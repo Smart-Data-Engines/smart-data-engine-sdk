@@ -22,7 +22,22 @@ vectors/
   errors/<nnn>-<name>/
     model.json
     expected.json             which error, and at what point it must be raised
+  canonical/<nnn>-<name>/
+    value.json                a value fed straight to the encoder
+    bytes.json                the exact bytes it must produce
+    expected.json             for cases that must be refused instead
+    why.txt                   what would break if this vector were not here
 ```
+
+`canonical/` is the newest kind and the most instructive. It exists because a mutation that should
+have failed did not: every object key in the model IR is fixed ASCII, so no model vector reaches the
+object-key comparator, and swapping code point ordering for a naive sort passed the whole suite.
+Field names do reach the IR - as array elements, through a different comparator. Two call sites, one
+covered.
+
+The lesson generalises, and it is worth applying to any vector added here: **break the code
+deliberately and check that this suite notices.** A vector that passes without reaching the code it
+describes takes the place of one that would have.
 
 `ir.json` holds bytes, not a document to be re-parsed. Compare it as bytes. A library that parses it
 and compares the parsed structures is not testing the thing that breaks - two libraries agreeing on

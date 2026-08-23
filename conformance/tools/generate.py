@@ -164,6 +164,36 @@ def _everything() -> sde.LogicalModel:
     return sde.build_model(Wszystko)
 
 
+def _astral() -> sde.LogicalModel:
+    """A model whose field names expose UTF-16 order against code point order.
+
+    This vector exists because the TypeScript implementation found the divergence. JavaScript compares
+    strings by UTF-16 code unit; the contract requires code point order. For anything in the Basic
+    Multilingual Plane the two agree, so no test written with Latin or even CJK names can see the
+    difference. Above U+FFFF they disagree: an astral character is a surrogate pair starting at
+    0xD800, so UTF-16 order puts every emoji *before* U+E000 while code point order puts it after.
+
+    Expected order of these three field names: "a", U+E000, U+1F600. A library that used a naive
+    sort would produce "a", U+1F600, U+E000, hash differently from every other library, and nothing
+    would fail until the control plane was looking at two models where there should be one.
+    """
+    sde.clear_registry()
+
+    @sde.entity
+    class Astral:
+        id: uuid.UUID
+        a: str
+        # U+E000, private use area, inside the BMP
+        locals()["\ue000"] = str
+        # U+1F600, astral: stored as a surrogate pair in UTF-16
+        locals()["\U0001f600"] = str
+
+    # Annotations added after the fact, because the names are not valid Python identifiers.
+    Astral.__annotations__["\ue000"] = str
+    Astral.__annotations__["\U0001f600"] = str
+    return sde.build_model(Astral)
+
+
 def _routing_vector() -> None:
     model = _shop()
     shapes = sde.enumerate_shapes(model)
@@ -352,6 +382,7 @@ def main() -> int:
     _write_model_vector("001-single-entity", _shop())  # skipped: hand-written
     _write_model_vector("002-relations-keys-atomicity", _shop())
     _write_model_vector("003-type-vocabulary-and-unicode", _everything())
+    _write_model_vector("004-astral-identifier", _astral())
     _routing_vector()
     _error_vectors()
     print("\nVectors written. Review the diff by hand before committing: this is the contract.")

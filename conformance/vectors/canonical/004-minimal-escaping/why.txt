@@ -1,0 +1,4 @@
+Escape only the quote, the backslash and C0 controls. Do not escape non-ASCII, do not
+escape the forward slash, and do not escape U+2028. Several widely used JSON writers escape
+some of those - JavaScript-aware ones usually escape U+2028 - and any of them changes the
+hash.

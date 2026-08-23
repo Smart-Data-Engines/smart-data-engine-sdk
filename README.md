@@ -52,9 +52,9 @@ planner, and no migration engine. Those are next, in that order, and migration i
 
 | Library | Tier | Status |
 |---|---|---|
-| [`python/`](python/) | 0 + partial 2 | reference implementation |
-| `typescript/` | — | next |
-| `java/`, `rust/` | — | contributions welcome once the contract has a second implementation |
+| [`python/`](python/) | 0, and 2 for PostgreSQL | reference implementation |
+| [`typescript/`](typescript/) | 0 | passes the same vectors, byte for byte |
+| `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has two implementations, which is what made it safe to invite them |
 
 ## What you declare, and what you do not
 
@@ -111,15 +111,35 @@ divergence is a red test for whoever caused it rather than an operation written 
 production.
 
 `conformance/vectors/model/001-single-entity` was written by hand from the document rather than
-generated, which makes it the one vector that proves the document says enough to implement from.
+generated, which makes it the one vector that proves the document says enough to implement from. So
+was every vector under `conformance/vectors/canonical/`.
+
+### What the second implementation found
+
+Writing TypeScript against the contract, rather than translating Python into it, found a divergence
+worth the entire exercise. JavaScript compares strings by UTF-16 code unit; the contract requires code
+point order. Those agree for everything in the Basic Multilingual Plane, so no test written with Latin
+or CJK identifiers can see the difference — and they disagree above U+FFFF, where an astral character
+is a surrogate pair starting at 0xD800 and therefore sorts *before* U+E000 instead of after. One field
+name like that and two libraries produce two versions of one model.
+
+Then mutation testing found that the first vector written for it did not actually cover the bug. Every
+object key in the model IR is fixed ASCII, so swapping the object-key comparator for a naive sort
+passed the whole suite; field names reach the IR as array elements, through a different comparator. The
+`canonical/` vectors exist to close that, and both call sites are now verified by deliberately breaking
+them and watching the suite go red.
 
 ## Getting started
 
 ```bash
-cd python
-python -m venv .venv && .venv/bin/pip install -e '.[dev,signed,postgres]'
-cd .. && make pg-up && make check
+cd python && python -m venv .venv && .venv/bin/pip install -e '.[dev,signed,postgres]' && cd ..
+cd typescript && npm install && cd ..
+make pg-up && make check
 ```
+
+`make check` runs both languages. It does not stop at the first failure across them on purpose: if
+Python and TypeScript have both drifted, you want to see both, because the fix is usually in the
+contract rather than in either library.
 
 The integration slice runs against a real PostgreSQL rather than a fake. A fake would agree with
 whatever this library believes about types, quoting and transactions, which is exactly the set of

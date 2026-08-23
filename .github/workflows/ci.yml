@@ -75,6 +75,34 @@ jobs:
           pytest tests/test_postgres_slice.py -q | tee /tmp/slice.txt
           grep -qv "skipped" /tmp/slice.txt || { echo "the PostgreSQL slice was skipped"; exit 1; }
 
+  typescript:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+
+      - name: install
+        working-directory: typescript
+        run: npm ci
+
+      - name: types
+        working-directory: typescript
+        run: npx tsc --noEmit
+
+      - name: the same vectors Python runs
+        working-directory: typescript
+        run: npx vitest run
+
   contract:
     runs-on: ubuntu-latest
     steps:

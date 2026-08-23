@@ -29,6 +29,17 @@ for a given value.
 2. **Object keys are NFC-normalised, then sorted by Unicode code point.** In that order. Sorting
    first would place `e` + U+0301 under `e` and the composed `é` at U+00E9, which are different
    positions for what must be the same key.
+
+   **By code point, which is not the same as your language's default string comparison.** JavaScript,
+   Java and C# all compare strings by UTF-16 code unit. For anything in the Basic Multilingual Plane
+   the two orders agree, so the difference is invisible in any test written with Latin or even CJK
+   identifiers. Above U+FFFF they diverge: an astral character is a surrogate pair starting at
+   0xD800, so UTF-16 order places every emoji and every CJK extension character *before* U+E000
+   while code point order places them after. One such field name would hash differently in two
+   libraries, the control plane would see two models, and nothing would fail until half a fleet was
+   writing to the wrong tables. This was found by writing the second implementation, which is the
+   argument for writing it early: `conformance/vectors/canonical/001-key-order-by-code-point` and
+   `model/004-astral-identifier` exist so it cannot come back.
 3. **No insignificant whitespace.** `{"a":1,"b":[2,3]}`. No space after `:` or `,`, no newlines, no
    trailing newline.
 4. **Every string value is NFC-normalised.**
@@ -264,6 +275,24 @@ library, whoever wrote it.
 
 ## 10. Running the vectors
 
+There are four kinds:
+
+| Kind | What it pins |
+|---|---|
+| `model/` | a neutral declaration, and the exact IR bytes, version, groups and shapes it must produce |
+| `routing/` | a map plus cases: `(shape, in a write transaction?, needs freshness?)` to materialisation |
+| `errors/` | which error, and at what stage it must be raised |
+| `canonical/` | a value fed straight to the encoder, and the exact bytes |
+
+`canonical/` is the newest and the most instructive. It exists because a mutation that should have
+failed did not: every object key in the model IR is fixed ASCII, so no model vector reaches the
+object-key comparator, and swapping code point ordering for a naive sort passed the entire suite.
+Field names do reach the IR - as array elements, through a different comparator. Two call sites, one
+covered, and the gap was invisible until somebody deliberately broke the code to see what noticed.
+
+Every expectation under `canonical/` is written by hand from this document, which also makes those
+vectors the check on whether this document is complete.
+
 Each library reads `conformance/vectors/**` in its own test runner. Four things matter:
 
 - **Compare `ir.json` as bytes.** Parsing it first and comparing structures would pass two libraries
@@ -276,6 +305,9 @@ Each library reads `conformance/vectors/**` in its own test runner. Four things 
   query runs, rather than when the model is built, has a different bug that a type-only assertion
   cannot see.
 - **Fail loudly if you ran zero vectors.** A green suite that found no files is worse than a red one.
+- **Break your own code and check that this suite notices.** A vector that passes without reaching
+  the code it describes takes the place of one that would have. This is not general advice; it is how
+  the `canonical/` vectors came to exist.
 
 ## 11. Changing this document
 

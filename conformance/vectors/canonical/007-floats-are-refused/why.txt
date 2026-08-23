@@ -1,0 +1,6 @@
+Floating point has no canonical form: its textual representation differs between languages
+and the difference is unfixable after the fact.
+
+This is about literals in the *encoding*, not about the type system. A field may perfectly
+well have type float64, which reaches the IR as the string "float64" - see
+model/003-type-vocabulary-and-unicode.

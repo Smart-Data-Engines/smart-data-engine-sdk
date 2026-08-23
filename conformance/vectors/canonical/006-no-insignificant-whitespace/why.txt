@@ -1,0 +1,2 @@
+No space after a colon or a comma, no newlines, no trailing newline. Empty containers and
+null are written out rather than omitted.

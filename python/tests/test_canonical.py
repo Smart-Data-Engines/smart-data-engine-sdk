@@ -120,3 +120,20 @@ def test_digest_is_stable() -> None:
     # rather than a self-referential assertion.
     assert digest16({"a": 1}) == digest16({"a": 1})
     assert digest16({"a": 1}) != digest16({"a": 2})
+
+
+def test_keys_are_ordered_by_code_point_not_by_utf16_unit() -> None:
+    """The divergence the TypeScript implementation found, pinned on this side too.
+
+    Python compares strings by code point, so this passes for free here - which is exactly why it
+    needs an explicit test. JavaScript's default sort compares UTF-16 code units, and an astral
+    character is a surrogate pair starting at 0xD800, so it sorts *before* U+E000 there and *after*
+    it here. Two libraries, two model versions, one control plane looking at what it thinks are two
+    models.
+
+    conformance/vectors/model/004-astral-identifier covers the same ground through the model path.
+    """
+    astral = "\U0001f600"  # surrogate pair in UTF-16, single code point here
+    private_use = ""  # inside the BMP, above the surrogate range
+    encoded = canonical_str({astral: 1, private_use: 2, "a": 3})
+    assert encoded.index('"a"') < encoded.index(f'"{private_use}"') < encoded.index(f'"{astral}"')

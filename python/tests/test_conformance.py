@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 import sde
-from sde.canonical import canonical_bytes
+from sde.canonical import CanonicalError, canonical_bytes
 from sde.errors import DeclarationError, MapError
 from sde.testing.loader import model_from_neutral
 
@@ -123,3 +123,37 @@ def test_error_vector(case: Path) -> None:
 
     with pytest.raises(exc_type, match=expected["match"]):
         model_from_neutral(_read_json(case / "model.json"))
+
+
+# --- canonical vectors -----------------------------------------------------------------------
+#
+# These feed a value straight into the encoder rather than going through a model, and they exist
+# because of a mutation that should have failed and did not. Every object key in the model IR is
+# fixed ASCII, so the *object key* comparator was never exercised: swapping code point ordering
+# for a naive sort passed the whole suite. Field names do reach the IR, but as array elements,
+# which is a different call site with a different comparator.
+
+
+@pytest.mark.parametrize("case", _cases("canonical"), ids=_ident)
+def test_canonical_vector(case: Path) -> None:
+    raw = (case / "value.json").read_text(encoding="utf-8")
+    value = json.loads(raw)
+
+    expected_error = case / "expected.json"
+    if expected_error.exists():
+        want = _read_json(expected_error)
+        assert want["error"] == "CanonicalError"
+        with pytest.raises(CanonicalError, match=want["match"]):
+            canonical_bytes(value)
+        return
+
+    expected = (case / "bytes.json").read_bytes()
+    assert canonical_bytes(value) == expected, (
+        f"{_ident(case)}: canonical bytes differ. See why.txt in that directory - every one of "
+        "these expectations was written by hand from the format contract, so a mismatch means the "
+        "implementation drifted from the document rather than the other way round."
+    )
+
+
+def test_there_are_canonical_vectors() -> None:
+    assert _cases("canonical"), "no canonical vectors found"

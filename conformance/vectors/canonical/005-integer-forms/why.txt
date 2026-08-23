@@ -1,0 +1,3 @@
+Shortest decimal form: no plus sign, no exponent, no leading zeros. The largest value here
+is 2^53-1, the last integer JavaScript represents exactly. Above it a library must refuse
+rather than truncate, since truncated bytes are bytes no other language can reproduce.

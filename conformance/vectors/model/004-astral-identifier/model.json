@@ -1,0 +1,29 @@
+{
+  "entities": [
+    {
+      "name": "Astral",
+      "fields": [
+        {
+          "name": "a",
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "\ue000",
+          "type": "string"
+        },
+        {
+          "name": "\ud83d\ude00",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": []
+}

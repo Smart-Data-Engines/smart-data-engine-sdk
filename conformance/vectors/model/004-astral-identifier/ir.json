@@ -1,0 +1,1 @@
+{"atomic":[],"contract":1,"cost_ceiling":null,"entities":[{"fields":[{"name":"a","nullable":false,"type":"string"},{"name":"id","nullable":false,"type":"uuid"},{"name":"","nullable":false,"type":"string"},{"name":"😀","nullable":false,"type":"string"}],"key":[{"field":"id","position":0}],"name":"Astral","pii":[],"residency":null}],"relations":[]}

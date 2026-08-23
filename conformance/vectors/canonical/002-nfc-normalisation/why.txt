@@ -1,0 +1,2 @@
+Every string is NFC-normalised, keys included. A decomposed e plus combining acute is
+emitted as the composed U+00E9.

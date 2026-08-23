@@ -1,0 +1,44 @@
+[
+  {
+    "group": "Astral",
+    "kind": "aggregate",
+    "entity": "Astral",
+    "fields": [],
+    "target": null,
+    "id": "a90a99342d5b6875"
+  },
+  {
+    "group": "Astral",
+    "kind": "bulk_write",
+    "entity": "Astral",
+    "fields": [],
+    "target": null,
+    "id": "76e567a538ba1bfb"
+  },
+  {
+    "group": "Astral",
+    "kind": "full_scan",
+    "entity": "Astral",
+    "fields": [],
+    "target": null,
+    "id": "7d84f804fc12592b"
+  },
+  {
+    "group": "Astral",
+    "kind": "point_read",
+    "entity": "Astral",
+    "fields": [
+      "id"
+    ],
+    "target": null,
+    "id": "be4dd4152373b9d4"
+  },
+  {
+    "group": "Astral",
+    "kind": "write",
+    "entity": "Astral",
+    "fields": [],
+    "target": null,
+    "id": "99b3b2586a2c8d09"
+  }
+]

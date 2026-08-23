@@ -1,0 +1,8 @@
+Two keys differing only in Unicode composition are the same key. A structure containing
+both is an error rather than a last-one-wins, because which one wins would depend on
+iteration order.
+
+value.json holds both spellings literally, which no language's dictionary type can, so a
+runner has to feed the parsed JSON object straight to the encoder without round-tripping it
+through a native map first. Parsers differ here: some collapse the two keys, in which case
+the runner should skip this vector and say so rather than passing it.

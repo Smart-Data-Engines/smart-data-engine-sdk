@@ -1,0 +1,4 @@
+Normalisation happens before sorting. Sorting first would order the decomposed form under
+"e", ahead of "z"; normalising first puts it at U+00E9, after "z". Both orders are
+self-consistent, so only an explicit expectation catches a library that runs the two steps
+the wrong way round.

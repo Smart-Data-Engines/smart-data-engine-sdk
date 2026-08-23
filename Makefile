@@ -6,16 +6,21 @@
 
 PY := python/.venv/bin
 
-.PHONY: help check python-check python-test python-lint python-types conformance clean pg-up pg-down
+.PHONY: help check python-check python-test python-lint python-types ts-check ts-test ts-types \
+        conformance clean pg-up pg-down
 
 help:
 	@echo "check         everything CI runs"
 	@echo "python-check  lint, types and tests for the Python library"
-	@echo "conformance   run the shared vectors (currently: Python)"
+	@echo "ts-check      types and tests for the TypeScript library"
+	@echo "conformance   run the shared vectors in every language that has them"
 	@echo "pg-up         start a PostgreSQL for the integration slice"
 	@echo "pg-down       stop it"
 
-check: python-check
+# Both languages, and deliberately not stopping at the first failure across them: if Python and
+# TypeScript have both drifted from the contract you want to see both, because the fix is usually in
+# the contract rather than in either library.
+check: python-check ts-check
 
 python-check: python-lint python-types python-test
 
@@ -28,8 +33,17 @@ python-types:
 python-test:
 	cd python && .venv/bin/python -m pytest
 
+ts-check: ts-types ts-test
+
+ts-types:
+	cd typescript && npx tsc --noEmit
+
+ts-test:
+	cd typescript && npx vitest run
+
 conformance:
 	cd python && .venv/bin/python -m pytest tests/test_conformance.py -v
+	cd typescript && npx vitest run tests/conformance.test.ts
 
 # The integration slice runs against a real PostgreSQL rather than a fake, because a fake would agree
 # with whatever this library believes about types, quoting and transactions - which is exactly the set

@@ -1,0 +1,7 @@
+Object keys are ordered by Unicode code point, not by UTF-16 code unit. JavaScript's
+default string comparison is UTF-16, which places U+1F600 - a surrogate pair starting at
+0xD83D - before U+E000, while code point order places it after.
+
+This vector exists because a mutation proved the gap. Every object key in the model IR is
+fixed ASCII, so replacing the key comparator with a naive sort passed the entire suite.
+Field names do reach the IR, but as array elements, which is a different call site.
