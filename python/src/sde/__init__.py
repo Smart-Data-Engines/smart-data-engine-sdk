@@ -46,6 +46,7 @@ from .placement import (
     load_map,
 )
 from .routing import Router, resolve
+from .session import Engine, Session
 from .shapes import SHAPE_KINDS, OperationShape, enumerate_shapes
 from .types import Float32, Int32, Json, Timestamp, precision
 
@@ -56,6 +57,7 @@ __all__ = [
     "SHAPE_KINDS",
     "CanonicalError",
     "DeclarationError",
+    "Engine",
     "EngineError",
     "Float32",
     "Group",
@@ -72,6 +74,7 @@ __all__ = [
     "Ref",
     "Router",
     "SdeError",
+    "Session",
     "Timestamp",
     "__version__",
     "build_model",

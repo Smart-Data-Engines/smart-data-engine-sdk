@@ -280,6 +280,7 @@ def load_map(
         ids = [m.id for m in (source, *derived)]
         if len(set(ids)) != len(ids):
             raise MapError(f"{where}: two materialisations share an id")
+
         groups[name] = GroupPlacement(group=name, source=source, derived=derived)
 
     routing = raw.get("routing") or {}
@@ -298,6 +299,8 @@ def load_map(
             name: _resolve_auto(placement, model, model_groups[name])
             for name, placement in groups.items()
         }
+        for placement in groups.values():
+            _refuse_shadowing(placement)
     elif any(m.layout is _AUTO for p in groups.values() for m in p.all()):
         raise MapError(
             'a layout asked to be derived with {"auto": true}, but no model was supplied to derive '
@@ -312,6 +315,32 @@ def load_map(
         routing={str(k): str(v) for k, v in routing.items()},
         signed=signature_present,
     )
+
+
+def _refuse_shadowing(placement: GroupPlacement) -> None:
+    """Refuse a derived copy that is secretly the source.
+
+    Two materialisations of one group in the same engine must not name the same tables. Found by a
+    test rather than by thinking: with an auto layout on both, the source and a derived copy derive
+    identical table names, so a copy placed in the same engine simply *is* the source. Reads would
+    appear to work, the lag would always measure zero, and the second copy would exist only in the
+    map. Refused rather than warned about, precisely because it looks like it works.
+
+    Checked after auto layouts are resolved, since before that there are no table names to compare.
+    """
+    source_tables = set(placement.source.layout.tables.values())
+    for candidate in placement.derived:
+        if candidate.engine != placement.source.engine:
+            continue
+        shared = sorted(source_tables & set(candidate.layout.tables.values()))
+        if shared:
+            raise MapError(
+                f"group {placement.group!r}: materialisation {candidate.id!r} is in the same "
+                "engine "
+                f"as the source and reuses its tables {shared}. That is not a copy of the group, "
+                "it is the original with a second name in the map, so its lag would always read as "
+                "zero and a read routed to it would silently be a read of the source."
+            )
 
 
 def _resolve_auto(placement: GroupPlacement, model: LogicalModel, group: Any) -> GroupPlacement:

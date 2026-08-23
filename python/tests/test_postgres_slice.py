@@ -257,3 +257,43 @@ def test_reads_and_writes_go_to_the_same_place_when_there_is_one_engine(
 ) -> None:
     for shape in sde.enumerate_shapes(model):
         assert sde.resolve(placement, shape).engine == "pg-test"
+
+
+def test_the_session_works_against_a_real_engine(
+    engine: PostgresEngine, model: sde.LogicalModel, placement: sde.PlacementMap
+) -> None:
+    """The same path the session tests exercise against a fake, now against PostgreSQL.
+
+    The fake agrees with whatever this library believes about tables and transactions, so it can
+    only check the routing decisions. This checks that the decisions are executable: that the table
+    name the map produced exists, that a transaction on the group's source engine actually commits,
+    and that a read after a write inside it returns the row.
+    """
+    session = sde.Session(model, placement, {"pg-test": engine})
+
+    user_id = uuid.uuid4()
+    with session.transaction("User", "Order"):
+        session.save("User", {"id": user_id, "email": "session@example.com"})
+        # Inside a write transaction the read must come from the source, and here that is the only
+        # copy - so this asserts the plumbing rather than the routing.
+        inside = session.get("User", {"id": user_id})
+        assert inside is not None
+        assert inside["email"] == "session@example.com"
+
+    assert session.get("User", {"id": user_id}) is not None
+
+
+def test_the_session_refuses_a_cross_group_transaction_on_a_real_engine(
+    engine: PostgresEngine, model: sde.LogicalModel, placement: sde.PlacementMap
+) -> None:
+    # Same refusal as the unit test, repeated here for one reason: to confirm nothing is opened on
+    # the real connection before it fires. A guarantee that holds against a fake and leaks a real
+    # transaction would be worse than not having it.
+    from sde.errors import ModelPlanningError
+
+    session = sde.Session(model, placement, {"pg-test": engine})
+    expected = "cannot span colocation groups"
+    with pytest.raises(ModelPlanningError, match=expected), session.transaction("Order", "Event"):
+        pass
+    # The connection is still usable, which it would not be if a transaction had been left open.
+    assert engine.count(_table(placement, model, "User")) >= 0
