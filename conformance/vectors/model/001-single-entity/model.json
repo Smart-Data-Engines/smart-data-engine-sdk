@@ -1,0 +1,14 @@
+{
+  "entities": [
+    {
+      "name": "Event",
+      "fields": [
+        {"name": "id", "type": "uuid"},
+        {"name": "name", "type": "string"},
+        {"name": "at", "type": "timestamptz"},
+        {"name": "note", "type": "string", "nullable": true}
+      ],
+      "key": ["id"]
+    }
+  ]
+}

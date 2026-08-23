@@ -1,0 +1,20 @@
+{
+  "entities": [
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "user",
+      "from": "Order",
+      "to": "User"
+    }
+  ]
+}

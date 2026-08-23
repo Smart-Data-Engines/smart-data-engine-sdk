@@ -1,0 +1,17 @@
+{
+  "entities": [
+    {
+      "name": "Bad",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "amount",
+          "type": "decimal"
+        }
+      ]
+    }
+  ]
+}

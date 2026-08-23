@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "well-formed decimal",
+  "why": "whitespace inside a type name is exactly the kind of thing two libraries would disagree about, so the written form is fixed"
+}

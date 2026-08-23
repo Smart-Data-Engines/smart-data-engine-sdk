@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Node, for the TypeScript library
+node_modules/
+typescript/dist/
+
+# Java, Rust
+target/
+.gradle/
+
+# Artefacts that could carry a client's data. A placement map is fine to commit - it names tables,
+# not rows - but anything a running application produced is not, and the cost of being wrong here is
+# not a tidy repository, it is somebody else's data in our history.
+*.profile.json
+telemetry-*.json
+
+# Local configuration and anything holding a key
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

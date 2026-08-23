@@ -1,0 +1,221 @@
+[
+  {
+    "group": "Event",
+    "kind": "aggregate",
+    "entity": "Event",
+    "fields": [],
+    "target": null,
+    "id": "9f1df8b8eab136a4"
+  },
+  {
+    "group": "Event",
+    "kind": "bulk_write",
+    "entity": "Event",
+    "fields": [],
+    "target": null,
+    "id": "7e84acca9e339f59"
+  },
+  {
+    "group": "Event",
+    "kind": "full_scan",
+    "entity": "Event",
+    "fields": [],
+    "target": null,
+    "id": "2477d087f39d0ae4"
+  },
+  {
+    "group": "Event",
+    "kind": "point_read",
+    "entity": "Event",
+    "fields": [
+      "id"
+    ],
+    "target": null,
+    "id": "4c0548f35036e637"
+  },
+  {
+    "group": "Event",
+    "kind": "range_read",
+    "entity": "Event",
+    "fields": [
+      "at"
+    ],
+    "target": null,
+    "id": "14e2d02e68a0f339"
+  },
+  {
+    "group": "Event",
+    "kind": "write",
+    "entity": "Event",
+    "fields": [],
+    "target": null,
+    "id": "2cb99e505653072d"
+  },
+  {
+    "group": "Order",
+    "kind": "aggregate",
+    "entity": "Order",
+    "fields": [],
+    "target": null,
+    "id": "be940bf177a12092"
+  },
+  {
+    "group": "Order",
+    "kind": "bulk_write",
+    "entity": "Order",
+    "fields": [],
+    "target": null,
+    "id": "3db0367790437d21"
+  },
+  {
+    "group": "Order",
+    "kind": "full_scan",
+    "entity": "Order",
+    "fields": [],
+    "target": null,
+    "id": "b71336d345e3a4bd"
+  },
+  {
+    "group": "Order",
+    "kind": "point_read",
+    "entity": "Order",
+    "fields": [
+      "id",
+      "tenant"
+    ],
+    "target": null,
+    "id": "12f8b2171bc2bf78"
+  },
+  {
+    "group": "Order",
+    "kind": "range_read",
+    "entity": "Order",
+    "fields": [
+      "placed_at"
+    ],
+    "target": null,
+    "id": "5b2e8f432ff4c8a2"
+  },
+  {
+    "group": "Order",
+    "kind": "range_read",
+    "entity": "Order",
+    "fields": [
+      "total"
+    ],
+    "target": null,
+    "id": "8d4141e36a5b1ac6"
+  },
+  {
+    "group": "Order",
+    "kind": "relation_walk",
+    "entity": "Order",
+    "fields": [
+      "user"
+    ],
+    "target": "User",
+    "id": "2c86f98a8c958f19"
+  },
+  {
+    "group": "Order",
+    "kind": "write",
+    "entity": "Order",
+    "fields": [],
+    "target": null,
+    "id": "f8eeddafb1599211"
+  },
+  {
+    "group": "Order",
+    "kind": "aggregate",
+    "entity": "Payment",
+    "fields": [],
+    "target": null,
+    "id": "eeb82eec362eafae"
+  },
+  {
+    "group": "Order",
+    "kind": "bulk_write",
+    "entity": "Payment",
+    "fields": [],
+    "target": null,
+    "id": "0fb46b22b55aaa54"
+  },
+  {
+    "group": "Order",
+    "kind": "full_scan",
+    "entity": "Payment",
+    "fields": [],
+    "target": null,
+    "id": "df0d075f0c22e8d9"
+  },
+  {
+    "group": "Order",
+    "kind": "point_read",
+    "entity": "Payment",
+    "fields": [
+      "id"
+    ],
+    "target": null,
+    "id": "8cd424b1ac1cdef5"
+  },
+  {
+    "group": "Order",
+    "kind": "range_read",
+    "entity": "Payment",
+    "fields": [
+      "amount"
+    ],
+    "target": null,
+    "id": "cf71ef84eaeb1a33"
+  },
+  {
+    "group": "Order",
+    "kind": "write",
+    "entity": "Payment",
+    "fields": [],
+    "target": null,
+    "id": "ff336eca63c5d4cb"
+  },
+  {
+    "group": "Order",
+    "kind": "aggregate",
+    "entity": "User",
+    "fields": [],
+    "target": null,
+    "id": "55a3ea7f7feb894c"
+  },
+  {
+    "group": "Order",
+    "kind": "bulk_write",
+    "entity": "User",
+    "fields": [],
+    "target": null,
+    "id": "59456fca09c87a9c"
+  },
+  {
+    "group": "Order",
+    "kind": "full_scan",
+    "entity": "User",
+    "fields": [],
+    "target": null,
+    "id": "19af817f6f8b3ab8"
+  },
+  {
+    "group": "Order",
+    "kind": "point_read",
+    "entity": "User",
+    "fields": [
+      "id"
+    ],
+    "target": null,
+    "id": "d2f9cce926765b6e"
+  },
+  {
+    "group": "Order",
+    "kind": "write",
+    "entity": "User",
+    "fields": [],
+    "target": null,
+    "id": "182bf89923261f77"
+  }
+]

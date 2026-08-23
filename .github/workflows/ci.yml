@@ -1,0 +1,95 @@
+name: check
+
+# Every library runs the shared conformance vectors in its own runner. That is the whole mechanism by
+# which four implementations stay identical, so it runs on every push rather than on a schedule.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is 3.11 because the code uses `X | None` at runtime in annotations resolved by
+        # get_type_hints. The ceiling is whatever is current: a canonical encoding that drifts with a
+        # Python release is exactly the failure the contract exists to prevent, so both ends get run.
+        python: ["3.11", "3.12", "3.13"]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev,signed,postgres]'
+
+      - name: lint
+        working-directory: python
+        run: ruff check src tests
+
+      - name: types
+        working-directory: python
+        # Not decoration: several guarantees in this design are enforced by types rather than by
+        # runtime checks, so a weakened annotation is a deleted guarantee.
+        run: mypy src
+
+      - name: tests, including the PostgreSQL slice
+        working-directory: python
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+        run: pytest -v
+
+      - name: the integration slice actually ran
+        working-directory: python
+        # A skipped integration test is indistinguishable from a passing one in a summary line, and
+        # the slice is the only thing here that proves the library works against a real engine.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+        run: |
+          pytest tests/test_postgres_slice.py -q | tee /tmp/slice.txt
+          grep -qv "skipped" /tmp/slice.txt || { echo "the PostgreSQL slice was skipped"; exit 1; }
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the hand-written vector is unchanged
+        # model/001-single-entity was typed out from docs/format-contract.md rather than generated,
+        # which makes it the only independent check that the document is sufficient to implement from.
+        # Changing it is changing the contract, and that has to be deliberate enough to require
+        # editing this workflow.
+        run: |
+          expected=54a50916f4326096
+          actual=$(sha256sum conformance/vectors/model/001-single-entity/ir.json | cut -c1-16)
+          test "$actual" = "$expected" || {
+            echo "the hand-written vector changed: $actual != $expected"
+            echo "If that was deliberate, bump conformance/contract-version.txt and this check."
+            exit 1
+          }

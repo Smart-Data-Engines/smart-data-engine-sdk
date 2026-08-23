@@ -1,0 +1,1 @@
+{"atomic":[],"contract":1,"cost_ceiling":null,"entities":[{"fields":[{"name":"at","nullable":false,"type":"timestamptz"},{"name":"id","nullable":false,"type":"uuid"},{"name":"name","nullable":false,"type":"string"},{"name":"note","nullable":true,"type":"string"}],"key":[{"field":"id","position":0}],"name":"Event","pii":[],"residency":null}],"relations":[]}

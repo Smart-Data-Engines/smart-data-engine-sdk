@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Event",
+    "members": [
+      "Event"
+    ]
+  },
+  {
+    "name": "Order",
+    "members": [
+      "Order",
+      "Payment",
+      "User"
+    ]
+  }
+]

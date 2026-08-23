@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "unknown entity",
+  "why": "a dangling relation would silently drop a colocation edge, and the group it should have merged with would be placed separately"
+}

@@ -1,0 +1,48 @@
+"""Structured logging, with one rule: every event has a name from a closed vocabulary.
+
+We never have access to a client's machine. When something goes wrong there, the log is the only
+diagnostic we will ever see, so it has to be greppable and stable rather than prose that changes
+with each refactor. Hence ``sde.``-prefixed event names, structured fields, and no interpolated
+values in the event name itself.
+
+No dependency on a logging framework, and no configuration required. The library emits through the
+standard :mod:`logging` module under the ``sde`` logger and stays silent unless the application
+configures a handler - a library that prints on import is a library people vendor and patch.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Final
+
+__all__ = ["EVENTS", "log", "logger"]
+
+logger: Final = logging.getLogger("sde")
+
+EVENTS: Final[frozenset[str]] = frozenset(
+    {
+        "sde.model.built",
+        "sde.map.loaded",
+        "sde.map.unsigned",
+        "sde.map.rejected",
+        "sde.route.resolved",
+        "sde.route.fallback",
+        "sde.schema.applied",
+        "sde.write.failed",
+        "sde.internal.error",
+    }
+)
+
+
+def log(event: str, /, **fields: Any) -> None:
+    """Emit one structured event.
+
+    An unknown event name is a programming error and says so, because the whole value of a closed
+    vocabulary is that a client can build an alert on an event name and have it keep working.
+    """
+    if event not in EVENTS:
+        raise ValueError(
+            f"{event!r} is not a known event. Add it to EVENTS with a comment explaining when it "
+            "fires - the vocabulary is closed so that alerts built on these names keep working."
+        )
+    logger.info(event, extra={"sde_event": event, "sde_fields": fields})

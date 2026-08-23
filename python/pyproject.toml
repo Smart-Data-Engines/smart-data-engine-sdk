@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sde"
+dynamic = ["version"]
+description = "Smart Data Engine client library: declare a data model, we place it and move it"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Smart Data Engines" }]
+keywords = ["database", "placement", "polystore", "postgresql", "clickhouse"]
+
+# No runtime dependencies on purpose. This library goes into someone else's application, so every
+# dependency is a dependency they inherit and a version conflict they may have to resolve. Signature
+# verification and engine drivers are extras, because not every deployment needs them: an unsigned,
+# hand-written map with no engine driver is a valid way to use this.
+dependencies = []
+
+[project.optional-dependencies]
+signed = ["cryptography>=42"]
+postgres = ["psycopg[binary]>=3.1"]
+dev = ["pytest>=8", "mypy>=1.11", "ruff>=0.6"]
+
+[tool.hatch.version]
+path = "src/sde/__init__.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# RUF012 wants ClassVar on mutable class attributes. It is right about ordinary classes and wrong
+# about ours: `class Meta: pii = ["email"]` is the library's public declarative API, and this is
+# exactly how a client writes it. Annotating it would be teaching people a worse habit to satisfy a
+# linter. Off in tests, where the declarations live; the library itself never writes one.
+"tests/*" = ["RUF012"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+# The type vocabulary maps Python's types onto neutral names by inspecting annotations, which means
+# handling objects mypy cannot narrow. Those places are explicit rather than blanket-ignored.
+disallow_any_explicit = false

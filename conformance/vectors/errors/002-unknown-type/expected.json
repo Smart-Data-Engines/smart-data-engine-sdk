@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "neutral type vocabulary",
+  "why": "the vocabulary is closed; a name outside it must not be guessed at"
+}

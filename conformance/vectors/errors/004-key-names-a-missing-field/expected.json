@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "not fields",
+  "why": "a key that is not stored in the entity cannot address, migrate or verify a row"
+}

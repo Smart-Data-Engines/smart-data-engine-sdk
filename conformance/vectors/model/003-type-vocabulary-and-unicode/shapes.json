@@ -1,0 +1,124 @@
+[
+  {
+    "group": "Wszystko",
+    "kind": "aggregate",
+    "entity": "Wszystko",
+    "fields": [],
+    "target": null,
+    "id": "a238d207ca1ab6b9"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "bulk_write",
+    "entity": "Wszystko",
+    "fields": [],
+    "target": null,
+    "id": "6dd34aa076597ccb"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "full_scan",
+    "entity": "Wszystko",
+    "fields": [],
+    "target": null,
+    "id": "8685fd5a5654dc1f"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "point_read",
+    "entity": "Wszystko",
+    "fields": [
+      "id"
+    ],
+    "target": null,
+    "id": "c4ac2f74701329a3"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "approx"
+    ],
+    "target": null,
+    "id": "ca6e872f4edb95c9"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "big"
+    ],
+    "target": null,
+    "id": "3c9a485d081bc34c"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "day"
+    ],
+    "target": null,
+    "id": "d0817ae5947dc713"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "moment"
+    ],
+    "target": null,
+    "id": "1442810d23bd66ce"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "money"
+    ],
+    "target": null,
+    "id": "ce6b9fbd8f801067"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "naive"
+    ],
+    "target": null,
+    "id": "abef3c5544f961ad"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "narrow"
+    ],
+    "target": null,
+    "id": "5b5b12cf7da82b7d"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "range_read",
+    "entity": "Wszystko",
+    "fields": [
+      "small"
+    ],
+    "target": null,
+    "id": "024354b7cb526d86"
+  },
+  {
+    "group": "Wszystko",
+    "kind": "write",
+    "entity": "Wszystko",
+    "fields": [],
+    "target": null,
+    "id": "1bd2a34d03f18093"
+  }
+]

@@ -1,0 +1,70 @@
+{
+  "entities": [
+    {
+      "name": "Wszystko",
+      "fields": [
+        {
+          "name": "approx",
+          "type": "float64"
+        },
+        {
+          "name": "big",
+          "type": "int64"
+        },
+        {
+          "name": "blob",
+          "type": "bytes"
+        },
+        {
+          "name": "day",
+          "type": "date"
+        },
+        {
+          "name": "doc",
+          "type": "json"
+        },
+        {
+          "name": "flag",
+          "type": "bool"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "maybe",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "moment",
+          "type": "timestamptz"
+        },
+        {
+          "name": "money",
+          "type": "decimal(19,4)"
+        },
+        {
+          "name": "naive",
+          "type": "timestamp"
+        },
+        {
+          "name": "narrow",
+          "type": "float32"
+        },
+        {
+          "name": "small",
+          "type": "int32"
+        },
+        {
+          "name": "za\u017c\u00f3\u0142\u0107",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": []
+}

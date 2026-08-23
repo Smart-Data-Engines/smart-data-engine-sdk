@@ -1,0 +1,16 @@
+{
+  "entities": [
+    {
+      "name": "Bad",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "tenant"
+      ]
+    }
+  ]
+}
