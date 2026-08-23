@@ -79,13 +79,16 @@ and tested, not tolerated — it is also the honest answer to what happens if yo
 ## Install
 
 ```bash
-pip install sde                  # core, no dependencies at all
-pip install 'sde[signed]'        # verify maps we signed
-pip install 'sde[postgres]'      # PostgreSQL engine driver
+pip install smart-data-engine              # core, no dependencies at all
+pip install 'smart-data-engine[signed]'    # verify maps we signed
+pip install 'smart-data-engine[postgres]'  # PostgreSQL engine driver
 ```
 
 The core has no runtime dependencies. This library goes into your application, so every dependency
 would be one you inherit and a version conflict you might have to resolve.
+
+The distribution is `smart-data-engine` and the import is `sde`, because `sde` was already taken on
+PyPI. Mildly annoying, and better than a cute misspelling.
 
 ## Conformance
 

@@ -3,7 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sde"
+# The distribution is "smart-data-engine"; the import is "sde". Not a style choice: "sde" is already
+# taken on PyPI, and squatting-adjacent renames of an import path are worse for a client than a
+# distribution name that differs from it. `pip install smart-data-engine` then `import sde`.
+name = "smart-data-engine"
 dynamic = ["version"]
 description = "Smart Data Engine client library: declare a data model, we place it and move it"
 readme = "README.md"
@@ -25,6 +28,12 @@ dev = ["pytest>=8", "mypy>=1.11", "ruff>=0.6"]
 
 [tool.hatch.version]
 path = "src/sde/__init__.py"
+
+# The distribution and the import differ, so the package has to be pointed at explicitly. Hatchling
+# otherwise looks for a directory named after the project and fails - which it did, and better here
+# than at publish time.
+[tool.hatch.build.targets.wheel]
+packages = ["src/sde"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
