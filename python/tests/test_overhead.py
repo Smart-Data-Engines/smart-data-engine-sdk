@@ -18,8 +18,8 @@ So there are two tests here and they do different jobs:
   divides by a measured round trip. This is the one that gates a release.
 * `test_end_to_end_comparison_is_reported_but_not_asserted` runs the A/B anyway and prints both
   numbers with their spread, because a wildly wrong end-to-end result would mean the first test is
-  measuring the wrong thing. It deliberately asserts almost nothing: an assertion that fails on noise
-  teaches a team to rerun the suite until it passes, which is worse than no assertion at all.
+  measuring the wrong thing. It deliberately asserts almost nothing: an assertion that fails on
+  noise teaches a team to rerun the suite until it passes, which is worse than no assertion.
 """
 
 from __future__ import annotations
@@ -28,7 +28,8 @@ import os
 import statistics
 import time
 import uuid
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 
@@ -95,7 +96,7 @@ def engine(model: sde.LogicalModel, placement: sde.PlacementMap) -> Iterator[Pos
     assert DSN
     with PostgresEngine(DSN) as eng:
         table = placement.placement_of("Reading").source.layout.table_for("Reading")
-        with eng._cx.cursor() as cur:  # noqa: SLF001 - test setup
+        with eng._cx.cursor() as cur:
             cur.execute(f'DROP TABLE IF EXISTS "{table}" CASCADE')
         for group in sde.colocation_groups(model):
             layout = placement.placement_of(group.name).source.layout
@@ -107,7 +108,6 @@ def test_library_overhead_per_operation_is_under_one_percent(
     model: sde.LogicalModel, placement: sde.PlacementMap, engine: PostgresEngine
 ) -> None:
     """The release gate. Measures the added work, not the difference between two noisy totals."""
-    session = sde.Session(model, placement, {"pg": engine})
     table = placement.placement_of("Reading").source.layout.table_for("Reading")
 
     # What a round trip costs. Measured through the driver, so the library is not in it at all.
@@ -139,10 +139,10 @@ def test_library_overhead_per_operation_is_under_one_percent(
     )
 
     assert ratio < BUDGET, (
-        f"the library adds {ratio * 100:.2f}% of a round trip at p99, over the {BUDGET * 100:.0f}% "
-        "budget in requirement 3.5. Look at what routing is doing per call: it is supposed to be a "
-        "dictionary lookup and three conditions, and anything that turned it into more than that is "
-        "the regression."
+        f"the library adds {ratio * 100:.2f}% of a round trip at p99, over the "
+        f"{BUDGET * 100:.0f}% budget in requirement 3.5. Look at what routing is doing per call: "
+        "it is supposed to be a dictionary lookup and three conditions, and anything that turned "
+        "it into more than that is the regression."
     )
 
     # And a floor on the round trip, so that a broken fixture cannot make the ratio look good by
@@ -158,9 +158,9 @@ def test_end_to_end_comparison_is_reported_but_not_asserted(
 ) -> None:
     """The sanity check. Reports both numbers and their spread, asserts only the obvious.
 
-    Deliberately not a threshold test. On this hardware a one percent difference in end-to-end p99 is
-    well inside the run-to-run spread, so a strict assertion here would fail on noise - and a test
-    that fails on noise teaches a team to rerun the suite until it goes green, which is worse than
+    Deliberately not a threshold test. On this hardware a one percent difference in end-to-end p99
+    is well inside the run-to-run spread, so a strict assertion here would fail on noise - and a
+    test that fails on noise teaches a team to rerun until it goes green, which is worse than
     having no test.
     """
     session = sde.Session(model, placement, {"pg": engine})
@@ -179,8 +179,10 @@ def test_end_to_end_comparison_is_reported_but_not_asserted(
     through_p99 = _percentile(through, 0.99)
 
     print(
-        f"\n  direct p99          {direct_p99 / 1000:9.1f} µs   spread p50->p99 {spread(direct):6.1%}"
-        f"\n  through session p99 {through_p99 / 1000:9.1f} µs   spread p50->p99 {spread(through):6.1%}"
+        f"\n  direct p99          {direct_p99 / 1000:9.1f} µs"
+        f"   spread p50->p99 {spread(direct):6.1%}"
+        f"\n  through session p99 {through_p99 / 1000:9.1f} µs"
+        f"   spread p50->p99 {spread(through):6.1%}"
         f"\n  difference          {(through_p99 / direct_p99 - 1) * 100:9.1f} %"
         "\n  (reported, not asserted: this difference is inside the noise on this hardware)"
     )
@@ -189,7 +191,8 @@ def test_end_to_end_comparison_is_reported_but_not_asserted(
     # slower. That would not be noise, it would be a bug - a second round trip, or a connection
     # opened per call.
     assert through_p99 < direct_p99 * 3, (
-        f"going through the session made a point read {through_p99 / direct_p99:.1f}x slower at p99. "
+        f"going through the session made a point read {through_p99 / direct_p99:.1f}x slower at "
+        "p99. "
         "That is far outside measurement noise; look for a second round trip or a connection being "
         "opened per operation."
     )

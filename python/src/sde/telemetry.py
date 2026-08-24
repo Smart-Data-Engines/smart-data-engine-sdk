@@ -42,6 +42,7 @@ __all__ = [
     "Recorder",
     "ShapeStats",
     "Window",
+    "has_time_dimension",
 ]
 
 # 1 µs to about 17 s, doubling. Twenty-five buckets is enough to tell a cache hit from a full scan,
@@ -219,6 +220,34 @@ def _at(ordered: list[float], fraction: float) -> float | None:
     if not ordered:
         return None
     return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
+
+
+# Types that make a field a time dimension. Recognised by **type**, never by name - see below.
+_TIME_TYPES = frozenset({"date", "timestamp", "timestamptz"})
+
+
+def has_time_dimension(model: Any, group: Any) -> bool:
+    """Does any entity in this group carry a time dimension?
+
+    Decided by the declared type and never by the field's name. Two reasons, and the second is the
+    one that made it a rule rather than a preference.
+
+    A name is not evidence: `created_at` typed as a string is a string, and treating it as a
+    timestamp would have the planner recommend time partitioning on a column no engine can
+    range-scan usefully.
+
+    And a client may hash identifier names (requirement 11.3) so that we never see them. A
+    derivation that reads names would silently produce different answers with hashing on and off -
+    which is exactly the property the conformance vector for hashed models exists to forbid.
+    Deciding by type also means models written in other natural languages work identically, which is
+    a free consequence of getting this right for the other reason.
+    """
+    for member in group.members:
+        spec = model.entity(member)
+        for spec_field in spec.fields:
+            if spec_field.type in _TIME_TYPES:
+                return True
+    return False
 
 
 class Recorder:

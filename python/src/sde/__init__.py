@@ -49,7 +49,14 @@ from .placement import (
 from .routing import Router, resolve
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, OperationShape, enumerate_shapes
-from .telemetry import GroupFeatures, Histogram, Recorder, ShapeStats, Window
+from .telemetry import (
+    GroupFeatures,
+    Histogram,
+    Recorder,
+    ShapeStats,
+    Window,
+    has_time_dimension,
+)
 from .types import Float32, Int32, Json, Timestamp, precision
 
 __version__ = "0.1.0.dev0"
@@ -93,6 +100,7 @@ __all__ = [
     "entity",
     "enumerate_shapes",
     "group_of",
+    "has_time_dimension",
     "internal_failures",
     "load_map",
     "precision",

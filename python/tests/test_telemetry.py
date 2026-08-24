@@ -71,7 +71,9 @@ def test_merging_preserves_counts() -> None:
 # --- recorder ----------------------------------------------------------------------------------
 
 
-def _record(recorder: Recorder, kind: str, *, calls: int = 1, ns: int = 100_000, rows: int = 1) -> None:
+def _record(
+    recorder: Recorder, kind: str, *, calls: int = 1, ns: int = 100_000, rows: int = 1
+) -> None:
     for _ in range(calls):
         recorder.record(
             shape_id=f"shape-{kind}",
@@ -97,7 +99,8 @@ def test_a_window_carries_one_record_per_shape() -> None:
 
 
 def test_the_buffer_is_bounded_and_says_what_it_dropped() -> None:
-    # Telemetry is the thing that gets lost when there is no room. Never an operation, never a write.
+    # Telemetry is the thing that gets lost when there is no room. Never an operation, never a
+    # write.
     recorder = Recorder("v1", max_windows=2)
     for _ in range(4):
         _record(recorder, "point_read")
@@ -315,3 +318,54 @@ def test_the_call_site_points_at_the_caller_not_at_us() -> None:
     site = window.shapes[0].call_site
     assert site is not None
     assert "/sde/" not in site
+
+
+def test_a_time_dimension_is_recognised_by_type_never_by_name() -> None:
+    """The rule that survives name hashing, and the reason it is a rule.
+
+    A name is not evidence: `created_at` typed as a string is a string, and treating it as a
+    timestamp would have the planner recommend time partitioning on a column no engine can
+    range-scan usefully.
+
+    The larger reason is that a client may hash identifier names so we never see them. A derivation
+    that read names would answer differently with hashing on and off, which the hashed-model vector
+    exists to forbid. Deciding by type also makes models written in other natural languages work
+    identically - a free consequence of getting it right for the first reason.
+    """
+    import datetime as dt
+
+    @sde.entity
+    class Zamowienie:
+        id: uuid.UUID
+        # Non-ASCII name, genuine timestamp type.
+        czas_utworzenia: dt.datetime
+        # English name that looks like a timestamp and is not one.
+        created_at: str
+
+    model = sde.build_model(Zamowienie)
+    group = sde.colocation_groups(model)[0]
+    assert sde.has_time_dimension(model, group) is True
+
+    sde.clear_registry()
+
+    @sde.entity
+    class NoTime:
+        id: uuid.UUID
+        created_at: str
+        updated_at: str
+
+    model_without = sde.build_model(NoTime)
+    group_without = sde.colocation_groups(model_without)[0]
+    assert sde.has_time_dimension(model_without, group_without) is False
+
+
+def test_a_date_counts_as_a_time_dimension() -> None:
+    import datetime as dt
+
+    @sde.entity
+    class Daily:
+        id: uuid.UUID
+        day: dt.date
+
+    model = sde.build_model(Daily)
+    assert sde.has_time_dimension(model, sde.colocation_groups(model)[0]) is True
