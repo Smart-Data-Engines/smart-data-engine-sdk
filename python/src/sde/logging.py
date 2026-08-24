@@ -51,6 +51,11 @@ def log(event: str, /, **fields: Any) -> None:
             f"{event!r} is not a known event. Add it to EVENTS with a comment explaining when it "
             "fires - the vocabulary is closed so that alerts built on these names keep working."
         )
+    # Checked before anything is built. Routing logs on every operation and an unconfigured logger is
+    # the normal case in production, so the cost of a log line nobody consumes has to be one
+    # comparison rather than a dictionary construction.
+    if not logger.isEnabledFor(logging.INFO):
+        return
     try:
         logger.info(event, extra={"sde_event": event, "sde_fields": fields})
     except BaseException as exc:

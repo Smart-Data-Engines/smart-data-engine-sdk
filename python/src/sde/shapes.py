@@ -20,7 +20,7 @@ the map promises a route for an operation that then fails.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .canonical import digest16
@@ -63,6 +63,20 @@ class OperationShape:
     fields: tuple[str, ...]
     target: str | None = None
 
+    # Computed once, in __post_init__, and stored. It used to be a property, which meant a SHA-256
+    # over a freshly built and canonically encoded dict on every access - and routing reads it up to
+    # three times per operation. The overhead test measured 41 microseconds median to resolve one
+    # route, sixteen percent of a PostgreSQL round trip, against a budget of one percent. Exactly the
+    # same mistake as building a key four times per write, which the order book engine paid for once
+    # already.
+    id: str = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        # object.__setattr__ because the dataclass is frozen. The alternative - a memo keyed by the
+        # shape - would put a dictionary lookup back on the hot path to avoid a hash, which is the
+        # wrong trade when shapes are enumerated once per model and live for the process.
+        object.__setattr__(self, "id", digest16(self.as_ir()))
+
     def as_ir(self) -> dict[str, Any]:
         # Sorted fields, explicit nulls: the shape is hashed, so its encoding has to be as stable as
         # the model's.
@@ -73,10 +87,6 @@ class OperationShape:
             "fields": list(self.fields),
             "target": self.target,
         }
-
-    @property
-    def id(self) -> str:
-        return digest16(self.as_ir())
 
 
 def _is_ordered(neutral_type: str) -> bool:

@@ -47,8 +47,27 @@ export function shapeIr(shape: OperationShape): Record<string, unknown> {
   }
 }
 
+/**
+ * Identifiers are memoised per shape object.
+ *
+ * Not premature. Routing reads a shape's identifier on every operation, and computing it means
+ * building an object, canonically encoding it and running SHA-256 over the result. The Python
+ * implementation had exactly this on its hot path and the overhead test measured 41 microseconds
+ * median to resolve one route - sixteen percent of a PostgreSQL round trip, against a budget of one
+ * percent. Shapes are enumerated once per model and live for the process, so a WeakMap keyed by the
+ * object is both correct and free after the first call.
+ *
+ * A WeakMap rather than a field on the interface so that `shapeId` keeps working on a shape literal
+ * built by hand, which the conformance runner and anyone reading a vector will do.
+ */
+const idCache = new WeakMap<OperationShape, string>()
+
 export function shapeId(shape: OperationShape): string {
-  return digest16(shapeIr(shape))
+  const cached = idCache.get(shape)
+  if (cached !== undefined) return cached
+  const computed = digest16(shapeIr(shape))
+  idCache.set(shape, computed)
+  return computed
 }
 
 function isOrdered(type: string): boolean {
