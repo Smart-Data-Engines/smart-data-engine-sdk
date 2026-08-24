@@ -66,9 +66,8 @@ class OperationShape:
     # Computed once, in __post_init__, and stored. It used to be a property, which meant a SHA-256
     # over a freshly built and canonically encoded dict on every access - and routing reads it up to
     # three times per operation. The overhead test measured 41 microseconds median to resolve one
-    # route, sixteen percent of a PostgreSQL round trip, against a budget of one percent. Exactly the
-    # same mistake as building a key four times per write, which the order book engine paid for once
-    # already.
+    # route, sixteen percent of a PostgreSQL round trip, against a budget of one percent. The same
+    # mistake as building a key four times per write, which the engine paid for once already.
     id: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -116,11 +115,11 @@ def enumerate_shapes(model: LogicalModel) -> tuple[OperationShape, ...]:
         shapes.append(OperationShape(group=group, kind="full_scan", entity=spec.name, fields=()))
         shapes.append(OperationShape(group=group, kind="aggregate", entity=spec.name, fields=()))
 
-        for field in spec.fields:
-            if _is_ordered(field.type):
+        for spec_field in spec.fields:
+            if _is_ordered(spec_field.type):
                 shapes.append(
                     OperationShape(
-                        group=group, kind="range_read", entity=spec.name, fields=(field.name,)
+                        group=group, kind="range_read", entity=spec.name, fields=(spec_field.name,)
                     )
                 )
 

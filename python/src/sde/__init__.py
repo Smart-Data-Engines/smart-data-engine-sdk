@@ -49,6 +49,7 @@ from .placement import (
 from .routing import Router, resolve
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, OperationShape, enumerate_shapes
+from .telemetry import GroupFeatures, Histogram, Recorder, ShapeStats, Window
 from .types import Float32, Int32, Json, Timestamp, precision
 
 __version__ = "0.1.0.dev0"
@@ -62,7 +63,9 @@ __all__ = [
     "EngineError",
     "Float32",
     "Group",
+    "GroupFeatures",
     "GroupPlacement",
+    "Histogram",
     "Int32",
     "Json",
     "LogicalModel",
@@ -72,11 +75,14 @@ __all__ = [
     "OperationShape",
     "PhysicalLayout",
     "PlacementMap",
+    "Recorder",
     "Ref",
     "Router",
     "SdeError",
     "Session",
+    "ShapeStats",
     "Timestamp",
+    "Window",
     "__version__",
     "build_model",
     "canonical_bytes",

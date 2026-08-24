@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from time import perf_counter_ns
 from typing import Any, Protocol
 
 from .errors import EngineError, ModelPlanningError
@@ -26,6 +27,7 @@ from .model import LogicalModel
 from .placement import Materialization, PlacementMap
 from .routing import Router
 from .shapes import OperationShape, enumerate_shapes
+from .telemetry import Recorder
 
 __all__ = ["Engine", "Session"]
 
@@ -60,7 +62,13 @@ class Session:
         model: LogicalModel,
         placement: PlacementMap,
         engines: Mapping[str, Engine],
+        *,
+        recorder: Recorder | None = None,
     ) -> None:
+        # Telemetry is optional and off by default. A library that starts measuring the moment it is
+        # imported is a library people are right to be suspicious of; measurement begins when a
+        # recorder is handed in, which is a visible line in the client's code.
+        self._recorder = recorder
         self._model = model
         self._placement = placement
         self._engines = dict(engines)
@@ -126,7 +134,19 @@ class Session:
     def save(self, entity: str, values: Mapping[str, Any]) -> None:
         shape = self._shape(entity, "write")
         engine, materialization = self._target(shape, fresh=False)
-        engine.insert(materialization.layout.table_for(entity), values)
+        table = materialization.layout.table_for(entity)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        try:
+            engine.insert(table, values)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            # In a finally block on purpose: a failed write is exactly the operation whose
+            # latency and error count matter most to a placement decision, and it is the one an
+            # early return would silently omit.
+            self._observe(shape, started, rows=1, failed=failed)
 
     def get(self, entity: str, key: Mapping[str, Any], *, fresh: bool = False) -> Any:
         spec = self._model.entity(entity)
@@ -139,7 +159,37 @@ class Session:
             )
         shape = self._shape(entity, "point_read", expected)
         engine, materialization = self._target(shape, fresh=fresh)
-        return engine.get(materialization.layout.table_for(entity), key)
+        table = materialization.layout.table_for(entity)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        row: Any = None
+        try:
+            row = engine.get(table, key)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=0 if row is None else 1, failed=failed)
+        return row
+
+    def _observe(self, shape: OperationShape, started: int, *, rows: int, failed: bool) -> None:
+        """Hand one observation to the recorder, if there is one.
+
+        The timing call is skipped entirely when telemetry is off, which is why `started` is
+        passed in rather than measured here: with no recorder this method is one attribute check.
+        """
+        recorder = self._recorder
+        if recorder is None:
+            return
+        recorder.record(
+            shape_id=shape.id,
+            group=shape.group,
+            entity=shape.entity,
+            kind=shape.kind,
+            nanoseconds=perf_counter_ns() - started,
+            rows=rows,
+            failed=failed,
+        )
 
     # --- transactions ----------------------------------------------------------------------
 
