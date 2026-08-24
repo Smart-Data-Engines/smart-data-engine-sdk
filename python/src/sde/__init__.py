@@ -37,7 +37,9 @@ from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .entity import Ref, clear_registry, entity, registry
 from .errors import DeclarationError, EngineError, MapError, ModelPlanningError, SdeError
 from .groups import Group, colocation_groups, group_of
+from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .internal import internal_failures, reset_internal_failures
+from .layout import default_layout, snake_case
 from .model import CONTRACT, LogicalModel, build_model
 from .placement import (
     GroupPlacement,
@@ -79,6 +81,7 @@ __all__ = [
     "MapError",
     "Materialization",
     "ModelPlanningError",
+    "NameMap",
     "OperationShape",
     "PhysicalLayout",
     "PlacementMap",
@@ -96,15 +99,19 @@ __all__ = [
     "canonical_str",
     "clear_registry",
     "colocation_groups",
+    "default_layout",
     "digest16",
     "entity",
     "enumerate_shapes",
     "group_of",
     "has_time_dimension",
+    "hash_identifiers",
     "internal_failures",
     "load_map",
+    "load_or_create_salt",
     "precision",
     "registry",
     "reset_internal_failures",
     "resolve",
+    "snake_case",
 ]
