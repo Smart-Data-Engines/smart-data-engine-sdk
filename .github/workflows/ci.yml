@@ -108,6 +108,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: the hashing digests are what openssl derives
+        # The model/ vectors were produced by the implementation they verify, which is why 001 is
+        # hand-written. The hashing/ vectors do not need that workaround: an HMAC is reproducible by
+        # anything, so this re-derives every committed digest with openssl and fails on a
+        # disagreement. What it checks is the part a port gets wrong - NFC before the HMAC, U+0000 as
+        # the separator, the prefix outside the message, fields hashed with their entity - none of
+        # which any ASCII-only test can see.
+        run: python3 conformance/tools/hashing_vectors.py --verify
+
       - name: the hand-written vector is unchanged
         # model/001-single-entity was typed out from docs/format-contract.md rather than generated,
         # which makes it the only independent check that the document is sufficient to implement from.
