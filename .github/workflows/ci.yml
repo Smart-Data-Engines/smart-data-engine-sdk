@@ -108,6 +108,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: the built wheel carries the PEP 561 marker
+        # The unit test checks the file is in the source tree. This checks it is in the artefact -
+        # which is the thing a consumer installs, and the two are only the same until somebody
+        # changes the build configuration. A wheel without the marker type-checks fine here and
+        # makes every downstream `import sde` untyped.
+        run: |
+          python3 -m pip install -q build
+          python3 -m build --wheel --outdir /tmp/wheel python
+          python3 - <<'PY'
+          import glob, zipfile, sys
+          wheel = glob.glob('/tmp/wheel/*.whl')[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          if 'sde/py.typed' not in names:
+              print(f'{wheel} has no sde/py.typed. Consumers would see this library as untyped.')
+              print('\n'.join(sorted(names)[:40]))
+              sys.exit(1)
+          print(f'{wheel}: marker present')
+          PY
+
       - name: the hashing digests are what openssl derives
         # The model/ vectors were produced by the implementation they verify, which is why 001 is
         # hand-written. The hashing/ vectors do not need that workaround: an HMAC is reproducible by

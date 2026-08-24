@@ -34,6 +34,16 @@ path = "src/sde/__init__.py"
 # than at publish time.
 [tool.hatch.build.targets.wheel]
 packages = ["src/sde"]
+# `src/sde/py.typed` needs no entry here: hatchling includes it because it lives inside the package
+# directory, which was checked by building the wheel both ways rather than assumed. A `force-include`
+# for it was written first and then removed - dead configuration that looks load-bearing is worse than
+# none, because the next person reads it as a requirement.
+#
+# The marker itself is not optional. Without it a consumer's type checker reports `module is installed,
+# but missing library stubs or py.typed marker` and treats every symbol here as Any, which is worse
+# than shipping no annotations: it is shipping annotations only we benefit from, in a library whose
+# argument is that a client can verify our invariants by reading it. CI builds the wheel and looks
+# inside, because the source tree and the artefact are only the same until somebody changes this file.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
