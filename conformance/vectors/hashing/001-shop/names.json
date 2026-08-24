@@ -1,0 +1,34 @@
+{
+  "entities": {
+    "Event": "e_820aa85c0a46",
+    "Order": "e_bb3d42b4cc5d",
+    "Payment": "e_57ed2139d4fb",
+    "User": "e_546526714dc9"
+  },
+  "fields": {
+    "Event": {
+      "at": "f_e881c66a196a",
+      "id": "f_ca8ce7bbc8bb",
+      "name": "f_329cbbb1de19"
+    },
+    "Order": {
+      "id": "f_7d1d3e8368c8",
+      "placed_at": "f_1039b0a3d379",
+      "tenant": "f_d186ef62ff24",
+      "total": "f_9c2a350085ac"
+    },
+    "Payment": {
+      "amount": "f_00df3f49745f",
+      "id": "f_5777a34dcd89"
+    },
+    "User": {
+      "email": "f_b1b4a0ec9efb",
+      "id": "f_b79e462d447e"
+    }
+  },
+  "relations": {
+    "Order": {
+      "user": "r_36c38e251b29"
+    }
+  }
+}

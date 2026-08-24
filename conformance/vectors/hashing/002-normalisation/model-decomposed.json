@@ -1,0 +1,21 @@
+{
+  "entities": [
+    {
+      "name": "Zamo\u0301wienie",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "wartos\u0301c\u0301",
+          "type": "decimal(12,2)"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": []
+}

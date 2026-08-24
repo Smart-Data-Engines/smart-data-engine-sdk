@@ -28,7 +28,7 @@ const model = buildModel([User, Order, Event])
 free to go somewhere built for it. That split is the decision most applications get wrong once, at the
 start, and never revisit.
 
-## Status: Tier 0
+## Status: Tier 0, plus hashed identifiers
 
 | Tier | What it covers | Here? |
 |---|---|---|
@@ -36,10 +36,17 @@ start, and never revisit.
 | 1 | telemetry: measurement, window aggregation, local buffering | not yet |
 | 2 | schema creation and migration participation | not yet |
 | 3 | framework integrations, pooling | not yet |
+| — | hashed identifiers (§2a), a mode rather than a tier | **yes** |
 
 Tier 0 means this library can declare a model, agree with every other SDE library about what that
 model *is*, load a placement map and tell you where an operation goes. It cannot yet talk to a
 database. The Python library is further along; see the repository root for what each one reaches.
+
+`hashIdentifiers` is listed separately because hashing is orthogonal to the tiers - a complete Tier 0
+library may omit it. What is not optional is agreement: run two services in two languages against one
+model, and if they derive different digests they compute different `model_version` values and each
+refuses the other's placement map. This library passes `conformance/vectors/hashing/`, which is the
+only claim worth making about it.
 
 ## Why the model is declared rather than inferred
 

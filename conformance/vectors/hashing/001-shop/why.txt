@@ -1,0 +1,31 @@
+The same model as model/002-relations-keys-atomicity, hashed with a fixed salt. Sharing
+the declaration is the point: the two directories can be diffed to see exactly what
+hashing changes and what it must not.
+
+What it changes, and what a library has to reproduce:
+
+  - Every entity, field and relation name is a keyed digest, twelve hex characters
+    behind e_ / f_ / r_. The message is NFC-normalised and joined with U+0000, and the
+    prefix is outside the HMAC. Section 2a of the format contract has the derivation.
+  - Fields are hashed with their entity, so Order.id and User.id differ. A library that
+    hashes field names on their own passes every other assertion here and fails this one.
+  - groups.json shows the consequence that has to be documented rather than discovered:
+    the group is called Order in model/002 and e_546526714dc9 here, because a group is
+    named after its alphabetically first member and hashing changed which member that is.
+    The IR differs, so the version differs, so a map issued for the unhashed model is
+    refused. Hashing is a model change, not a setting.
+
+What it must not change:
+
+  - residency stays "EU". A jurisdiction is not an identifier, and a hashed placement
+    constraint is an unenforceable one.
+  - cost_ceiling stays 750.00 EUR. A number and a currency.
+  - Types, keys and nullability are untouched: the physical schema is derived from them.
+  - The colocation partition is the same set of sets, translated through names.json.
+    Order pulls User in through the relation and Payment in through the declared
+    atomicity; Event stands alone. Two groups here, two groups there.
+
+Every digest in names.json was recomputed with openssl dgst -sha256 -mac HMAC before
+this vector was written, by conformance/tools/hashing_vectors.py, which aborts on a
+disagreement. So unlike the model/ vectors, these do not depend on this library being
+right - only on the format document describing the message construction correctly.

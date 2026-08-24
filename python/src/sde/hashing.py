@@ -39,6 +39,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,14 +117,29 @@ class NameMap:
 
 
 def _digest(salt: bytes, prefix: str, *parts: str) -> str:
-    """HMAC over the parts, joined by a separator that cannot appear in an identifier.
+    """HMAC over the parts, NFC-normalised and joined by a separator no identifier can contain.
 
-    The separator matters: hashing ``("User", "id")`` as ``"Userid"`` would collide with
-    ``("Use", "rid")``. Unlikely, and unlikely is not a guarantee when the consequence is two fields
-    becoming one column.
+    Two details, both of which a port can get wrong silently, so both are pinned in the format
+    contract.
+
+    **NFC first.** The canonical encoder normalises before it emits bytes, which is why two
+    libraries that declare ``Zamówienie`` in different normal forms compute the *same* model
+    version. Hashing a name before normalising it would throw that away: the same identifier written
+    two ways would give two digests, two model versions, and a placement map issued for one service
+    that the other refuses. Nothing about that is visible in ASCII, so it would have shipped and
+    then failed for a client whose entity names are not English.
+
+    **The separator, not concatenation.** Hashing ``("User", "id")`` as ``"Userid"`` would collide
+    with ``("Use", "rid")``. Unlikely is not a guarantee when the consequence is two fields becoming
+    one column. U+0000 cannot occur in an identifier, so the join is unambiguous.
+
+    The prefix is deliberately outside the HMAC. It labels the digest for a human reading a table
+    name; it carries no secret and adding it to the message would only make the derivation harder to
+    reproduce.
     """
-    message = "\x00".join(parts).encode("utf-8")
-    return prefix + hmac.new(salt, message, hashlib.sha256).hexdigest()[:DIGEST_CHARS]
+    message = "\x00".join(unicodedata.normalize("NFC", part) for part in parts)
+    digest = hmac.new(salt, message.encode("utf-8"), hashlib.sha256).hexdigest()
+    return prefix + digest[:DIGEST_CHARS]
 
 
 def hash_identifiers(model: LogicalModel, salt: bytes) -> tuple[LogicalModel, NameMap]:

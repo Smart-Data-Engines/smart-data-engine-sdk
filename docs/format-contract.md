@@ -72,6 +72,59 @@ shape.id      = lowercase_hex(sha256(canonical_bytes(shape)))[:16]
 
 Sixteen hex characters, which is the first eight bytes of the digest.
 
+## 2a. Hashed identifiers
+
+A client may replace every identifier in their model with a keyed digest, so that we never see that
+they have an entity called `patient_diagnosis`. The salt stays on their infrastructure and is never
+serialised into anything — not a model, not a telemetry window, not a support attachment.
+
+Hashing is optional. Its **bytes are not**: a client can run one service on the Python library and
+another on the TypeScript one against the same model, and if the two derive different digests they
+compute different `model_version` values and each refuses the other's placement map. So a library that
+offers hashing at all must derive it exactly like this:
+
+```
+digest(salt, parts)  = lowercase_hex(hmac_sha256(salt, join(nfc(parts), U+0000)))[:12]
+
+entity   E           -> "e_" + digest(salt, [E])
+field    F of E      -> "f_" + digest(salt, [E, F])
+relation R on E      -> "r_" + digest(salt, [E, R])
+```
+
+Five details, each of which a port can get wrong while every ASCII test still passes:
+
+- **NFC before the HMAC, not after.** §1 normalises before emitting bytes, which is why two libraries
+  that declare `Zamówienie` in different normal forms agree on the model version. Hashing the raw name
+  throws that guarantee away and nothing in an English-only test suite notices.
+- **U+0000 as the separator, not concatenation.** `("User", "id")` joined without one collides with
+  `("Use", "rid")`. Unlikely is not a guarantee when the consequence is two fields sharing one column.
+- **The prefix is outside the HMAC.** It labels a digest for whoever reads a table name; it is not part
+  of the message. A field of `A` named `B` and a relation on `A` named `B` therefore share a digest and
+  differ only by prefix, which is intended.
+- **Twelve hex characters**, i.e. 48 bits — half the length of a `model_version`, because these appear
+  in table names. A collision would merge two entities into one, so it is **checked and refused**, never
+  merged.
+- **Fields and relations are hashed with their entity.** The same field name on two entities must give
+  two digests, or we learn that both have a field called `email` without being able to read the name —
+  the structural leak hashing exists to close.
+
+What is **not** hashed, and why:
+
+| Not hashed | Because |
+|---|---|
+| `residency` | a jurisdiction, and a hard placement constraint; a hashed constraint is unenforceable |
+| `cost_ceiling` | a number and a currency |
+| types, keys, nullability | the physical schema is derived from them, and none of them is a name |
+
+Two consequences a client has to be told rather than left to discover:
+
+- **Hashing is a model change, not a setting.** A group is named after its alphabetically first member
+  and a shape id includes group and entity names, so the IR differs, the version differs, and the
+  existing map is refused. Switching hashing on requires a new map.
+- **The client's own tables get opaque names** like `e_9c1f2a7b3d40`, because the physical layout comes
+  from a map keyed by hashed names. For a regulated deployment that is the point; elsewhere it is a real
+  cost, which is why this is off unless asked for.
+
 ## 3. The neutral type vocabulary
 
 No language's own type names reach the IR. Each library maps its host language onto this closed set:
@@ -124,10 +177,20 @@ Python library maps `datetime` to `timestamptz` and offers `sde.Timestamp` for t
 }
 ```
 
-Two rules worth restating because they are the ones an implementer gets wrong:
+Three rules worth restating because they are the ones an implementer gets wrong:
 
 **Nothing depends on declaration order.** The order a client happened to write their entities in is
 not part of their model, so it must not reach the hash.
+
+**Sort where the IR is built, not where it is called from.** "Sorted by name" above means sorted by the
+name that appears *in the IR*, and the sorting belongs to whatever constructs these bytes — not to the
+caller who happens to hand it a sorted list. The distinction is invisible until a second caller shows
+up. Ours was hashing (§2a): it rebuilds each entity with digests for names while keeping the original
+sequence, so one library's field arrays came out ordered by the *real* names. Alphabetical order of
+hidden names is a small amount of exactly what hashing hides, and no library that had never seen those
+names could reproduce the bytes. One implementation sorted inside the constructor and one trusted its
+callers; both passed their own suites for months, and the shared vector is what made them disagree out
+loud.
 
 **Composite key order is recorded, not implied.** `(tenant, id)` and `(id, tenant)` are different
 keys and different models. Recording that as an explicit `position` rather than as array order means
@@ -273,9 +336,16 @@ languages or the word is worthless.
 Tier 0 is not optional. An implementation that does not pass the Tier 0 vectors is not an SDE
 library, whoever wrote it.
 
+**Name hashing (§2a) is orthogonal to the tiers.** It is a mode, not a level: a Tier 0 library may
+omit it entirely and still be complete, and a Tier 3 library may not have it. What is not optional is
+agreement — a library that offers hashing must pass `hashing/`, because a client running two languages
+against one model needs both to derive the same digests or each refuses the other's map. Declared
+separately from the tier, for the same reason "supported" has to mean one thing: a library that says
+"Tier 0 + hashing" is making a claim the vectors can check.
+
 ## 10. Running the vectors
 
-There are four kinds:
+There are five kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -283,6 +353,13 @@ There are four kinds:
 | `routing/` | a map plus cases: `(shape, in a write transaction?, needs freshness?)` to materialisation |
 | `errors/` | which error, and at what stage it must be raised |
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
+| `hashing/` | a salt, a model, and every digest §2a must derive from them |
+
+`hashing/` is only run by a library that offers hashing, and skipping it has to be visible: an
+implementation that quietly runs zero of these while claiming to support the mode is the failure the
+vectors exist to make impossible. One of its cases carries an identifier in two Unicode normal forms,
+which is the case that fails if a port hashes before normalising — the defect that section exists to
+name.
 
 `canonical/` is the newest and the most instructive. It exists because a mutation that should have
 failed did not: every object key in the model IR is fixed ASCII, so no model vector reaches the

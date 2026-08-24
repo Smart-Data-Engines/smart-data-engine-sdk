@@ -22,6 +22,7 @@ import pytest
 import sde
 from sde.canonical import CanonicalError, canonical_bytes
 from sde.errors import DeclarationError, MapError
+from sde.hashing import hash_identifiers
 from sde.testing.loader import model_from_neutral
 
 VECTORS = Path(__file__).resolve().parents[2] / "conformance" / "vectors"
@@ -157,3 +158,62 @@ def test_canonical_vector(case: Path) -> None:
 
 def test_there_are_canonical_vectors() -> None:
     assert _cases("canonical"), "no canonical vectors found"
+
+# --- hashing vectors -------------------------------------------------------------------------
+#
+# Only run by a library that offers hashing (§2a), and hashing is a mode rather than a tier. What
+# these pin is not the HMAC - anything can compute an HMAC - but the message: NFC first, U+0000 as
+# the separator, the prefix outside, fields hashed with their entity. Every one of those is
+# invisible in an ASCII-only test.
+
+
+@pytest.mark.parametrize("case", _cases("hashing"), ids=_ident)
+def test_hashing_vector(case: Path) -> None:
+    salt = bytes.fromhex((case / "salt.hex").read_text().strip())
+    sde.clear_registry()
+    model = model_from_neutral(_read_json(case / "model.json"))
+    hashed, names = hash_identifiers(model, salt)
+
+    expected = _read_json(case / "names.json")
+    assert dict(names.entities) == expected["entities"], (
+        "entity digests differ from the vector. The HMAC is not the likely cause - check whether "
+        "the name is NFC-normalised before hashing and whether the prefix leaked into the message."
+    )
+    assert {e: dict(m) for e, m in names.fields.items()} == expected["fields"], (
+        "field digests differ. Fields are hashed *with* their entity, so the message is "
+        "entity + U+0000 + field, not the field name alone."
+    )
+    assert {e: dict(m) for e, m in names.relations.items()} == expected["relations"]
+
+    assert canonical_bytes(hashed.ir) == (case / "ir.json").read_bytes()
+    assert hashed.version == (case / "version.txt").read_text().strip()
+
+    groups = [
+        {"name": g.name, "members": list(g.members)} for g in sde.colocation_groups(hashed)
+    ]
+    assert groups == _read_json(case / "groups.json")
+
+    # Where the case carries the same identifiers in a second normal form, the two must agree. A
+    # library that hashes before normalising passes everything above and fails here.
+    decomposed = case / "model-decomposed.json"
+    if decomposed.exists():
+        raw_nfc = (case / "model.json").read_bytes()
+        raw_nfd = decomposed.read_bytes()
+        assert raw_nfc != raw_nfd, (
+            f"{_ident(case)}: the two model files are byte-identical, so this case proves nothing "
+            "about normalisation."
+        )
+        sde.clear_registry()
+        other, _ = hash_identifiers(model_from_neutral(_read_json(decomposed)), salt)
+        assert other.version == (case / "version-decomposed.txt").read_text().strip()
+        assert other.version == hashed.version, (
+            "the same identifier in two normal forms produced two hashed models. A map issued for "
+            "one service would be refused by the other, and no ASCII test can see it."
+        )
+
+
+def test_there_are_hashing_vectors() -> None:
+    # This library offers hashing, so skipping these silently is not an option. A library that does
+    # not offer it removes this test along with the feature - and says so in its README, because
+    # "supported" has to mean one thing across languages.
+    assert _cases("hashing"), "no hashing vectors found, but this library implements section 2a"

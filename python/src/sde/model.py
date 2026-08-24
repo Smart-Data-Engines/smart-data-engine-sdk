@@ -16,7 +16,7 @@ contract show up all over this file and are worth naming before you read it:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, get_args, get_origin, get_type_hints
 
 from .canonical import canonical_bytes, digest16
@@ -278,6 +278,25 @@ def assemble(
     """
     specs = tuple(sorted(entities, key=lambda s: s.name))
     rels = tuple(sorted(relations, key=lambda r: (r.source, r.name, r.target)))
+
+    # Fields and pii are sorted **here**, by the name that ends up in the IR - not left in whatever
+    # order the caller supplied. Both callers below happen to supply them sorted already, so for
+    # years this was a no-op and the ordering rule lived in a convention rather than in the code.
+    # Hashing broke the convention: it rebuilds an entity with digests for names while keeping the
+    # original sequence, so the IR came out ordered by the *real* field names. Two consequences, one
+    # of them a leak: the hashed IR encoded the alphabetical order of names it is supposed to hide,
+    # and no library that had never seen those names could reproduce the bytes. TypeScript sorted,
+    # Python did not, and the hashing vector is what made the disagreement visible.
+    def ordered(spec: EntitySpec) -> EntitySpec:
+        return replace(
+            spec,
+            fields=tuple(sorted(spec.fields, key=lambda f: f.name)),
+            # `key` is deliberately not sorted: its order is positional and carries meaning, which
+            # is why the IR writes an explicit index for it.
+            pii=tuple(sorted(spec.pii)),
+        )
+
+    specs = tuple(ordered(spec) for spec in specs)
 
     ir: dict[str, Any] = {
         "contract": CONTRACT,

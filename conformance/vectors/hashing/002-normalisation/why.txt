@@ -1,0 +1,22 @@
+One identifier, two Unicode normal forms, one expected digest.
+
+model.json holds Zamówienie and wartość composed (U+00F3, U+015B, U+0107).
+model-decomposed.json holds the same two words decomposed (o, s, c each followed by
+U+0301 COMBINING ACUTE ACCENT). Both files are ASCII with \u escapes, because which
+form a file holds must not depend on what opens it, and in this directory that is the
+entire subject.
+
+Both must produce the same hashed model: version.txt and version-decomposed.txt are
+equal, and that equality is the assertion.
+
+This vector exists because the reference implementation got it wrong. Section 1
+normalises to NFC before emitting bytes, which is why two libraries that declare
+Zamówienie differently agree on model_version. The first version of hashing HMAC'd the
+raw name, so the same identifier written two ways gave two digests, two versions, and a
+placement map issued for the Python service that the TypeScript one would refuse. It
+passed every test in the suite, because every other identifier in every other test is
+ASCII, where the two forms coincide.
+
+It was found by writing section 2a of the format contract, not by a test - which is the
+argument for the document existing at all, and the reason this vector is here rather
+than only a unit test in one language.

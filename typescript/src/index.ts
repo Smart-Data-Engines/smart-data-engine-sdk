@@ -10,6 +10,10 @@
  * go with them, and routing. Telemetry (Tier 1) and schema plus migration participation (Tier 2) are
  * not here yet, and the README says so rather than implying otherwise.
  *
+ * It also implements hashed identifiers (section 2a), which is a mode rather than a tier: a complete
+ * Tier 0 library may omit it, but one that offers it has to derive the same digests as every other, or
+ * two services on one model compute two model versions and each refuses the other's map.
+ *
  * Unlike Python, the model is declared explicitly rather than read from annotations - TypeScript's
  * types are erased before the code runs. That is not a workaround; it is why this was the right second
  * implementation. Anything the format contract left implicit had nowhere to hide.
@@ -17,6 +21,8 @@
 
 export { CanonicalError, canonicalBytes, canonicalString, compareCodePoints, digest16 } from './canonical.js'
 export { DeclarationError, EngineError, MapError, ModelPlanningError, SdeError } from './errors.js'
+export type { NameMap } from './hashing.js'
+export { DIGEST_CHARS, hashIdentifiers } from './hashing.js'
 export type { Group } from './groups.js'
 export { colocationGroups, groupOf } from './groups.js'
 export type {

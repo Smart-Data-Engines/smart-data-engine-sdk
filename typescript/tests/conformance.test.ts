@@ -10,7 +10,7 @@
  * precisely the failure these vectors exist to catch, and it is invisible the moment you parse.
  */
 
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -22,6 +22,7 @@ import {
   CONTRACT,
   DeclarationError,
   enumerateShapes,
+  hashIdentifiers,
   loadMap,
   MapError,
   resolve,
@@ -216,6 +217,60 @@ describe('canonical vectors', () => {
         `see why.txt in ${name}: every expectation here was written by hand from the format ` +
           'contract, so a mismatch means this implementation drifted from the document.',
       ).toBe(expected.toString('utf8'))
+    })
+  }
+})
+
+// --- hashing vectors ---------------------------------------------------------------------------
+//
+// Only run by a library that offers hashing (section 2a), which this one now does. What these pin is
+// not the HMAC - anything computes an HMAC - but the message: NFC first, U+0000 as the separator, the
+// prefix outside, fields hashed with their entity. All four are invisible in an ASCII-only test, and
+// three of them are what a line-by-line translation of the Python would plausibly get wrong.
+
+describe('hashing vectors', () => {
+  const kind = cases('hashing')
+
+  it('found vectors to run', () => {
+    // A library that claims section 2a and silently runs zero of these is the failure the vectors
+    // exist to make impossible.
+    expect(kind.length).toBeGreaterThan(0)
+  })
+
+  for (const name of kind) {
+    it(name, () => {
+      const dir = join(VECTORS, 'hashing', name)
+      const salt = Buffer.from(readFileSync(join(dir, 'salt.hex'), 'utf8').trim(), 'hex')
+      const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      const { model: hashed, names } = hashIdentifiers(model, salt)
+
+      const expected = readJson<{
+        entities: Record<string, string>
+        fields: Record<string, Record<string, string>>
+        relations: Record<string, Record<string, string>>
+      }>(join(dir, 'names.json'))
+
+      expect(names.entities).toEqual(expected.entities)
+      expect(names.fields).toEqual(expected.fields)
+      expect(names.relations).toEqual(expected.relations)
+
+      expect(canonicalBytes(hashed.ir)).toEqual(readFileSync(join(dir, 'ir.json')))
+      expect(hashed.version).toBe(readFileSync(join(dir, 'version.txt'), 'utf8').trim())
+      expect(
+        colocationGroups(hashed).map((g) => ({ name: g.name, members: [...g.members] })),
+      ).toEqual(readJson(join(dir, 'groups.json')))
+
+      // Where the case carries the same identifiers in a second normal form, the two must agree. A
+      // library that hashes before normalising passes everything above and fails here.
+      const decomposedPath = join(dir, 'model-decomposed.json')
+      if (existsSync(decomposedPath)) {
+        expect(readFileSync(join(dir, 'model.json'))).not.toEqual(readFileSync(decomposedPath))
+        const other = hashIdentifiers(modelFromNeutral(readJson(decomposedPath)), salt)
+        expect(other.model.version).toBe(
+          readFileSync(join(dir, 'version-decomposed.txt'), 'utf8').trim(),
+        )
+        expect(other.model.version).toBe(hashed.version)
+      }
     })
   }
 })

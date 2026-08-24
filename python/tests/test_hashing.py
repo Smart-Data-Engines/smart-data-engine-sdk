@@ -9,6 +9,7 @@ writes ``if "log" in table_name`` in the decision path, the invariance test fail
 from __future__ import annotations
 
 import datetime as dt
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -158,6 +159,87 @@ def test_names_are_replaced_everywhere_they_appear() -> None:
         assert leaked not in ir, f"{leaked} survived hashing and is in the IR"
 
 
+def test_the_hashed_ir_does_not_encode_the_order_of_the_real_names() -> None:
+    """The leak the TypeScript port found, and the reason a second implementation is worth its cost.
+
+    Hashing rebuilds each entity with digests for names. The first version kept the original
+    sequence, so the field arrays in the hashed IR came out ordered by the *real* field names -
+    alphabetically, which is a small amount of exactly the information hashing exists to hide, and
+    which no library that had never seen those names could reproduce. Python sorted nowhere,
+    TypeScript sorted in ``assemble``, both passed their own suites, and the shared vector is what
+    made them disagree out loud.
+
+    The assertion is deliberately about the *hashed* names being in order rather than about any
+    particular sequence: it holds whatever the salt is, and it fails the moment somebody
+    reintroduces "keep the caller's order".
+    """
+    model = _shop()
+    hashed, _ = hash_identifiers(model, SALT)
+
+    for entity in hashed.entities:
+        names = [f["name"] for f in _fields_in_ir(hashed, entity.name)]
+        assert names == sorted(names), (
+            f"{entity.name}: fields in the IR are not in order of their hashed names, so their "
+            "sequence still carries information about the names they replaced."
+        )
+
+    # And the same claim from the other side: reordering the declaration must not change the bytes.
+    sde.clear_registry()
+    reversed_declaration = _shop_reversed()
+    other, _ = hash_identifiers(reversed_declaration, SALT)
+    assert other.version == hashed.version, (
+        "declaring the same entities in a different order produced different hashed bytes. Array "
+        "order in the IR has to be derived from the IR's own names, not from the caller."
+    )
+
+
+def _fields_in_ir(model: sde.LogicalModel, entity: str) -> list[dict[str, object]]:
+    for spec in model.ir["entities"]:
+        if spec["name"] == entity:
+            fields: list[dict[str, object]] = spec["fields"]
+            return fields
+    raise AssertionError(f"{entity} is not in the IR")
+
+
+def _shop_reversed() -> sde.LogicalModel:
+    """The same model, declared in the opposite order, with fields reversed too."""
+
+    @sde.entity
+    class Event:
+        at: dt.datetime
+        name: str
+        id: uuid.UUID
+
+    @sde.entity
+    class User:
+        email: str
+        id: uuid.UUID
+
+        class Meta:
+            pii = ["email"]
+
+    @sde.entity
+    class Order:
+        placed_at: dt.datetime
+        user: sde.Ref[User]
+        id: uuid.UUID
+        tenant: uuid.UUID
+
+        class Meta:
+            key = ["tenant", "id"]
+            residency = "EU"
+
+    @sde.entity
+    class Payment:
+        amount: int
+        id: uuid.UUID
+
+        class Meta:
+            atomic_with = ["Order"]
+
+    return sde.build_model(Event, User, Order, Payment)
+
+
 def test_residency_survives_because_it_is_not_an_identifier() -> None:
     # Hashing a jurisdiction would make a hard placement constraint unenforceable, which is a worse
     # outcome than us knowing that some group must stay in the EU.
@@ -187,6 +269,35 @@ def test_the_same_field_name_on_two_entities_hashes_differently() -> None:
     model = _shop()
     _, names = hash_identifiers(model, SALT)
     assert names.field("User", "id") != names.field("Order", "id")
+
+
+def test_the_same_name_in_two_normal_forms_hashes_the_same() -> None:
+    """Found by writing the format contract, not by a test, and it would have shipped.
+
+    The canonical encoder normalises to NFC before emitting bytes, so two libraries that declare
+    ``Zamowienie`` in different normal forms compute the same model version. Hashing before
+    normalising threw that away: two digests, two versions, and a map issued for the Python service
+    that the TypeScript one refuses. Invisible in ASCII, so the first person to hit it would have
+    been a client whose entity names are not English.
+    """
+    nfc = unicodedata.normalize("NFC", "Zam\u00f3wienie")
+    nfd = unicodedata.normalize("NFD", "Zam\u00f3wienie")
+    assert nfc != nfd, "the two forms are identical, so this test proves nothing"
+
+    def one(name: str) -> sde.LogicalModel:
+        sde.clear_registry()
+        declared = type(name, (), {"__annotations__": {"id": uuid.UUID}})
+        return sde.build_model(sde.entity(declared))
+
+    composed, decomposed = one(nfc), one(nfd)
+    assert composed.version == decomposed.version, "the unhashed models already disagree"
+
+    first, _ = hash_identifiers(composed, SALT)
+    second, _ = hash_identifiers(decomposed, SALT)
+    assert first.version == second.version, (
+        "hashing is not normalising before the HMAC. The same identifier written two ways produces "
+        "two hashed models, so a placement map issued for one service is refused by the other."
+    )
 
 
 def test_a_different_salt_gives_different_names() -> None:

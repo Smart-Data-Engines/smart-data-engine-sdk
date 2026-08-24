@@ -1,0 +1,1 @@
+{"atomic":[],"contract":1,"cost_ceiling":null,"entities":[{"fields":[{"name":"f_1a8497dc0050","nullable":false,"type":"decimal(12,2)"},{"name":"f_af7803942b35","nullable":false,"type":"uuid"}],"key":[{"field":"f_af7803942b35","position":0}],"name":"e_3d71ba226e80","pii":[],"residency":null}],"relations":[]}
