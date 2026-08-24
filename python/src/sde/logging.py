@@ -37,12 +37,28 @@ EVENTS: Final[frozenset[str]] = frozenset(
 def log(event: str, /, **fields: Any) -> None:
     """Emit one structured event.
 
-    An unknown event name is a programming error and says so, because the whole value of a closed
-    vocabulary is that a client can build an alert on an event name and have it keep working.
+    An unknown event name raises, because the whole value of a closed vocabulary is that a client
+    can build an alert on a name and have it keep working. That is a programming error on our side
+    and the test suite is where it should surface.
+
+    The *emission* is a different matter and is deliberately incapable of raising. The handler
+    belongs to the client's application: it might write to a socket that just closed, or be a custom
+    formatter with a bug in it. A library that fails a request because its own log line could not be
+    written has no business being in somebody else's process.
     """
     if event not in EVENTS:
         raise ValueError(
             f"{event!r} is not a known event. Add it to EVENTS with a comment explaining when it "
             "fires - the vocabulary is closed so that alerts built on these names keep working."
         )
-    logger.info(event, extra={"sde_event": event, "sde_fields": fields})
+    try:
+        logger.info(event, extra={"sde_event": event, "sde_fields": fields})
+    except BaseException as exc:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        # No guard() here, and no logging of the logging failure: guard() reports through log(), so
+        # calling it would be a loop. Counted instead, through the same registry, by hand.
+        from .internal import _failures, _lock
+
+        with _lock:
+            _failures["logging.emit"] = _failures.get("logging.emit", 0) + 1

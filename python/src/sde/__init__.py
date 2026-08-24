@@ -37,6 +37,7 @@ from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .entity import Ref, clear_registry, entity, registry
 from .errors import DeclarationError, EngineError, MapError, ModelPlanningError, SdeError
 from .groups import Group, colocation_groups, group_of
+from .internal import internal_failures, reset_internal_failures
 from .model import CONTRACT, LogicalModel, build_model
 from .placement import (
     GroupPlacement,
@@ -86,8 +87,10 @@ __all__ = [
     "entity",
     "enumerate_shapes",
     "group_of",
+    "internal_failures",
     "load_map",
     "precision",
     "registry",
+    "reset_internal_failures",
     "resolve",
 ]
