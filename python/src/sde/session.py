@@ -15,13 +15,14 @@ first one is a test failure.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from time import perf_counter_ns
 from typing import Any, Protocol
 
 from .errors import EngineError, ModelPlanningError
 from .groups import Group, colocation_groups
+from .hashing import NameMap
 from .logging import log
 from .model import LogicalModel
 from .placement import Materialization, PlacementMap
@@ -64,11 +65,28 @@ class Session:
         engines: Mapping[str, Engine],
         *,
         recorder: Recorder | None = None,
+        names: NameMap | None = None,
     ) -> None:
         # Telemetry is optional and off by default. A library that starts measuring the moment it is
         # imported is a library people are right to be suspicious of; measurement begins when a
         # recorder is handed in, which is a visible line in the client's code.
         self._recorder = recorder
+
+        # The one place where the client's names and the hashed ones meet. When a model has been
+        # hashed, everything downstream of here - the map, the shapes, the tables, the telemetry -
+        # speaks digests only, and the application keeps saying `save("User", {"email": ...})`.
+        # Without this the mode is unusable: a client would have to write `save("e_546526714dc9",
+        # {"f_b1b4a0ec9efb": ...})` in their own code, which nobody will do and which would put the
+        # digests in their source anyway.
+        self._names = names
+        self._reverse_fields: dict[str, dict[str, str]] = {}
+        self._declared: tuple[str, ...] = ()
+        if names is not None:
+            for entity, mapping in names.fields.items():
+                self._reverse_fields[names.entity(entity)] = {
+                    hashed: original for original, hashed in mapping.items()
+                }
+            self._declared = tuple(sorted(names.entities))
         self._model = model
         self._placement = placement
         self._engines = dict(engines)
@@ -89,11 +107,60 @@ class Session:
                 "connection is not something a library should do."
             )
 
+    # --- the hashing boundary --------------------------------------------------------------
+    #
+    # Four one-line helpers, each guarded by `is None`, because with hashing off the cost of this
+    # whole mechanism has to be a single attribute check on the hot path - the overhead test gates
+    # the library at one percent of a round trip and routing already spends 0.4% of it.
+
+    def _entity(self, entity: str) -> str:
+        """The client's entity name, as the model knows it."""
+        if self._names is None:
+            return entity
+        return self._names.entity(entity)
+
+    def _fields_in(self, entity: str, values: Mapping[str, Any]) -> Mapping[str, Any]:
+        if self._names is None:
+            return values
+        mapping = self._names.fields[entity]
+        try:
+            return {mapping[field]: value for field, value in values.items()}
+        except KeyError as exc:
+            raise ModelPlanningError(
+                f"{entity} has no field {exc.args[0]!r}. With hashed identifiers a field the model "
+                "does not declare cannot be translated, so it is refused here rather than sent to "
+                "an engine under a name nothing will recognise."
+            ) from None
+
+    def _fields_out(self, entity: str, row: Any) -> Any:
+        """Translate a row back, so a client can read their own data.
+
+        Skipping this would hand back `{"f_b1b4a0ec9efb": "a@b.c"}`. The row would be correct and
+        useless: the application would have to know the digests to index it, which is the one thing
+        hashing exists to keep out of their code.
+        """
+        if self._names is None or not isinstance(row, Mapping):
+            return row
+        reverse = self._reverse_fields.get(self._names.entity(entity), {})
+        return {reverse.get(field, field): value for field, value in row.items()}
+
+    def _client_names(self, entity: str, fields: Iterable[str]) -> list[str]:
+        """Hashed field names, back in the client's vocabulary, for an error message.
+
+        An error that says `['f_7d1d3e8368c8', 'f_d186ef62ff24']` is an error that sends somebody to
+        read our source. It costs one dict lookup on a path that is already raising.
+        """
+        if self._names is None:
+            return sorted(fields)
+        reverse = self._reverse_fields.get(self._names.entity(entity), {})
+        return sorted(reverse.get(field, field) for field in fields)
+
     # --- structure -------------------------------------------------------------------------
 
     def group_of(self, entity: str) -> Group:
+        target = self._entity(entity)
         for group in self._groups:
-            if entity in group:
+            if target in group:
                 return group
         raise ModelPlanningError(
             f"{entity!r} is not in this model. A session routes what the model declares; an entity "
@@ -132,9 +199,11 @@ class Session:
     # --- data ------------------------------------------------------------------------------
 
     def save(self, entity: str, values: Mapping[str, Any]) -> None:
-        shape = self._shape(entity, "write")
+        target = self._entity(entity)
+        values = self._fields_in(entity, values)
+        shape = self._shape(target, "write")
         engine, materialization = self._target(shape, fresh=False)
-        table = materialization.layout.table_for(entity)
+        table = materialization.layout.table_for(target)
         started = perf_counter_ns() if self._recorder else 0
         failed = False
         try:
@@ -149,17 +218,23 @@ class Session:
             self._observe(shape, started, rows=1, failed=failed)
 
     def get(self, entity: str, key: Mapping[str, Any], *, fresh: bool = False) -> Any:
-        spec = self._model.entity(entity)
+        target = self._entity(entity)
+        given = self._fields_in(entity, key)
+        spec = self._model.entity(target)
         expected = tuple(sorted(spec.key))
-        if tuple(sorted(key)) != expected:
+        if tuple(sorted(given)) != expected:
+            # Both lists are put back into the client's vocabulary: with hashing on, an error naming
+            # digests tells them nothing about their own code.
             raise ModelPlanningError(
-                f"a point read of {entity} needs exactly its key {list(expected)}, and was given "
-                f"{sorted(key)}. A partial key is a range read, which is a different shape and may "
-                "well be routed somewhere else."
+                f"a point read of {entity} needs exactly its key "
+                f"{self._client_names(entity, expected)}, and was given "
+                f"{self._client_names(entity, given)}. A partial key is a range read, which is a "
+                "different shape and may well be routed somewhere else."
             )
-        shape = self._shape(entity, "point_read", expected)
+        shape = self._shape(target, "point_read", expected)
         engine, materialization = self._target(shape, fresh=fresh)
-        table = materialization.layout.table_for(entity)
+        table = materialization.layout.table_for(target)
+        key = given
         started = perf_counter_ns() if self._recorder else 0
         failed = False
         row: Any = None
@@ -170,7 +245,7 @@ class Session:
             raise
         finally:
             self._observe(shape, started, rows=0 if row is None else 1, failed=failed)
-        return row
+        return self._fields_out(entity, row)
 
     def _observe(self, shape: OperationShape, started: int, *, rows: int, failed: bool) -> None:
         """Hand one observation to the recorder, if there is one.
@@ -205,7 +280,11 @@ class Session:
         one group. That is not a convenience for small models so much as a refusal to let a
         two-group model quietly get a transaction that only covers half of what the caller meant.
         """
-        names = list(entities) if entities else [e.name for e in self._model.entities]
+        # Entity names in the *client's* vocabulary, so that an error message and the entities they
+        # passed are in the same language. With hashing on, `self._model.entities` are digests, and
+        # feeding those back through `group_of` would try to hash a hash.
+        declared = self._declared or tuple(e.name for e in self._model.entities)
+        names = list(entities) if entities else list(declared)
         groups = {self.group_of(name).name for name in names}
         if len(groups) > 1:
             by_group: dict[str, list[str]] = {}
