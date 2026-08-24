@@ -125,6 +125,16 @@ class GroupFeatures:
     unknown also appears in ``missing``, so a reader never has to infer absence from a null.
     """
 
+    calls: int = 0
+    """How many operations were observed. A count, never a value.
+
+    Present because a planner comparing two groups has to know which one carries the traffic:
+    without it, an idle group and the group serving every request are equally important, and one
+    dead group can outvote the one that matters. It is also evidence about the features themselves -
+    a read/write ratio derived from twelve calls is arithmetic, not a measurement, and the planner
+    should be able to see that rather than being told a confident number.
+    """
+
     read_write_ratio: float | None = None
     shape_mix: Mapping[str, float] = field(default_factory=dict)
     latency_p50_ms: float | None = None
@@ -198,6 +208,7 @@ class Window:
             missing.add("read_write_ratio")
 
         return GroupFeatures(
+            calls=calls,
             read_write_ratio=(reads / writes) if writes else None,
             shape_mix=mix,
             latency_p50_ms=latency.percentile_ms(0.5),

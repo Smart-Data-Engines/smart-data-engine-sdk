@@ -163,6 +163,33 @@ def test_read_write_ratio_and_shape_mix() -> None:
     assert features.pk_access_share == pytest.approx(0.8)
 
 
+def test_how_many_calls_were_seen_is_reported_because_a_ratio_needs_a_denominator() -> None:
+    """A count, and the reason it is worth carrying next to the ratios.
+
+    Two groups both reporting a read/write ratio of 4.0 are not equally informative when one saw
+    twelve calls and the other twelve million. Without the count, a planner comparing them treats an
+    idle group as evidence, and one dead group can outvote the group serving every request.
+
+    It is a count, never a value, so it does not weaken the privacy guarantee - and the marker test
+    in this file searches the whole serialised window, so it covers this field automatically.
+    """
+    recorder = Recorder("v1")
+    _record(recorder, "point_read", calls=8)
+    _record(recorder, "write", calls=2)
+    window = recorder.roll()
+    assert window is not None
+    features = window.features("Order")
+    assert features.calls == 10
+    # And the ratio is derived from the same denominator, so the two cannot disagree.
+    assert features.read_write_ratio == pytest.approx(8 / 2)
+
+
+def test_an_untouched_group_reports_no_calls_rather_than_no_number() -> None:
+    # Zero is the right answer here, unlike for a ratio: nobody called it, and that is measured.
+    window = Window(model_version="v1", started_ns=0, ended_ns=1, shapes=())
+    assert window.features("Order").calls == 0
+
+
 def test_a_group_with_no_writes_reports_the_ratio_as_unknown() -> None:
     # Not infinity, and not zero. Dividing by zero writes would give a number that reads as "all
     # reads" and is really "we have not seen a write yet", and those want different decisions.
