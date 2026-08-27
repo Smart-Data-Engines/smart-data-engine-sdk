@@ -1,0 +1,29 @@
+Identifiers that are also property names on Object.prototype.
+
+An entity named __proto__, a field named __proto__ on a different entity, a field
+named constructor, and fields named toString and valueOf. Plus a relation named
+__proto__, because relations are stored in a second level of name-keyed objects and
+that level had the same defect.
+
+None of these is a name a business model is likely to contain. That is not the point:
+the point is that they are names a *client* may write, and section 2a says what their
+digests are. A library that produces something else for them produces something else,
+and the two implementations then disagree.
+
+This vector exists because the TypeScript implementation was wrong and the Python one
+was not, which is the shape of failure the whole suite is for. Every name-keyed map in
+hashing.ts was a plain `{}`, so:
+
+  - `mapping['__proto__'] = 'f_...'` is silently a *no-op* in JavaScript. Assigning a
+    string to __proto__ does nothing, so the digest never lands and reading it back
+    yields Object.prototype - an object where a string was expected.
+  - `relationNames[source] ?? {}` returns Object.prototype rather than falling through,
+    because Object.prototype is truthy. The next line then writes a property onto
+    Object.prototype, polluting every object in the process.
+
+Python's dict has no prototype and no reserved keys, so the same model hashed in the
+two languages gave a correct answer in one and a corrupt one in the other, with a
+side effect on unrelated code in the second. Found by CodeQL's
+js/prototype-polluting-assignment, not by a test - and the fix is Object.create(null)
+everywhere, which is why hashing.ts now says so in its own header rather than leaving
+it as a style preference somebody tidies away.

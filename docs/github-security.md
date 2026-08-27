@@ -176,9 +176,17 @@ Rules that hold:
   `/actions/permissions`), so an unpinned action is refused rather than merely discouraged. The cost is
   worth stating: a workflow that unpins one does not fail a test, it fails to start — which reads as
   infrastructure trouble rather than as policy.
-- **Least-privilege `permissions:`** ✅ — `contents: read` at workflow level, widened only where
-  needed (CodeQL needs `security-events: write`). The repository default for `GITHUB_TOKEN` is
-  read-only ✅ and workflows cannot approve pull requests ✅.
+- **Least-privilege `permissions:`** ✅ — `contents: read` at workflow level in both workflows,
+  widened only where needed (CodeQL needs `security-events: write`). The repository default for
+  `GITHUB_TOKEN` is read-only ✅ and workflows cannot approve pull requests ✅.
+
+  This line claimed `ci.yml` had a `permissions:` block before it had one. It did not, and the thing
+  that noticed was the `actions` analysis added in §3.1, which reported
+  `actions/missing-workflow-permissions` against all three of its jobs on its first run. Nothing was
+  exploitable, since the repository default is read-only — but a workflow that does not state its
+  permissions is one repository setting away from a write token, and the point of declaring them is
+  that the workflow stops depending on a setting somewhere else. Third claim in this document written
+  before it was true; the analysis that caught it was added in the same commit as the claim.
 - **Never use `pull_request_target`** with a checkout of the PR head. That combination hands a fork's
   code a write token. `pull_request` is the safe trigger and is what both workflows use.
 - **Do not interpolate untrusted input into `run:`** — a PR title or branch name containing `$(...)`
