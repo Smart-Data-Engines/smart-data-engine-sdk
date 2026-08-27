@@ -1,0 +1,51 @@
+version: 2
+
+# Three ecosystems, because this repository has three: the workflows, the Python package and the
+# TypeScript one. A missing entry here is not a warning anywhere - the updates simply never arrive -
+# so the list has to be checked against the tree when a language is added.
+
+updates:
+  # First, and the one that matters most for security. Every third-party action in this repository is
+  # pinned to a commit SHA, which is what stops a moved tag from changing our CI. The cost of pinning
+  # is that a SHA never updates itself, and this is what pays that cost.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
+    labels:
+      - dependencies
+    groups:
+      # codeql-action's `init` and `analyze` steps must move together: running init from one version
+      # and analyze from another fails with "Loaded a configuration file for version X, but running
+      # version Y". Dependabot split that bump into two PRs once in the engine repository and each
+      # failed on its own, which - with the analysis required - blocked the merge queue until both
+      # were bumped in one commit.
+      codeql:
+        patterns:
+          - "github/codeql-action*"
+
+  - package-ecosystem: pip
+    directory: /python
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
+    labels:
+      - dependencies
+
+  - package-ecosystem: npm
+    directory: /typescript
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
+    labels:
+      - dependencies
+    # A published library must not force a major bump on the applications that embed it, so a major
+    # version change is a deliberate act with its own PR rather than something that arrives on a
+    # Monday.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

@@ -1,0 +1,58 @@
+name: CodeQL
+
+# Two languages and the workflows themselves. The languages are here because this repository is the
+# public half of a product whose whole pitch is "read the code and check the privacy claim yourself" -
+# an analysis that never runs would make that invitation weaker than it sounds.
+#
+# `actions` is here for a less obvious reason: the third-party actions below are pinned to commit
+# SHAs, and this is the analysis that notices when a future edit quietly unpins one, or interpolates
+# a pull request title into a `run:` block.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so new queries run against unchanged code too.
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@a35ac6e6798d72df5475948b28efb89edc2e19ca  # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          # No build: both languages are interpreted and `actions` is configuration. A build mode
+          # here would only be a place for a build to fail.
+          build-mode: none
+          # No `queries:` line, which means the default suite: security queries only, tuned for
+          # precision. That is a decision with a scar behind it rather than a default accepted out of
+          # laziness. In the engine repository `security-and-quality` fired a quality query 29 times
+          # on a loop idiom nobody intended to change; every PR touching the file opened a review
+          # thread, and with `required_review_thread_resolution` on the ruleset each one needed a
+          # manual resolution. A required analysis that reports things we will not act on does not
+          # add safety, it adds the habit of clicking past findings. Widen this to
+          # `security-extended` once a few months of runs have been clean.
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@a35ac6e6798d72df5475948b28efb89edc2e19ca  # v4.37.9
+        with:
+          category: /language:${{ matrix.language }}
