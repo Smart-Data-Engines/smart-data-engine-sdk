@@ -65,10 +65,27 @@ def load_or_create_salt(path: Path | None = None) -> bytes:
     The salt never appears in a model, a telemetry window or anything sent to us: it is the whole
     mechanism, and a salt we hold is a mechanism we could reverse. Stored with owner-only
     permissions, because a readable salt in a shared container image is the same as no salt.
+
+    The file is read **verbatim**. An earlier version called ``.strip()`` on it, to be forgiving
+    about a trailing newline in a hand-made file, and that was a serious bug rather than a kindness.
+    ``bytes.strip()`` removes six byte *values* - space, tab, newline, carriage return, ``\x0b`` and
+    ``\x0c`` - and a random 32-byte salt begins or ends with one of them about 5% of the time.
+
+    When it did, the process that generated the salt used all 32 bytes and every process afterwards
+    used the stripped remainder. So one client computed **two different model versions** for one
+    declared model: the map issued for one is refused by the other, and a map that was accepted
+    names different tables. The TypeScript library takes the salt as bytes from its caller and
+    strips nothing, so a Python service and a Node service sharing one salt file disagreed too - the
+    exact failure the byte contract exists to prevent, arriving through the file rather than the
+    encoder.
+
+    A file created with ``echo`` therefore includes its newline, and the salt is those bytes
+    including it. That is consistent and checkable. Being forgiving would mean choosing an encoding,
+    hex or base64, and that changes what is on disk - which changes every name derived from it.
     """
     location = path or Path.home() / ".sde" / "salt"
     if location.exists():
-        salt = location.read_bytes().strip()
+        salt = location.read_bytes()
         if len(salt) < 16:
             raise DeclarationError(
                 f"the salt at {location} is shorter than 16 bytes. A short salt is "
