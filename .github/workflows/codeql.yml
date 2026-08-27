@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@a35ac6e6798d72df5475948b28efb89edc2e19ca  # v4.37.9
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
         with:
           languages: ${{ matrix.language }}
           # No build: both languages are interpreted and `actions` is configuration. A build mode
@@ -53,6 +53,6 @@ jobs:
           # `security-extended` once a few months of runs have been clean.
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@a35ac6e6798d72df5475948b28efb89edc2e19ca  # v4.37.9
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
         with:
           category: /language:${{ matrix.language }}
