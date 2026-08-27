@@ -5,7 +5,10 @@
 # The engine repository shipped @kmacewicz here for months and all eight of its lines were inert.
 # Check with:
 #
-#   gh api repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors
+#   gh api 'repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors?ref=refs/heads/main'
+#
+# The long ref form is required: the bare endpoint answers 404 on this repository, which
+# reads as a broken file rather than as a missing query parameter.
 #
 * @krzysztof-smartdataengines
 

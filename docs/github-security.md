@@ -97,6 +97,17 @@ gh pr checks <number>
 `python (3.14)`, which runs on every PR and gates nothing until it is added to `main.json` and
 re-applied. The workflow and the ruleset drift, and the drift looks like green.
 
+Both of those are now checked mechanically rather than warned about. `.github/rulesets/check_contexts.py`
+derives the contexts the workflows will actually report — job id or `name:`, with matrix values
+appended the way GitHub appends them — and compares that set against `main.json` in both directions.
+It runs in the `contract` job, so a renamed job or a new matrix cell fails the pull request that
+introduced it. `CodeQL` is the one allowlisted exception, because no job of ours produces it; the
+allowlist is checked too, so removing that context from the ruleset fails as dead configuration.
+
+What it cannot see is the **live** ruleset on GitHub, which needs a token the job does not have and
+should not. It covers the half that drifts when somebody edits a workflow, which is the half that
+drifts. After changing `main.json`, re-apply it — see `.github/rulesets/README.md`.
+
 ### 1.3 `required_signatures` is deliberately absent ⚙️
 
 Add it only after registering an SSH or GPG **signing** key on the account and confirming a commit
@@ -256,10 +267,16 @@ like protection and provides none. This is not hypothetical: the engine reposito
 and all eight of its lines are inert.
 
 ```bash
-gh api repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors
+gh api 'repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors?ref=refs/heads/main' \
+  --jq '.errors'
 ```
 
 An empty `errors` array is the only acceptable answer. Re-run it after adding or removing anyone.
+
+The fully-qualified ref is not decoration. On this repository the bare endpoint and `?ref=main` both
+answer **404**, and only `?ref=refs/heads/main` returns the array — so following the obvious form of
+the command tells you the check is broken when in fact the file is fine. The engine repository answers
+the bare form. Same endpoint, same account, different behaviour; use the long form and stop guessing.
 
 Note that `required_approving_review_count` is `0` and `require_code_owner_review` is `false` while
 there is one maintainer — a review you grant yourself is theatre. `CODEOWNERS` is therefore
