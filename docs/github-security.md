@@ -157,6 +157,21 @@ Rules that hold:
   tag is a mutable pointer: whoever controls `actions/checkout` can move `@v4` to different code, and
   a step whose contents can change without a diff here has no place in a repository this one is judged
   by. Dependabot understands this form and bumps the SHA and the comment together.
+
+  **Resolve the SHA with the peel suffix**, or you will pin the wrong object:
+
+  ```bash
+  git ls-remote https://github.com/<owner>/<repo>.git 'refs/tags/<tag>^{}'
+  ```
+
+  Without `^{}` the answer for an **annotated** tag is the tag object's SHA, not the commit's. The
+  three `actions/*` tags used here are lightweight, so the ref already is the commit and both forms
+  agree — which is exactly what makes this easy to get away with and then get wrong.
+  `github/codeql-action` uses annotated tags, and the first pins in this repository were its tag
+  objects. The symptom is diagnostic and worth recognising: **Dependabot opens a PR that appears to
+  bump a version to itself**, `v4.37.9` → `v4.37.9`, changing only the SHA. Nothing is insecure — a
+  tag object's SHA is content-addressed too, and it names one fixed commit — but the pin is not the
+  thing the comment claims, and every future bump will carry that noise.
 - **The repository now *requires* SHA pinning** ✅ (`sha_pinning_required: true` on
   `/actions/permissions`), so an unpinned action is refused rather than merely discouraged. The cost is
   worth stating: a workflow that unpins one does not fail a test, it fails to start — which reads as
