@@ -132,6 +132,15 @@ jobs:
           print(f'{wheel}: marker present')
           PY
 
+      - name: the ruleset still gates what the workflows produce
+        # docs/github-security.md names two ways this configuration fails quietly: a required context
+        # nothing produces waits forever, and a job nothing requires runs and gates nothing while
+        # looking like coverage. Both were warnings in a document until this step; the second one is
+        # created by adding a single matrix entry above.
+        run: |
+          python3 -m pip install -q pyyaml
+          python3 .github/rulesets/check_contexts.py
+
       - name: the hashing digests are what openssl derives
         # The model/ vectors were produced by the implementation they verify, which is why 001 is
         # hand-written. The hashing/ vectors do not need that workaround: an HMAC is reproducible by

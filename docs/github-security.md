@@ -97,6 +97,17 @@ gh pr checks <number>
 `python (3.14)`, which runs on every PR and gates nothing until it is added to `main.json` and
 re-applied. The workflow and the ruleset drift, and the drift looks like green.
 
+Both of those are now checked mechanically rather than warned about. `.github/rulesets/check_contexts.py`
+derives the contexts the workflows will actually report — job id or `name:`, with matrix values
+appended the way GitHub appends them — and compares that set against `main.json` in both directions.
+It runs in the `contract` job, so a renamed job or a new matrix cell fails the pull request that
+introduced it. `CodeQL` is the one allowlisted exception, because no job of ours produces it; the
+allowlist is checked too, so removing that context from the ruleset fails as dead configuration.
+
+What it cannot see is the **live** ruleset on GitHub, which needs a token the job does not have and
+should not. It covers the half that drifts when somebody edits a workflow, which is the half that
+drifts. After changing `main.json`, re-apply it — see `.github/rulesets/README.md`.
+
 ### 1.3 `required_signatures` is deliberately absent ⚙️
 
 Add it only after registering an SSH or GPG **signing** key on the account and confirming a commit
@@ -146,6 +157,21 @@ Rules that hold:
   tag is a mutable pointer: whoever controls `actions/checkout` can move `@v4` to different code, and
   a step whose contents can change without a diff here has no place in a repository this one is judged
   by. Dependabot understands this form and bumps the SHA and the comment together.
+
+  **Resolve the SHA with the peel suffix**, or you will pin the wrong object:
+
+  ```bash
+  git ls-remote https://github.com/<owner>/<repo>.git 'refs/tags/<tag>^{}'
+  ```
+
+  Without `^{}` the answer for an **annotated** tag is the tag object's SHA, not the commit's. The
+  three `actions/*` tags used here are lightweight, so the ref already is the commit and both forms
+  agree — which is exactly what makes this easy to get away with and then get wrong.
+  `github/codeql-action` uses annotated tags, and the first pins in this repository were its tag
+  objects. The symptom is diagnostic and worth recognising: **Dependabot opens a PR that appears to
+  bump a version to itself**, `v4.37.9` → `v4.37.9`, changing only the SHA. Nothing is insecure — a
+  tag object's SHA is content-addressed too, and it names one fixed commit — but the pin is not the
+  thing the comment claims, and every future bump will carry that noise.
 - **The repository now *requires* SHA pinning** ✅ (`sha_pinning_required: true` on
   `/actions/permissions`), so an unpinned action is refused rather than merely discouraged. The cost is
   worth stating: a workflow that unpins one does not fail a test, it fails to start — which reads as
@@ -238,8 +264,17 @@ placeholder version costs nothing and closes the window.
 
 ## 5. Repository access ⚙️
 
-- **Enforce 2FA** on the `Smart-Data-Engines` organisation (Settings → Authentication security).
+- **Enforce 2FA** on the `Smart-Data-Engines` organisation ⚙️ (Settings → Authentication security).
   Hardware key or TOTP, not SMS. One member today, which is the cheapest possible moment to turn it on.
+  Not reachable from the API: `PATCH /orgs/{org}` accepts `two_factor_requirement_enabled` with a 200
+  and leaves it `false`, the same trap as the two secret-scanning flags in §2.
+- **New repositories in the organisation start protected** ✅. This was worth fixing once rather than
+  per repository: every `*_enabled_for_new_repositories` flag on the organisation was `false`, so a
+  new repository — the Java, Rust, C# and Go libraries are all coming — would have begun life with no
+  secret scanning, no push protection and no Dependabot, and would have needed somebody to remember
+  this document. Now enabled at the organisation: secret scanning, push protection, Dependabot alerts,
+  Dependabot security updates, dependency graph. GitHub Advanced Security is deliberately left off,
+  since turning it on for new repositories is a billing decision rather than a hygiene one.
 - Grant the minimum role: `write` for contributors, `admin` only where genuinely needed. Today there
   is one collaborator, `krzysztof-smartdataengines`, with `admin`.
 - Review third-party OAuth apps and installed GitHub Apps periodically. Every app with write access is
@@ -256,10 +291,16 @@ like protection and provides none. This is not hypothetical: the engine reposito
 and all eight of its lines are inert.
 
 ```bash
-gh api repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors
+gh api 'repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors?ref=refs/heads/main' \
+  --jq '.errors'
 ```
 
 An empty `errors` array is the only acceptable answer. Re-run it after adding or removing anyone.
+
+The fully-qualified ref is not decoration. On this repository the bare endpoint and `?ref=main` both
+answer **404**, and only `?ref=refs/heads/main` returns the array — so following the obvious form of
+the command tells you the check is broken when in fact the file is fine. The engine repository answers
+the bare form. Same endpoint, same account, different behaviour; use the long form and stop guessing.
 
 Note that `required_approving_review_count` is `0` and `require_code_owner_review` is `false` while
 there is one maintainer — a review you grant yourself is theatre. `CODEOWNERS` is therefore
@@ -361,7 +402,8 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
 ⚙️ register smart-data-engine on PyPI and @smart-data-engines on npm  ← most urgent
-⚙️ org-wide 2FA on Smart-Data-Engines
+✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
+⚙️ org-wide 2FA on Smart-Data-Engines — UI only, the API reports success and changes nothing
 ⚙️ registry accounts with 2FA, before the first publish
 ⚙️ SSH/GPG signing key registered as a *signing* key, then required_signatures in the ruleset
 ⚙️ non-provider secret patterns + validity checks (organisation-level Secret Protection)
