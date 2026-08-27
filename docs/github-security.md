@@ -19,9 +19,9 @@ they differ, the difference is called out rather than left to be noticed.
 - **This library gets published to PyPI and npm.** The engine ships source; this ships an artefact
   that runs inside other people's applications and holds their database credentials. A compromised
   release here is a far worse event than a compromised release there, which is what §4 is about.
-- **The distribution names were not registered.** `smart-data-engine` on PyPI was unclaimed while the
-  README told readers to `pip install smart-data-engine`. See §4.1; this is the single most urgent
-  item in this document.
+- **The distribution names are not registered.** `smart-data-engine` on PyPI is unclaimed while
+  `python/README.md` and two of the library's own runtime error messages tell people to install it.
+  See §4.1; this is the single most urgent item in this document.
 - **Two languages, so two analyses and ten required checks**, not four (§1).
 - **The default branch is `main`, not `master`.** The rulesets differ in that one string, and a
   ruleset targeting the wrong ref is silently inert.
@@ -239,12 +239,25 @@ Checked while writing this document:
 | `@smart-data-engines/sde` | npm | **unclaimed** |
 | `sde` | PyPI | taken by someone else — which is why the import is `sde` and the distribution is not |
 
-The README of this public repository tells readers to `pip install smart-data-engine`. Until that name
-is ours, following our own documentation can install somebody else's code — and the person best placed
-to notice the gap is anyone who reads the repository we are asking people to read.
+Three places in this repository already name the distribution, and the last one is the reason this is
+not merely tidiness:
 
-Register both, with 2FA on both accounts, before the first release and preferably today. Registering a
-placeholder version costs nothing and closes the window.
+- `python/README.md` — an installation section with `pip install smart-data-engine` and both extras
+- `python/pyproject.toml` — `name = "smart-data-engine"`, which is what a publish would claim
+- **`sde/placement.py` and `sde/engines/postgres.py` — runtime error messages.** A user who loads a
+  signed map without the extra is told, by the library, at the moment something failed, to run
+  `pip install 'smart-data-engine[signed]'`. That is the worst possible moment to be pointed at a name
+  somebody else controls: the person is debugging, they will copy the command, and the instruction came
+  from inside the code they trusted.
+
+Today the name resolves to nothing, so the command simply fails. The window is open only until someone
+registers it, and closing it costs one upload. Register both names with 2FA on both accounts, before
+the first release and preferably today. A placeholder version is enough.
+
+An earlier revision of this document said the *root* README carried that instruction. It does not — it
+installs from the working tree with `pip install -e`. Corrected rather than quietly reworded, because a
+security document that misstates a checkable fact spends the authority it needs for the claims that
+cannot be checked as easily.
 
 ### 4.2 When a publish workflow is written ⚙️
 
