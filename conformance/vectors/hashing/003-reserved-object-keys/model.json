@@ -1,0 +1,51 @@
+{
+  "entities": [
+    {
+      "name": "__proto__",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "constructor",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "__proto__",
+          "type": "string"
+        },
+        {
+          "name": "toString",
+          "type": "string"
+        },
+        {
+          "name": "valueOf",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "__proto__",
+      "from": "Order",
+      "to": "__proto__"
+    }
+  ]
+}

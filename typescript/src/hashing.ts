@@ -15,7 +15,21 @@
  * the two forms coincide. `conformance/vectors/hashing/002-normalisation` exists so that neither
  * implementation can lose it again.
  *
- * One JavaScript-specific note. Ordering matters twice below - members within an atomicity group,
+ * Two JavaScript-specific notes, and the first one is a correctness bug this file had.
+ *
+ * **Every name-keyed object here is `Object.create(null)`, never `{}`.** A plain object inherits
+ * `Object.prototype`, so a client entity or field named `__proto__` does not get an own property:
+ * assigning a string to `__proto__` is silently a no-op, and reading it back yields the prototype
+ * object rather than a digest. Worse, `relationNames[source] ?? {}` would then hand back
+ * `Object.prototype` itself - truthy, so the `??` does not fire - and the next line writes a property
+ * onto it, polluting every object in the process. Python's `dict` has none of this, so the same model
+ * hashed in both languages produced a correct result in one and a corrupt one in the other: the byte
+ * contract's failure mode arriving through the container rather than the encoder.
+ * `conformance/vectors/hashing/003-reserved-object-keys` exists so neither implementation can lose it,
+ * and `constructor` is in that vector alongside `__proto__` because it is a name a real model might
+ * plausibly use.
+ *
+ * The second note is about ordering. It matters twice below - members within an atomicity group,
  * and the groups among themselves - and both use `compareCodePoints` rather than the default
  * comparator. Hashed names are `e_` plus hex, so UTF-16 and code point order agree on them today and
  * the default sort would pass every vector. It is still wrong, for the same reason it is wrong in
@@ -93,7 +107,9 @@ export function hashIdentifiers(
     throw new DeclarationError(`the salt must be at least ${MIN_SALT_BYTES} bytes`)
   }
 
-  const entityNames: Record<string, string> = {}
+  // Object.create(null), not {}, and this is a correctness rule rather than a style one - see the
+  // note about reserved keys at the top of this file.
+  const entityNames: Record<string, string> = Object.create(null) as Record<string, string>
   const seen = new Map<string, string>()
   for (const spec of model.entities) {
     const hashed = digest(salt, ENTITY_PREFIX, [spec.name])
@@ -109,12 +125,14 @@ export function hashIdentifiers(
     entityNames[spec.name] = hashed
   }
 
-  const fieldNames: Record<string, Record<string, string>> = {}
-  const relationNames: Record<string, Record<string, string>> = {}
+  const fieldNames: Record<string, Record<string, string>> =
+    Object.create(null) as Record<string, Record<string, string>>
+  const relationNames: Record<string, Record<string, string>> =
+    Object.create(null) as Record<string, Record<string, string>>
 
   const entities: EntitySpec[] = []
   for (const spec of model.entities) {
-    const mapping: Record<string, string> = {}
+    const mapping: Record<string, string> = Object.create(null) as Record<string, string>
     for (const field of spec.fields) {
       mapping[field.name] = digest(salt, FIELD_PREFIX, [spec.name, field.name])
     }
@@ -142,7 +160,8 @@ export function hashIdentifiers(
   const relations: RelationSpec[] = []
   for (const relation of model.relations) {
     const hashed = digest(salt, RELATION_PREFIX, [relation.source, relation.name])
-    const bucket = relationNames[relation.source] ?? {}
+    const bucket =
+      relationNames[relation.source] ?? (Object.create(null) as Record<string, string>)
     bucket[relation.name] = hashed
     relationNames[relation.source] = bucket
     relations.push({

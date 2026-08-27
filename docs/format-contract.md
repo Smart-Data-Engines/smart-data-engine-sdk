@@ -108,6 +108,17 @@ Five details, each of which a port can get wrong while every ASCII test still pa
   two digests, or we learn that both have a field called `email` without being able to read the name —
   the structural leak hashing exists to close.
 
+A seventh detail, for a port rather than for the arithmetic: **the container holding the name map
+must not reserve any identifier.** A JavaScript object literal inherits `Object.prototype`, so
+`map["__proto__"] = digest` is silently a no-op and reading it back yields the prototype — and
+`map[source] ?? {}` returns `Object.prototype` rather than falling through, so the next write pollutes
+every object in the process. Our TypeScript library had exactly that while Python, whose `dict` has no
+reserved keys, was correct: one model, two languages, a correct answer in one and a corrupt one in the
+other. `conformance/vectors/hashing/003-reserved-object-keys` pins the digests for `__proto__`,
+`constructor`, `toString` and `valueOf` so no port can lose it. Whatever a language's equivalent hazard
+is — a case-insensitive map, a map that forbids an empty key, a name colliding with a built-in — that
+vector is what finds it.
+
 A sixth detail, added after it went wrong here rather than in advance: **the salt is a byte string,
 and where a library reads it from a file it reads the file verbatim.** No trimming, no whitespace
 handling, no text decoding. This is part of the contract and not an implementation choice, because a
