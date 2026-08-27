@@ -1,0 +1,36 @@
+# Every change needs the maintainer's review.
+#
+# The handle below is verified rather than assumed: an unknown handle, or a handle without write
+# access, is *silently ignored* by GitHub - the file keeps looking like protection and provides none.
+# The engine repository shipped @kmacewicz here for months and all eight of its lines were inert.
+# Check with:
+#
+#   gh api repos/Smart-Data-Engines/smart-data-engine-sdk/codeowners/errors
+#
+* @krzysztof-smartdataengines
+
+# Paths where a mistake is expensive, listed so a reviewer knows what is load-bearing rather than
+# having to infer it.
+
+# The byte contract. Two implementations agreeing with each other but not with this document is the
+# failure mode the whole conformance suite exists to catch, and it surfaces as an operation written
+# to the wrong engine rather than as a build error.
+/docs/format-contract.md      @krzysztof-smartdataengines
+/conformance/                 @krzysztof-smartdataengines
+
+# The privacy claim, in the three files a sceptical reader is pointed at by SECURITY.md.
+/python/src/sde/telemetry.py  @krzysztof-smartdataengines
+/python/src/sde/shapes.py     @krzysztof-smartdataengines
+/python/src/sde/routing.py    @krzysztof-smartdataengines
+
+# Trust decisions: which placement map is accepted, and how identifiers are derived.
+/python/src/sde/placement.py  @krzysztof-smartdataengines
+/python/src/sde/hashing.py    @krzysztof-smartdataengines
+/typescript/src/hashing.ts    @krzysztof-smartdataengines
+
+# CI, security posture and packaging.
+/.github/                     @krzysztof-smartdataengines
+/SECURITY.md                  @krzysztof-smartdataengines
+/docs/github-security.md      @krzysztof-smartdataengines
+/python/pyproject.toml        @krzysztof-smartdataengines
+/typescript/package.json      @krzysztof-smartdataengines
