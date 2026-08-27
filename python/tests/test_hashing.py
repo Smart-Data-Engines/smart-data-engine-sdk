@@ -368,6 +368,60 @@ def test_a_salt_file_is_created_once_and_kept_private(tmp_path: Path) -> None:
     assert load_or_create_salt(location) == first
 
 
+def test_a_salt_is_read_back_exactly_as_written_for_every_leading_byte(tmp_path: Path) -> None:
+    """The salt file is bytes, and every one of the 256 possible first bytes has to survive a read.
+
+    Deterministic on purpose. The bug this covers was found by
+    :func:`test_a_salt_file_is_created_once_and_kept_private` failing once in about twenty CI runs,
+    because that test depends on ``secrets.token_bytes`` happening to produce a salt beginning or
+    ending with one of the six byte values ``bytes.strip()`` removes. A test that catches a defect
+    5% of the time reads as a flaky test, and a flaky test gets re-run rather than read.
+    """
+    for first in range(256):
+        location = tmp_path / f"salt-{first:03d}"
+        written = bytes([first]) + b"\x00" * 30 + bytes([first])
+        location.write_bytes(written)
+        assert load_or_create_salt(location) == written, (
+            f"a salt beginning and ending with byte 0x{first:02x} did not survive a round trip. "
+            f"The salt is the HMAC key for every hashed name, so a salt that changes between "
+            f"processes changes the model version, and the map issued for one is refused by the "
+            f"other."
+        )
+
+
+def test_the_six_whitespace_bytes_are_the_ones_that_used_to_be_eaten(tmp_path: Path) -> None:
+    """Name the exact byte values, so a future "be forgiving about newlines" has to face them.
+
+    ``bytes.strip()`` with no argument removes ``b' \t\n\r\x0b\x0c'``. Spelling them out is the
+    point: the previous implementation looked like it handled a trailing newline, and in fact
+    silently shortened one salt in twenty.
+    """
+    for byte in b" \t\n\r\x0b\x0c":
+        location = tmp_path / f"ws-{byte:03d}"
+        written = bytes([byte]) * 4 + b"salt-body-that-is-long-enough!!" + bytes([byte]) * 4
+        location.write_bytes(written)
+        read = load_or_create_salt(location)
+        assert read == written, f"byte 0x{byte:02x} was stripped from the salt"
+        assert len(read) == len(written)
+
+
+def test_a_generated_salt_survives_its_own_round_trip(tmp_path: Path) -> None:
+    """The real path, run enough times that the 5% case is a certainty rather than a coin flip.
+
+    Two hundred generated salts: the chance that none of them starts or ends with a stripped byte is
+    about 0.99 ** 200, under a tenth of a percent. The deterministic tests above are what pin the
+    behaviour; this one exercises the real generate-then-read path, which is the one an application
+    takes.
+    """
+    for i in range(200):
+        location = tmp_path / f"gen-{i:03d}"
+        generated = load_or_create_salt(location)
+        assert load_or_create_salt(location) == generated, (
+            f"salt {i} changed between the call that created it and the call that read it: "
+            f"{generated!r} became {load_or_create_salt(location)!r}"
+        )
+
+
 def test_a_truncated_salt_file_is_refused_rather_than_used(tmp_path: Path) -> None:
     location = tmp_path / "salt"
     location.write_bytes(b"tiny")

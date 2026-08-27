@@ -108,6 +108,24 @@ Five details, each of which a port can get wrong while every ASCII test still pa
   two digests, or we learn that both have a field called `email` without being able to read the name —
   the structural leak hashing exists to close.
 
+A sixth detail, added after it went wrong here rather than in advance: **the salt is a byte string,
+and where a library reads it from a file it reads the file verbatim.** No trimming, no whitespace
+handling, no text decoding. This is part of the contract and not an implementation choice, because a
+Python service and a Node service in one deployment share one salt file and must derive the same
+digests from it. Our Python library called `.strip()` on the file, "to tolerate a trailing newline",
+which removes six byte *values* — space, tab, LF, CR, `U+000B`, `U+000C` — so a random 32-byte salt
+was silently shortened about 5% of the time. The process that generated the salt then used all 32
+bytes and every later process used the remainder: one client, one declared model, **two model
+versions**. A library that wants to accept a hand-written salt has to define an encoding for the file
+(hex or base64) and say so; it must not guess by stripping.
+
+The contract version is **not** bumped for this. Nothing in the derivation above changed; the rule was
+always implied by "the salt", and the fix makes one implementation produce the answer the document
+already specified. The consequence for an affected client is worth saying plainly all the same: if your
+salt happened to begin or end with one of those six bytes, your `model_version` changes when you
+upgrade, and you need a new map — the same thing that happens when a salt is replaced, and for the same
+reason.
+
 What is **not** hashed, and why:
 
 | Not hashed | Because |
