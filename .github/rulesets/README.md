@@ -11,14 +11,18 @@ These files are **not applied automatically**. GitHub does not read them; they a
 ```bash
 REPO=Smart-Data-Engines/smart-data-engine-sdk
 
-# First time: create. Afterwards use PUT with the id the create call returned, because POST would
-# make a second ruleset and two rulesets on one branch are additive - which reads as "the change did
-# nothing" when it actually doubled the rules.
-gh api -X POST "repos/$REPO/rulesets" --input .github/rulesets/main.json
-gh api -X POST "repos/$REPO/rulesets" --input .github/rulesets/tags.json
+# Both already exist. These are the ids; use PUT, because POST would create a *second* ruleset and
+# two rulesets on one branch are additive - which reads as "my change did nothing" when in fact it
+# doubled the rules.
+MAIN=21671884
+TAGS=21671885
 
-# Update (PUT replaces the ruleset wholesale, so send the whole file)
-gh api -X PUT "repos/$REPO/rulesets/<id>" --input .github/rulesets/main.json
+# PUT replaces the ruleset wholesale, so send the whole file rather than a fragment.
+gh api -X PUT "repos/$REPO/rulesets/$MAIN" --input .github/rulesets/main.json
+gh api -X PUT "repos/$REPO/rulesets/$TAGS" --input .github/rulesets/tags.json
+
+# Creating from scratch, if this ever has to be rebuilt:
+#   gh api -X POST "repos/$REPO/rulesets" --input .github/rulesets/main.json
 ```
 
 ## Verify
@@ -26,10 +30,10 @@ gh api -X PUT "repos/$REPO/rulesets/<id>" --input .github/rulesets/main.json
 ```bash
 REPO=Smart-Data-Engines/smart-data-engine-sdk
 gh api "repos/$REPO/rulesets" --jq '.[] | {id, name, target, enforcement}'
-gh api "repos/$REPO/rulesets/<id>" --jq '{rules: [.rules[].type], bypass: .bypass_actors}'
+gh api "repos/$REPO/rulesets/21671884" --jq '{rules: [.rules[].type], bypass: .bypass_actors}'
 
 # The useful one: the checks a pull request actually has to pass.
-gh api "repos/$REPO/rulesets/<id>" --jq '.rules[] | select(.type=="required_status_checks")
+gh api "repos/$REPO/rulesets/21671884" --jq '.rules[] | select(.type=="required_status_checks")
        | .parameters.required_status_checks[].context'
 ```
 
@@ -67,7 +71,7 @@ the branch exposed:
 
 ```bash
 R=Smart-Data-Engines/smart-data-engine-sdk
-ID=<id>
+ID=21671884
 jq '.enforcement = "disabled"' .github/rulesets/main.json > /tmp/off.json
 
 gh api -X PUT "repos/$R/rulesets/$ID" --input /tmp/off.json --jq '.enforcement'
