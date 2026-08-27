@@ -2,7 +2,13 @@
 
 ## Reporting
 
-Email **security@smartdataengines.com**. Please do not open a public issue for a vulnerability.
+Use GitHub's [private vulnerability
+reporting](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/security/advisories/new) — it is
+enabled on this repository, it gives you a private thread with us, and it means you do not have to
+trust that a mailbox is being read. If you would rather use email,
+**security@smartdataengines.com** works too.
+
+Either way, please do not open a public issue for a vulnerability.
 
 We will acknowledge within three working days and tell you what we intend to do and when. If we
 disagree that something is a vulnerability we will say so and explain, rather than going quiet.

@@ -1,5 +1,11 @@
 # Smart Data Engine — client libraries
 
+[![check](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/actions/workflows/codeql.yml/badge.svg)](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/actions/workflows/codeql.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Node 18+](https://img.shields.io/badge/node-18%2B-blue.svg)](https://nodejs.org/)
+
 Declare your data model. We decide which database engine each part of it lives in, how it is laid out
 there, and when it should move — and move it while your application keeps running.
 

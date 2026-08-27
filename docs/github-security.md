@@ -370,11 +370,15 @@ These make the posture legible to somebody evaluating the project, which for thi
 commercial function and not a courtesy:
 
 - `SECURITY.md` ✅ — how to report a vulnerability, what response to expect, what is in scope, and what
-  is deliberately **not** a vulnerability (an unsigned map is accepted; the map format is public)
+  is deliberately **not** a vulnerability (an unsigned map is accepted; the map format is public). It
+  now leads with GitHub's private reporting form rather than an email address, since §2 turned that on:
+  a researcher gets a private thread and does not have to trust that a mailbox is read
 - `LICENSE` ✅ — Apache 2.0, with `NOTICE`
 - `CONTRIBUTING.md` ✅ and `CODE_OF_CONDUCT.md` ✅
 - `docs/format-contract.md` ✅ — the byte contract a fifth implementation is written from
-- A green CI badge in the README ✅ — evidence the tests run, not merely that they exist
+- Green CI and CodeQL badges in the README ✅ — evidence the checks run, not merely that they exist.
+  Added on 27 August 2026; this line claimed them for a while before they were there, which is the same
+  failure as a checklist item marked done, in the same document, on the same day
 
 ## 9. Threat model in one paragraph
 
