@@ -264,8 +264,17 @@ placeholder version costs nothing and closes the window.
 
 ## 5. Repository access ⚙️
 
-- **Enforce 2FA** on the `Smart-Data-Engines` organisation (Settings → Authentication security).
+- **Enforce 2FA** on the `Smart-Data-Engines` organisation ⚙️ (Settings → Authentication security).
   Hardware key or TOTP, not SMS. One member today, which is the cheapest possible moment to turn it on.
+  Not reachable from the API: `PATCH /orgs/{org}` accepts `two_factor_requirement_enabled` with a 200
+  and leaves it `false`, the same trap as the two secret-scanning flags in §2.
+- **New repositories in the organisation start protected** ✅. This was worth fixing once rather than
+  per repository: every `*_enabled_for_new_repositories` flag on the organisation was `false`, so a
+  new repository — the Java, Rust, C# and Go libraries are all coming — would have begun life with no
+  secret scanning, no push protection and no Dependabot, and would have needed somebody to remember
+  this document. Now enabled at the organisation: secret scanning, push protection, Dependabot alerts,
+  Dependabot security updates, dependency graph. GitHub Advanced Security is deliberately left off,
+  since turning it on for new repositories is a billing decision rather than a hygiene one.
 - Grant the minimum role: `write` for contributors, `admin` only where genuinely needed. Today there
   is one collaborator, `krzysztof-smartdataengines`, with `admin`.
 - Review third-party OAuth apps and installed GitHub Apps periodically. Every app with write access is
@@ -393,7 +402,8 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
 ⚙️ register smart-data-engine on PyPI and @smart-data-engines on npm  ← most urgent
-⚙️ org-wide 2FA on Smart-Data-Engines
+✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
+⚙️ org-wide 2FA on Smart-Data-Engines — UI only, the API reports success and changes nothing
 ⚙️ registry accounts with 2FA, before the first publish
 ⚙️ SSH/GPG signing key registered as a *signing* key, then required_signatures in the ruleset
 ⚙️ non-provider secret patterns + validity checks (organisation-level Secret Protection)
