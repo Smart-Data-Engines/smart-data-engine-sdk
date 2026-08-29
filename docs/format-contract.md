@@ -384,6 +384,14 @@ There are five kinds:
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
 
+**Three of the sets named in the tier table above do not exist yet:** `telemetry/`, `schema/` and
+`migration/`. That is worth stating in the contract rather than leaving it to be discovered from an
+empty directory, because §9 says a tier claim is one the vectors can check, and for Tier 1 and Tier 2
+that is currently false. The reference implementation has both, covered by its own tests and by a
+slice against a real PostgreSQL — which verifies that it works, not that a second implementation would
+agree with it. The gap costs nothing while one library claims those tiers and everything on the day two
+do, so the vectors are written before a second claim is accepted, not after.
+
 `hashing/` is only run by a library that offers hashing, and skipping it has to be visible: an
 implementation that quietly runs zero of these while claiming to support the mode is the failure the
 vectors exist to make impossible. One of its cases carries an identifier in two Unicode normal forms,

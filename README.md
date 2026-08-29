@@ -52,15 +52,28 @@ start, and never revisit, because moving a live table is a project rather than a
 ## Status
 
 **Early.** What works today is the first slice, end to end: declaration, canonical model and version,
-colocation groups, operation shapes, placement maps with signature verification, routing, and a
-PostgreSQL adapter that creates schema and reads and writes through it. There is no telemetry yet, no
-planner, and no migration engine. Those are next, in that order, and migration is last on purpose.
+colocation groups, operation shapes, placement maps with signature verification, routing, hashed
+identifiers, telemetry, and a PostgreSQL adapter that creates schema and reads and writes through it.
+
+What does not exist yet: **a second engine adapter** — so there is nothing to choose between — and
+**no migration engine**. Migration is last on purpose; one lost row ends a product like this, so it
+comes after three checkpoints and a test that deliberately drops writes in order to prove the
+verification notices.
 
 | Library | Tier | Status |
 |---|---|---|
-| [`python/`](python/) | 0, and 2 for PostgreSQL | reference implementation |
-| [`typescript/`](typescript/) | 0 | passes the same vectors, byte for byte |
+| [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, plus hashing | reference implementation |
+| [`typescript/`](typescript/) | 0, plus hashing | passes the same vectors, byte for byte |
 | `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has two implementations, which is what made it safe to invite them |
+
+One honest qualification on that table, because the whole point of the tiers is that "supported" means
+the same thing in every language. Tier 0 is backed by shared vectors that both implementations run.
+**Tier 1 and Tier 2 are not, yet** — the `telemetry/`, `schema/` and `migration/` vector sets named in
+`docs/format-contract.md` §10 do not exist. Python's Tier 1 and Tier 2 are covered by its own tests
+and by a slice against a real PostgreSQL, which is not the same thing: it verifies that the
+implementation works, not that a second implementation would agree with it. Today that costs nothing,
+since no other library claims those tiers. It costs on the day one does, so the vectors come before
+the claim does.
 
 ## What you declare, and what you do not
 
