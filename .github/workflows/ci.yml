@@ -59,8 +59,13 @@ jobs:
           CLICKHOUSE_PASSWORD: sde
           CLICKHOUSE_DB: sde
         ports: ["8123:8123"]
+        # 127.0.0.1 rather than localhost, and the difference is the whole reason the first attempt
+        # at this failed. `wget` in the alpine image resolves `localhost` to the IPv6 `[::1]`, and
+        # ClickHouse listens on IPv4 only, so the probe got "Connection refused" against a server
+        # that had started perfectly - GitHub then reported "Failed to initialize container", which
+        # points at the image rather than at the health check that was wrong.
         options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
