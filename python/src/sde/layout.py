@@ -29,7 +29,7 @@ from .groups import Group
 from .model import LogicalModel
 from .placement import PhysicalLayout
 
-__all__ = ["POSTGRES_TYPES", "default_layout", "snake_case"]
+__all__ = ["CLICKHOUSE_TYPES", "POSTGRES_TYPES", "default_layout", "snake_case"]
 
 _CAMEL_BOUNDARY: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
@@ -48,6 +48,44 @@ POSTGRES_TYPES: Final[Mapping[str, str]] = {
     "json": "jsonb",
 }
 
+CLICKHOUSE_TYPES: Final[Mapping[str, str]] = {
+    "bool": "Bool",
+    "int32": "Int32",
+    "int64": "Int64",
+    "float32": "Float32",
+    "float64": "Float64",
+    "string": "String",
+    # `bytes` and `json` are deliberately absent, and their absence is a *refusal* rather than an
+    # oversight. `_column_type` raises for an unmapped neutral type, so a model with either field
+    # cannot have a ClickHouse layout derived - which means the planner cannot place that group here
+    # and the failure lands at map-build time, in our process, loudly. Both were measured before
+    # being given up on:
+    #
+    # `bytes`: a ClickHouse `String` stores the bytes correctly - `hex()` and `length()` on the
+    # server confirm all four bytes of b"\x00\x01\xff\xfe" arrive intact. The read lies. The driver
+    # decodes a `String` column to `str`, cannot decode invalid UTF-8, and returns the hex text
+    # "0001fffe" instead. Nothing distinguishes a binary `String` column from a text one on the way
+    # back, so the adapter cannot correct it, and silently handing a client hex text where they
+    # wrote bytes is the kind of corruption that surfaces years later in a checksum.
+    #
+    # `json`: PostgreSQL `jsonb` returns a parsed `dict`; a ClickHouse `String` returns the
+    # original text. The same field would change Python type when its group moved, which breaks the
+    # promise the whole product is built on. The native `JSON` type would fix it and was
+    # experimental in the server versions in scope, and a signed placement map has to outlive a
+    # server upgrade. Resolving this properly means deciding what the neutral `json` type promises
+    # on the way *back* - a dict or the exact text - and changing both adapters together. It is a
+    # task, not a mapping.
+    "uuid": "UUID",
+    # Date32 rather than Date: Date covers 1970-2149, which is a range a business date can leave.
+    # Silently clamping a date is worse than storing four bytes more.
+    "date": "Date32",
+    # Millisecond precision, stated. ClickHouse's plain DateTime is second-resolution, so a client
+    # who wrote 12:00:00.500 would read back 12:00:00 - a lossy round trip that no test with
+    # whole-second fixtures would notice.
+    "timestamp": "DateTime64(3)",
+    "timestamptz": "DateTime64(3, 'UTC')",
+}
+
 
 def snake_case(name: str) -> str:
     """``OrderLine`` -> ``order_line``, and NFC-normalised.
@@ -60,16 +98,33 @@ def snake_case(name: str) -> str:
     return _CAMEL_BOUNDARY.sub("_", normalised).lower()
 
 
-def _column_type(neutral: str) -> str:
+_DIALECT_TYPES: Final[Mapping[str, Mapping[str, str]]] = {
+    "postgres": POSTGRES_TYPES,
+    "clickhouse": CLICKHOUSE_TYPES,
+}
+
+_DECIMAL: Final[Mapping[str, str]] = {
+    "postgres": "numeric({digits},{scale})",
+    "clickhouse": "Decimal({digits}, {scale})",
+}
+
+
+def _column_type(neutral: str, dialect: str) -> str:
+    """One neutral type, one engine type, and no defaulting.
+
+    A missing entry raises rather than falling back to a string, because a type nobody mapped is a
+    gap in an adapter and the honest place to find that out is here - not in a client's database,
+    where the column already exists with the wrong type and changing it is a migration.
+    """
+    types = _DIALECT_TYPES[dialect]
     if neutral.startswith("decimal("):
         digits, scale = neutral[len("decimal(") : -1].split(",")
-        return f"numeric({digits},{scale})"
+        return _DECIMAL[dialect].format(digits=digits, scale=scale)
     try:
-        return POSTGRES_TYPES[neutral]
+        return types[neutral]
     except KeyError:
         raise DeclarationError(
-            f"no PostgreSQL type for {neutral!r}. Every member of the neutral vocabulary needs "
-            "one; "
+            f"no {dialect} type for {neutral!r}. Every member of the neutral vocabulary needs one; "
             "this is a gap in the adapter rather than a problem with the model."
         ) from None
 
@@ -83,11 +138,12 @@ def default_layout(
     every ORM uses, so a client looking at their own database recognises what they are seeing. A
     relation to an entity with a composite key produces one column per key field.
     """
-    if dialect != "postgres":
+    if dialect not in _DIALECT_TYPES:
         raise DeclarationError(
-            f"no default layout for dialect {dialect!r} yet. Adding one is an adapter's job, and "
-            "it "
-            "has to be added deliberately rather than approximated from this one."
+            f"no default layout for dialect {dialect!r}. Adding one is an adapter's job, and it "
+            f"has "
+            f"to be added deliberately rather than approximated from an existing one - the known "
+            f"dialects are {sorted(_DIALECT_TYPES)}."
         )
 
     tables: dict[str, str] = {}
@@ -100,7 +156,7 @@ def default_layout(
 
         cols: dict[str, str] = {}
         for field in spec.fields:
-            cols[field.name] = _column_type(field.type)
+            cols[field.name] = _column_type(field.type, dialect)
 
         for relation in model.relations:
             if relation.source != entity_name:
@@ -112,23 +168,32 @@ def default_layout(
                 # earlier version branched on the key's arity and produced the same name in both
                 # arms, which ruff spotted as a useless condition - correctly, and it was a leftover
                 # from an idea about naming that turned out not to be worth the inconsistency.
-                cols[f"{relation.name}_{key_field}"] = _column_type(key_spec.type)
+                cols[f"{relation.name}_{key_field}"] = _column_type(key_spec.type, dialect)
 
         columns[entity_name] = cols
 
         # One index, and only because a foreign key without one turns every relation walk into a
         # sequential scan. Anything beyond this is a planner decision with a cost attached, and the
         # library has no business guessing at it.
-        for relation in model.relations:
-            if relation.source != entity_name:
-                continue
-            target = model.entity(relation.target)
-            indexes.append(
-                {
-                    "entity": entity_name,
-                    "name": f"{snake_case(entity_name)}_{relation.name}_idx",
-                    "columns": [f"{relation.name}_{k}" for k in target.key],
-                }
-            )
+        #
+        # None at all for ClickHouse, and that is not an omission. It has no B-tree: `CREATE INDEX`
+        # there builds a *data-skipping* index, which needs a type and a granularity and helps only
+        # when the data is already ordered so whole granules can be ruled out. Choosing those is a
+        # planner decision with a cost attached, exactly like the ones above that this function
+        # refuses to make. What a MergeTree does have is its `ORDER BY`, which is the primary index
+        # and is derived from the declared key by the adapter - so the useful index exists, it is
+        # simply not expressed as a row in this list.
+        if dialect != "clickhouse":
+            for relation in model.relations:
+                if relation.source != entity_name:
+                    continue
+                target = model.entity(relation.target)
+                indexes.append(
+                    {
+                        "entity": entity_name,
+                        "name": f"{snake_case(entity_name)}_{relation.name}_idx",
+                        "columns": [f"{relation.name}_{k}" for k in target.key],
+                    }
+                )
 
     return PhysicalLayout(tables=tables, columns=columns, indexes=tuple(indexes))

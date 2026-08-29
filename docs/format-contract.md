@@ -179,6 +179,35 @@ maps ambiguously — Python's `datetime`, which may or may not carry a zone — 
 it in that library's own documentation, and provide an explicit way to ask for the other one. The
 Python library maps `datetime` to `timestamptz` and offers `sde.Timestamp` for the naive form.
 
+### 3.1 The other direction: an engine need not map every neutral type
+
+The vocabulary above is what a *model* may say. What an engine can store is a separate question, and
+the two are allowed to differ — a neutral type an engine cannot hold **faithfully** must be left
+unmapped rather than approximated.
+
+The rule is one sentence: **an engine adapter that cannot round-trip a neutral type does not map it,
+and the effect is a placement constraint rather than a lossy column.** Deriving a layout raises, the
+planner therefore cannot put a group containing such a field in that engine, and the refusal happens
+where a map is built rather than where a value is read.
+
+Two live examples, and the point of naming them here is that both look like they work:
+
+- **`bytes` in ClickHouse.** A `String` column stores the bytes correctly — `hex()` and `length()` on
+  the server confirm it. The *read* is what fails: the driver decodes the column to text, cannot decode
+  bytes that are not valid UTF-8, and returns their hex representation as a string. Nothing
+  distinguishes a binary `String` column from a text one on the way back, so no adapter can correct it.
+- **`json` in ClickHouse.** PostgreSQL returns a parsed object; a ClickHouse `String` returns the
+  original text. The field would change type in the host language when its group moved, which is the
+  one thing a placement change must never do.
+
+Both are unmapped today, and that costs real capability — an event payload in a column store is a
+natural thing to want. It costs less than a client discovering after a migration that a checksum no
+longer matches, or that a field is now a string. The way out of either is a decision about what the
+neutral type promises on the way *back*, made once and implemented in every adapter together.
+
+**A library's tier is per engine, and "supported" means round-trips.** A library that maps a type by
+storing something adjacent to it has not implemented that type.
+
 ## 4. The IR
 
 ```jsonc
