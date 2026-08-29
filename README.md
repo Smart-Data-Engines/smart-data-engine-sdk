@@ -53,16 +53,28 @@ start, and never revisit, because moving a live table is a project rather than a
 
 **Early.** What works today is the first slice, end to end: declaration, canonical model and version,
 colocation groups, operation shapes, placement maps with signature verification, routing, hashed
-identifiers, telemetry, and a PostgreSQL adapter that creates schema and reads and writes through it.
+identifiers, telemetry, and **two engine adapters** — PostgreSQL and ClickHouse — each of which
+creates its own schema and reads and writes through it.
 
-What does not exist yet: **a second engine adapter** — so there is nothing to choose between — and
-**no migration engine**. Migration is last on purpose; one lost row ends a product like this, so it
-comes after three checkpoints and a test that deliberately drops writes in order to prove the
-verification notices.
+Two engines is the first point at which any of this means anything. Between a row store and a column
+store lies the decision most applications get wrong once, at the start, and never revisit; with one
+adapter there was nothing to choose between.
+
+The pair is also what makes a claim checkable that was previously only stated. `save()` the same value
+through both adapters, read it back from each, and the two results have to be equal — in content *and*
+in Python type. That test found two divergences the moment it existed: a naive `datetime` landed in
+PostgreSQL as 12:00 and in ClickHouse as 10:00, and a `timestamptz` came back timezone-aware from one
+engine and naive from the other, so the same field read from the two could not even be compared. Both
+are fixed; the test is `python/tests/test_engine_agreement.py`, it needs both servers, and CI fails if
+it skipped.
+
+What does not exist yet: **no migration engine**. Migration is last on purpose; one lost row ends a
+product like this, so it comes after three checkpoints and a test that deliberately drops writes in
+order to prove the verification notices.
 
 | Library | Tier | Status |
 |---|---|---|
-| [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, plus hashing | reference implementation |
+| [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL and ClickHouse, plus hashing | reference implementation |
 | [`typescript/`](typescript/) | 0, plus hashing | passes the same vectors, byte for byte |
 | `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has two implementations, which is what made it safe to invite them |
 

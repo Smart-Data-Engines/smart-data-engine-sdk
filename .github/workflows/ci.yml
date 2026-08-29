@@ -49,6 +49,22 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      clickhouse:
+        # The second engine, and the reason the product exists: between these two lies the decision
+        # clients get wrong once, at the start. It is here rather than in a job of its own because the
+        # test that matters most needs *both* servers at once - one value written to each, read back,
+        # and asserted equal in content and in Python type. Two divergences were living in that gap.
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -60,7 +76,7 @@ jobs:
         working-directory: python
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,signed,postgres]'
+          pip install -e '.[dev,signed,postgres,clickhouse]'
 
       - name: lint
         working-directory: python
@@ -72,21 +88,27 @@ jobs:
         # runtime checks, so a weakened annotation is a deleted guarantee.
         run: mypy src
 
-      - name: tests, including the PostgreSQL slice
+      - name: tests, including both engine slices
         working-directory: python
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: pytest -v
 
-      - name: the integration slice actually ran
+      - name: the integration slices actually ran
         working-directory: python
         # A skipped integration test is indistinguishable from a passing one in a summary line, and
-        # the slice is the only thing here that proves the library works against a real engine.
+        # these are the only things here that prove the library works against a real engine. The
+        # agreement slice is the most important of the three and the easiest to lose: it needs *both*
+        # DSNs, so a single missing variable turns it into a silent skip.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          pytest tests/test_postgres_slice.py -q | tee /tmp/slice.txt
-          grep -qv "skipped" /tmp/slice.txt || { echo "the PostgreSQL slice was skipped"; exit 1; }
+          for slice in test_postgres_slice test_clickhouse_slice test_engine_agreement; do
+            pytest "tests/$slice.py" -q | tee /tmp/slice.txt
+            grep -qv "skipped" /tmp/slice.txt || { echo "$slice was skipped"; exit 1; }
+          done
 
   typescript:
     runs-on: ubuntu-latest
