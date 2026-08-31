@@ -365,6 +365,22 @@ where data is written:
   `schema_is_fixed(dialect)`; an implementation may spell it differently, since it never reaches a
   byte of the format.
 - `routing` is optional. A shape with no entry routes to the source.
+- **A derived materialisation carries an explicit layout, never `{"auto": true}`.** `auto` derives the
+  *normalised* layout, which is the source's shape - so a derived copy asking for it would be a second
+  copy of the source in another engine, paying for storage and lag to answer questions the source
+  already answers. What a derived materialisation is *for* is a different physical shape, and the
+  Python library derives one with `denormalized_layout()`: one wide table at the root entity's grain,
+  with intra-group relations flattened in under `<relation>_<field>` - the same convention the foreign
+  key uses, so a client reading their own analytical table knows where a column came from.
+- **A field declared as personal data is excluded from that wide table unless explicitly allowed for
+  that field.** Requirement 5.5, and the rule lives in the derivation rather than in whatever builds
+  the map: an analytical materialisation is a second copy in a different engine with different access
+  controls, so "your personal data is not copied there" is worth being able to *read* in the library
+  rather than take on trust. It fails closed - an empty allowance excludes every declared field, on
+  the root as well as on the inlined side - and reports what it left out, because an analyst finding
+  no `email` column has to be able to tell a decision from missing data. An implementation may spell
+  the allowance differently; nothing about it reaches a byte of this format, since the map carries
+  only the resulting layout.
 - **Every `routing` value must name a materialisation of the shape's own group**, and every key must
   be a shape this model produces. Checked when the map is loaded, not when the shape is first
   routed — see §8.

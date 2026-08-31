@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Mapping
-from typing import Final
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Final
 
 from .errors import DeclarationError
 from .groups import Group
@@ -37,13 +38,16 @@ __all__ = [
     "ORDERBOOK_TABLE",
     "ORDERBOOK_TYPES",
     "POSTGRES_TYPES",
+    "DerivedLayout",
     "can_store",
     "default_layout",
+    "denormalized_layout",
     "fixed_schema_mismatch",
     "group_columns",
     "snake_case",
     "stored_types",
 ]
+
 
 _CAMEL_BOUNDARY: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
@@ -469,3 +473,173 @@ def default_layout(
                 )
 
     return PhysicalLayout(tables=tables, columns=columns, indexes=tuple(indexes))
+
+
+# ── The other layout: one wide table for reading, and the field it will not copy ─────────────────
+
+
+@dataclass(frozen=True)
+class DerivedLayout:
+    """A denormalised layout, plus what it left behind and why.
+
+    One value rather than a layout and a second function answering "what was excluded", because two
+    derivations of the same decision drift - and the thing that would drift here is a list of
+    personal data fields, where a stale answer is the worst kind. The control plane puts ``layout``
+    in the map and ``excluded_pii`` in the report; both come from one pass.
+    """
+
+    layout: PhysicalLayout
+    root: str
+    """The entity whose grain the wide table has: one row per root row."""
+
+    inlined: tuple[tuple[str, str], ...]
+    """(relation, target entity) pairs that were flattened in, in declared order."""
+
+    excluded_pii: tuple[str, ...]
+    """``Entity.field`` for every personal-data field kept out, sorted.
+
+    Reported rather than silently absent. An analyst who queries the wide table and finds no email
+    needs to be told that the column is missing *by decision*, not conclude the data is incomplete -
+    and the client needs to see which fields they would have to allow explicitly.
+    """
+
+
+def _relation_columns(model: LogicalModel, group: Group) -> dict[str, list[Any]]:
+    """Intra-group relations by source entity, in declared order."""
+    out: dict[str, list[Any]] = {name: [] for name in group.members}
+    members = set(group.members)
+    for relation in model.relations:
+        if relation.source in members and relation.target in members:
+            out[relation.source].append(relation)
+    return out
+
+
+def denormalized_layout(
+    model: LogicalModel,
+    group: Group,
+    *,
+    dialect: str = "clickhouse",
+    include_pii: Sequence[str] = (),
+) -> DerivedLayout:
+    """One wide table for a group, for an engine that is read from rather than written to.
+
+    Requirement 5.1: the same entity may be materialised differently in different engines -
+    normalised in a transactional store to write, flattened in an analytical one to read - from one
+    logical model. This is the second derivation, and it is here rather than in the control plane
+    for the same reason ``default_layout`` is: the library has to be able to apply a hand-written
+    map, and a schema derived in two places is a schema that eventually differs in one.
+
+    **Personal data is excluded unless named in ``include_pii``.** Requirement 5.5, and it lives in
+    this function rather than in the planner on purpose: an analytical materialisation is a second
+    copy of the data in a different engine with different access controls, so "we do not copy your
+    personal data there" is a promise worth being able to *read* rather than take. Fails closed - an
+    empty allowance excludes every declared personal-data field, and a caller who wants one copied
+    names it. Names are ``Entity.field``, because a group holds several entities and ``email`` alone
+    would be ambiguous the moment two of them have one.
+
+    The rule applies to the root entity's own fields as well as to the inlined ones. "Denormalised
+    into an analytical materialisation" is about the copy arriving there, not about which side of a
+    join it came from, and a rule with an exception for the root would be a rule nobody could state
+    in one sentence.
+
+    Four refusals, each because the friendly alternative produces something worse than an error:
+
+    **A group with no intra-group relation.** There is nothing to flatten, so the wide table would
+    be ``default_layout`` under another name: a second copy costing storage, replication and lag
+    while answering exactly the questions the source already answers.
+
+    **An ambiguous root.** The grain is the entity nothing else in the group points at. If two
+    entities qualify, one row of the wide table would mean whatever this function guessed, and a
+    table whose row nobody chose the meaning of is worse than no table.
+
+    **A fixed-schema engine.** Its schema is not ours to choose, so there is no wide table to make
+    there - see ``FIXED_SCHEMA``.
+
+    **An allowance naming something that is not a declared personal-data field of this group.** Both
+    directions: a typo would leave the field excluded while the client believed they had allowed it,
+    and a name that is not personal data at all suggests the client thinks it is.
+    """
+    if dialect in FIXED_SCHEMA:
+        raise DeclarationError(
+            f"{dialect!r} imposes its own schema, so there is no denormalised layout to derive for "
+            f"it. A wide table is a choice about physical shape, and this engine has already made "
+            f"it."
+        )
+
+    pii_by_entity = {
+        name: set(model.entity(name).pii) for name in group.members
+    }
+    known_pii = sorted(
+        f"{entity}.{field}" for entity, fields in pii_by_entity.items() for field in fields
+    )
+    allowed = tuple(include_pii)
+    unknown = sorted(set(allowed) - set(known_pii))
+    if unknown:
+        raise DeclarationError(
+            f"include_pii names {unknown}, which {group.name} does not declare as personal data. "
+            f"Refused in both directions rather than ignored: a misspelling would leave the field "
+            f"excluded while you believed you had allowed it, and a name that is not personal data "
+            f"suggests it was expected to be. This group declares {known_pii or 'none'}."
+        )
+
+    relations = _relation_columns(model, group)
+    targets = {r.target for outgoing in relations.values() for r in outgoing}
+    roots = sorted(name for name in group.members if name not in targets)
+    if not any(relations.values()):
+        raise DeclarationError(
+            f"{group.name} has no relation inside it, so there is nothing to denormalise. A wide "
+            f"table here would be the default layout under another name - a second copy paying for "
+            f"storage, replication and lag to answer the questions the source already answers."
+        )
+    if len(roots) != 1:
+        raise DeclarationError(
+            f"{group.name} has {roots} as candidate roots and a wide table has one grain. Refusing "
+            f"rather than picking: one row would mean whatever this function chose, and a table "
+            f"whose row nobody decided the meaning of is worse than no table."
+        )
+    root = roots[0]
+
+    neutral = _neutral_columns(model, group)
+    columns: dict[str, str] = {}
+    excluded: list[str] = []
+
+    def take(entity: str, field: str, column: str, neutral_type: str) -> None:
+        qualified = f"{entity}.{field}"
+        if field in pii_by_entity[entity] and qualified not in allowed:
+            excluded.append(qualified)
+            return
+        columns[column] = _column_type(neutral_type, dialect)
+
+    # The root's own columns keep their names. A column belonging to an inlined relation is skipped
+    # here and taken on the inlined pass instead, and that is **not** about duplicates: the foreign
+    # key `user_id` and the inlined `User.id` produce the same column name by construction, so the
+    # dictionary assignment would be idempotent either way. It is about the personal-data rule. A
+    # foreign-key column is named after the relation, not after a field of the root, so the check in
+    # `take()` does not recognise it - and a target whose *key* is declared personal data
+    # (`Person.national_id`) would arrive here under `person_national_id` with nothing to stop it.
+    # Deferring to the inlined pass puts the column under the entity that declared it.
+    inlined_names = {relation.name for relation in relations[root]}
+    for column, neutral_type in neutral[root].items():
+        if any(column.startswith(f"{name}_") for name in inlined_names):
+            continue
+        take(root, column, column, neutral_type)
+
+    inlined: list[tuple[str, str]] = []
+    for relation in relations[root]:
+        target = relation.target
+        inlined.append((relation.name, target))
+        for column, neutral_type in neutral[target].items():
+            # `<relation>_<field>`, the same convention the foreign key already uses, so a client
+            # reading their own analytical table recognises where a column came from without a map.
+            take(target, column, f"{relation.name}_{column}", neutral_type)
+
+    return DerivedLayout(
+        layout=PhysicalLayout(
+            tables={root: f"{snake_case(root)}_wide"},
+            columns={root: columns},
+            indexes=(),
+        ),
+        root=root,
+        inlined=tuple(inlined),
+        excluded_pii=tuple(sorted(excluded)),
+    )
