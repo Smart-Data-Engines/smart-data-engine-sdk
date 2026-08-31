@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "is for model version",
+  "stage": "map",
+  "why": "a map for a different model version describes tables that may not exist. Refused, never reconciled: the difference between two model versions cannot be guessed from either side."
+}

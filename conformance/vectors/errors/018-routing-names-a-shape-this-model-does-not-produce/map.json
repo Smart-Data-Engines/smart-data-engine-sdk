@@ -1,0 +1,53 @@
+{
+  "contract": 1,
+  "groups": {
+    "Event": {
+      "derived": [
+        {
+          "engine": "ch-1",
+          "id": "Event@ch",
+          "lag_budget_ms": 30000,
+          "layout": {
+            "tables": {
+              "Event": "event",
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            }
+          }
+        }
+      ],
+      "source": {
+        "engine": "pg-main",
+        "id": "Event@pg",
+        "layout": {
+          "tables": {
+            "Event": "event",
+            "Order": "order",
+            "Payment": "payment",
+            "User": "user"
+          }
+        }
+      }
+    },
+    "Order": {
+      "source": {
+        "engine": "pg-main",
+        "id": "Order@pg",
+        "layout": {
+          "tables": {
+            "Event": "event",
+            "Order": "order",
+            "Payment": "payment",
+            "User": "user"
+          }
+        }
+      }
+    }
+  },
+  "map_version": 1,
+  "model_version": "59a263d15793fb78",
+  "routing": {
+    "0000000000000000": "Event@pg"
+  }
+}

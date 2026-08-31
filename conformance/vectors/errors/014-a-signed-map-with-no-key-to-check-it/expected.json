@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "no public key was",
+  "stage": "map",
+  "why": "a signature is a claim that the map came from us. An unverifiable claim is worse than no claim: an unsigned map is a supported mode, and this is not it."
+}

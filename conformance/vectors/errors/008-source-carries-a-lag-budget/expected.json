@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "cannot have a lag budget",
+  "stage": "map",
+  "why": "the source is where writes land, so it is not behind anything. A lag budget on it is a map that believes its own authoritative copy is stale, and a library that accepted it would route freshness-sensitive reads by a number that means nothing."
+}

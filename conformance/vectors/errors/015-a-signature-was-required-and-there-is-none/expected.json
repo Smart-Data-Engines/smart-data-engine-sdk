@@ -1,0 +1,9 @@
+{
+  "error": "MapError",
+  "load": {
+    "require_signature": true
+  },
+  "match": "signature was required",
+  "stage": "map",
+  "why": "the caller asked for proof of origin. Accepting an unsigned map here would make require_signature advice rather than a check."
+}

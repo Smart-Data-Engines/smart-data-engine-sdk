@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "does not produce that shape",
+  "stage": "map",
+  "why": "the model version already matched, so the two sides enumerated shapes differently. That is the divergence the byte contract exists for: one library's write lands in a table another library never looks at, and nothing fails at the time it happens."
+}

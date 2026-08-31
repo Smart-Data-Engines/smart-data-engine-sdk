@@ -229,10 +229,9 @@ def load_map(
     if contract != CONTRACT:
         raise MapError(
             f"this map declares format contract {contract!r} and this library implements "
-            "{CONTRACT}. "
-            "Refusing rather than guessing: the difference between two contract versions is "
-            "exactly "
-            "the kind of thing that would otherwise be interpreted as a missing field meaning zero."
+            f"{CONTRACT}. Refusing rather than guessing: the difference between two contract "
+            f"versions is exactly the kind of thing that would otherwise be interpreted as a "
+            f"missing field meaning zero."
         )
 
     model_version = raw.get("model_version")
@@ -295,17 +294,30 @@ def load_map(
                 f"the map does not place these groups: {missing}. Every group in the model needs a "
                 "home before anything can run."
             )
+        # And the other direction. Checking only one of the two is how a map placing a group this
+        # model does not have reached `model_groups[name]` below and came out as a bare KeyError -
+        # a library exception with no explanation, on the path whose entire job is to explain.
+        unknown = sorted(set(groups) - set(model_groups))
+        if unknown:
+            raise MapError(
+                f"the map places groups this model does not have: {unknown}. The model version "
+                "matched, so this is not a stale map: the two sides derived colocation groups "
+                "differently, and a group nobody declared has no entities to hold."
+            )
         groups = {
             name: _resolve_auto(placement, model, model_groups[name])
             for name, placement in groups.items()
         }
         for placement in groups.values():
             _refuse_shadowing(placement)
+        _check_routing_targets(routing, groups, model)
     elif any(m.layout is _AUTO for p in groups.values() for m in p.all()):
         raise MapError(
             'a layout asked to be derived with {"auto": true}, but no model was supplied to derive '
             "it from. Pass model= to load_map()."
         )
+    else:
+        _check_routing_targets(routing, groups, None)
 
     return PlacementMap(
         contract=contract,
@@ -374,3 +386,66 @@ def _model_groups(model: LogicalModel) -> tuple[Any, ...]:
     from .groups import colocation_groups
 
     return colocation_groups(model)
+
+
+def _model_shapes(model: LogicalModel) -> tuple[Any, ...]:
+    # Late for the same reason: shapes imports groups, which imports model.
+    from .shapes import enumerate_shapes
+
+    return enumerate_shapes(model)
+
+
+def _check_routing_targets(
+    routing: Mapping[str, Any],
+    groups: Mapping[str, GroupPlacement],
+    model: LogicalModel | None,
+) -> None:
+    """Every routing entry must name a materialisation that exists, in the shape's own group.
+
+    This used to be checked in ``GroupPlacement.by_id`` - that is, at the first read that routed
+    through the broken entry. Deferring it there turns a mistake in a document we hand over into an
+    error inside the client's request path, at a moment nobody can predict: only the shapes routing
+    through that entry fail, so a staging run that never issues those operations is green and the
+    map looks applied. Everything here is decidable at load, so it is decided at load.
+
+    Two levels, because ``model`` is optional. Without a model: the target has to be an id declared
+    somewhere in this map. With one: it has to be declared in the group the shape belongs to, which
+    is the check that matters - ids are only unique *within* a group, so a target that exists in
+    some other group would otherwise read the entity out of a copy that does not hold it.
+    """
+    declared = {name: {m.id for m in placement.all()} for name, placement in groups.items()}
+    everywhere = {mat_id for ids in declared.values() for mat_id in ids}
+
+    for shape_id, target in sorted(routing.items()):
+        if not isinstance(target, str):
+            raise MapError(
+                f"the routing entry for shape {shape_id!r} is not a materialisation id. Routing "
+                "maps a shape id to one id, and anything else is a table nobody can look up."
+            )
+        if target not in everywhere:
+            raise MapError(
+                f"the routing table sends shape {shape_id!r} to materialisation {target!r}, and no "
+                f"group in this map declares one with that id. The map is internally inconsistent: "
+                f"declared ids are {sorted(everywhere)}."
+            )
+
+    if model is None:
+        return
+
+    shapes = {shape.id: shape for shape in _model_shapes(model)}
+    for shape_id, target in sorted(routing.items()):
+        shape = shapes.get(shape_id)
+        if shape is None:
+            raise MapError(
+                f"the routing table has an entry for shape {shape_id!r}, and this model does not "
+                "produce that shape. The model version matched, so the two sides enumerated shapes "
+                "differently - which is the divergence that puts one library's write in a table "
+                "another library never looks at."
+            )
+        if target not in declared.get(shape.group, frozenset()):
+            raise MapError(
+                f"the routing table sends shape {shape_id!r} - which belongs to group "
+                f"{shape.group!r} - to materialisation {target!r}, which that group does not "
+                f"declare. Materialisation ids are unique only within a group, so this would read "
+                f"{shape.entity} out of a copy that does not hold it."
+            )

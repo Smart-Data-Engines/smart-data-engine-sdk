@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "implements 1",
+  "stage": "map",
+  "why": "the refusal has to name both versions. An earlier Python message rendered a literal '{CONTRACT}' here while TypeScript rendered the number, which is a divergence no vector reached: the suite compared encodings and this path produces only a diagnostic."
+}

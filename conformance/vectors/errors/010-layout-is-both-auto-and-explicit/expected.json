@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "either auto or explicit",
+  "stage": "map",
+  "why": "two sources of truth for a schema is how two libraries end up writing the same entity to two different table names."
+}

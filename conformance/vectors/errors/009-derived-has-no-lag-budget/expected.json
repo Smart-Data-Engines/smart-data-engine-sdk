@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "needs lag_budget_ms",
+  "stage": "map",
+  "why": "without it nobody can tell a healthy copy from one that is hours behind, and the routing rule for a read that needs freshness has no threshold to compare against."
+}
