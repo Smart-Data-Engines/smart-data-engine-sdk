@@ -297,3 +297,56 @@ def test_the_session_refuses_a_cross_group_transaction_on_a_real_engine(
         pass
     # The connection is still usable, which it would not be if a transaction had been left open.
     assert engine.count(_table(placement, model, "User")) >= 0
+
+
+def test_a_table_that_already_exists_with_another_shape_is_refused(
+    engine: sde.Engine, placement: sde.PlacementMap, model: sde.LogicalModel
+) -> None:
+    """`CREATE TABLE IF NOT EXISTS` keeps whatever is there, so somebody has to look.
+
+    Found by running the walkthrough against a database that already had a `reading` table from
+    something else. The DDL reported success, `ensure_schema` returned, and the first insert failed
+    with `column "at" of relation "reading" does not exist` - an error naming a column rather than
+    the cause, arriving in the request path instead of at startup.
+
+    Missing columns are refused. Extra ones are not: a client may have added one outside SDE, the
+    map does not name it, writes are unaffected, and refusing would make this library an obstacle to
+    work it has no opinion about.
+    """
+    group = next(g for g in sde.colocation_groups(model) if "Event" in g.members)
+    layout = placement.placement_of(group.name).source.layout
+    assert layout is not None
+    table = layout.tables["Event"]
+
+    with engine._cx.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        cur.execute(f'CREATE TABLE "{table}" ("id" uuid PRIMARY KEY, "unrelated" text)')
+
+    keys = {e.name: tuple(e.key) for e in model.entities}
+    with pytest.raises(sde.errors.EngineError, match="already existed with a different shape"):
+        engine.ensure_schema(layout, keys=keys)
+
+    with engine._cx.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+
+def test_an_extra_column_is_allowed_and_logged(
+    engine: sde.Engine, placement: sde.PlacementMap, model: sde.LogicalModel
+) -> None:
+    group = next(g for g in sde.colocation_groups(model) if "Event" in g.members)
+    layout = placement.placement_of(group.name).source.layout
+    assert layout is not None
+    table = layout.tables["Event"]
+    keys = {e.name: tuple(e.key) for e in model.entities}
+
+    with engine._cx.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+    engine.ensure_schema(layout, keys=keys)
+    with engine._cx.cursor() as cur:
+        cur.execute(f'ALTER TABLE "{table}" ADD COLUMN "added_by_the_client" text')
+
+    # No exception: the map has no opinion about a column it does not name.
+    engine.ensure_schema(layout, keys=keys)
+
+    with engine._cx.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table}"')

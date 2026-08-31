@@ -28,6 +28,11 @@ EVENTS: Final[frozenset[str]] = frozenset(
         "sde.route.resolved",
         "sde.route.fallback",
         "sde.schema.applied",
+        # extra_columns fires when a table the map describes has columns the map does not
+        # name. Allowed rather than refused - a client may have added one outside SDE and
+        # writes are unaffected - but logged, because the alternative to refusing is saying
+        # nothing, and a schema that has quietly diverged is worth one line.
+        "sde.schema.extra_columns",
         "sde.write.failed",
         "sde.internal.error",
         # Telemetry. dropped fires when the buffer is full and the oldest window is discarded -
