@@ -40,7 +40,7 @@ from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .infer import InferredModel, Note, infer_model, infer_models
 from .internal import internal_failures, reset_internal_failures
-from .layout import DIALECTS, default_layout, snake_case
+from .layout import DIALECTS, can_store, default_layout, snake_case, stored_types
 from .model import CONTRACT, LogicalModel, build_model
 from .placement import (
     GroupPlacement,
@@ -100,6 +100,7 @@ __all__ = [
     "Window",
     "__version__",
     "build_model",
+    "can_store",
     "canonical_bytes",
     "canonical_str",
     "clear_registry",
@@ -122,4 +123,5 @@ __all__ = [
     "resolve",
     "schema_statements",
     "snake_case",
+    "stored_types",
 ]

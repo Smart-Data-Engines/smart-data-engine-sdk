@@ -18,7 +18,7 @@ import pytest
 
 import sde
 from sde.errors import DeclarationError
-from sde.layout import CLICKHOUSE_TYPES, POSTGRES_TYPES, default_layout
+from sde.layout import CLICKHOUSE_TYPES, POSTGRES_TYPES, _column_type, default_layout
 from sde.types import NEUTRAL_TYPES
 
 
@@ -153,3 +153,114 @@ def test_decimal_precision_survives_into_both_dialects() -> None:
     assert default_layout(model, group, dialect="clickhouse").columns["Order"]["total"] == (
         "Decimal(12, 2)"
     )
+
+
+# ── can_store: the one public question about representability ──────────────────────────────────
+
+
+def test_can_store_agrees_with_the_type_mapping_for_the_whole_vocabulary() -> None:
+    """The property that makes the question worth exposing at all.
+
+    A representability check that could answer True where the renderer raises would let a placement
+    be approved and then fail to apply - which is worse than not being able to ask, because the
+    failure moves from planning time into the client's request path. So it is not checked against
+    a hand-written list of what each engine supports; that list is the thing that drifts. It is
+    checked against the function that types the columns, across the whole neutral vocabulary.
+    """
+    vocabulary = [*sorted(NEUTRAL_TYPES), "decimal(12,2)", "decimal(38,10)"]
+    for dialect in sde.DIALECTS:
+        for neutral in vocabulary:
+            try:
+                _column_type(neutral, dialect)
+            except DeclarationError:
+                typed = False
+            else:
+                typed = True
+            assert sde.can_store(neutral, dialect=dialect) is typed, (
+                f"can_store({neutral!r}, dialect={dialect!r}) disagrees with _column_type"
+            )
+
+
+def test_the_two_refusals_clickhouse_makes_are_visible_without_trying_to_build_a_layout() -> None:
+    """Before this, the only way to learn either was to place the group and watch it raise."""
+    assert sde.can_store("bytes", dialect="postgres") is True
+    assert sde.can_store("json", dialect="postgres") is True
+    assert sde.can_store("bytes", dialect="clickhouse") is False
+    assert sde.can_store("json", dialect="clickhouse") is False
+
+
+def test_an_unknown_dialect_raises_rather_than_answering_false() -> None:
+    """False would be a claim about an engine this library has never heard of."""
+    with pytest.raises(DeclarationError, match="no type table for dialect"):
+        sde.can_store("int64", dialect="duckdb")
+
+
+def test_a_malformed_type_raises_through_rather_than_reporting_unstorable() -> None:
+    '''"This engine cannot store it" and "that type parses nowhere" are different findings.'''
+    with pytest.raises((ValueError, KeyError)):
+        sde.can_store("decimal(oops)", dialect="postgres")
+
+
+# ── stored_types: what the control plane asks before it picks an engine ─────────────────────────
+
+
+def _model_with_a_clickhouse_hostile_field() -> sde.LogicalModel:
+    sde.clear_registry()
+
+    @sde.entity
+    class Attachment:
+        id: uuid.UUID
+        blob: bytes
+
+    @sde.entity
+    class Message:
+        id: uuid.UUID
+        attachment: sde.Ref[Attachment]
+        body: str
+
+    return sde.build_model(Attachment, Message)
+
+
+def test_stored_types_and_can_store_predict_whether_the_layout_renders() -> None:
+    """The equivalence the control plane's exclusion rests on.
+
+    If these two could disagree, an engine would be reported able to hold a group and then fail
+    while the map was being built - which is the situation this pair exists to end, only moved one
+    step later and harder to read.
+    """
+    for model in (_model(), _model_with_a_clickhouse_hostile_field()):
+        for group in sde.colocation_groups(model):
+            types = sde.stored_types(model, group)
+            for dialect in sde.DIALECTS:
+                predicted = all(sde.can_store(t, dialect=dialect) for t in types)
+                try:
+                    default_layout(model, group, dialect=dialect)
+                except DeclarationError:
+                    rendered = False
+                else:
+                    rendered = True
+                assert predicted is rendered, (
+                    f"{group.name} in {dialect}: predicted {predicted}, layout rendered {rendered}"
+                )
+
+
+def test_a_relation_puts_the_targets_key_type_in_the_set() -> None:
+    """A foreign-key column is a column, so its type is a type this engine has to have.
+
+    A relation unions its ends into one group, so today the target's key type is also a declared
+    field of a member and the set would be the same either way. Pinned anyway: if that ever changes,
+    the failure is a placement approved for an engine that cannot type the foreign key.
+    """
+    model = _model_with_a_clickhouse_hostile_field()
+    group = sde.group_of(sde.colocation_groups(model), "Message")
+    assert "Attachment" in group.members, "a Ref should colocate; this test assumes it"
+    assert "uuid" in sde.stored_types(model, group)
+
+
+def test_the_clickhouse_gap_is_visible_before_a_layout_is_attempted() -> None:
+    model = _model_with_a_clickhouse_hostile_field()
+    group = sde.group_of(sde.colocation_groups(model), "Message")
+    types = sde.stored_types(model, group)
+    assert "bytes" in types
+    assert all(sde.can_store(t, dialect="postgres") for t in types)
+    assert not all(sde.can_store(t, dialect="clickhouse") for t in types)
