@@ -58,18 +58,14 @@ from typing import Any
 from ..errors import EngineError
 from ..logging import log
 from ..placement import PhysicalLayout
+from ..schema import QUOTE, schema_statements
 
 __all__ = ["ClickHouseEngine"]
 
 
-def _quote(identifier: str) -> str:
-    """Backticks, doubled to escape.
-
-    ClickHouse accepts double quotes too. Backticks are the idiomatic form and, more usefully, they
-    make a generated statement obviously ClickHouse when it turns up in a log next to a PostgreSQL
-    one.
-    """
-    return "`" + identifier.replace("`", "``") + "`"
+# Bound from the one definition in sde.schema, so that DDL and DML cannot disagree about
+# how an identifier is escaped.
+_quote = QUOTE["clickhouse"]
 
 
 def _as_utc(value: Any) -> Any:
@@ -161,36 +157,7 @@ class ClickHouseEngine:
         `sde.layout` - because ClickHouse's `CREATE INDEX` builds a data-skipping index that needs a
         type and a granularity, and choosing those is a planner decision with a cost attached.
         """
-        statements: list[str] = []
-        for entity, table in sorted(layout.tables.items()):
-            cols = layout.columns.get(entity, {})
-            if not cols:
-                raise EngineError(f"the layout gives no columns for {entity!r}")
-            key = list(keys.get(entity, ()))
-            if not key:
-                raise EngineError(f"no key for {entity!r}; a table without one cannot be addressed")
-            missing = [column for column in key if column not in cols]
-            if missing:
-                raise EngineError(
-                    f"the key of {entity!r} names columns the layout does not have: {missing}. In "
-                    f"ClickHouse the key becomes ORDER BY, so this would produce a table that "
-                    f"cannot be created rather than one with a missing constraint."
-                )
-            defs = ", ".join(f"{_quote(c)} {t}" for c, t in sorted(cols.items()))
-            order = ", ".join(_quote(c) for c in key)
-            statements.append(
-                f"CREATE TABLE IF NOT EXISTS {_quote(table)} ({defs}) "
-                f"ENGINE = ReplacingMergeTree ORDER BY ({order})"
-            )
-
-        if layout.indexes:
-            raise EngineError(
-                f"the layout carries {len(layout.indexes)} index definitions and this engine "
-                f"has no "
-                "B-tree to put them in. A ClickHouse index is a data-skipping index with a type "
-                "and "
-                f"a granularity, so this map was built for another dialect."
-            )
+        statements = schema_statements(layout, keys=keys, dialect=self.dialect)
 
         for statement in statements:
             try:
