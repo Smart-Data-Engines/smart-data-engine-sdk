@@ -1,17 +1,17 @@
 """PostgreSQL adapter.
 
-Two rules run through everything here, and both come straight from the requirements rather than from
-taste.
+Two rules run through everything here, and both come straight from the requirements rather than
+from taste.
 
-**A failed write is reported, never worked around.** No retry into another engine, no swallowing, no
-"eventually consistent" story invented on the spot. If the source engine for a group will not take
-the write, the client's code finds out (:class:`~sde.errors.EngineError`). The library swallows its
-*own* internal problems - routing, telemetry - because a bug of ours must not take down someone's
-application, but a write that did not happen is not our internal problem and reporting success for
-it would be the single worst thing this library could do.
+**A failed write is reported, never worked around.** No retry into another engine, no swallowing,
+no "eventually consistent" story invented on the spot. If the source engine for a group will not
+take the write, the client's code finds out (:class:`~sde.errors.EngineError`). The library
+swallows its *own* internal problems - routing, telemetry - because a bug of ours must not take
+down someone's application, but a write that did not happen is not our internal problem and
+reporting success for it would be the single worst thing this library could do.
 
-**Identifiers are quoted, always.** Not for injection - identifiers come from the placement map, not
-from user input - but because entity names may contain non-ASCII characters, and an unquoted
+**Identifiers are quoted, always.** Not for injection - identifiers come from the placement map,
+not from user input - but because entity names may contain non-ASCII characters, and an unquoted
 identifier in PostgreSQL is folded to lower case in a way that is lossy for some of them.
 """
 
@@ -87,9 +87,9 @@ class PostgresEngine:
 
         Idempotent on purpose: an application restarting must not reapply DDL, and two instances
         starting at once must not race. Anything beyond creation - altering a column, dropping an
-        index - is a migration, which is the orchestrator's job and carries a safety classification.
-        A library that quietly altered a live column would be doing the one thing this product
-        promises never to do without a rollback path.
+        index - is a migration, which is the orchestrator's job and carries a safety
+        classification. A library that quietly altered a live column would be doing the one thing
+        this product promises never to do without a rollback path.
         """
         statements = schema_statements(layout, keys=keys, dialect=self.dialect)
 
@@ -100,6 +100,64 @@ class PostgresEngine:
                 except Exception as exc:
                     raise EngineError(f"schema statement failed: {statement}: {exc}") from exc
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
+        self._verify_schema(layout)
+
+    def _verify_schema(self, layout: PhysicalLayout) -> None:
+        """Check that what exists is what the map describes, because IF NOT EXISTS does not.
+
+        `CREATE TABLE IF NOT EXISTS` accepts a table of that name whatever shape it is in, so a
+        table left over from something else - an older map, another application, a hand-run
+        migration - is silently kept and the first insert fails with `column "at" does not exist`.
+        That error names a column and not the cause, and it arrives in the client's request path
+        rather than at startup.
+
+        A **missing** column is refused: writes through this map cannot work. An **extra** column
+        is logged and allowed - a client may have added one outside SDE, the map does not name it,
+        writes are unaffected, and refusing would make this library an obstacle to work it has no
+        opinion about.
+
+        Names only. Comparing declared types to `information_schema.data_type` means matching
+        `numeric(8,2)` against `numeric`, and a check that has to normalise dialect spellings
+        would report differences that are not differences.
+        """
+        expected = {
+            table: set(layout.columns.get(entity, {}))
+            for entity, table in sorted(layout.tables.items())
+        }
+        if not expected:
+            return
+
+        with self._cx.cursor() as cur:
+            cur.execute(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ANY(%s)",
+                [sorted(expected)],
+            )
+            found: dict[str, set[str]] = {}
+            for table_name, column_name in cur.fetchall():
+                found.setdefault(str(table_name), set()).add(str(column_name))
+
+        for table, columns in sorted(expected.items()):
+            actual = found.get(table)
+            if actual is None:
+                raise EngineError(
+                    f"{table!r} does not exist after applying the schema. The statement reported "
+                    f"success, so this is a permissions or search_path problem rather than a bad "
+                    f"map."
+                )
+            missing = sorted(columns - actual)
+            if missing:
+                raise EngineError(
+                    f"{table!r} already existed with a different shape: the map needs {missing} "
+                    f"and the table has {sorted(actual)}. `CREATE TABLE IF NOT EXISTS` keeps "
+                    f"whatever is there, so this table came from somewhere else - an older map, "
+                    f"another application, a migration run by hand. Refusing here rather than at "
+                    f"the first insert, which would fail in your request path with an error naming "
+                    f"a column and not the cause."
+                )
+            extra = sorted(actual - columns)
+            if extra:
+                log("sde.schema.extra_columns", table=table, columns=extra)
 
     # --- data ------------------------------------------------------------------------------
 
@@ -183,9 +241,9 @@ class PostgresEngine:
 
         There is no distributed transaction here and there will not be one. A client needing two
         entities to commit together declares that, and the planner puts them in the same group and
-        therefore the same engine - so the requirement turns into a placement constraint instead of
-        a two-phase commit. That is the trade this product makes, and it is why this method is four
-        lines rather than a subsystem.
+        therefore the same engine - so the requirement turns into a placement constraint instead
+        of a two-phase commit. That is the trade this product makes, and it is why this method is
+        four lines rather than a subsystem.
         """
         cx = self._cx
         previous = cx.autocommit

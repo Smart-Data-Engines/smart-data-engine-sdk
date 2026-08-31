@@ -38,6 +38,7 @@ from .entity import Ref, clear_registry, entity, registry
 from .errors import DeclarationError, EngineError, MapError, ModelPlanningError, SdeError
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
+from .infer import InferredModel, Note, infer_model, infer_models
 from .internal import internal_failures, reset_internal_failures
 from .layout import DIALECTS, default_layout, snake_case
 from .model import CONTRACT, LogicalModel, build_model
@@ -49,6 +50,7 @@ from .placement import (
     load_map,
 )
 from .routing import Router, resolve
+from .schema import schema_statements
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, OperationShape, enumerate_shapes
 from .telemetry import (
@@ -76,6 +78,7 @@ __all__ = [
     "GroupFeatures",
     "GroupPlacement",
     "Histogram",
+    "InferredModel",
     "Int32",
     "Json",
     "LogicalModel",
@@ -83,6 +86,7 @@ __all__ = [
     "Materialization",
     "ModelPlanningError",
     "NameMap",
+    "Note",
     "OperationShape",
     "PhysicalLayout",
     "PlacementMap",
@@ -107,6 +111,8 @@ __all__ = [
     "group_of",
     "has_time_dimension",
     "hash_identifiers",
+    "infer_model",
+    "infer_models",
     "internal_failures",
     "load_map",
     "load_or_create_salt",
@@ -114,5 +120,6 @@ __all__ = [
     "registry",
     "reset_internal_failures",
     "resolve",
+    "schema_statements",
     "snake_case",
 ]
