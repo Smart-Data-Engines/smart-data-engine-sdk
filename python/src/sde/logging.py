@@ -34,6 +34,10 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # nothing, and a schema that has quietly diverged is worth one line.
         "sde.schema.extra_columns",
         "sde.write.failed",
+        # The orderbook engine only. A write there is invisible to a query until flush(), and
+        # flush() in local mode tears the engine down and reopens it - 3.4 ms measured. Reads flush
+        # lazily, so this line is where the cost shows up and how many rows it bought.
+        "sde.orderbook.flushed",
         "sde.internal.error",
         # Telemetry. dropped fires when the buffer is full and the oldest window is discarded -
         # telemetry is the thing that gets lost when we run out of room, never an operation.

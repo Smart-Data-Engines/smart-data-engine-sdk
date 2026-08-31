@@ -74,3 +74,12 @@ warn_unreachable = true
 # The type vocabulary maps Python's types onto neutral names by inspecting annotations, which means
 # handling objects mypy cannot narrow. Those places are explicit rather than blanket-ignored.
 disallow_any_explicit = false
+
+# The orderbook engine's Python client is not on PyPI and is installed from its own repository, so
+# no environment can be relied on to have it - including CI, which installs from an index. Ignoring
+# the missing import here rather than vendoring a stub: a stub we wrote would be a second, silently
+# stale description of somebody else's API, and the adapter already converts every value crossing
+# that boundary (`int(...)`, `str(...)`) precisely because nothing type-checks it.
+[[tool.mypy.overrides]]
+module = ["orderbook_engine", "orderbook_engine.*"]
+ignore_missing_imports = true
