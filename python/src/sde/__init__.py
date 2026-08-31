@@ -39,7 +39,7 @@ from .errors import DeclarationError, EngineError, MapError, ModelPlanningError,
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .internal import internal_failures, reset_internal_failures
-from .layout import default_layout, snake_case
+from .layout import DIALECTS, default_layout, snake_case
 from .model import CONTRACT, LogicalModel, build_model
 from .placement import (
     GroupPlacement,
@@ -65,6 +65,7 @@ __version__ = "0.1.0.dev0"
 
 __all__ = [
     "CONTRACT",
+    "DIALECTS",
     "SHAPE_KINDS",
     "CanonicalError",
     "DeclarationError",
