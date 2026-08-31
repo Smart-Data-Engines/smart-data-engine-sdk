@@ -24,12 +24,14 @@ from typing import Any
 from ..errors import EngineError
 from ..logging import log
 from ..placement import PhysicalLayout
+from ..schema import QUOTE, schema_statements
 
 __all__ = ["PostgresEngine"]
 
 
-def _quote(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
+# Bound from the one definition in sde.schema, so that DDL and DML cannot disagree about
+# how an identifier is escaped.
+_quote = QUOTE["postgres"]
 
 
 class PostgresEngine:
@@ -89,31 +91,7 @@ class PostgresEngine:
         A library that quietly altered a live column would be doing the one thing this product
         promises never to do without a rollback path.
         """
-        statements: list[str] = []
-        for entity, table in sorted(layout.tables.items()):
-            cols = layout.columns.get(entity, {})
-            if not cols:
-                raise EngineError(f"the layout gives no columns for {entity!r}")
-            key = list(keys.get(entity, ()))
-            if not key:
-                raise EngineError(f"no key for {entity!r}; a table without one cannot be addressed")
-            defs = ", ".join(f"{_quote(c)} {t}" for c, t in sorted(cols.items()))
-            pk = ", ".join(_quote(c) for c in key)
-            statements.append(
-                f"CREATE TABLE IF NOT EXISTS {_quote(table)} ({defs}, PRIMARY KEY ({pk}))"
-            )
-
-        for index in layout.indexes:
-            index_entity = str(index["entity"])
-            index_table = layout.tables.get(index_entity)
-            if index_table is None:
-                continue
-            index_name = str(index["name"])
-            index_cols = ", ".join(_quote(str(c)) for c in index["columns"])
-            statements.append(
-                f"CREATE INDEX IF NOT EXISTS {_quote(index_name)} "
-                f"ON {_quote(index_table)} ({index_cols})"
-            )
+        statements = schema_statements(layout, keys=keys, dialect=self.dialect)
 
         with self._cx.cursor() as cur:
             for statement in statements:
