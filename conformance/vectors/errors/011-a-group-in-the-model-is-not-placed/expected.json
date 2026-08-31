@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "does not place these groups",
+  "stage": "map",
+  "why": "an unplaced group is an entity with nowhere to be written. Refused at load rather than at the first write, which would surface as a runtime error in the client's request path."
+}

@@ -341,8 +341,15 @@ where data is written:
   copy from one that is hours behind.
 - Materialisation ids are unique within a group.
 - Every group in the model must be placed.
+- **No group may be placed that the model does not have.** The converse of the rule above, and it
+  needs saying separately: checking one direction reads as checking both. Python fell through to a
+  lookup on the model's groups and raised a bare `KeyError`; TypeScript accepted the map in silence.
+  One missing rule, two languages, two different wrong answers.
 - `layout` is either explicit or `{"auto": true}`, never both.
 - `routing` is optional. A shape with no entry routes to the source.
+- **Every `routing` value must name a materialisation of the shape's own group**, and every key must
+  be a shape this model produces. Checked when the map is loaded, not when the shape is first
+  routed — see §8.
 
 ### Signing
 
@@ -366,6 +373,27 @@ Publishing the library does not weaken any of this. The public key is in the lib
 is in the control plane, and a signature was never a secret.
 
 ## 8. Routing
+
+**The routing table is validated when the map is loaded.** It used to be validated at the first read
+that routed through a broken entry, which is the worse of the two places: a map is a document handed
+over and applied, so an inconsistency that only surfaces when one particular shape is issued fails
+inside the client's request path at a moment nobody can predict — and a run that never issues those
+operations is green while the map looks applied. Nothing in the check needs runtime information, so
+nothing in it waits for runtime.
+
+Two levels, because the model is optional at load:
+
+| Model | Checked |
+|---|---|
+| absent | the target is an id declared somewhere in this map |
+| present | the target is declared in **the group the shape belongs to**, and the key is a shape this model produces |
+
+The second is the one that matters. Materialisation ids are unique only *within* a group, so a target
+that exists in some other group is not evidence of anything — routing a shape at another group's copy
+reads the entity out of a table that does not hold it, which is a wrong answer rather than an error. A
+routing key that is not a shape of this model is a divergence too: the model version already matched,
+so the two sides enumerated shapes differently, and that is how one library's write lands in a table
+another library never looks at.
 
 Three conditions, then a lookup:
 
@@ -409,7 +437,7 @@ There are five kinds:
 |---|---|
 | `model/` | a neutral declaration, and the exact IR bytes, version, groups and shapes it must produce |
 | `routing/` | a map plus cases: `(shape, in a write transaction?, needs freshness?)` to materialisation |
-| `errors/` | which error, and at what stage it must be raised |
+| `errors/` | which error, and at what stage it must be raised — `model` or `map` |
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
 
@@ -420,6 +448,22 @@ that is currently false. The reference implementation has both, covered by its o
 slice against a real PostgreSQL — which verifies that it works, not that a second implementation would
 agree with it. The gap costs nothing while one library claims those tiers and everything on the day two
 do, so the vectors are written before a second claim is accepted, not after.
+
+An `errors/` case carries a `stage`. `model` cases feed `model.json` to the model builder; `map`
+cases build the model **first, outside the assertion**, then feed `map.json` to the map loader with
+the options in `load` (`require_signature`, `public_key`). That ordering is the point: a vector whose
+model was broken by accident would otherwise throw at the model stage and satisfy an assertion that
+looks only at the class and the message — a failure at the wrong stage entirely, which is the bug
+`stage` exists to catch. A runner that meets a stage it does not implement **fails**; it does not
+skip. A stage nobody runs is a rule nobody checks.
+
+The `map` stage exists because there was no shared coverage of §7 at all. Every refusal there — each
+one deciding where a client's data gets written — was checked in the reference implementation's own
+tests and in nothing the two libraries share. The cost showed up as a message that rendered a literal
+`{CONTRACT}` in one language and the version number in the other: a lost `f` prefix on a continuation
+line inside an implicitly concatenated string, invisible in review because the group reads as one
+string, and invisible to the vectors because they compare encodings and this path produces only a
+diagnostic.
 
 `hashing/` is only run by a library that offers hashing, and skipping it has to be visible: an
 implementation that quietly runs zero of these while claiming to support the mode is the failure the
@@ -458,6 +502,14 @@ A vector is frozen once committed. Changing one is changing the contract: bump
 `conformance/contract-version.txt`, and every library declares which version it implements. There is
 no quiet fix — a vector that was wrong was a contract that was wrong, and somebody may have a stored
 placement map that depends on it.
+
+**Tightening a refusal is not a format change. Loosening one is.** Adding a rule that refuses a
+document which was already internally inconsistent does not make `contract: 1` ambiguous — it makes
+the two libraries agree, which is the whole point of the number. Dropping a refusal does: an older
+library would reject what a newer one accepts, and then the meaning of a stored map depends on which
+version happens to be installed. That is the same failure as `{"auto": true}` deciding table names
+from the installed library, and it is refused for the same reason. Both directions get vectors either
+way, because the argument above is only trustworthy if the newly refused shapes are written down.
 
 If your library cannot reproduce a byte this document requires, the first hypothesis should be that
 **this document is wrong** — that it wrote down what one language happens to do rather than something

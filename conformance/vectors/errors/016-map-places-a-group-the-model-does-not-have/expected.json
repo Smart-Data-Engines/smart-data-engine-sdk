@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "places groups this model does not have",
+  "stage": "map",
+  "why": "the converse of 011, and it needs its own case because checking one direction reads as checking both. Before this rule existed Python fell through to a lookup on the model's groups and raised a bare KeyError, while TypeScript accepted the map in silence: one missing rule, two languages, two different wrong answers."
+}

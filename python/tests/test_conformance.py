@@ -14,6 +14,8 @@ these vectors exist to catch, and it is invisible the moment you parse.
 from __future__ import annotations
 
 import json
+from base64 import b64decode
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -109,21 +111,58 @@ _ERRORS: dict[str, type[Exception]] = {
 }
 
 
+def _load_map_from_vector(case: Path, load: Mapping[str, Any]) -> None:
+    """Build the model, then load the map. The order is the point.
+
+    A map-stage vector has a *valid* model, and building it has to happen outside the block that
+    expects the failure. Otherwise a vector whose model was broken by accident would raise
+    ``DeclarationError`` at the model stage, and an assertion checking only the class and the
+    message would be satisfied by a failure at the wrong stage entirely - which is the exact bug
+    the ``stage`` field exists to catch.
+    """
+    model = model_from_neutral(_read_json(case / "model.json"))
+    encoded = load.get("public_key")
+    sde.load_map(
+        _read_json(case / "map.json"),
+        model=model,
+        public_key=b64decode(encoded) if isinstance(encoded, str) else None,
+        require_signature=bool(load.get("require_signature", False)),
+    )
+
+
 @pytest.mark.parametrize("case", _cases("errors"), ids=_ident)
 def test_error_vector(case: Path) -> None:
     expected = _read_json(case / "expected.json")
     exc_type = _ERRORS[expected["error"]]
+    stage = expected["stage"]
 
     # The stage matters as much as the error. A library that raises the right exception when the
     # query runs, rather than when the model is built, has a different bug that happens to look the
     # same in a test that only checks the type.
-    assert expected["stage"] == "model", (
-        f"{_ident(case)} expects the error at stage {expected['stage']!r}, which this runner does "
-        "not know how to exercise yet"
+    assert stage in ("model", "map"), (
+        f"{_ident(case)} expects the error at stage {stage!r}, which this runner does not know how "
+        "to exercise yet. Failing rather than skipping: a stage nobody runs is a rule nobody "
+        "checks."
     )
 
     with pytest.raises(exc_type, match=expected["match"]):
-        model_from_neutral(_read_json(case / "model.json"))
+        if stage == "model":
+            model_from_neutral(_read_json(case / "model.json"))
+        else:
+            _load_map_from_vector(case, expected.get("load", {}))
+
+
+def test_both_stages_are_actually_covered_by_vectors() -> None:
+    """A stage the runner supports and no vector uses is a rule that reads as covered.
+
+    Before the map stage existed, every rule in section 7 of the contract - eleven refusals, each
+    deciding where a client's data gets written - was checked in Python's own tests and in nothing
+    shared. TypeScript enforced the same rules and no shared case reached any of them, which is how
+    the contract-mismatch message came to render a literal ``{CONTRACT}`` in one language and the
+    number in the other.
+    """
+    stages = {_read_json(case / "expected.json")["stage"] for case in _cases("errors")}
+    assert stages == {"model", "map"}, f"error vectors cover only {sorted(stages)}"
 
 
 # --- canonical vectors -----------------------------------------------------------------------

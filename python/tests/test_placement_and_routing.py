@@ -32,6 +32,57 @@ def _model() -> sde.LogicalModel:
     return sde.build_model(Event)
 
 
+def _two_group_model() -> sde.LogicalModel:
+    """Two entities, no relation between them, so colocation puts them in two groups.
+
+    Needed because materialisation ids are unique only *within* a group: a one-group model cannot
+    express an id that exists in the map and not in the shape's own group, which is the case the
+    model-dependent routing check exists for.
+    """
+
+    @sde.entity
+    class Event:
+        id: uuid.UUID
+        name: str
+
+    @sde.entity
+    class Ledger:
+        id: uuid.UUID
+        note: str
+
+    return sde.build_model(Event, Ledger)
+
+
+def _two_group_map(model: sde.LogicalModel) -> dict[str, Any]:
+    return {
+        "contract": sde.CONTRACT,
+        "model_version": model.version,
+        "map_version": 1,
+        "groups": {
+            "Event": {
+                "source": {
+                    "id": "event@pg",
+                    "engine": "pg-main",
+                    "layout": {
+                        "tables": {"Event": "event"},
+                        "columns": {"Event": {"id": "uuid", "name": "text"}},
+                    },
+                }
+            },
+            "Ledger": {
+                "source": {
+                    "id": "ledger@pg",
+                    "engine": "pg-main",
+                    "layout": {
+                        "tables": {"Ledger": "ledger"},
+                        "columns": {"Ledger": {"id": "uuid", "note": "text"}},
+                    },
+                }
+            },
+        },
+    }
+
+
 def _layout() -> dict[str, Any]:
     return {"tables": {"Event": "event"}, "columns": {"Event": {"id": "uuid", "name": "text"}}}
 
@@ -113,6 +164,26 @@ def test_contract_mismatch_is_refused_not_guessed() -> None:
     model = _model()
     with pytest.raises(MapError, match="format contract"):
         sde.load_map(_map(model, contract=99), model=model)
+
+
+def test_the_contract_mismatch_message_names_both_versions() -> None:
+    """Matching on a prefix let a broken message ship, so this matches on the numbers.
+
+    The earlier version of this message was an implicitly concatenated group where one continuation
+    line had lost its ``f``, so the text a client saw was "this library implements {CONTRACT}". The
+    TypeScript port of the same message interpolated correctly, which makes this a Python/TypeScript
+    divergence of the class the conformance vectors cannot see: they compare encodings, not
+    diagnostics. A refusal is the library's only output on this path, so the text *is* the
+    behaviour.
+    """
+    model = _model()
+    with pytest.raises(MapError) as raised:
+        sde.load_map(_map(model, contract=99), model=model)
+
+    message = str(raised.value)
+    assert "99" in message, "the map's own version has to be in there"
+    assert f"implements {sde.CONTRACT}" in message
+    assert "{" not in message, f"an unrendered placeholder survived: {message}"
 
 
 def test_model_version_mismatch_is_refused() -> None:
@@ -197,11 +268,83 @@ def test_an_unrouted_shape_falls_back_to_the_source() -> None:
     assert sde.resolve(placement, shapes["aggregate"]).id == "event@pg"
 
 
-def test_routing_at_a_materialisation_that_does_not_exist_is_refused() -> None:
+def test_routing_at_a_materialisation_that_does_not_exist_is_refused_at_load() -> None:
+    """It used to load fine and fail at the first read that routed through the entry.
+
+    That is the worse of the two places for it. A map is a document handed over and applied; an
+    inconsistency in it that only surfaces when a particular shape is issued fails inside the
+    client's request path at a time nobody can predict, and a staging run that never issues that
+    operation is green. Nothing here needs runtime information, so nothing here waits for runtime.
+    """
     model = _model()
     shapes = {s.kind: s for s in sde.enumerate_shapes(model)}
     raw = _map(model)
     raw["routing"] = {shapes["full_scan"].id: "event@nowhere"}
-    placement = sde.load_map(raw, model=model)
-    with pytest.raises(MapError, match="no materialisation"):
-        sde.resolve(placement, shapes["full_scan"])
+    with pytest.raises(MapError, match="no group in this map declares one with that id"):
+        sde.load_map(raw, model=model)
+
+
+def test_routing_across_groups_is_refused_because_ids_are_only_unique_within_one() -> None:
+    """The check that needs the model, and the reason the weaker one is not enough.
+
+    Materialisation ids are unique within a group, so an id that exists in *some* group is not
+    evidence it exists in the right one. Routing a shape at another group's copy would read the
+    entity out of a table that does not hold it - a wrong answer rather than an error.
+    """
+    model = _two_group_model()
+    event_scan = next(
+        s for s in sde.enumerate_shapes(model) if s.group == "Event" and s.kind == "full_scan"
+    )
+    raw = _two_group_map(model)
+    # `ledger@pg` is declared - in the other group. The weaker check passes; this one must not.
+    raw["routing"] = {event_scan.id: "ledger@pg"}
+    with pytest.raises(MapError, match="which that group does not declare"):
+        sde.load_map(raw, model=model)
+
+
+def test_a_map_placing_a_group_the_model_does_not_have_is_refused_not_a_keyerror() -> None:
+    """The other direction of the same check, and it used to be a bare ``KeyError``.
+
+    Only the model-to-map direction was checked, so a map placing a group the model does not have
+    fell through to a dict lookup on the model's groups and came out as ``KeyError: 'Other'`` - an
+    exception with no explanation, raised by the function whose whole job on this path is to
+    explain. One-directional checks read as complete; this is the same shape as a required status
+    check nobody produces.
+    """
+    model = _model()
+    raw = _map(model)
+    raw["groups"]["Other"] = {
+        "source": {"id": "other@pg", "engine": "pg-main", "layout": _layout()}
+    }
+    with pytest.raises(MapError, match="places groups this model does not have"):
+        sde.load_map(raw, model=model)
+
+
+def test_a_routing_entry_for_a_shape_this_model_does_not_produce_is_refused() -> None:
+    """Same model version on both sides and a different shape enumeration is a real divergence.
+
+    The model version covers the declaration, so if it matches and a routing key names a shape this
+    library does not enumerate, the two sides disagree about what operations exist. That is the
+    failure the byte contract exists for: one library's write lands where another never looks.
+    """
+    model = _model()
+    raw = _map(model)
+    raw["routing"] = {"0" * 16: raw["groups"]["Event"]["source"]["id"]}
+    with pytest.raises(MapError, match="does not produce that shape"):
+        sde.load_map(raw, model=model)
+
+
+def test_by_id_still_guards_the_path_that_load_now_makes_unreachable() -> None:
+    """Kept deliberately, and this test is the reason it stays.
+
+    Now that ``load_map`` refuses a dangling routing entry, ``by_id`` cannot be reached with a bad
+    id through the public path - which is exactly the argument somebody would use to delete it. A
+    guard whose reachability depends on a check somewhere else is worth keeping and worth testing
+    directly, because the day the other check moves is the day this one matters again.
+    """
+    placement = sde.GroupPlacement(
+        group="Event",
+        source=sde.Materialization(id="event@pg", engine="pg", layout=None),
+    )
+    with pytest.raises(MapError, match="has no materialisation"):
+        placement.by_id("event@nowhere")

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "share an id",
+  "stage": "map",
+  "why": "materialisation ids are what routing points at, so two with one id make the routing table ambiguous - and which one wins would depend on the order the library happened to parse."
+}

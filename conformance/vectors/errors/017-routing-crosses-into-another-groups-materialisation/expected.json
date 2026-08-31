@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "which that group does not declare",
+  "stage": "map",
+  "why": "materialisation ids are unique only within a group, so a target that exists in some other group is not evidence of anything. Routing a shape at another group's copy reads the entity out of a table that does not hold it - a wrong answer rather than an error, which is why the weaker 'declared somewhere' check is not enough."
+}

@@ -17,6 +17,7 @@ import { MapError } from './errors.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
 import { CONTRACT, entityOf } from './model.js'
+import { enumerateShapes, shapeId } from './shapes.js'
 
 export interface PhysicalLayout {
   readonly tables: Readonly<Record<string, string>>
@@ -166,6 +167,73 @@ function verifyMapSignature(raw: Record<string, unknown>, publicKey: Uint8Array)
   }
 }
 
+/**
+ * Every routing entry must name a materialisation that exists, in the shape's own group.
+ *
+ * This lived in `materializationById` - that is, at the first read that routed through the broken
+ * entry. Deferring it there turns a mistake in a document we hand over into an error inside the
+ * client's request path at a moment nobody can predict: only the shapes routing through that entry
+ * fail, so a run that never issues those operations is green and the map looks applied.
+ *
+ * Two levels, because the model is optional. Without one: the target must be an id declared
+ * somewhere in this map. With one: it must be declared in the group the shape belongs to - the
+ * check that matters, since ids are unique only *within* a group.
+ */
+function checkRoutingTargets(
+  routing: Record<string, unknown>,
+  groups: Record<string, GroupPlacement>,
+  model: LogicalModel | undefined,
+): void {
+  const declared: Record<string, Set<string>> = Object.create(null)
+  const everywhere = new Set<string>()
+  for (const [name, placement] of Object.entries(groups)) {
+    const ids = new Set([placement.source, ...placement.derived].map((m) => m.id))
+    declared[name] = ids
+    for (const id of ids) everywhere.add(id)
+  }
+
+  const entries = Object.entries(routing).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+
+  for (const [shapeIdent, target] of entries) {
+    if (typeof target !== 'string') {
+      throw new MapError(
+        `the routing entry for shape '${shapeIdent}' is not a materialisation id. Routing maps a ` +
+          'shape id to one id, and anything else is a table nobody can look up.',
+      )
+    }
+    if (!everywhere.has(target)) {
+      throw new MapError(
+        `the routing table sends shape '${shapeIdent}' to materialisation '${target}', and no ` +
+          'group in this map declares one with that id. The map is internally inconsistent: ' +
+          `declared ids are ${JSON.stringify([...everywhere].sort())}.`,
+      )
+    }
+  }
+
+  if (!model) return
+
+  const shapes = new Map(enumerateShapes(model).map((shape) => [shapeId(shape), shape]))
+  for (const [shapeIdent, target] of entries) {
+    const shape = shapes.get(shapeIdent)
+    if (!shape) {
+      throw new MapError(
+        `the routing table has an entry for shape '${shapeIdent}', and this model does not produce ` +
+          'that shape. The model version matched, so the two sides enumerated shapes differently - ' +
+          "which is the divergence that puts one library's write in a table another library never " +
+          'looks at.',
+      )
+    }
+    if (!declared[shape.group]?.has(target as string)) {
+      throw new MapError(
+        `the routing table sends shape '${shapeIdent}' - which belongs to group '${shape.group}' - ` +
+          `to materialisation '${target as string}', which that group does not declare. ` +
+          'Materialisation ids are unique only within a group, so this would read ' +
+          `${shape.entity} out of a copy that does not hold it.`,
+      )
+    }
+  }
+}
+
 export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   const body = asRecord(raw, 'a placement map')
 
@@ -272,14 +340,25 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   }
 
   if (options.model) {
-    const missing = modelGroups
-      .map((g) => g.name)
-      .filter((name) => !(name in groups))
-      .sort()
+    const declaredNames = modelGroups.map((g) => g.name)
+    const missing = declaredNames.filter((name) => !(name in groups)).sort()
     if (missing.length > 0) {
       throw new MapError(
         `the map does not place these groups: ${JSON.stringify(missing)}. Every group in the model ` +
           'needs a home before anything can run.',
+      )
+    }
+    // And the other direction. Checking one of the two reads as complete: Python fell through to a
+    // dict lookup and produced a bare KeyError, this one accepted the map in silence. Two
+    // languages, one missing check, two different wrong answers.
+    const unknown = Object.keys(groups)
+      .filter((name) => !declaredNames.includes(name))
+      .sort()
+    if (unknown.length > 0) {
+      throw new MapError(
+        `the map places groups this model does not have: ${JSON.stringify(unknown)}. The model ` +
+          'version matched, so this is not a stale map: the two sides derived colocation groups ' +
+          'differently, and a group nobody declared has no entities to hold.',
       )
     }
   }
@@ -288,6 +367,8 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   if (typeof routingRaw !== 'object' || routingRaw === null) {
     throw new MapError("'routing' must be a mapping from shape id to materialisation id")
   }
+
+  checkRoutingTargets(routingRaw as Record<string, unknown>, groups, options.model)
 
   return {
     contract: CONTRACT,

@@ -29,6 +29,7 @@ import {
   shapeId,
   shapeIr,
 } from '../src/index.js'
+import type { LogicalModel } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
 const CONFORMANCE = join(import.meta.dirname ?? __dirname, '..', '..', 'conformance')
@@ -139,26 +140,69 @@ const ERRORS: Record<string, new (...args: never[]) => Error> = {
   MapError,
 }
 
+interface ErrorExpectation {
+  readonly error: string
+  readonly stage: string
+  readonly match: string
+  readonly load?: { readonly require_signature?: boolean; readonly public_key?: string }
+}
+
 describe('error vectors', () => {
   for (const name of cases('errors')) {
     it(name, () => {
       const dir = join(VECTORS, 'errors', name)
-      const expected = readJson<{ error: string; stage: string; match: string }>(
-        join(dir, 'expected.json'),
-      )
+      const expected = readJson<ErrorExpectation>(join(dir, 'expected.json'))
       const ctor = ERRORS[expected.error]
       expect(ctor, `unknown error class ${expected.error}`).toBeDefined()
 
       // The stage matters as much as the class. A library that raises the right error when a query
       // runs, rather than when the model is built, has a different bug that a type-only assertion
       // cannot see.
-      expect(expected.stage).toBe('model')
+      expect(
+        ['model', 'map'],
+        `${name} expects the error at stage '${expected.stage}', which this runner does not know ` +
+          'how to exercise yet. Failing rather than skipping: a stage nobody runs is a rule ' +
+          'nobody checks.',
+      ).toContain(expected.stage)
 
-      expect(() => modelFromNeutral(readJson(join(dir, 'model.json')))).toThrow(
-        new RegExp(expected.match),
-      )
+      if (expected.stage === 'model') {
+        expect(() => modelFromNeutral(readJson(join(dir, 'model.json')))).toThrow(
+          new RegExp(expected.match),
+        )
+        return
+      }
+
+      // A map-stage vector has a *valid* model, and building it happens outside the assertion. A
+      // vector whose model was broken by accident would otherwise throw at the model stage and
+      // satisfy an assertion that only looks at the class and the message - failing at the wrong
+      // stage entirely, which is the bug the `stage` field exists to catch.
+      const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      const raw = readJson<unknown>(join(dir, 'map.json'))
+      const load = expected.load ?? {}
+      // Built up rather than passed inline: `exactOptionalPropertyTypes` distinguishes an absent
+      // key from one set to undefined, and the library's contract is "no key was provided", which
+      // is the absent case.
+      const options: { model: LogicalModel; publicKey?: Uint8Array; requireSignature?: boolean } = {
+        model,
+        requireSignature: load.require_signature === true,
+      }
+      if (load.public_key) options.publicKey = Buffer.from(load.public_key, 'base64')
+      expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match))
     })
   }
+})
+
+it('covers both error stages with actual vectors', () => {
+  // A stage the runner supports and no vector uses is a rule that reads as covered. Before the map
+  // stage existed, every refusal in section 7 of the contract was checked in Python's own tests and
+  // in nothing shared - which is how one message came to render a literal '{CONTRACT}' in Python
+  // and the number here.
+  const stages = new Set(
+    cases('errors').map(
+      (name) => readJson<ErrorExpectation>(join(VECTORS, 'errors', name, 'expected.json')).stage,
+    ),
+  )
+  expect([...stages].sort()).toEqual(['map', 'model'])
 })
 
 

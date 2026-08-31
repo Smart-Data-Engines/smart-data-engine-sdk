@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "no group in this map declares one with that id",
+  "stage": "map",
+  "why": "a routing entry naming a materialisation that is not in the map used to load cleanly and fail at the first read that routed through it - inside the client's request path, only for the shapes involved, so a staging run that never issued them looked green. Nothing about the check needs runtime information, so it belongs at load."
+}
