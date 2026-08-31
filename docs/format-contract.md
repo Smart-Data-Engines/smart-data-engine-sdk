@@ -346,6 +346,24 @@ where data is written:
   lookup on the model's groups and raised a bare `KeyError`; TypeScript accepted the map in silence.
   One missing rule, two languages, two different wrong answers.
 - `layout` is either explicit or `{"auto": true}`, never both.
+- **`{"auto": true}` derives a PostgreSQL layout, in every implementation.** A layout carries no
+  dialect and a materialisation names its engine by *name* rather than by dialect — deliberately,
+  since reasoning about an engine from its name is what these libraries refuse everywhere — so there
+  is nothing in the document from which the right dialect could be derived. A hand-written map for
+  another engine needs an explicit layout. Both non-PostgreSQL engines refuse a PostgreSQL-derived
+  layout rather than applying it, so this fails closed; the message names a symptom, not the cause.
+  Making `auto` dialect-aware means a new key in a signed document, which by §11 is a loosening and
+  therefore a contract bump in every language at once.
+- **An engine may impose its own schema rather than accepting one.** The orderbook engine stores L2
+  depth in a shape fixed in its own source, so there is no DDL to send it and the relationship
+  inverts: a group either *is* that shape or it cannot be placed there. Nothing in this document
+  changes for such an engine — a layout for it is an ordinary explicit layout, with the engine's own
+  table name and the engine's own column names — and that is the point. An implementation that only
+  reads maps needs no knowledge of it. One that applies them needs to know that rendering the DDL
+  for such a layout yields **no statements**, and that "no statements" there means "nothing to run"
+  rather than "no tables in this layout". The Python library separates the two with
+  `schema_is_fixed(dialect)`; an implementation may spell it differently, since it never reaches a
+  byte of the format.
 - `routing` is optional. A shape with no entry routes to the source.
 - **Every `routing` value must name a materialisation of the shape's own group**, and every key must
   be a shape this model produces. Checked when the map is loaded, not when the shape is first

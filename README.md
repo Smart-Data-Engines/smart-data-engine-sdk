@@ -53,12 +53,31 @@ start, and never revisit, because moving a live table is a project rather than a
 
 **Early.** What works today is the first slice, end to end: declaration, canonical model and version,
 colocation groups, operation shapes, placement maps with signature verification, routing, hashed
-identifiers, telemetry, and **two engine adapters** — PostgreSQL and ClickHouse — each of which
-creates its own schema and reads and writes through it.
+identifiers, telemetry, and **three engine adapters** — PostgreSQL, ClickHouse and the
+[orderbook engine](https://github.com/Smart-Data-Engines/low-cost-and-low-latency-orderbook-dbengine).
+The first two create their own schema and read and write through it.
 
 Two engines is the first point at which any of this means anything. Between a row store and a column
 store lies the decision most applications get wrong once, at the start, and never revisit; with one
 adapter there was nothing to choose between.
+
+The third is a different kind of engine and it changed something about this library rather than
+adding to it. It stores L2 orderbook depth in a shape fixed in its own C++ source, so there is no
+`CREATE TABLE` to send it and the relationship inverts: for PostgreSQL and ClickHouse you declare a
+model and we choose the physical schema, and here the engine has already chosen. A group either *is*
+that shape or it cannot be placed there, and `sde.ORDERBOOK_SHAPE` is the shape.
+
+Three differences from a general-purpose store are named rather than smoothed over, because a client
+planning around this engine needs to know which promises it does not make. It has no transactions.
+It does not enforce a key — two writes with the same one both persist, measured, so a read by key
+**refuses** when it finds two rather than answering with one of them. And its unit of work is an
+update of N depth levels rather than a row, because `level` is a price's index inside an update and
+not a column the write API accepts; a single-row write can therefore only produce level 0, and any
+other value is refused rather than stored at 0 with the read disagreeing with the write.
+
+Smoothing any of those over had only bad forms. Mapping a client's field names onto the engine's
+would mean guessing which declared field is the price from what it is called, and reasoning from a
+name is what this library refuses everywhere else.
 
 The pair is also what makes a claim checkable that was previously only stated. `save()` the same value
 through both adapters, read it back from each, and the two results have to be equal — in content *and*
@@ -74,7 +93,7 @@ order to prove the verification notices.
 
 | Library | Tier | Status |
 |---|---|---|
-| [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL and ClickHouse, plus hashing | reference implementation |
+| [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, ClickHouse and the orderbook engine, plus hashing | reference implementation |
 | [`typescript/`](typescript/) | 0, plus hashing | passes the same vectors, byte for byte |
 | `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has two implementations, which is what made it safe to invite them |
 
@@ -172,9 +191,26 @@ make pg-up && make check
 Python and TypeScript have both drifted, you want to see both, because the fix is usually in the
 contract rather than in either library.
 
-The integration slice runs against a real PostgreSQL rather than a fake. A fake would agree with
-whatever this library believes about types, quoting and transactions, which is exactly the set of
-beliefs worth checking.
+The integration slices run against real servers rather than fakes. A fake would agree with whatever
+this library believes about types, quoting and transactions, which is exactly the set of beliefs
+worth checking.
+
+The orderbook slice is the exception, and the exception is split rather than waived. That engine's
+Python client is not on PyPI and its shared library is built from C++, so it cannot run everywhere.
+Everything the adapter *decides* — the shape check, the level refusal, the refusal on a duplicate
+key, unknown-not-zero for a sequence number — happens before the client library is called and is
+tested against a fake, which runs everywhere. What a fake cannot check is whether the engine still
+behaves as measured, so four measurements are asserted against the engine itself:
+
+```bash
+git clone https://github.com/Smart-Data-Engines/low-cost-and-low-latency-orderbook-dbengine ../ob
+cmake -S ../ob -B ../ob/build && cmake --build ../ob/build -j"$(nproc)"
+OB_LIB_PATH=$PWD/../ob/build/liborderbook_shared.so PYTHONPATH=$PWD/../ob/python \
+  SDE_ORDERBOOK=1 python/.venv/bin/python -m pytest python/tests/test_orderbook_slice.py
+```
+
+If the engine changes, that file fails and the fake stops describing something true — which is the
+failure mode a fake normally hides.
 
 ## Contributing
 

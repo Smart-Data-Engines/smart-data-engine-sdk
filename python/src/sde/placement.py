@@ -128,6 +128,17 @@ def _layout(raw: Mapping[str, Any], where: str) -> PhysicalLayout | object:
     ``{"auto": true}`` is what makes a hand-written map a few lines rather than a full schema
     written out by hand. Without it the no-account mode from requirement 12.5 would be technically
     true and practically unusable, which is the same as not having it.
+
+    It derives a **PostgreSQL** layout, always, and that is a limit rather than a default worth
+    changing quietly. A layout has no dialect in it and the map names an engine by *name*, not by
+    dialect - deliberately, since reasoning from an engine's name is what this library refuses
+    everywhere - so there is nothing here from which the right dialect could be known. A
+    hand-written map for ClickHouse or for the orderbook engine therefore needs an explicit layout,
+    and both of those engines refuse a PostgreSQL-derived one rather than applying it: ClickHouse
+    because it carries indexes it has no B-tree for, the orderbook engine because the table is not
+    the one name its storage has. Fails closed, in other words, but the message names the symptom.
+    Making ``auto`` dialect-aware means a new key in a signed document, which is a loosening of the
+    format and so a contract bump in every language at once - see section 11.
     """
     if not isinstance(raw, dict):
         raise MapError(f"{where}: layout must be an object")

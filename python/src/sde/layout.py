@@ -31,9 +31,16 @@ from .placement import PhysicalLayout
 
 __all__ = [
     "CLICKHOUSE_TYPES",
+    "FIXED_SCHEMA",
+    "ORDERBOOK_KEY",
+    "ORDERBOOK_SHAPE",
+    "ORDERBOOK_TABLE",
+    "ORDERBOOK_TYPES",
     "POSTGRES_TYPES",
     "can_store",
     "default_layout",
+    "fixed_schema_mismatch",
+    "group_columns",
     "snake_case",
     "stored_types",
 ]
@@ -105,21 +112,159 @@ def snake_case(name: str) -> str:
     return _CAMEL_BOUNDARY.sub("_", normalised).lower()
 
 
+ORDERBOOK_TYPES: Final[Mapping[str, str]] = {
+    # Only the types the fixed shape uses, and their engine spelling is the C type the API takes.
+    # Everything else is absent, and the absence is the same refusal ClickHouse makes for `bytes`:
+    # a neutral type with no entry here cannot be given a column, so the group cannot be placed.
+    # It matters less here than there, because a model with an extra *field* is already refused by
+    # `fixed_schema_mismatch` - but the two refusals have to agree, and the cheapest way to make
+    # them agree is for this table to hold exactly the types the shape names.
+    "string": "char*",
+    "int32": "uint32_t",
+    "int64": "int64_t",
+}
+
 _DIALECT_TYPES: Final[Mapping[str, Mapping[str, str]]] = {
     "postgres": POSTGRES_TYPES,
     "clickhouse": CLICKHOUSE_TYPES,
+    "orderbook": ORDERBOOK_TYPES,
 }
 
 # The dialects this library knows, as one public list. It exists because the control plane kept its
 # own vocabulary - `postgresql` there, `postgres` here - and the two agreed only for as long as
 # nothing joined them. The first code that needed both spellings to match was the one rendering DDL
 # for an engine named in the registry, and it failed at runtime rather than at any earlier point.
-DIALECTS: Final[tuple[str, ...]] = ("clickhouse", "postgres")
+DIALECTS: Final[tuple[str, ...]] = ("clickhouse", "orderbook", "postgres")
 
 _DECIMAL: Final[Mapping[str, str]] = {
     "postgres": "numeric({digits},{scale})",
     "clickhouse": "Decimal({digits}, {scale})",
 }
+
+
+# ── An engine whose schema is not ours to choose ─────────────────────────────────────────────────
+#
+# Everything above answers "what columns should this entity get here". The orderbook engine answers
+# it first: it stores L2 depth in one shape, fixed in C++, and there is no CREATE TABLE to send it.
+# So the relationship inverts. For PostgreSQL and ClickHouse the client declares a model and we
+# decide the physical schema; here the engine has already decided, and either the client's model
+# *is* that shape or the group cannot go there.
+#
+# That is stated rather than smoothed over, because smoothing it over has only bad forms. Mapping
+# the client's field names onto the engine's - `at` onto `timestamp_ns`, `qty` onto `quantity` -
+# would mean guessing which declared field is the price from what it is called, and reasoning from a
+# name is the one thing this product refuses everywhere else. Accepting a wider model and dropping
+# the extra fields would lose data in an engine chosen for not losing any.
+#
+# The consequence is a constraint on the model, and the refusal names the whole expected shape so it
+# is actionable in one read.
+
+ORDERBOOK_TABLE: Final[str] = "orderbook"
+"""The engine's own name for its storage. One table, and we did not name it."""
+
+ORDERBOOK_SHAPE: Final[Mapping[str, str]] = {
+    # The address. Not columns in a result row - the engine's query language takes them in the FROM
+    # clause, `FROM 'BTCUSDT'.'binance'` - but they are fields of the entity and part of its key,
+    # because two rows differing only in symbol are different rows.
+    "symbol": "string",
+    "exchange": "string",
+    # The row.
+    "timestamp_ns": "int64",
+    "side": "string",
+    "level": "int32",
+    "price": "int64",
+    "quantity": "int64",
+    "order_count": "int32",
+    # Nullable in the model and *unknown* rather than zero when the engine cannot supply it. The
+    # engine returns 0 for a row whose sequence number it does not have, which is a safe sentinel
+    # there because its own numbering starts at 1 - and it is not safe here, because a client
+    # comparing sequence numbers cannot tell a sentinel from a value. The adapter converts.
+    "sequence_number": "int64",
+}
+"""The nine fields an entity must declare, by name and by neutral type, to live in this engine.
+
+``price`` and ``quantity`` are integers in the engine's sub-unit, not decimals. That is the engine's
+choice and it is the right one for an orderbook - a decimal per level per update is a rounding
+question in the hot path - but it means a client who declared ``decimal(12,2)`` is declaring a
+different model, and this refuses rather than converting. Converting would put our arithmetic
+between the client's price and their storage.
+"""
+
+ORDERBOOK_KEY: Final[tuple[str, ...]] = (
+    "symbol",
+    "exchange",
+    "timestamp_ns",
+    "side",
+    "level",
+)
+"""The key, in the order the engine addresses by. Positional and load-bearing, as in ClickHouse."""
+
+FIXED_SCHEMA: Final[frozenset[str]] = frozenset({"orderbook"})
+"""Dialects whose physical schema the engine imposes rather than accepting from us.
+
+A named set rather than a check on the dialect string, so that the three places that have to behave
+differently - the layout, the DDL renderer and the control plane's eligibility filter - agree by
+construction instead of each testing for one name.
+"""
+
+_FIXED_SHAPES: Final[Mapping[str, tuple[str, Mapping[str, str], tuple[str, ...]]]] = {
+    "orderbook": (ORDERBOOK_TABLE, ORDERBOOK_SHAPE, ORDERBOOK_KEY),
+}
+
+assert set(_FIXED_SHAPES) == set(FIXED_SCHEMA), sorted(set(_FIXED_SHAPES) ^ set(FIXED_SCHEMA))
+
+
+def fixed_schema_mismatch(
+    columns: Mapping[str, Mapping[str, str]], *, dialect: str
+) -> str | None:
+    """Why a group cannot live in a fixed-schema engine, or ``None`` if it can.
+
+    ``columns`` is entity name to column name to neutral type - what :func:`group_columns` returns.
+    ``None`` for a dialect that is not fixed-schema, because "no objection" is the honest answer to
+    a question that does not apply: the caller asks this once per engine and branching on the
+    dialect at the call site would put the set of fixed-schema engines in two places.
+
+    A type check alone is not enough and that is the whole reason this exists. The orderbook shape
+    is made of ``string``, ``int32`` and ``int64``, all of which every engine can store - so a model
+    of two integers and a string passes representability and then fails while the layout is built,
+    which is the failure this function was added to stop happening twice.
+    """
+    fixed = _FIXED_SHAPES.get(dialect)
+    if fixed is None:
+        return None
+    _, shape, _ = fixed
+
+    if len(columns) != 1:
+        return (
+            f"this engine stores one thing, and this group has {len(columns)} entities "
+            f"({sorted(columns)}). A colocation group is what shares an engine, so a group of two "
+            f"cannot go somewhere with room for one."
+        )
+    entity, declared = next(iter(columns.items()))
+
+    missing = sorted(set(shape) - set(declared))
+    extra = sorted(set(declared) - set(shape))
+    wrong = sorted(
+        f"{name} is declared {declared[name]!r} and this engine stores {shape[name]!r}"
+        for name in sorted(set(shape) & set(declared))
+        if declared[name] != shape[name]
+    )
+    if not (missing or extra or wrong):
+        return None
+
+    problems = []
+    if missing:
+        problems.append(f"{entity} declares no {missing}")
+    if extra:
+        problems.append(f"{entity} declares {extra}, which this engine has nowhere to put")
+    if wrong:
+        problems.append("; ".join(wrong))
+    expected = ", ".join(f"{name}: {kind}" for name, kind in shape.items())
+    return (
+        f"{'. '.join(problems)}. This engine's schema is fixed in the engine and not chosen by us, "
+        f"so a model either is that shape or cannot be stored here. The shape is exactly: "
+        f"{expected}."
+    )
 
 
 def _column_type(neutral: str, dialect: str) -> str:
@@ -132,7 +277,18 @@ def _column_type(neutral: str, dialect: str) -> str:
     types = _DIALECT_TYPES[dialect]
     if neutral.startswith("decimal("):
         digits, scale = neutral[len("decimal(") : -1].split(",")
-        return _DECIMAL[dialect].format(digits=digits, scale=scale)
+        template = _DECIMAL.get(dialect)
+        if template is None:
+            # A DeclarationError rather than a KeyError, because this is the same answer as any
+            # other unmapped neutral type - the engine cannot give this column a type - and
+            # `can_store` distinguishes "cannot store" from "does not parse" by which exception it
+            # sees. The orderbook engine stores prices as integers in a sub-unit; a decimal there
+            # would need our arithmetic between the client's price and their storage.
+            raise DeclarationError(
+                f"no {dialect} type for {neutral!r}. This engine has no decimal type at all, so "
+                f"this is a gap in the model for this engine rather than in the adapter."
+            )
+        return template.format(digits=digits, scale=scale)
     try:
         return types[neutral]
     except KeyError:
@@ -208,6 +364,17 @@ def _neutral_columns(model: LogicalModel, group: Group) -> dict[str, dict[str, s
     return out
 
 
+def group_columns(model: LogicalModel, group: Group) -> Mapping[str, Mapping[str, str]]:
+    """Every column a group's tables need, per entity, in the neutral vocabulary.
+
+    The public form of the derivation the layout uses. Exposed because the control plane has two
+    questions to ask before it picks an engine - can this engine store these types, and does this
+    group *fit* an engine whose shape is fixed - and the second one needs the column names, not just
+    the types.
+    """
+    return _neutral_columns(model, group)
+
+
 def stored_types(model: LogicalModel, group: Group) -> tuple[str, ...]:
     """The neutral types a group's tables need, sorted and deduplicated.
 
@@ -250,6 +417,21 @@ def default_layout(
         )
 
     neutral = _neutral_columns(model, group)
+
+    if dialect in FIXED_SCHEMA:
+        mismatch = fixed_schema_mismatch(neutral, dialect=dialect)
+        if mismatch is not None:
+            raise DeclarationError(mismatch)
+        table, shape, _ = _FIXED_SHAPES[dialect]
+        entity = next(iter(neutral))
+        # The engine's own table name and the engine's own column names, typed through the same
+        # `_column_type` as everything else so that an unmapped neutral type still raises here
+        # rather than producing a column with a plausible C type nobody chose.
+        return PhysicalLayout(
+            tables={entity: table},
+            columns={entity: {name: _column_type(kind, dialect) for name, kind in shape.items()}},
+            indexes=(),
+        )
 
     tables: dict[str, str] = {}
     columns: dict[str, dict[str, str]] = {}

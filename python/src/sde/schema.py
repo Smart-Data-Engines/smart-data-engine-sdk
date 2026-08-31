@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 
 from .errors import EngineError
-from .layout import DIALECTS
+from .layout import DIALECTS, FIXED_SCHEMA
 from .placement import PhysicalLayout
 
 
@@ -121,15 +121,56 @@ def _clickhouse_statements(
     return tuple(statements)
 
 
+def _no_statements(layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
+    """No DDL, because this engine's schema is not ours to create.
+
+    An empty tuple rather than a raise, and the difference matters. "Run nothing" is the *correct*
+    action for a caller preparing a fixed-schema engine: the storage exists the moment the engine
+    opens its data directory, and the client's obligation is that their model matches the shape -
+    which ``default_layout`` has already enforced by the time a layout exists to render.
+
+    Raising would push the branch out to every caller, which is the shape of the defect this module
+    was extracted to remove. What the empty tuple loses is the *explanation*, and
+    :func:`schema_is_fixed` supplies that to anybody printing one - the control plane's placement
+    report does, because "here is the schema we chose for you: (nothing)" needs a sentence after it.
+    """
+    return ()
+
+
 _BY_DIALECT = {
     "postgres": _postgres_statements,
     "clickhouse": _clickhouse_statements,
+    "orderbook": _no_statements,
 }
 
 # A dialect this library types columns for and cannot render DDL for would be a map it can build and
 # not apply, so the two lists have to be the same list.
 assert set(_BY_DIALECT) == set(DIALECTS), sorted(set(_BY_DIALECT) ^ set(DIALECTS))
-assert set(QUOTE) == set(DIALECTS), sorted(set(QUOTE) ^ set(DIALECTS))
+
+# Quoting is not the same list, and the exception is named rather than absorbed: a fixed-schema
+# engine never has an identifier of ours to escape. It emits no DDL, and its query language takes
+# the symbol and the exchange as string *literals* rather than identifiers. A no-op quoting function
+# entered here to satisfy a symmetry would look usable and silently escape nothing the day somebody
+# reached for it.
+_QUOTED = set(DIALECTS) - FIXED_SCHEMA
+assert set(QUOTE) == _QUOTED, sorted(set(QUOTE) ^ _QUOTED)
+
+
+def schema_is_fixed(dialect: str) -> bool:
+    """Whether this engine imposes its own schema, so an empty statement list means "nothing to do".
+
+    The one public way to tell that apart from "no tables in this layout". A caller that never asks
+    still behaves correctly - creating nothing is right - but a caller *reporting* what the client
+    must do has a different sentence to write, and guessing which by testing the dialect string
+    would put the set of fixed-schema engines in two places.
+    """
+    if dialect not in _BY_DIALECT:
+        raise EngineError(
+            f"unknown dialect {dialect!r}; this library renders {sorted(_BY_DIALECT)}. Answering "
+            f"False would say 'that engine takes DDL from us' about an engine it has never heard "
+            f"of."
+        )
+    return dialect in FIXED_SCHEMA
 
 
 def schema_statements(
