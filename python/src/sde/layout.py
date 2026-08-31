@@ -103,6 +103,12 @@ _DIALECT_TYPES: Final[Mapping[str, Mapping[str, str]]] = {
     "clickhouse": CLICKHOUSE_TYPES,
 }
 
+# The dialects this library knows, as one public list. It exists because the control plane kept its
+# own vocabulary - `postgresql` there, `postgres` here - and the two agreed only for as long as
+# nothing joined them. The first code that needed both spellings to match was the one rendering DDL
+# for an engine named in the registry, and it failed at runtime rather than at any earlier point.
+DIALECTS: Final[tuple[str, ...]] = ("clickhouse", "postgres")
+
 _DECIMAL: Final[Mapping[str, str]] = {
     "postgres": "numeric({digits},{scale})",
     "clickhouse": "Decimal({digits}, {scale})",

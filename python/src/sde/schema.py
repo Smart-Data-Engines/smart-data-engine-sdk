@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 
 from .errors import EngineError
+from .layout import DIALECTS
 from .placement import PhysicalLayout
 
 
@@ -124,6 +125,11 @@ _BY_DIALECT = {
     "postgres": _postgres_statements,
     "clickhouse": _clickhouse_statements,
 }
+
+# A dialect this library types columns for and cannot render DDL for would be a map it can build and
+# not apply, so the two lists have to be the same list.
+assert set(_BY_DIALECT) == set(DIALECTS), sorted(set(_BY_DIALECT) ^ set(DIALECTS))
+assert set(QUOTE) == set(DIALECTS), sorted(set(QUOTE) ^ set(DIALECTS))
 
 
 def schema_statements(
