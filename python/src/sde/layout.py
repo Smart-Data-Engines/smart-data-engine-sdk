@@ -29,7 +29,14 @@ from .groups import Group
 from .model import LogicalModel
 from .placement import PhysicalLayout
 
-__all__ = ["CLICKHOUSE_TYPES", "POSTGRES_TYPES", "default_layout", "snake_case"]
+__all__ = [
+    "CLICKHOUSE_TYPES",
+    "POSTGRES_TYPES",
+    "can_store",
+    "default_layout",
+    "snake_case",
+    "stored_types",
+]
 
 _CAMEL_BOUNDARY: Final = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
@@ -135,6 +142,96 @@ def _column_type(neutral: str, dialect: str) -> str:
         ) from None
 
 
+def can_store(neutral: str, *, dialect: str) -> bool:
+    """Whether this dialect has a column type for this neutral type.
+
+    The one public question about representability, and it exists because the answer was previously
+    only obtainable by trying: a group with a ``bytes`` field placed in ClickHouse produced a
+    valid scoring decision and then raised out of ``default_layout``. The refusal was correct and it
+    landed in the wrong place - at map-build time, where it reads as our defect rather than as a
+    reason one engine was not a candidate.
+
+    Implemented by asking the renderer rather than by a second table. A representability check that
+    could disagree with the type mapping would be worse than none: it would let a placement be
+    approved and then fail to apply, which is the failure the byte contract exists to prevent.
+
+    A malformed type - ``decimal(x)`` - is not answered ``False``. "This engine cannot store it"
+    is a claim about the engine; a type that parses nowhere is a claim about the model, and the
+    model's own validation owns it. So that raises through.
+    """
+    if dialect not in _DIALECT_TYPES:
+        raise DeclarationError(
+            f"no type table for dialect {dialect!r}; this library knows {sorted(_DIALECT_TYPES)}. "
+            f"Answering False would say 'that engine cannot store it' about an engine this library "
+            f"has never heard of."
+        )
+    try:
+        _column_type(neutral, dialect)
+    except DeclarationError:
+        return False
+    return True
+
+
+def _neutral_columns(model: LogicalModel, group: Group) -> dict[str, dict[str, str]]:
+    """Every column a group's tables need, in the neutral vocabulary, before any dialect.
+
+    Factored out of ``default_layout`` because two things need it and a second copy of the loop is
+    how they stop agreeing. ``default_layout`` maps each of these through ``_column_type``;
+    ``stored_types`` asks which of them an engine can represent at all.
+
+    A group has a foreign-key column for every relation whose source is a member. Today those add no
+    *type* the group did not already have, because a relation unions its two ends into one
+    colocation group, so the target's key fields are declared fields of a member. That is a fact
+    about how groups are formed rather than about layouts, and this function does not rely on it -
+    which is the point of deriving the set here instead of from ``spec.fields`` at the call site.
+
+    Insertion order is the declared field order, then relations in declared order. Callers that need
+    a stable ordering get one without sorting; callers that sort - the DDL renderer does - are
+    unaffected.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for entity_name in group.members:
+        spec = model.entity(entity_name)
+        cols: dict[str, str] = {field.name: field.type for field in spec.fields}
+        for relation in model.relations:
+            if relation.source != entity_name:
+                continue
+            target = model.entity(relation.target)
+            for key_field in target.key:
+                key_spec = next(f for f in target.fields if f.name == key_field)
+                # <relation>_<key field>, for a single-field key and for a composite one alike. An
+                # earlier version branched on the key's arity and produced the same name in both
+                # arms, which ruff spotted as a useless condition - correctly, and it was a leftover
+                # from an idea about naming that turned out not to be worth the inconsistency.
+                cols[f"{relation.name}_{key_field}"] = key_spec.type
+        out[entity_name] = cols
+    return out
+
+
+def stored_types(model: LogicalModel, group: Group) -> tuple[str, ...]:
+    """The neutral types a group's tables need, sorted and deduplicated.
+
+    For the control plane, which has to answer "can this engine hold this group" *before* it picks
+    one. Without this the only available answer was to place the group and watch ``default_layout``
+    raise - a correct refusal in the wrong place, because it arrives after the decision is made and
+    reads as our defect rather than as the reason an engine was not a candidate.
+
+    Paired with :func:`can_store`, which is asked once per type. Both come from the same column
+    derivation the layout uses, so an engine reported able to hold a group is one whose layout can
+    actually be rendered - and that equivalence is what the control plane relies on when it excludes
+    an engine instead of discovering the problem while building the map.
+    """
+    return tuple(
+        sorted(
+            {
+                column_type
+                for cols in _neutral_columns(model, group).values()
+                for column_type in cols.values()
+            }
+        )
+    )
+
+
 def default_layout(
     model: LogicalModel, group: Group, *, dialect: str = "postgres"
 ) -> PhysicalLayout:
@@ -152,31 +249,18 @@ def default_layout(
             f"dialects are {sorted(_DIALECT_TYPES)}."
         )
 
+    neutral = _neutral_columns(model, group)
+
     tables: dict[str, str] = {}
     columns: dict[str, dict[str, str]] = {}
     indexes: list[dict[str, object]] = []
 
     for entity_name in group.members:
-        spec = model.entity(entity_name)
         tables[entity_name] = snake_case(entity_name)
-
-        cols: dict[str, str] = {}
-        for field in spec.fields:
-            cols[field.name] = _column_type(field.type, dialect)
-
-        for relation in model.relations:
-            if relation.source != entity_name:
-                continue
-            target = model.entity(relation.target)
-            for key_field in target.key:
-                key_spec = next(f for f in target.fields if f.name == key_field)
-                # <relation>_<key field>, for a single-field key and for a composite one alike. An
-                # earlier version branched on the key's arity and produced the same name in both
-                # arms, which ruff spotted as a useless condition - correctly, and it was a leftover
-                # from an idea about naming that turned out not to be worth the inconsistency.
-                cols[f"{relation.name}_{key_field}"] = _column_type(key_spec.type, dialect)
-
-        columns[entity_name] = cols
+        columns[entity_name] = {
+            column: _column_type(neutral_type, dialect)
+            for column, neutral_type in neutral[entity_name].items()
+        }
 
         # One index, and only because a foreign key without one turns every relation walk into a
         # sequential scan. Anything beyond this is a planner decision with a cost attached, and the
