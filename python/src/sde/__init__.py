@@ -50,6 +50,7 @@ from .placement import (
     load_map,
 )
 from .routing import Router, resolve
+from .schema import schema_statements
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, OperationShape, enumerate_shapes
 from .telemetry import (
@@ -119,5 +120,6 @@ __all__ = [
     "registry",
     "reset_internal_failures",
     "resolve",
+    "schema_statements",
     "snake_case",
 ]
