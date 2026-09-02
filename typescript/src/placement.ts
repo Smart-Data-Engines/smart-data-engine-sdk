@@ -99,7 +99,7 @@ export const MAP_CONTRACT_FLOOR = 1
 
 export const WATERMARK_TABLE = 'sde_map_state'
 /**
- * The table the Python library keeps its own bookkeeping in: the highest map version applied
+ * The table the Python library keeps its map bookkeeping in: the highest map version applied
  * against an engine, which is what stops an older signed map being loaded over a newer one.
  *
  * This runtime has no engine adapters, so it never writes that table - and it refuses a layout
@@ -107,6 +107,32 @@ export const WATERMARK_TABLE = 'sde_map_state'
  * and not the other is exactly the divergence the conformance suite exists to catch: one map, two
  * libraries, accepted here and refused there. Nothing in this file could have discovered that on
  * its own.
+ */
+
+export const BACKFILL_TABLE = 'sde_backfill_state'
+/**
+ * The table the Python library keeps its backfill progress in: how many rows of each entity a
+ * migration has copied into an engine, which is what lets an interrupted backfill resume.
+ *
+ * The second reserved name, and the reason the refusal below is written over a table of them
+ * rather than over one string.
+ */
+
+export const RESERVED_TABLES: ReadonlyArray<readonly [string, string]> = [
+  [
+    WATERMARK_TABLE,
+    'the highest map version applied against an engine, which is what stops an older map from ' +
+      'being loaded over a newer one',
+  ],
+  [
+    BACKFILL_TABLE,
+    'how many rows of each entity a migration has copied into an engine, which is what lets an ' +
+      'interrupted backfill resume instead of starting over',
+  ],
+]
+/**
+ * Table names the library owns, and what each one holds - kept in the same order as the Python
+ * mapping so that a document colliding with two of them is refused for the same one in both.
  */
 
 const AUTO = Symbol('auto-layout')
@@ -137,18 +163,19 @@ function readLayout(raw: unknown, where: string): MaybeLayout {
         'to have one derived from the model',
     )
   }
-  const reserved = Object.entries(tables as Record<string, string>)
-    .filter(([, table]) => table === WATERMARK_TABLE)
-    .map(([entity]) => entity)
-    .sort()
-  if (reserved.length > 0) {
-    throw new MapError(
-      `${where}: ${JSON.stringify(reserved)} would be stored in a table called ` +
-        `'${WATERMARK_TABLE}', which this library keeps its own bookkeeping in - the highest map ` +
-        'version applied against an engine, which is what stops an older map from being loaded ' +
-        'over a newer one. A client table under that name would be read as bookkeeping and ' +
-        'written to as bookkeeping. Rename the table; the name is yours to choose everywhere else.',
-    )
+  for (const [name, holds] of RESERVED_TABLES) {
+    const reserved = Object.entries(tables as Record<string, string>)
+      .filter(([, table]) => table === name)
+      .map(([entity]) => entity)
+      .sort()
+    if (reserved.length > 0) {
+      throw new MapError(
+        `${where}: ${JSON.stringify(reserved)} would be stored in a table called ` +
+          `'${name}', which this library keeps its own bookkeeping in - ${holds}. A client table ` +
+          'under that name would be read as bookkeeping and written to as bookkeeping. Rename ' +
+          'the table; the name is yours to choose everywhere else.',
+      )
+    }
   }
   return {
     tables: tables as Record<string, string>,

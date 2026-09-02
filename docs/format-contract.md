@@ -446,6 +446,21 @@ language. That refusal is a parsing rule, so it belongs here rather than in an a
 holds in one runtime and not the other is one map with two meanings, which is what this document
 exists to prevent. Vector: `errors/019-layout-names-the-reserved-bookkeeping-table`.
 
+There is now a second reserved name, and the pair is why the refusal is written over a table of them
+rather than over one string:
+
+| Name | `sde_backfill_state` |
+|---|---|
+| Columns | `materialization` (string), `entity` (string), `rows_copied` (int64), `at` (timestamp, engine default) |
+| Writes | **append-only**; the marker is `max(rows_copied)` per (`materialization`, `entity`) |
+| Created | on first read, by the adapter, if it is missing |
+| Scope | one row count per fan-out target per entity - see the migration section below |
+
+Vector: `errors/025-layout-names-the-reserved-backfill-table`. A reserved name a client's model can
+collide with is a collision that fails silently in the direction that matters: their rows read as
+progress, our progress written into their table. Both reservations are tightenings and neither is a
+version bump.
+
 Four rules, and the first two are what make the mechanism safe rather than merely present:
 
 - **append-only, watermark is `max()`.** No update, no key to enforce, no row to contend over - and
@@ -471,6 +486,35 @@ a document, so there is no version bump: the reservation is a *tightening* of a 
 and the bookkeeping is behaviour in a runtime that has engine adapters. A runtime with none - the
 TypeScript one today - implements the reservation and nothing else, which is the whole of what a
 Tier 0 library can do here.
+
+### The backfill marker: a row count, and never a key
+
+The `also_write` key below says where a copy goes. What says how much of it has arrived is one
+integer per (fan-out target, entity), and the choice of an integer over "the last key copied" is the
+one decision in a migration a future language port must not get wrong.
+
+A key marker resumes exactly and needs a **codec**: every type a key can be has to survive a round
+trip through whatever column the marker table has, in every language that grows an adapter. The
+failure mode of a lossy round trip is a resume point *past* rows that were never copied, which is
+silent data loss - and it would be data loss that one language has and another does not, which is
+precisely the divergence this document exists to prevent. A row count has no codec and cannot fail
+that way: resuming means asking the source for the key of row *N*, and if rows have been inserted
+below that point since, row *N* is now earlier than it was, so the backfill redoes work. Every error
+in that derivation points at recopying.
+
+Recopying is free because two further rules hold each other up:
+
+- **the chunk is written before the marker moves.** A crash between them costs a recopy; the other
+  order costs the chunk, permanently;
+- **the copy is idempotent, using the target's own key semantics.** `ON CONFLICT DO NOTHING` where
+  there is a primary key, a `ReplacingMergeTree` collapsing under `FINAL` where there is not. An
+  engine that can offer neither cannot be a fan-out target, and that is a named refusal rather than
+  a silent skip.
+
+Two consequences a port should not have to rediscover. The marker is **never a key value**, so it
+never appears in a log line either - a log is the last place a client's own data should turn up. And
+a source with fewer rows than the marker claims were copied **refuses**: rows left the source outside
+the library, so the marker describes a table that no longer exists.
 
 **A limitation, stated rather than left to be found.** The watermark is per engine, and this format
 has no field naming which stream of maps a document belongs to. An engine shared by two independent

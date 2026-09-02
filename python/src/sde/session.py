@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from time import perf_counter_ns
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from .errors import EngineError, ModelPlanningError
@@ -116,6 +117,30 @@ class Session:
         # the same place. It costs one statement per participating engine, once per process, and
         # nothing at all for an unsigned map.
         self._forward_only = enforce_forward_only(placement, self._engines)
+
+    # --- what a session is -----------------------------------------------------------------
+    #
+    # The three things a session was handed, readable. Exposed for `sde.migration`, which needs all
+    # three and is deliberately a set of free functions rather than methods here: a call that copies
+    # a table for an hour has no business sitting in autocomplete next to `save()`. Reaching into
+    # private attributes from a sibling module would have worked and would have made this class a
+    # friend of that one, which is a worse arrangement than admitting what a session holds.
+
+    @property
+    def model(self) -> LogicalModel:
+        """The model this session routes. Digests rather than the client's names when hashing is on,
+        like everything else downstream of that boundary."""
+        return self._model
+
+    @property
+    def placement(self) -> PlacementMap:
+        """The map in force."""
+        return self._placement
+
+    @property
+    def engines(self) -> Mapping[str, Engine]:
+        """The adapters, by the names the map uses. A read-only view; the session keeps its own."""
+        return MappingProxyType(self._engines)
 
     @property
     def rollback_protection(self) -> WatermarkCheck:

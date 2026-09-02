@@ -44,8 +44,10 @@ export type {
 } from './placement.js'
 export {
   ALSO_WRITE_SINCE,
+  BACKFILL_TABLE,
   MAP_CONTRACT,
   MAP_CONTRACT_FLOOR,
+  RESERVED_TABLES,
   WATERMARK_TABLE,
   loadMap,
   materializationById,

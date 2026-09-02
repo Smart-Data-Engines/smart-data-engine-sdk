@@ -34,6 +34,8 @@ from .logging import log
 from .model import LogicalModel
 
 __all__ = [
+    "BACKFILL_TABLE",
+    "RESERVED_TABLES",
     "GroupPlacement",
     "Materialization",
     "PhysicalLayout",
@@ -168,7 +170,7 @@ the promise was that hand-writing a map is enough.
 """
 
 WATERMARK_TABLE = "sde_map_state"
-"""The table this library keeps its own bookkeeping in - see :mod:`sde.watermark`.
+"""The table this library keeps its map bookkeeping in - see :mod:`sde.watermark`.
 
 Defined here rather than there because the reservation is a property of the map format, and because
 ``watermark.py`` imports this module: a layout naming this table is refused when the map is loaded.
@@ -176,6 +178,32 @@ Defined here rather than there because the reservation is a property of the map 
 A client entity called ``SdeMapState`` would derive this table name from the model, and the refusal
 below catches that too - at map load, which for a map we issue means at issuance, since `issue()`
 parses its own output with this parser. The message names the fix, which is to rename the entity.
+"""
+
+BACKFILL_TABLE = "sde_backfill_state"
+"""The table this library keeps its backfill progress in - see :mod:`sde.migration`.
+
+The second of these, and the reason the refusal below is written over a set rather than over one
+name: a bookkeeping table whose name is not reserved is a table a client's model can collide with,
+and the collision is silent in the direction that matters - we would read their rows as progress and
+write progress into their table.
+"""
+
+RESERVED_TABLES: Mapping[str, str] = {
+    WATERMARK_TABLE: (
+        "the highest map version applied against an engine, which is what stops an older map "
+        "from being loaded over a newer one"
+    ),
+    BACKFILL_TABLE: (
+        "how many rows of each entity a migration has copied into an engine, which is what lets "
+        "an interrupted backfill resume instead of starting over"
+    ),
+}
+"""Table names this library owns, and what each one holds.
+
+A mapping rather than a set so the refusal can say what the collision would break. "This name is
+reserved" sends the reader to our source; "this name holds the backfill marker" tells them why
+their entity cannot have it.
 """
 
 _AUTO = object()
@@ -215,17 +243,15 @@ def _layout(raw: Mapping[str, Any], where: str) -> PhysicalLayout | object:
             f"{where}: layout needs a non-empty 'tables' mapping entity -> table name, "
             'or {"auto": true} to have one derived from the model'
         )
-    reserved = sorted(
-        entity for entity, table in tables.items() if str(table) == WATERMARK_TABLE
-    )
-    if reserved:
-        raise MapError(
-            f"{where}: {reserved} would be stored in a table called {WATERMARK_TABLE!r}, which "
-            f"this library keeps its own bookkeeping in - the highest map version applied against "
-            f"an engine, which is what stops an older map from being loaded over a newer one. A "
-            f"client table under that name would be read as bookkeeping and written to as "
-            f"bookkeeping. Rename the table; the name is yours to choose everywhere else."
-        )
+    for name, holds in RESERVED_TABLES.items():
+        reserved = sorted(entity for entity, table in tables.items() if str(table) == name)
+        if reserved:
+            raise MapError(
+                f"{where}: {reserved} would be stored in a table called {name!r}, which this "
+                f"library keeps its own bookkeeping in - {holds}. A client table under that name "
+                f"would be read as bookkeeping and written to as bookkeeping. Rename the table; "
+                f"the name is yours to choose everywhere else."
+            )
     return PhysicalLayout(
         tables=dict(tables),
         columns={k: dict(v) for k, v in (raw.get("columns") or {}).items()},

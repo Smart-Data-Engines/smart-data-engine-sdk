@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "sde_backfill_state",
+  "stage": "map",
+  "why": "the second table the library owns: how many rows of each entity a migration has copied into an engine, which is what lets an interrupted backfill resume instead of starting over. Reserved for the same reason as sde_map_state and refused in the same place - a client table under the name would be read as progress and written to as progress, and a backfill reading a client's rows as a row count would resume from a position that means nothing. This runtime has no engine adapters and so never writes the table; the rule is still a parsing rule, and a parsing rule that holds in one language and not the other is one map with two meanings."
+}
