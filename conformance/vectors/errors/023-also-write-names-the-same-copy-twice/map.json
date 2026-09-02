@@ -1,7 +1,11 @@
 {
-  "contract": 3,
+  "contract": 2,
   "groups": {
     "Event": {
+      "also_write": [
+        "Event@ch",
+        "Event@ch"
+      ],
       "derived": [
         {
           "engine": "ch-1",

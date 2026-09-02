@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "not a derived materialisation",
+  "stage": "map",
+  "why": "a fan-out target that does not exist is a write with nowhere to go, and during a migration that is a row the copy never receives. Refused when the map loads rather than at the first write, for the reason the routing table was moved there."
+}

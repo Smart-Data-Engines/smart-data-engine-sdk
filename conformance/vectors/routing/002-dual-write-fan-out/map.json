@@ -1,7 +1,10 @@
 {
-  "contract": 3,
+  "contract": 2,
   "groups": {
     "Event": {
+      "also_write": [
+        "Event@ch"
+      ],
       "derived": [
         {
           "engine": "ch-1",
@@ -45,7 +48,7 @@
       }
     }
   },
-  "map_version": 1,
+  "map_version": 2,
   "model_version": "59a263d15793fb78",
   "routing": {
     "2477d087f39d0ae4": "Event@ch",

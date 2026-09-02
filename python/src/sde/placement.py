@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .canonical import canonical_bytes
 from .errors import MapError
 from .logging import log
-from .model import CONTRACT, LogicalModel
+from .model import LogicalModel
 
 __all__ = [
     "GroupPlacement",
@@ -85,6 +85,20 @@ class GroupPlacement:
     group: str
     source: Materialization
     derived: tuple[Materialization, ...] = ()
+    also_write: tuple[Materialization, ...] = ()
+    """Derived copies that writes are **also** sent to, additionally and never authoritatively.
+
+    This is how a migration reaches the library, and the reason there is no phase name anywhere in
+    the map. A library does not need to know what ``DUAL_WRITE`` means; it needs to know where
+    writes go and where reads go, and both of those were already things a map says. Putting the
+    phase in the document as well would be a second representation of a fact the fan-out and the
+    routing table already carry - and a signed document with two representations of one fact is one
+    that can contradict itself.
+
+    Empty for every map that is not mid-migration, and the key is absent rather than empty then, for
+    the reason ``partition_by`` is: absent says "not doing this", and an empty list says "considered
+    and chose none", which is a stronger claim and a false one.
+    """
 
     def all(self) -> tuple[Materialization, ...]:
         return (self.source, *self.derived)
@@ -118,6 +132,40 @@ class PlacementMap:
                 "nowhere to live is not a slow path, it is an unanswerable operation."
             ) from None
 
+
+MAP_CONTRACT = 2
+"""The placement map's format version, which is not the IR's - see :data:`sde.model.CONTRACT`.
+
+Two because the map gained ``also_write``, which a contract-1 library would ignore while a
+contract-2 one honours it: the same document, two different sets of engines written to, and the
+difference decided by which version happens to be installed. That is a loosening, and section 11 of
+the contract says a loosening bumps the number.
+"""
+
+ALSO_WRITE_SINCE = 2
+"""The contract that introduced ``also_write``.
+
+A document declaring an earlier contract and carrying the key is refused. That is a *tightening* -
+no bump - and it exists because of who makes the mistake: a producer that grew the key and forgot to
+raise the number, which is exactly what happened on the control-plane side of the very change that
+added it. Honouring the key anyway would mean an old library ignoring the fan-out while a new one
+performs it, on the same document.
+"""
+
+MAP_CONTRACT_FLOOR = 1
+"""The oldest map format this library still reads.
+
+**Backwards compatible, forwards strict**, and the asymmetry is knowledge rather than kindness: we
+know exactly what contract 1 was, and every contract-1 document is a valid contract-2 one with a key
+absent - which reads as "no dual write", a complete and correct meaning. What came *after* this
+library cannot be known, so a higher number is refused rather than interpreted, which is the case
+the original message argued for.
+
+The alternative - strict equality, as this library did until contract 2 - couples a library upgrade
+to a control-plane action: a client would have to be issued a new map before they could start. For
+the no-account mode that is worse than inconvenient, because there is nobody to issue them one and
+the promise was that hand-writing a map is enough.
+"""
 
 WATERMARK_TABLE = "sde_map_state"
 """The table this library keeps its own bookkeeping in - see :mod:`sde.watermark`.
@@ -184,6 +232,68 @@ def _layout(raw: Mapping[str, Any], where: str) -> PhysicalLayout | object:
         indexes=tuple(raw.get("indexes") or ()),
         partition_by=dict(raw.get("partition_by") or {}),
     )
+
+
+def _also_write(
+    raw: Any,
+    where: str,
+    *,
+    contract: int,
+    source: Materialization,
+    derived: tuple[Materialization, ...],
+) -> tuple[Materialization, ...]:
+    """The derived copies writes are additionally sent to. Four refusals, each with its failure.
+
+    Validated here rather than at the first write, for the reason the routing table was moved here:
+    a map is a document handed over once and obeyed for months, so a defect in it should be found
+    when it arrives and not by the request that happens to touch it. During a migration that request
+    is a write, and the failure mode is a write that goes to one engine when the map says two.
+    """
+    if raw is None:
+        return ()
+    if contract < ALSO_WRITE_SINCE:
+        raise MapError(
+            f"{where}: this map declares format contract {contract} and uses 'also_write', which "
+            f"contract {ALSO_WRITE_SINCE} introduced. Refused rather than honoured, and the reason "
+            f"is who makes this mistake: a producer that grew the key and forgot to raise the "
+            f"number. Honouring it would mean a contract-1 library ignoring the fan-out while a "
+            f"contract-2 one performs it - the same document, two sets of engines written to - "
+            f"which is the whole failure the version exists to prevent."
+        )
+    if not isinstance(raw, list) or not raw:
+        raise MapError(
+            f"{where}: 'also_write' is a non-empty list of materialisation ids, or absent. Absent "
+            f"means writes go to the source alone; an empty list would be a claim that fan-out was "
+            f"considered and none chosen, which is a stronger thing to say and not what the "
+            f"planner means when it omits the key."
+        )
+    by_id = {m.id: m for m in derived}
+    out: list[Materialization] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            raise MapError(f"{where}: 'also_write' holds materialisation ids, not {entry!r}")
+        if entry == source.id:
+            raise MapError(
+                f"{where}: 'also_write' names the source {entry!r}. The source is where writes "
+                f"already land - listing it would either write the row twice or read as though the "
+                f"source were somehow optional, and both are worse than the refusal."
+            )
+        if entry in seen:
+            raise MapError(
+                f"{where}: 'also_write' names {entry!r} twice. Two identical fan-out targets is "
+                f"either a duplicated row or a document nobody meant to write."
+            )
+        if entry not in by_id:
+            raise MapError(
+                f"{where}: 'also_write' names {entry!r}, which is not a derived materialisation of "
+                f"this group. It has {sorted(by_id)}. A fan-out target that does not exist is a "
+                f"write with nowhere to go, and during a migration that is a row the copy never "
+                f"receives."
+            )
+        seen.add(entry)
+        out.append(by_id[entry])
+    return tuple(out)
 
 
 def _materialization(raw: Mapping[str, Any], where: str, *, source: bool) -> Materialization:
@@ -259,12 +369,23 @@ def load_map(
         raise MapError("a placement map is an object")
 
     contract = raw.get("contract")
-    if contract != CONTRACT:
+    if not isinstance(contract, int) or isinstance(contract, bool):
         raise MapError(
-            f"this map declares format contract {contract!r} and this library implements "
-            f"{CONTRACT}. Refusing rather than guessing: the difference between two contract "
-            f"versions is exactly the kind of thing that would otherwise be interpreted as a "
-            f"missing field meaning zero."
+            f"this map declares format contract {contract!r}, which is not a version number. "
+            f"This library reads {MAP_CONTRACT_FLOOR} to {MAP_CONTRACT}."
+        )
+    if contract > MAP_CONTRACT:
+        raise MapError(
+            f"this map declares format contract {contract} and this library implements "
+            f"{MAP_CONTRACT}. Refusing rather than guessing: a version this library does not know "
+            f"may say something with a key it has never heard of, and the difference between two "
+            f"contract versions is exactly the kind of thing that would otherwise be interpreted "
+            f"as a missing field meaning zero. Upgrade the library."
+        )
+    if contract < MAP_CONTRACT_FLOOR:
+        raise MapError(
+            f"this map declares format contract {contract} and the oldest this library still "
+            f"reads is {MAP_CONTRACT_FLOOR}."
         )
 
     model_version = raw.get("model_version")
@@ -313,7 +434,18 @@ def load_map(
         if len(set(ids)) != len(ids):
             raise MapError(f"{where}: two materialisations share an id")
 
-        groups[name] = GroupPlacement(group=name, source=source, derived=derived)
+        groups[name] = GroupPlacement(
+            group=name,
+            source=source,
+            derived=derived,
+            also_write=_also_write(
+                body.get("also_write"),
+                where,
+                contract=contract,
+                source=source,
+                derived=derived,
+            ),
+        )
 
     routing = raw.get("routing") or {}
     if not isinstance(routing, dict):
@@ -407,10 +539,19 @@ def _resolve_auto(placement: GroupPlacement, model: LogicalModel, group: Any) ->
             lag_budget_ms=mat.lag_budget_ms,
         )
 
-    return GroupPlacement(
-        group=placement.group,
+    # `replace` rather than a fresh GroupPlacement, and this is a fix rather than a preference.
+    # Reconstructing it listed the fields that existed when it was written, so `also_write` was
+    # dropped here the moment it was added: the map parsed, the fan-out came back empty, and writes
+    # went to one engine while the signed document said two. Silently, on the write path, during a
+    # migration - the worst failure this feature has. It is the third time in this project that a
+    # value has been computed and lost at a boundary (`provisional`, then `basis`), so the shape of
+    # the fix matters more than the fix: with `replace`, a field added later travels whether or not
+    # anybody remembers this function.
+    return replace(
+        placement,
         source=fill(placement.source),
         derived=tuple(fill(m) for m in placement.derived),
+        also_write=tuple(fill(m) for m in placement.also_write),
     )
 
 

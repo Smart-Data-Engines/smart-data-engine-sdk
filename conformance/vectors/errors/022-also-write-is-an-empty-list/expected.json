@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "non-empty list",
+  "stage": "map",
+  "why": "absent means writes go to the source alone; an empty list would be a claim that fan-out was considered and none chosen, which is a stronger thing to say and not what the planner means when it omits the key. Same argument as partition_by."
+}

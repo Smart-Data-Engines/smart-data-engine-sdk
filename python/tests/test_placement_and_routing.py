@@ -182,8 +182,54 @@ def test_the_contract_mismatch_message_names_both_versions() -> None:
 
     message = str(raised.value)
     assert "99" in message, "the map's own version has to be in there"
-    assert f"implements {sde.CONTRACT}" in message
+    assert f"implements {sde.MAP_CONTRACT}" in message
     assert "{" not in message, f"an unrendered placeholder survived: {message}"
+
+
+def test_an_older_map_contract_is_accepted_and_a_newer_one_is_not() -> None:
+    """Backwards compatible, forwards strict, and the asymmetry is knowledge rather than kindness.
+
+    Every contract-1 document is a valid contract-2 one with a key absent, which reads as "no dual
+    write" - a complete meaning. What came after this library cannot be known, so a higher number is
+    refused rather than interpreted.
+
+    Strict equality, which is what this library did until contract 2, couples a library upgrade to a
+    control-plane action: a client would need a new map issued before they could start. In the
+    no-account mode there is nobody to issue them one, and the promise was that hand-writing a map
+    is enough.
+    """
+    model = _model()
+    assert sde.MAP_CONTRACT_FLOOR < sde.MAP_CONTRACT, "there is nothing to be compatible with"
+    for readable in range(sde.MAP_CONTRACT_FLOOR, sde.MAP_CONTRACT + 1):
+        loaded = sde.load_map(_map(model, contract=readable), model=model)
+        assert loaded.contract == readable
+    with pytest.raises(MapError, match="Upgrade the library"):
+        sde.load_map(_map(model, contract=sde.MAP_CONTRACT + 1), model=model)
+
+
+def test_a_contract_below_the_floor_and_one_that_is_not_a_number_are_both_refused() -> None:
+    """Zero is the reachable one: it is what somebody hand-writing a map types, and what a field
+    read as "missing means zero" would produce. A non-integer matters for the same reason - `"2"`
+    and `2` are different documents, and a library that accepted the string would be one whose
+    acceptance depended on how its JSON parser felt about types."""
+    model = _model()
+    with pytest.raises(MapError, match="oldest this library still reads is 1"):
+        sde.load_map(_map(model, contract=0), model=model)
+    for wrong in ("2", 2.0, None, True):
+        with pytest.raises(MapError, match="not a version number"):
+            sde.load_map(_map(model, contract=wrong), model=model)  # type: ignore[arg-type]
+
+
+def test_the_map_contract_is_not_the_irs_contract() -> None:
+    """The split that avoided giving every client a new model version for a key in another document.
+
+    `contract` lives *inside* the IR and `model_version` is a digest of the IR, so bumping one
+    number for a change to the map format would invalidate every issued map and re-bless every
+    model vector. The hand-written vector - typed out from the contract document to prove it is
+    implementable, and digest-pinned in CI - is the evidence: adding `also_write` does not move it.
+    """
+    assert sde.CONTRACT == 1
+    assert sde.MAP_CONTRACT >= sde.CONTRACT
 
 
 def test_model_version_mismatch_is_refused() -> None:

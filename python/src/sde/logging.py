@@ -41,6 +41,10 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # nothing, and a schema that has quietly diverged is worth one line.
         "sde.schema.extra_columns",
         "sde.write.failed",
+        # A dual-write fan-out did not reach a copy. Not an application failure: the row is in the
+        # source, which is authoritative, and VERIFY is the gate that refuses to switch reads while
+        # any divergence remains. This is the only place in the library that swallows a write error.
+        "sde.migration.divergence",
         # The orderbook engine only. A write there is invisible to a query until flush(), and
         # flush() in local mode tears the engine down and reopens it - 3.4 ms measured. Reads flush
         # lazily, so this line is where the cost shows up and how many rows it bought.

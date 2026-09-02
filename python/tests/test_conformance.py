@@ -104,6 +104,18 @@ def test_routing_vector(case: Path) -> None:
             f"{expectation['expect']}"
         )
 
+    # Optional, and present only for a map that fans writes out. Asserted here rather than in a
+    # Python-only test because a fan-out target read differently in two languages is a row written
+    # to one copy and not the other - the divergence class this whole suite exists for, and the one
+    # that produces no error at the time it happens.
+    fan_out = case / "also_write.json"
+    if fan_out.is_file():
+        for group, expected in sorted(_read_json(fan_out).items()):
+            got_ids = [m.id for m in placement.placement_of(group).also_write]
+            assert got_ids == expected, (
+                f"group {group} fans writes out to {got_ids}, vector expects {expected}"
+            )
+
 
 _ERRORS: dict[str, type[Exception]] = {
     "DeclarationError": DeclarationError,

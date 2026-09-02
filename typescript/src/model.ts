@@ -19,6 +19,15 @@ import { DeclarationError } from './errors.js'
 import type { FieldType, NeutralType } from './types.js'
 import { checkType } from './types.js'
 
+/**
+ * The **IR's** format version, and the one the conformance vectors are pinned to.
+ *
+ * Separate from `MAP_CONTRACT` since the placement map gained a key the IR did not. One counter for
+ * two artefacts means every artefact's version moves when any one of them changes - and `contract`
+ * is *inside* the IR, whose digest is `model_version`, so bumping it for a change to the map format
+ * would give every client a new model version and invalidate every issued map. For a key in a
+ * different document.
+ */
 export const CONTRACT = 1
 
 export interface FieldSpec {

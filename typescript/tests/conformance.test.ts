@@ -25,6 +25,7 @@ import {
   hashIdentifiers,
   loadMap,
   MapError,
+  placementOf,
   resolve,
   shapeId,
   shapeIr,
@@ -130,6 +131,19 @@ describe('routing vectors', () => {
           fresh: expectation.fresh === true,
         })
         expect(got.id, `${shape!.entity}.${shape!.kind}`).toBe(expectation.expect)
+      }
+
+      // Optional, and present only for a map that fans writes out. Asserted here rather than in a
+      // TypeScript-only test because a fan-out target read differently in two languages is a row
+      // written to one copy and not the other - the divergence class this suite exists for, and
+      // the one that produces no error at the time it happens.
+      const fanOutFile = join(dir, 'also_write.json')
+      if (existsSync(fanOutFile)) {
+        const expected = readJson<Record<string, string[]>>(fanOutFile)
+        for (const group of Object.keys(expected).sort()) {
+          const got = placementOf(map, group).alsoWrite.map((m) => m.id)
+          expect(got, `group ${group} fan-out`).toEqual(expected[group])
+        }
       }
     })
   }

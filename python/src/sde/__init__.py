@@ -64,6 +64,8 @@ from .layout import (
 )
 from .model import CONTRACT, LogicalModel, build_model
 from .placement import (
+    MAP_CONTRACT,
+    MAP_CONTRACT_FLOOR,
     GroupPlacement,
     Materialization,
     PhysicalLayout,
@@ -94,9 +96,12 @@ from .watermark import (
 __version__ = "0.1.0.dev0"
 
 __all__ = [
+    "ALSO_WRITE_SINCE",
     "CONTRACT",
     "DIALECTS",
     "FIXED_SCHEMA",
+    "MAP_CONTRACT",
+    "MAP_CONTRACT_FLOOR",
     "ORDERBOOK_KEY",
     "ORDERBOOK_SHAPE",
     "ORDERBOOK_TABLE",
