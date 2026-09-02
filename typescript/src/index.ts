@@ -42,7 +42,7 @@ export type {
   PhysicalLayout,
   PlacementMap,
 } from './placement.js'
-export { loadMap, materializationById, placementOf } from './placement.js'
+export { WATERMARK_TABLE, loadMap, materializationById, placementOf } from './placement.js'
 export type { ResolveOptions } from './routing.js'
 export { resolve } from './routing.js'
 export type { OperationShape, ShapeKind } from './shapes.js'

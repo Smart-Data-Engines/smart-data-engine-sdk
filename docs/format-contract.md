@@ -406,6 +406,61 @@ worse than no claim.
 Publishing the library does not weaken any of this. The public key is in the library, the private key
 is in the control plane, and a signature was never a secret.
 
+### Forward only: a signed map is never accepted below one already applied
+
+A signature says a document is authentic. It says nothing about whether it is current, and it cannot:
+a signed map for version 3 verifies correctly forever. So replacing a client's map file with an older
+signed one loads cleanly, routes writes to the previous placement, and **nothing protests**. Today
+that costs a stale schema. Once migration state travels in the map, it costs writes - a library
+reverted from dual-write to single-write mid-migration drops exactly the rows the migration exists
+not to drop.
+
+Refusing it needs the one thing this library otherwise does not have: **memory**. It lives in the
+client's own engines, in a reserved table:
+
+| Name | `sde_map_state` |
+|---|---|
+| Columns | `map_version` (int64), `model_version` (string), `seen_at` (timestamp, engine default) |
+| Writes | **append-only**; the watermark is `max(map_version)` |
+| Created | on first read, by the adapter, if it is missing |
+
+`sde_map_state` is **reserved**: a layout naming it is refused when the map is loaded, in every
+language. That refusal is a parsing rule, so it belongs here rather than in an adapter - a rule that
+holds in one runtime and not the other is one map with two meanings, which is what this document
+exists to prevent. Vector: `errors/019-layout-names-the-reserved-bookkeeping-table`.
+
+Four rules, and the first two are what make the mechanism safe rather than merely present:
+
+- **append-only, watermark is `max()`.** No update, no key to enforce, no row to contend over - and
+  therefore identical semantics in an engine with a primary key and in one without, which is the
+  engine this design was shaped by. A stale row can never lower the bar;
+- **every participating engine is written, and the watermark is the maximum over all of them.**
+  Losing an engine cannot lose the protection and a lagging one cannot weaken it;
+- **an engine that cannot keep the bookkeeping does not take part, and that is reported.** An engine
+  whose schema is fixed in its own source has nowhere to put a table. A client whose only engine is
+  one of those has no rollback protection and cannot have any; the honest maximum is to say so where
+  it can be read, which is why the check's state is public rather than internal;
+- **only signed maps are checked.** An unsigned map is the client's own document, and replacing it
+  with another is the no-account mode working as documented. In that mode this mechanism does
+  nothing at all: no table, no query, no cost.
+
+Equal is accepted - restarting a process against the same map is the ordinary case - and only
+strictly lower is refused. The escape for a legitimate rollback is to clear the bookkeeping, and the
+refusal says so; it is deliberately not a parameter, because a parameter named `allow_rollback` is
+set once during an incident and left set.
+
+**Not part of the byte contract, and the distinction matters.** Nothing above changes an encoding or
+a document, so there is no version bump: the reservation is a *tightening* of a refusal (section 11),
+and the bookkeeping is behaviour in a runtime that has engine adapters. A runtime with none - the
+TypeScript one today - implements the reservation and nothing else, which is the whole of what a
+Tier 0 library can do here.
+
+**A limitation, stated rather than left to be found.** The watermark is per engine, and this format
+has no field naming which stream of maps a document belongs to. An engine shared by two independent
+map streams would therefore have the higher one refusing the lower. The fix is a separate database
+per stream, which a shared engine wants anyway; inventing a stream identifier would mean a new key in
+a signed document, which is a loosening and so a bump in every language at once.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read

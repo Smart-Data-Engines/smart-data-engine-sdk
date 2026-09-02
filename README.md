@@ -146,6 +146,17 @@ Three things you can verify without asking us:
 What is refused is a map that *claims* to be ours, by carrying a signature, when there is no key to
 check the claim against. An unverifiable claim is worse than no claim.
 
+One more refusal is worth knowing about, because it means the library keeps a little state. A
+signature says a document is authentic and says nothing about whether it is current — a signed map
+for version 3 verifies correctly forever. So a **signed** map is refused if it is older than one
+already applied against your engines, and remembering which one that was needs a table:
+`sde_map_state`, append-only, in your own engines, holding a map version and a timestamp and nothing
+else. Equal is fine; restarting is ordinary. `session.rollback_protection` says whether it is in
+force, because a guarantee whose state you cannot read is one you have to take on trust — and for an
+engine whose schema is fixed in its own source there is nowhere to keep it, so the answer there is
+`unavailable` rather than a pretence. An **unsigned** map is never checked: it is your document, and
+in the no-account mode this costs nothing, creates nothing and queries nothing.
+
 ## The one hard rule across four languages
 
 Four libraries computing the same model version is not a nice property, it is the difference between a

@@ -25,6 +25,13 @@ EVENTS: Final[frozenset[str]] = frozenset(
         "sde.map.loaded",
         "sde.map.unsigned",
         "sde.map.rejected",
+        # A signed map was accepted and is not older than any already applied here. Emitted once
+        # per session, so the fields are the ones an operator wants when a start is refused later.
+        "sde.map.forward_only",
+        # No engine in this map can keep the bookkeeping, so a map that goes backwards cannot be
+        # recognised. Not a failure - our own orderbook engine has a fixed schema and nowhere to
+        # put it - but it is the one state where a documented protection is genuinely absent.
+        "sde.map.rollback_unprotected",
         "sde.route.resolved",
         "sde.route.fallback",
         "sde.schema.applied",

@@ -56,7 +56,7 @@ from typing import Any
 
 from ..errors import EngineError
 from ..logging import log
-from ..placement import PhysicalLayout
+from ..placement import WATERMARK_TABLE, PhysicalLayout
 from ..schema import QUOTE, schema_statements
 
 __all__ = ["ClickHouseEngine"]
@@ -244,6 +244,52 @@ class ClickHouseEngine:
         if not result.result_rows:
             return None
         return _row(result.column_names, result.column_types, result.result_rows[0])
+
+    # --- rollback protection ------------------------------------------------------------------
+    #
+    # Append-only and `max()`, which is what makes this identical in both engines: no key to
+    # enforce, no row to update, nothing for this engine's lack of a unique constraint to spoil.
+
+    def map_watermark(self) -> int | None:
+        """The highest map version applied against this engine, creating the table if missing.
+
+        A plain `MergeTree` is right here, and it is the one place in this adapter where that is
+        true without qualification: the table is append-only by design and the answer is an
+        aggregate, so there are no duplicates to collapse and no reason to pay for `FINAL`.
+        """
+        try:
+            self._cx.command(
+                f"CREATE TABLE IF NOT EXISTS {_quote(WATERMARK_TABLE)} ("
+                f"{_quote('map_version')} Int64, "
+                f"{_quote('model_version')} String, "
+                f"{_quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3, 'UTC')) "
+                f"ENGINE = MergeTree ORDER BY ({_quote('map_version')})"
+            )
+            result = self._cx.query(
+                f"SELECT max({_quote('map_version')}) FROM {_quote(WATERMARK_TABLE)}"
+            )
+        except Exception as exc:
+            raise EngineError(f"reading {WATERMARK_TABLE} failed: {exc}") from exc
+        if not result.result_rows or result.result_rows[0][0] is None:
+            return None
+        highest = int(result.result_rows[0][0])
+        # An empty MergeTree answers max() with 0 rather than with null, so zero here means either
+        # "no map has been applied" or "map version 0 has been". Map version 0 is what this library
+        # reads when a hand-written map omits the field, and a hand-written map is unsigned - so it
+        # never reaches this path. Reported as absent, which is the honest reading of the two.
+        return highest if highest > 0 else None
+
+    def record_map_version(self, version: int, *, model_version: str) -> None:
+        try:
+            self._cx.insert(
+                WATERMARK_TABLE,
+                [[version, model_version]],
+                column_names=["map_version", "model_version"],
+            )
+        except Exception as exc:
+            raise EngineError(
+                f"recording a map version in {WATERMARK_TABLE} failed: {exc}"
+            ) from exc
 
     def range(
         self,
