@@ -161,3 +161,30 @@ def test_shape_id_depends_on_the_group_it_lands_in() -> None:
     joined = sde.enumerate_shapes(sde.build_model(Anchor, Alone2))
     joined_point = next(s for s in joined if s.kind == "point_read" and s.entity == "Alone2")
     assert solo_point.id != joined_point.id
+
+
+def test_the_write_kinds_are_defined_once_in_the_package() -> None:
+    """Four copies of this set existed and two were inside this package.
+
+    One in `routing`, deciding whether an operation goes to the source; one in `telemetry`,
+    deciding whether an operation counts as a write in the features a placement is scored on. Two
+    copies of a set in one process is how the same operation becomes a write for routing and a read
+    for scoring, and nothing would have raised - the two would simply disagree about what the
+    client is doing.
+
+    A static test rather than a behavioural one, because the behaviour of two identical copies is
+    identical: the defect is only visible in the source until the day somebody edits one.
+    """
+    import re
+    from pathlib import Path
+
+    package = Path(sde.__file__).resolve().parent
+    literal = re.compile(r"""frozenset\(\{["']write["']""")
+    offenders = [
+        path.name
+        for path in sorted(package.rglob("*.py"))
+        if literal.search(path.read_text(encoding="utf-8")) and path.name != "shapes.py"
+    ]
+    assert not offenders, f"the write kinds are spelled out again in {offenders}"
+    assert frozenset({"write", "bulk_write"}) == sde.WRITE_KINDS
+    assert set(sde.SHAPE_KINDS) >= sde.WRITE_KINDS, "a write kind that is not a shape kind"

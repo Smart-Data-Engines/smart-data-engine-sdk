@@ -27,7 +27,7 @@ from .canonical import digest16
 from .groups import Group, colocation_groups, group_of
 from .model import LogicalModel
 
-__all__ = ["SHAPE_KINDS", "OperationShape", "enumerate_shapes"]
+__all__ = ["SHAPE_KINDS", "WRITE_KINDS", "OperationShape", "enumerate_shapes"]
 
 SHAPE_KINDS: Final[tuple[str, ...]] = (
     "point_read",
@@ -38,6 +38,20 @@ SHAPE_KINDS: Final[tuple[str, ...]] = (
     "write",
     "bulk_write",
 )
+
+WRITE_KINDS: Final[frozenset[str]] = frozenset({"write", "bulk_write"})
+"""Which of those kinds are writes. One definition, and it decides three separate things.
+
+Here rather than in each module that asks, because there were four copies of this set and two of
+them were inside this package - one in ``routing``, deciding whether an operation goes to the
+source, and one in ``telemetry``, deciding whether an operation counts as a write in the features a
+placement is scored on. Two copies of a set in one process is how the same operation comes to be a
+write for routing and a read for scoring, and nothing would have raised.
+
+Public because a producer of routing tables needs it. A write shape is never routed - the library
+sends writes to the source unconditionally - so an entry for one is a line in a signed document
+that nothing reads, and the control plane cannot avoid writing one without knowing this set.
+"""
 
 # Types over which a range predicate is meaningful. Ranges over strings and uuids are legal SQL and
 # almost never what anybody means, so they are not enumerated; if telemetry ever shows one, that is

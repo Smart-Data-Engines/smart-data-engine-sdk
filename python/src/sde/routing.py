@@ -28,11 +28,9 @@ from dataclasses import dataclass
 
 from .logging import log
 from .placement import Materialization, PlacementMap
-from .shapes import OperationShape
+from .shapes import WRITE_KINDS, OperationShape
 
 __all__ = ["Router", "resolve"]
-
-_WRITE_KINDS = frozenset({"write", "bulk_write"})
 
 
 @dataclass(frozen=True)
@@ -50,7 +48,7 @@ class Router:
     ) -> Materialization:
         group = self.placement.placement_of(shape.group)
 
-        if shape.kind in _WRITE_KINDS:
+        if shape.kind in WRITE_KINDS:
             return group.source
         if in_write_transaction or fresh:
             return group.source
