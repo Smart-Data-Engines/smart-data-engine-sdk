@@ -45,6 +45,11 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # source, which is authoritative, and VERIFY is the gate that refuses to switch reads while
         # any divergence remains. This is the only place in the library that swallows a write error.
         "sde.migration.divergence",
+        # One backfill chunk landed in a copy and the marker moved. Emitted per chunk rather than
+        # per run, because a backfill is the one operation here that can take hours and an operator
+        # watching it needs to see it move. The marker itself is a row count and never a key value:
+        # a log line is the last place a client's own data should turn up.
+        "sde.migration.backfill_progress",
         # The orderbook engine only. A write there is invisible to a query until flush(), and
         # flush() in local mode tears the engine down and reopens it - 3.4 ms measured. Reads flush
         # lazily, so this line is where the cost shows up and how many rows it bought.

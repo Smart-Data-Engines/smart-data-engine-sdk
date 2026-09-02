@@ -56,7 +56,8 @@ from typing import Any
 
 from ..errors import EngineError
 from ..logging import log
-from ..placement import WATERMARK_TABLE, PhysicalLayout
+from ..migration import key_columns, same_width
+from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..schema import QUOTE, schema_statements
 
 __all__ = ["ClickHouseEngine"]
@@ -335,6 +336,143 @@ class ClickHouseEngine:
         except Exception as exc:
             raise EngineError(f"count on {table} failed: {exc}") from exc
         return int(result.result_rows[0][0]) if result.result_rows else 0
+
+    # --- migration ------------------------------------------------------------------------------
+    #
+    # `sde.migration.Migratable`, the same optional protocol the PostgreSQL adapter satisfies. Two
+    # things are different here and neither is smoothed over: reads take `FINAL`, because a key
+    # saved twice is an overwrite in this engine rather than an error, and `copy_in` has no
+    # conflict clause to write - the collapse *is* the idempotence.
+
+    def key_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        after: Sequence[Any] | None = None,
+        upto: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows in key order, strictly after one key and up to another inclusive, with `FINAL`.
+
+        `FINAL` is what makes keyset pagination correct here rather than merely fast enough. Without
+        it a key saved twice returns two rows until a merge happens, and the next page starts
+        strictly after that key - so one of the duplicates is read and the other is not, which for a
+        backfill means copying a row this engine considers superseded.
+        """
+        cols = key_columns(order, table)
+        clauses: list[str] = []
+        parameters: dict[str, Any] = {}
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        if after is not None:
+            same_width(after, cols, "after")
+            names = [f"after_{i}" for i in range(len(cols))]
+            clauses.append(f"{tuple_expr} > ({', '.join(f'%({n})s' for n in names)})")
+            parameters.update(zip(names, (_as_utc(v) for v in after), strict=True))
+        if upto is not None:
+            same_width(upto, cols, "upto")
+            names = [f"upto_{i}" for i in range(len(cols))]
+            clauses.append(f"{tuple_expr} <= ({', '.join(f'%({n})s' for n in names)})")
+            parameters.update(zip(names, (_as_utc(v) for v in upto), strict=True))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cap = ""
+        if limit is not None:
+            cap = " LIMIT %(row_limit)s"
+            parameters["row_limit"] = int(limit)
+        sql = f"SELECT * FROM {_quote(table)} FINAL{where} ORDER BY {tuple_expr}{cap}"
+        try:
+            result = self._cx.query(sql, parameters=parameters)
+        except Exception as exc:
+            raise EngineError(f"key range select from {table} failed: {exc}") from exc
+        return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
+
+    def nth_key(
+        self, table: str, order: Sequence[str], *, position: int
+    ) -> tuple[Any, ...] | None:
+        """The key of the ``position``-th row in key order, one-based, or None if there is none."""
+        cols = key_columns(order, table)
+        if position < 1:
+            raise EngineError(f"position is one-based; {position} is not a row")
+        projection = ", ".join(_quote(c) for c in cols)
+        sql = (
+            f"SELECT {projection} FROM {_quote(table)} FINAL ORDER BY ({projection}) "
+            f"LIMIT 1 OFFSET %(skip)s"
+        )
+        try:
+            result = self._cx.query(sql, parameters={"skip": position - 1})
+        except Exception as exc:
+            raise EngineError(f"reading row {position} of {table} failed: {exc}") from exc
+        if not result.result_rows:
+            return None
+        row = _row(result.column_names, result.column_types, result.result_rows[0])
+        return tuple(row[column] for column in cols)
+
+    def copy_in(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Insert rows. Duplicates are collapsed by the table rather than rejected by it.
+
+        There is no `ON CONFLICT` to write and none is needed: the tables this library creates here
+        are `ReplacingMergeTree` ordered by the key, so a row copied twice leaves two parts that
+        collapse to the newest at merge time and read as one under `FINAL`. That is the same
+        idempotence the PostgreSQL path gets from a conflict clause, arrived at from the opposite
+        direction - and it is why a recopied chunk is free in both engines.
+        """
+        if not rows:
+            return
+        cols = sorted(rows[0])
+        for row in rows:
+            if sorted(row) != cols:
+                raise EngineError(
+                    f"copy_in into {table} was given rows with different columns "
+                    f"({cols} and {sorted(row)}). A chunk comes from one table, so this is a "
+                    f"caller assembling it from two."
+                )
+        data = [[_as_utc(row[c]) for c in cols] for row in rows]
+        try:
+            self._cx.insert(table, data, column_names=cols)
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
+
+    def backfill_marker(self, *, materialization: str, entity: str) -> int:
+        """How many rows of this entity have been copied into this engine. Zero if none.
+
+        A plain `MergeTree` and `max()`, as the map watermark is - append-only by design, so there
+        are no duplicates to collapse and no reason to pay for `FINAL`. The quirk that needed a
+        comment there is harmless here: an empty aggregate answers 0 rather than null, and 0 is
+        exactly what "nothing has been copied" means, so the two readings coincide.
+        """
+        try:
+            self._cx.command(
+                f"CREATE TABLE IF NOT EXISTS {_quote(BACKFILL_TABLE)} ("
+                f"{_quote('materialization')} String, "
+                f"{_quote('entity')} String, "
+                f"{_quote('rows_copied')} Int64, "
+                f"{_quote('at')} DateTime64(3, 'UTC') DEFAULT now64(3, 'UTC')) "
+                f"ENGINE = MergeTree ORDER BY ({_quote('materialization')}, {_quote('entity')})"
+            )
+            result = self._cx.query(
+                f"SELECT max({_quote('rows_copied')}) FROM {_quote(BACKFILL_TABLE)} "
+                f"WHERE {_quote('materialization')} = %(m)s AND {_quote('entity')} = %(e)s",
+                parameters={"m": materialization, "e": entity},
+            )
+        except Exception as exc:
+            raise EngineError(f"reading {BACKFILL_TABLE} failed: {exc}") from exc
+        if not result.result_rows or result.result_rows[0][0] is None:
+            return 0
+        return int(result.result_rows[0][0])
+
+    def record_backfill_marker(self, *, materialization: str, entity: str, rows: int) -> None:
+        """Append the new marker. Never update, so an interrupted run leaves a readable trail."""
+        try:
+            self._cx.insert(
+                BACKFILL_TABLE,
+                [[materialization, entity, int(rows)]],
+                column_names=["materialization", "entity", "rows_copied"],
+            )
+        except Exception as exc:
+            raise EngineError(
+                f"recording backfill progress in {BACKFILL_TABLE} failed: {exc}"
+            ) from exc
 
     # --- transactions ----------------------------------------------------------------------
 

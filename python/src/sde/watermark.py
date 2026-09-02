@@ -60,6 +60,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from .capabilities import satisfies
 from .errors import MapRolledBack
 from .logging import log
 from .placement import WATERMARK_TABLE, PlacementMap
@@ -118,8 +119,15 @@ class WatermarkCheck:
 
 
 def _split(engines: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Which engines can keep the bookkeeping and which cannot, both sorted."""
-    able = sorted(name for name, engine in engines.items() if isinstance(engine, WatermarkStore))
+    """Which engines can keep the bookkeeping and which cannot, both sorted.
+
+    Asked with :func:`sde.capabilities.satisfies` rather than `isinstance`, because a
+    runtime_checkable protocol resolves members without consulting `__getattr__` - so a client
+    wrapping one of our adapters for metrics or retries would be reported here as an engine with
+    nowhere to keep the bookkeeping, and would silently lose rollback protection under a message
+    blaming their engine's schema.
+    """
+    able = sorted(name for name, engine in engines.items() if satisfies(engine, WatermarkStore))
     unable = sorted(set(engines) - set(able))
     return tuple(able), tuple(unable)
 

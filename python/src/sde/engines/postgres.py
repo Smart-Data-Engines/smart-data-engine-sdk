@@ -23,7 +23,8 @@ from typing import Any
 
 from ..errors import EngineError
 from ..logging import log
-from ..placement import WATERMARK_TABLE, PhysicalLayout
+from ..migration import key_columns, same_width
+from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..schema import QUOTE, schema_statements
 
 __all__ = ["PostgresEngine"]
@@ -282,6 +283,169 @@ class PostgresEngine:
                 return int(row[0]) if row else 0
         except Exception as exc:
             raise EngineError(f"count on {table} failed: {exc}") from exc
+
+    # --- migration ------------------------------------------------------------------------------
+    #
+    # Five methods that satisfy `sde.migration.Migratable`, which like `WatermarkStore` is a
+    # separate optional protocol. Same reason: our own orderbook engine cannot offer any of them -
+    # its schema is fixed in its own source and it has nowhere to keep a marker - and an engine that
+    # cannot take part in a migration should be a named refusal rather than a broken adapter.
+
+    def key_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        after: Sequence[Any] | None = None,
+        upto: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows in key order, strictly after one key and up to another inclusive.
+
+        Row-value comparison - ``(a, b) > (%s, %s)`` - rather than a hand-rolled disjunction over
+        the key's columns. The disjunction is where composite-key pagination goes wrong, and it goes
+        wrong by skipping rows.
+
+        The bounds are asymmetric on purpose. ``after`` is exclusive because it is a resume point:
+        the row it names has been dealt with. ``upto`` is inclusive because it names the last row of
+        a chunk read from somewhere else, and that row is one this range has to include.
+        """
+        cols = key_columns(order, table)
+        clauses: list[str] = []
+        params: list[Any] = []
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        if after is not None:
+            same_width(after, cols, "after")
+            clauses.append(f"{tuple_expr} > ({', '.join(['%s'] * len(cols))})")
+            params.extend(after)
+        if upto is not None:
+            same_width(upto, cols, "upto")
+            clauses.append(f"{tuple_expr} <= ({', '.join(['%s'] * len(cols))})")
+            params.extend(upto)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cap = ""
+        if limit is not None:
+            cap = " LIMIT %s"
+            params.append(int(limit))
+        sql = f"SELECT * FROM {_quote(table)}{where} ORDER BY {tuple_expr}{cap}"
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(sql, params)
+                names = [d.name for d in cur.description or ()]
+                return [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
+        except Exception as exc:
+            raise EngineError(f"key range select from {table} failed: {exc}") from exc
+
+    def nth_key(
+        self, table: str, order: Sequence[str], *, position: int
+    ) -> tuple[Any, ...] | None:
+        """The key of the ``position``-th row in key order, one-based, or None if there is no such
+        row.
+
+        An ``OFFSET`` scan, which is the expensive kind of query, and it is here because it is paid
+        **once per resume** rather than once per chunk. See :mod:`sde.migration` for why the marker
+        is a row count and not a key.
+        """
+        cols = key_columns(order, table)
+        if position < 1:
+            raise EngineError(f"position is one-based; {position} is not a row")
+        projection = ", ".join(_quote(c) for c in cols)
+        sql = (
+            f"SELECT {projection} FROM {_quote(table)} ORDER BY ({projection}) "
+            f"OFFSET %s LIMIT 1"
+        )
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(sql, [position - 1])
+                row = cur.fetchone()
+        except Exception as exc:
+            raise EngineError(f"reading row {position} of {table} failed: {exc}") from exc
+        return None if row is None else tuple(row)
+
+    def copy_in(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Insert rows, skipping any whose key is already there.
+
+        ``ON CONFLICT DO NOTHING`` is what makes a backfill chunk **idempotent**, and idempotence is
+        what makes it resumable: the marker is written after the chunk, so a crash in between costs
+        a recopy and never a lost row. Without it the recopy would be a primary-key violation and
+        the safe failure mode would become the loud one.
+
+        The bare form, with no conflict target, so it covers the primary key and any unique index
+        the layout asked for. Naming the key here would mean deriving it a second time, and two
+        derivations of one key is how they come to disagree.
+
+        Returns nothing on purpose. PostgreSQL can say how many rows it actually wrote and
+        ClickHouse cannot, so a count here would mean different things in different engines - and
+        the caller needs "how much of the source have I consumed", which it already knows.
+        """
+        if not rows:
+            return
+        cols = sorted(rows[0])
+        for row in rows:
+            if sorted(row) != cols:
+                raise EngineError(
+                    f"copy_in into {table} was given rows with different columns "
+                    f"({cols} and {sorted(row)}). A chunk comes from one table, so this is a "
+                    f"caller assembling it from two."
+                )
+        placeholders = ", ".join(f"({', '.join(['%s'] * len(cols))})" for _ in rows)
+        sql = (
+            f"INSERT INTO {_quote(table)} ({', '.join(_quote(c) for c in cols)}) "
+            f"VALUES {placeholders} ON CONFLICT DO NOTHING"
+        )
+        params: list[Any] = []
+        for row in rows:
+            params.extend(row[c] for c in cols)
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(sql, params)
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
+
+    def backfill_marker(self, *, materialization: str, entity: str) -> int:
+        """How many rows of this entity have been copied into this engine. Zero if none.
+
+        `max()` over an append-only table, exactly like the map watermark, and for the same reason:
+        no row to update, nothing to contend over, and identical semantics in an engine with no
+        unique constraint. A stale row can never lower the marker.
+        """
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(
+                    f"CREATE TABLE IF NOT EXISTS {_quote(BACKFILL_TABLE)} ("
+                    f"{_quote('materialization')} text NOT NULL, "
+                    f"{_quote('entity')} text NOT NULL, "
+                    f"{_quote('rows_copied')} bigint NOT NULL, "
+                    f"{_quote('at')} timestamptz NOT NULL DEFAULT now())"
+                )
+                cur.execute(
+                    f"SELECT max({_quote('rows_copied')}) FROM {_quote(BACKFILL_TABLE)} "
+                    f"WHERE {_quote('materialization')} = %s AND {_quote('entity')} = %s",
+                    [materialization, entity],
+                )
+                row = cur.fetchone()
+        except Exception as exc:
+            raise EngineError(f"reading {BACKFILL_TABLE} failed: {exc}") from exc
+        if row is None or row[0] is None:
+            return 0
+        return int(row[0])
+
+    def record_backfill_marker(
+        self, *, materialization: str, entity: str, rows: int
+    ) -> None:
+        """Append the new marker. Never update, so an interrupted run leaves a readable trail."""
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO {_quote(BACKFILL_TABLE)} ({_quote('materialization')}, "
+                    f"{_quote('entity')}, {_quote('rows_copied')}) VALUES (%s, %s, %s)",
+                    [materialization, entity, int(rows)],
+                )
+        except Exception as exc:
+            raise EngineError(
+                f"recording backfill progress in {BACKFILL_TABLE} failed: {exc}"
+            ) from exc
 
     # --- transactions ----------------------------------------------------------------------
 

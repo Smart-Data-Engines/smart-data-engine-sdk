@@ -34,12 +34,14 @@ mode, not a loophole.
 from __future__ import annotations
 
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
+from .capabilities import members_of, satisfies
 from .entity import Ref, clear_registry, entity, registry
 from .errors import (
     DeclarationError,
     EngineError,
     MapError,
     MapRolledBack,
+    MigrationRefused,
     ModelPlanningError,
     SdeError,
 )
@@ -62,10 +64,25 @@ from .layout import (
     snake_case,
     stored_types,
 )
+from .migration import (
+    BACKFILL_TABLE,
+    CHUNK_ROWS,
+    DIALECT_PRECISION,
+    PRECISION_INDEPENDENT,
+    BackfillProgress,
+    Difference,
+    EntityProgress,
+    Migratable,
+    VerifyReport,
+    backfill,
+    verify,
+)
 from .model import CONTRACT, LogicalModel, build_model
 from .placement import (
+    ALSO_WRITE_SINCE,
     MAP_CONTRACT,
     MAP_CONTRACT_FLOOR,
+    RESERVED_TABLES,
     GroupPlacement,
     Materialization,
     PhysicalLayout,
@@ -97,21 +114,29 @@ __version__ = "0.1.0.dev0"
 
 __all__ = [
     "ALSO_WRITE_SINCE",
+    "BACKFILL_TABLE",
+    "CHUNK_ROWS",
     "CONTRACT",
     "DIALECTS",
+    "DIALECT_PRECISION",
     "FIXED_SCHEMA",
     "MAP_CONTRACT",
     "MAP_CONTRACT_FLOOR",
     "ORDERBOOK_KEY",
     "ORDERBOOK_SHAPE",
     "ORDERBOOK_TABLE",
+    "PRECISION_INDEPENDENT",
+    "RESERVED_TABLES",
     "SHAPE_KINDS",
     "WATERMARK_TABLE",
+    "BackfillProgress",
     "CanonicalError",
     "DeclarationError",
     "DerivedLayout",
+    "Difference",
     "Engine",
     "EngineError",
+    "EntityProgress",
     "Float32",
     "Group",
     "GroupFeatures",
@@ -124,6 +149,8 @@ __all__ = [
     "MapError",
     "MapRolledBack",
     "Materialization",
+    "Migratable",
+    "MigrationRefused",
     "ModelPlanningError",
     "NameMap",
     "Note",
@@ -138,10 +165,12 @@ __all__ = [
     "Session",
     "ShapeStats",
     "Timestamp",
+    "VerifyReport",
     "WatermarkCheck",
     "WatermarkStore",
     "Window",
     "__version__",
+    "backfill",
     "build_model",
     "can_store",
     "canonical_bytes",
@@ -164,12 +193,15 @@ __all__ = [
     "internal_failures",
     "load_map",
     "load_or_create_salt",
+    "members_of",
     "precision",
     "registry",
     "reset_internal_failures",
     "resolve",
+    "satisfies",
     "schema_is_fixed",
     "schema_statements",
     "snake_case",
     "stored_types",
+    "verify",
 ]

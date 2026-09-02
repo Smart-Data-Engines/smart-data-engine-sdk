@@ -17,6 +17,7 @@ __all__ = [
     "EngineError",
     "MapError",
     "MapRolledBack",
+    "MigrationRefused",
     "ModelPlanningError",
     "SdeError",
 ]
@@ -72,4 +73,16 @@ class EngineError(SdeError):
     a profiling or routing bug must not take down someone's application - but a write that did not
     happen is not an internal problem, and reporting success for it would be the worst thing this
     library could do.
+    """
+
+
+class MigrationRefused(SdeError):
+    """A migration cannot be performed as asked, and nothing has been copied.
+
+    Its own class rather than a :class:`ModelPlanningError`, because of when it is raised and what
+    the caller does about it. Everything here is refused *before* the first chunk moves - a target
+    whose columns are not the source's, an engine whose adapter cannot scan a table in key order, a
+    column the target dialect would silently truncate - so the guarantee this type carries is that
+    the data is exactly where it was. That is the fact an operator needs first, and a shared
+    exception type would not carry it.
     """
