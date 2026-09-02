@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "sde_map_state",
+  "stage": "map",
+  "why": "the library keeps its own bookkeeping in that table - the highest map version applied against an engine, which is what refuses an older signed map loaded over a newer one. A client table under the name would be read as bookkeeping and written to as bookkeeping. The rule is a parsing rule, so it has to hold in every language: accepted in one runtime and refused in the other is one map with two meanings."
+}

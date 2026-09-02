@@ -16,6 +16,7 @@ __all__ = [
     "DeclarationError",
     "EngineError",
     "MapError",
+    "MapRolledBack",
     "ModelPlanningError",
     "SdeError",
 ]
@@ -51,6 +52,16 @@ class MapError(SdeError):
     A bad signature, a map produced for a different model version, an unknown contract version. All
     of these refuse rather than degrade: the map decides where data is written, so guessing at a
     difference is the one thing that must never happen.
+    """
+
+
+class MapRolledBack(MapError):
+    """This map is older than one already applied against these engines.
+
+    A subclass rather than a plain :class:`MapError`, because it is the one map refusal a client may
+    reasonably want to handle: it says the document is authentic and out of date, not that it is
+    wrong. Everything else in this hierarchy says the map cannot be trusted; this one says it can
+    be, and that trusting it would undo something.
     """
 
 

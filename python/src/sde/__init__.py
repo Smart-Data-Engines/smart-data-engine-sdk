@@ -35,7 +35,14 @@ from __future__ import annotations
 
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .entity import Ref, clear_registry, entity, registry
-from .errors import DeclarationError, EngineError, MapError, ModelPlanningError, SdeError
+from .errors import (
+    DeclarationError,
+    EngineError,
+    MapError,
+    MapRolledBack,
+    ModelPlanningError,
+    SdeError,
+)
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .infer import InferredModel, Note, infer_model, infer_models
@@ -76,6 +83,13 @@ from .telemetry import (
     has_time_dimension,
 )
 from .types import Float32, Int32, Json, Timestamp, precision
+from .watermark import (
+    WATERMARK_TABLE,
+    Protection,
+    WatermarkCheck,
+    WatermarkStore,
+    enforce_forward_only,
+)
 
 __version__ = "0.1.0.dev0"
 
@@ -87,6 +101,7 @@ __all__ = [
     "ORDERBOOK_SHAPE",
     "ORDERBOOK_TABLE",
     "SHAPE_KINDS",
+    "WATERMARK_TABLE",
     "CanonicalError",
     "DeclarationError",
     "DerivedLayout",
@@ -102,6 +117,7 @@ __all__ = [
     "Json",
     "LogicalModel",
     "MapError",
+    "MapRolledBack",
     "Materialization",
     "ModelPlanningError",
     "NameMap",
@@ -109,6 +125,7 @@ __all__ = [
     "OperationShape",
     "PhysicalLayout",
     "PlacementMap",
+    "Protection",
     "Recorder",
     "Ref",
     "Router",
@@ -116,6 +133,8 @@ __all__ = [
     "Session",
     "ShapeStats",
     "Timestamp",
+    "WatermarkCheck",
+    "WatermarkStore",
     "Window",
     "__version__",
     "build_model",
@@ -127,6 +146,7 @@ __all__ = [
     "default_layout",
     "denormalized_layout",
     "digest16",
+    "enforce_forward_only",
     "entity",
     "enumerate_shapes",
     "fixed_schema_mismatch",

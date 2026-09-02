@@ -55,6 +55,18 @@ export interface LoadOptions {
   readonly requireSignature?: boolean
 }
 
+export const WATERMARK_TABLE = 'sde_map_state'
+/**
+ * The table the Python library keeps its own bookkeeping in: the highest map version applied
+ * against an engine, which is what stops an older signed map being loaded over a newer one.
+ *
+ * This runtime has no engine adapters, so it never writes that table - and it refuses a layout
+ * naming it anyway. The rule is a *parsing* rule, and a parsing rule that holds in one language
+ * and not the other is exactly the divergence the conformance suite exists to catch: one map, two
+ * libraries, accepted here and refused there. Nothing in this file could have discovered that on
+ * its own.
+ */
+
 const AUTO = Symbol('auto-layout')
 type MaybeLayout = PhysicalLayout | typeof AUTO
 
@@ -81,6 +93,19 @@ function readLayout(raw: unknown, where: string): MaybeLayout {
     throw new MapError(
       `${where}: layout needs a non-empty 'tables' mapping entity to table name, or {"auto": true} ` +
         'to have one derived from the model',
+    )
+  }
+  const reserved = Object.entries(tables as Record<string, string>)
+    .filter(([, table]) => table === WATERMARK_TABLE)
+    .map(([entity]) => entity)
+    .sort()
+  if (reserved.length > 0) {
+    throw new MapError(
+      `${where}: ${JSON.stringify(reserved)} would be stored in a table called ` +
+        `'${WATERMARK_TABLE}', which this library keeps its own bookkeeping in - the highest map ` +
+        'version applied against an engine, which is what stops an older map from being loaded ' +
+        'over a newer one. A client table under that name would be read as bookkeeping and ' +
+        'written to as bookkeeping. Rename the table; the name is yours to choose everywhere else.',
     )
   }
   return {

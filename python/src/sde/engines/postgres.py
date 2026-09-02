@@ -23,7 +23,7 @@ from typing import Any
 
 from ..errors import EngineError
 from ..logging import log
-from ..placement import PhysicalLayout
+from ..placement import WATERMARK_TABLE, PhysicalLayout
 from ..schema import QUOTE, schema_statements
 
 __all__ = ["PostgresEngine"]
@@ -191,6 +191,56 @@ class PostgresEngine:
                 return dict(zip(names, row, strict=True))
         except Exception as exc:
             raise EngineError(f"select from {table} failed: {exc}") from exc
+
+    # --- rollback protection ------------------------------------------------------------------
+    #
+    # Two methods that satisfy `sde.watermark.WatermarkStore`, which is a separate optional
+    # protocol rather than part of `Engine`: adding these to `Engine` would break every adapter
+    # anybody has written, for a capability our own orderbook engine cannot provide.
+
+    def map_watermark(self) -> int | None:
+        """The highest map version applied against this engine, creating the table if missing.
+
+        Creating on read rather than on write, and that closes a real gap: with the table appearing
+        only on the first write, the first load of a signed map has nothing to compare against and a
+        file swapped immediately after a deployment goes unnoticed. Reading is also the cheaper of
+        the two paths to make idempotent - `CREATE TABLE IF NOT EXISTS` here costs one statement per
+        session, once per process.
+        """
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(
+                    f"CREATE TABLE IF NOT EXISTS {_quote(WATERMARK_TABLE)} ("
+                    f"{_quote('map_version')} bigint NOT NULL, "
+                    f"{_quote('model_version')} text NOT NULL, "
+                    f"{_quote('seen_at')} timestamptz NOT NULL DEFAULT now())"
+                )
+                cur.execute(f"SELECT max({_quote('map_version')}) FROM {_quote(WATERMARK_TABLE)}")
+                row = cur.fetchone()
+        except Exception as exc:
+            raise EngineError(f"reading {WATERMARK_TABLE} failed: {exc}") from exc
+        if row is None or row[0] is None:
+            return None
+        return int(row[0])
+
+    def record_map_version(self, version: int, *, model_version: str) -> None:
+        """Append. Never update, so there is nothing to contend over and nothing to lose.
+
+        The timestamp comes from the engine's own `now()` rather than from this process: an audit
+        column wants the clock of the thing being audited, and this library reading a clock is a
+        thing its tests would then have to work around.
+        """
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO {_quote(WATERMARK_TABLE)} "
+                    f"({_quote('map_version')}, {_quote('model_version')}) VALUES (%s, %s)",
+                    [version, model_version],
+                )
+        except Exception as exc:
+            raise EngineError(
+                f"recording a map version in {WATERMARK_TABLE} failed: {exc}"
+            ) from exc
 
     def range(
         self,

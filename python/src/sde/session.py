@@ -29,6 +29,7 @@ from .placement import Materialization, PlacementMap
 from .routing import Router
 from .shapes import OperationShape, enumerate_shapes
 from .telemetry import Recorder
+from .watermark import WatermarkCheck, enforce_forward_only
 
 __all__ = ["Engine", "Session"]
 
@@ -106,6 +107,25 @@ class Session:
                 "cannot route an operation to an engine it has no adapter for, and guessing at a "
                 "connection is not something a library should do."
             )
+
+        # Here rather than in a method somebody has to remember to call, and here rather than in
+        # `ensure_schema`, which a deployment past its first release skips. A rolled-back map file
+        # is read at process start, so the check has to be on the path every start takes - and this
+        # constructor already refuses a map it cannot route, which is the same kind of refusal in
+        # the same place. It costs one statement per participating engine, once per process, and
+        # nothing at all for an unsigned map.
+        self._forward_only = enforce_forward_only(placement, self._engines)
+
+    @property
+    def rollback_protection(self) -> WatermarkCheck:
+        """Whether an older map could be loaded over this one, and why.
+
+        Public because a protection whose state cannot be read is a protection taken on trust. It
+        has three values and the middle one matters: `enforced`, `unavailable` - no engine in this
+        map can keep the bookkeeping, which is the case for an engine whose schema is fixed in its
+        own source - and `not_applicable` for an unsigned map, which is the client's own document.
+        """
+        return self._forward_only
 
     # --- the hashing boundary --------------------------------------------------------------
     #
