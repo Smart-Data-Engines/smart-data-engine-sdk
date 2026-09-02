@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
@@ -917,9 +918,10 @@ class Wrapper:
     """A proxy that forwards everything, which is how a client adds metrics or a retry.
 
     Two lines, and it was refused as an engine with no row-level operations until the capability
-    check stopped being `isinstance`. Since Python 3.12 a runtime_checkable protocol resolves
-    members with `inspect.getattr_static`, which ignores `__getattr__` - so this object answers
-    `hasattr` for every member of the protocol and fails the instance check.
+    check stopped being `isinstance`. A runtime_checkable protocol resolves members with `hasattr`
+    up to Python 3.11 and with `inspect.getattr_static` from 3.12 - and the second ignores
+    `__getattr__`, so this object passes the instance check on one supported interpreter and fails
+    it on the next.
     """
 
     def __init__(self, inner: Any) -> None:
@@ -943,10 +945,17 @@ def test_an_adapter_behind_a_forwarding_proxy_is_not_refused() -> None:
         source.insert("reading", {"id": n, "station": f"s{n}"})
     session = sde.Session(model, _map(model), {"pg": source, "ch": target})
 
-    assert not isinstance(source, sde.Migratable), "the spelling that would have refused it"
     assert sde.satisfies(source, sde.Migratable), "the question that matters"
     assert sde.backfill(session, _group(session), chunk_rows=2).complete
     assert sde.verify(session, _group(session), chunk_rows=2).matched
+
+    # And the finding in its strongest form, which CI produced rather than this machine:
+    # `isinstance` answers this **differently depending on the interpreter**. 3.11 resolves
+    # protocol members with `hasattr`, 3.12 and later with `getattr_static`. So the same client
+    # with the same wrapper had rollback protection on one Python and silently not on the next -
+    # across three versions this library supports and tests. Pinned rather than skipped: if a
+    # future version changes it back, this says so instead of quietly agreeing.
+    assert isinstance(source, sde.Migratable) is (sys.version_info < (3, 12))
 
 
 def test_the_same_proxy_keeps_its_rollback_protection() -> None:

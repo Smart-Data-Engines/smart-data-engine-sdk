@@ -5,17 +5,22 @@ sde.watermark.WatermarkStore` for the forward-only map check, and :class:`sde.mi
 for a migration. Both were originally asked with ``isinstance(engine, Protocol)``, which is the
 obvious spelling and the wrong question.
 
-Since Python 3.12 a ``runtime_checkable`` protocol resolves members with
-:func:`inspect.getattr_static`, which deliberately ignores ``__getattr__``. So an object that
-forwards to a wrapped adapter answers ``hasattr`` for every member of the protocol and still fails
-``isinstance``. Wrapping an engine adapter is an ordinary thing for a client to do - metrics,
-logging, a retry, a connection pool - and the consequence was two wrong diagnoses shipped as
-helpful messages: "this engine has nowhere to keep the bookkeeping, so you have no rollback
-protection", and "this engine cannot take part in a migration". Both would have named the client's
-*engine* for a property of their own wrapper, and the second one refuses a migration outright.
+A ``runtime_checkable`` protocol resolves its members with ``hasattr`` up to Python 3.11 and with
+:func:`inspect.getattr_static` from 3.12 onwards - and the second deliberately ignores
+``__getattr__``. So an object that forwards to a wrapped adapter answers ``hasattr`` for every
+member of the protocol, passes ``isinstance`` on 3.11, and fails it on 3.12. This library supports
+and tests all three, which makes that **the same client, the same wrapper, and a different answer
+per interpreter**.
+
+Wrapping an engine adapter is an ordinary thing for a client to do - metrics, logging, a retry, a
+connection pool - and the consequence was two wrong diagnoses shipped as helpful messages: "this
+engine has nowhere to keep the bookkeeping, so you have no rollback protection", and "this engine
+cannot take part in a migration". Both named the client's *engine* for a property of their own
+wrapper, and the second refuses a migration outright.
 
 Found from a test, not from review: a two-line proxy over the real ClickHouse adapter, written to
-make one write fail, was refused as an engine with no row-level operations.
+make one write fail, was refused as an engine with no row-level operations. The version dependence
+came from CI on 3.11, which is the part no single machine would have shown.
 
 So the question asked here is the one that matters - **will this object respond to these calls** -
 and it is asked with ordinary attribute access, which honours every way Python has of providing an
