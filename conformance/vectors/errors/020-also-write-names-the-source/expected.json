@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "names the source",
+  "stage": "map",
+  "why": "the source is where writes already land. Listing it would either write the row twice or read as though the source were somehow optional, and both are worse than the refusal."
+}

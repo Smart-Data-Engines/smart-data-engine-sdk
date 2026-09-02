@@ -304,7 +304,7 @@ the arguments, which is what makes telemetry safe by construction rather than by
 
 ```jsonc
 {
-  "contract": 1,
+  "contract": 2,
   "model_version": "54a50916f4326096",
   "map_version": 1,
   "groups": {
@@ -321,13 +321,30 @@ the arguments, which is what makes telemetry safe by construction rather than by
           "layout": {"tables": {"Event": "event"}, "columns": {}},
           "lag_budget_ms": 30000
         }
-      ]
+      ],
+      "also_write": ["Event@ch"]   // optional; absent for every map that is not mid-migration
     }
   },
   "routing": {"<shape id>": "<materialisation id>"},
   "signature": {"alg": "ed25519", "key_id": "k1", "value": "<base64>"}
 }
 ```
+
+**`contract` here is the map's own version, and it is not the IR's.** The IR carries a `contract`
+too and it is still `1`: nothing about the IR changed when the map gained `also_write`. One counter
+for two artefacts means every artefact's version moves when any one of them changes - and because
+`contract` is *inside* the IR and `model_version` is a digest of the IR, bumping one number for a
+key in a different document would give every client a new model version, invalidate every issued map
+and re-bless every model vector. The evidence that the split is right is `model/001-single-entity`,
+the hand-written vector whose digest CI pins: adding `also_write` does not move it.
+
+A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 2.
+Backwards compatible, forwards strict, and the asymmetry is knowledge rather than kindness: every
+contract-1 document is a valid contract-2 one with a key absent, which reads as "no dual write" -
+a complete meaning. What came *after* a library cannot be known, so a higher number is refused
+rather than interpreted. Strict equality, which is what contract 1 required, coupled a library
+upgrade to a control-plane action - and in the no-account mode there is nobody to issue a new map,
+so it would have broken the promise that hand-writing one is enough.
 
 Rules a library must enforce, all of them refusals rather than warnings, because this document decides
 where data is written:
@@ -461,6 +478,44 @@ map streams would therefore have the higher one refusing the lower. The fix is a
 per stream, which a shared engine wants anyway; inventing a stream identifier would mean a new key in
 a signed document, which is a loosening and so a bump in every language at once.
 
+### `also_write`: where a write goes, additionally
+
+Optional, a non-empty list of materialisation ids within the group, absent when there is no fan-out.
+This is how a **migration** reaches a library, and the reason no phase name appears anywhere in a
+map.
+
+A library does not need to know what `DUAL_WRITE` means. It needs to know where writes go and where
+reads go, and both of those were already things a map says - so a migration is a map with one more
+key, and the library starts writing to two engines because it was handed a new document rather than
+because something called it. Putting the phase in the map as well would be a second representation
+of a fact the fan-out and the routing table already carry, and a signed document with two
+representations of one fact is one that can contradict itself.
+
+Four refusals, validated **when the map loads** rather than at the first write. A map is handed over
+once and obeyed for months, so a defect in it belongs at arrival and not at the request that happens
+to touch it - and during a migration that request is a write, whose failure mode is a row that goes
+to one engine when the document says two.
+
+| Shape | Refused because | Vector |
+|---|---|---|
+| names the source | the source is where writes already land; listing it either writes the row twice or reads as though the source were optional | `errors/020` |
+| names an id that is not a derived copy of the group | a fan-out target that does not exist is a write with nowhere to go, and during a migration that is a row the copy never receives | `errors/021` |
+| an empty list | absent means "writes go to the source alone"; empty would claim fan-out was considered and none chosen, which is a stronger thing to say | `errors/022` |
+| names the same copy twice | a duplicated row, or a document nobody meant to write | `errors/023` |
+| present in a map declaring contract 1 | a key from a later contract in an earlier document. Refused because of *who* makes this mistake: a producer that grew the key and forgot to raise the number | `errors/024` |
+
+That last one is a **tightening**, so no bump, and it is worth its own line because it caught a real
+producer: the control plane emitted the IR's contract number into the map, so its first dual-write
+map declared 1 and carried the key. The library refused it, which is the only reason this paragraph
+is not a bug report.
+
+Two properties the format does **not** state and a runtime must: a write to an `also_write` copy is
+**additional and never authoritative**, and its failure does not interrupt the caller. That is
+behaviour rather than encoding, so it lives with the runtimes that have engine adapters; a Tier 0
+runtime implements the parsing and the four refusals and nothing else. `routing/002-dual-write-fan-out`
+pins the parse in both, and its cases assert the thing most likely to go wrong quietly: a **write
+shape still resolves to the source**.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read
@@ -591,6 +646,20 @@ A vector is frozen once committed. Changing one is changing the contract: bump
 `conformance/contract-version.txt`, and every library declares which version it implements. There is
 no quiet fix — a vector that was wrong was a contract that was wrong, and somebody may have a stored
 placement map that depends on it.
+
+**There are two numbers, and they move independently.** `conformance/contract-version.txt` is the
+**IR's**, which is what the vectors embed and what `model_version` is a digest of. The placement map
+has its own, because the two documents change for different reasons and a single counter makes every
+`model_version` move when a key is added to a map. Splitting them was itself a change to this
+document and is recorded here rather than in a commit message.
+
+**A library reads a range, not one number: the versions it implements and every earlier one it can
+still read.** Forwards it is strict, because what came after cannot be known. Backwards it is not,
+because it can: an older document is one this library once produced, and reading it is a matter of
+knowing which keys were absent. A library that grows a key must therefore state what its absence
+means - for `also_write`, "writes go to the source alone" - and that sentence is the whole of
+backwards compatibility. When there is a version whose absence cannot be given a meaning, the floor
+moves and that is a contract change like any other.
 
 **Tightening a refusal is not a format change. Loosening one is.** Adding a rule that refuses a
 document which was already internally inconsistent does not make `contract: 1` ambiguous — it makes

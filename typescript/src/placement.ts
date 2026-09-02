@@ -37,6 +37,19 @@ export interface GroupPlacement {
   readonly group: string
   readonly source: Materialization
   readonly derived: readonly Materialization[]
+  /**
+   * Derived copies that writes are **also** sent to, additionally and never authoritatively.
+   *
+   * This is how a migration reaches a library, and the reason no phase name appears anywhere in a
+   * map. A library does not need to know what `DUAL_WRITE` means; it needs to know where writes go
+   * and where reads go, and both were already things a map says. The phase in the document as well
+   * would be a second representation of a fact the fan-out and the routing table already carry.
+   *
+   * This runtime has no engine adapters, so it never performs the fan-out - and it parses and
+   * refuses exactly as the reference implementation does, because a fan-out target read differently
+   * in two languages is a row written to one copy and not the other.
+   */
+  readonly alsoWrite: readonly Materialization[]
 }
 
 export interface PlacementMap {
@@ -54,6 +67,35 @@ export interface LoadOptions {
   readonly publicKey?: Uint8Array
   readonly requireSignature?: boolean
 }
+
+export const MAP_CONTRACT = 2
+/**
+ * The placement map's format version, which is not the IR's - see `CONTRACT`.
+ *
+ * Two because the map gained `also_write`, which a contract-1 library would ignore while a
+ * contract-2 one honours it: the same document, two different sets of engines written to, and the
+ * difference decided by which version happens to be installed. A loosening bumps the number.
+ */
+
+export const ALSO_WRITE_SINCE = 2
+/**
+ * The contract that introduced `also_write`.
+ *
+ * A document declaring an earlier contract and carrying the key is refused. That is a *tightening*
+ * - no bump - and it exists because of who makes the mistake: a producer that grew the key and
+ * forgot to raise the number, which is what happened on the control-plane side of the very change
+ * that added it.
+ */
+
+export const MAP_CONTRACT_FLOOR = 1
+/**
+ * The oldest map format this library still reads.
+ *
+ * Backwards compatible, forwards strict, and the asymmetry is knowledge rather than kindness: every
+ * contract-1 document is a valid contract-2 one with a key absent, which reads as "no dual write"
+ * and is a complete meaning. What came after this library cannot be known, so a higher number is
+ * refused rather than interpreted.
+ */
 
 export const WATERMARK_TABLE = 'sde_map_state'
 /**
@@ -114,6 +156,77 @@ function readLayout(raw: unknown, where: string): MaybeLayout {
     indexes: (body['indexes'] ?? []) as PhysicalLayout['indexes'],
     partitionBy: (body['partition_by'] ?? {}) as Record<string, string>,
   }
+}
+
+/**
+ * The derived copies writes are additionally sent to. Four refusals, each with its failure.
+ *
+ * Validated when the map loads rather than at the first write, for the reason the routing table
+ * was: a map is handed over once and obeyed for months, so a defect in it should be found when it
+ * arrives and not by the request that happens to touch it. During a migration that request is a
+ * write, and the failure is a write that goes to one engine when the map says two.
+ */
+function readAlsoWrite(
+  raw: unknown,
+  where: string,
+  contract: number,
+  source: Materialization,
+  derived: readonly Materialization[],
+): readonly Materialization[] {
+  if (raw === undefined || raw === null) return []
+  if (contract < ALSO_WRITE_SINCE) {
+    throw new MapError(
+      `${where}: this map declares format contract ${contract} and uses 'also_write', which ` +
+        `contract ${ALSO_WRITE_SINCE} introduced. Refused rather than honoured, and the reason is ` +
+        'who makes this mistake: a producer that grew the key and forgot to raise the number. ' +
+        'Honouring it would mean a contract-1 library ignoring the fan-out while a contract-2 one ' +
+        'performs it - the same document, two sets of engines written to - which is the whole ' +
+        'failure the version exists to prevent.',
+    )
+  }
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new MapError(
+      `${where}: 'also_write' is a non-empty list of materialisation ids, or absent. Absent means ` +
+        'writes go to the source alone; an empty list would be a claim that fan-out was ' +
+        'considered and none chosen, which is a stronger thing to say and not what the planner ' +
+        'means when it omits the key.',
+    )
+  }
+  const byId = new Map(derived.map((m) => [m.id, m]))
+  const out: Materialization[] = []
+  const seen = new Set<string>()
+  for (const entry of raw) {
+    if (typeof entry !== 'string') {
+      throw new MapError(
+        `${where}: 'also_write' holds materialisation ids, not ${JSON.stringify(entry)}`,
+      )
+    }
+    if (entry === source.id) {
+      throw new MapError(
+        `${where}: 'also_write' names the source '${entry}'. The source is where writes already ` +
+          'land - listing it would either write the row twice or read as though the source were ' +
+          'somehow optional, and both are worse than the refusal.',
+      )
+    }
+    if (seen.has(entry)) {
+      throw new MapError(
+        `${where}: 'also_write' names '${entry}' twice. Two identical fan-out targets is either a ` +
+          'duplicated row or a document nobody meant to write.',
+      )
+    }
+    const found = byId.get(entry)
+    if (found === undefined) {
+      throw new MapError(
+        `${where}: 'also_write' names '${entry}', which is not a derived materialisation of this ` +
+          `group. It has ${JSON.stringify([...byId.keys()].sort())}. A fan-out target that does ` +
+          'not exist is a write with nowhere to go, and during a migration that is a row the copy ' +
+          'never receives.',
+      )
+    }
+    seen.add(entry)
+    out.push(found)
+  }
+  return out
 }
 
 function readMaterialization(
@@ -262,12 +375,26 @@ function checkRoutingTargets(
 export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   const body = asRecord(raw, 'a placement map')
 
-  if (body['contract'] !== CONTRACT) {
+  const contract = body['contract']
+  if (typeof contract !== 'number' || !Number.isInteger(contract)) {
     throw new MapError(
-      `this map declares format contract ${JSON.stringify(body['contract'])} and this library ` +
-        `implements ${CONTRACT}. Refusing rather than guessing: the difference between two contract ` +
+      `this map declares format contract ${JSON.stringify(contract)}, which is not a version ` +
+        `number. This library reads ${MAP_CONTRACT_FLOOR} to ${MAP_CONTRACT}.`,
+    )
+  }
+  if (contract < MAP_CONTRACT_FLOOR) {
+    throw new MapError(
+      `this map declares format contract ${contract} and the oldest this library still reads is ` +
+        `${MAP_CONTRACT_FLOOR}.`,
+    )
+  }
+  if (contract > MAP_CONTRACT) {
+    throw new MapError(
+      `this map declares format contract ${contract} and this library implements ` +
+        `${MAP_CONTRACT}. Refusing rather than guessing: a version this library does not know may ` +
+        'say something with a key it has never heard of, and the difference between two contract ' +
         'versions is exactly the kind of thing that would otherwise be interpreted as a missing ' +
-        'field meaning zero.',
+        'field meaning zero. Upgrade the library.',
     )
   }
 
@@ -361,7 +488,12 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
       }
     }
 
-    groups[name] = { group: name, source, derived }
+    groups[name] = {
+      group: name,
+      source,
+      derived,
+      alsoWrite: readAlsoWrite(placement['also_write'], where, contract, source, derived),
+    }
   }
 
   if (options.model) {

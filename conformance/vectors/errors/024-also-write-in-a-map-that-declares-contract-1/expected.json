@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "which contract 2 introduced",
+  "stage": "map",
+  "why": "a key from a later contract in a document declaring an earlier one. Refused rather than honoured because of who makes this mistake: a producer that grew the key and forgot to raise the number, which is what happened on the control-plane side of the change that added it. Honouring it would mean an old library ignoring the fan-out while a new one performs it, on the same document - the failure the version exists to prevent. A tightening, so no bump."
+}

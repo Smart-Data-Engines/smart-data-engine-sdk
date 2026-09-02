@@ -1,0 +1,24 @@
+[
+  {
+    "shape": "2477d087f39d0ae4",
+    "expect": "Event@ch"
+  },
+  {
+    "shape": "2cb99e505653072d",
+    "expect": "Event@pg"
+  },
+  {
+    "shape": "4c0548f35036e637",
+    "fresh": true,
+    "expect": "Event@pg"
+  },
+  {
+    "shape": "4c0548f35036e637",
+    "in_write_transaction": true,
+    "expect": "Event@pg"
+  },
+  {
+    "shape": "12f8b2171bc2bf78",
+    "expect": "Order@pg"
+  }
+]

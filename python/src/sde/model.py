@@ -35,6 +35,19 @@ __all__ = [
 ]
 
 CONTRACT = 1
+"""The **IR's** format version, and the one the conformance vectors are pinned to.
+
+Separate from :data:`sde.placement.MAP_CONTRACT` since the placement map gained a key the IR did
+not, and that separation is a correction rather than a convenience. One counter for two artefacts
+means every artefact's version moves when any one of them changes - and because ``contract`` is
+*inside* the IR, and ``model_version`` is a digest of the IR, bumping it for a change to the map
+format would give every client a new model version, invalidate every issued map, and re-bless every
+model vector. For a key in a different document.
+
+The evidence that the split is right is the hand-written vector: ``model/001-single-entity`` was
+typed out from the format contract to prove the document is implementable, and its digest is pinned
+in CI. Adding ``also_write`` to the map does not move it, because nothing about the IR changed.
+"""
 """Format contract version. Bumped when the IR shape or the encoding rules change."""
 
 

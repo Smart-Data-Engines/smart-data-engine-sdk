@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "twice",
+  "stage": "map",
+  "why": "two identical fan-out targets is either a duplicated row or a document nobody meant to write, and neither is something to guess at."
+}

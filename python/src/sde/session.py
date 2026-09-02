@@ -97,6 +97,7 @@ class Session:
             (s.entity, s.kind, s.fields): s for s in enumerate_shapes(model)
         }
         self._in_write_transaction = False
+        self._deferred: list[tuple[str, str, dict[str, Any]]] = []
 
         missing = sorted(
             {m.engine for p in placement.groups.values() for m in p.all()} - set(self._engines)
@@ -228,6 +229,7 @@ class Session:
         failed = False
         try:
             engine.insert(table, values)
+            self._fan_out(target, shape.group, values)
         except BaseException:
             failed = True
             raise
@@ -235,7 +237,60 @@ class Session:
             # In a finally block on purpose: a failed write is exactly the operation whose
             # latency and error count matter most to a placement decision, and it is the one an
             # early return would silently omit.
+            #
+            # The fan-out is inside the timed region, which is a decision. It makes the client's
+            # write slower and the telemetry has to say so, or a placement would be scored against
+            # a latency the application is not experiencing - and the whole point of the number is
+            # that it is what they pay. One consequence is worth knowing: during a migration this
+            # inflates write latency against a baseline written before it, so the drift detector
+            # sees a real degradation with a known cause.
             self._observe(shape, started, rows=1, failed=failed)
+
+    # --- dual write ----------------------------------------------------------------------------
+
+    def _fan_out(self, entity: str, group: str, values: Mapping[str, Any]) -> None:
+        """Write the row to every ``also_write`` copy of the group. Additionally, never
+        authoritatively.
+
+        Requirement 9.1 and task 12.3: **a failure here does not interrupt the client's
+        operation.** The row is in the source, which is the copy that counts, and turning a
+        migration into an application outage would make the safest thing this product does the
+        most dangerous. So the divergence is recorded and `VERIFY` is the gate that refuses to
+        switch reads while any of them remain.
+
+        Inside a write transaction the fan-out is **deferred to commit** rather than skipped or
+        done inline, and each of those three was considered. Inline is wrong: the target is a
+        different engine, so it is outside the source's transaction, and a rolled-back row would
+        exist in the copy - which after the switch is a row the client explicitly undid, readable.
+        Skipping is wrong for a quieter reason: those rows are above the backfill marker, so
+        nothing else copies them, and `VERIFY`'s tail check would refuse the migration of every
+        group that uses a transaction. Deferring keeps both properties: the copy only ever receives
+        committed rows, and it receives all of them.
+        """
+        placement = self._placement.placement_of(group)
+        if not placement.also_write:
+            return
+        for copy in placement.also_write:
+            table = copy.layout.table_for(entity)
+            if self._in_write_transaction:
+                self._deferred.append((copy.engine, table, dict(values)))
+                continue
+            self._replay_one(copy.engine, table, dict(values))
+
+    def _replay_one(self, engine_name: str, table: str, values: dict[str, Any]) -> None:
+        try:
+            self._engines[engine_name].insert(table, values)
+        except Exception as exc:
+            # Deliberately swallowed, and the only place in this library that swallows a write
+            # failure. The narrow `Exception` rather than `BaseException` matters: a
+            # KeyboardInterrupt or a SystemExit during a fan-out is not a divergence, it is a
+            # process being told to stop, and treating it as one would log a lie and continue.
+            log(
+                "sde.migration.divergence",
+                engine=engine_name,
+                table=table,
+                error=type(exc).__name__,
+            )
 
     def get(self, entity: str, key: Mapping[str, Any], *, fresh: bool = False) -> Any:
         target = self._entity(entity)
@@ -325,9 +380,26 @@ class Session:
         group = self.group_of(names[0])
         engine = self._engines[self._placement.placement_of(group.name).source.engine]
         previous = self._in_write_transaction
+        outer = len(self._deferred)
         self._in_write_transaction = True
+        committed = False
         try:
             with engine.transaction():
                 yield self
+            committed = True
         finally:
             self._in_write_transaction = previous
+            pending = self._deferred[outer:]
+            del self._deferred[outer:]
+            if committed and not previous:
+                # Replayed after the source transaction has committed, and only by the outermost
+                # one: a nested block that returns to a still-open transaction has not committed
+                # anything yet, so its rows go back on the queue rather than to the copy.
+                for engine_name, table, values in pending:
+                    self._replay_one(engine_name, table, values)
+            elif not committed:
+                # Rolled back. The rows never existed in the source, so they must never exist in
+                # the copy - dropping them is the whole reason the fan-out was deferred.
+                pass
+            else:
+                self._deferred.extend(pending)

@@ -1,6 +1,6 @@
 {
   "error": "MapError",
-  "match": "implements 1",
+  "match": "implements 2",
   "stage": "map",
-  "why": "the refusal has to name both versions. An earlier Python message rendered a literal '{CONTRACT}' here while TypeScript rendered the number, which is a divergence no vector reached: the suite compared encodings and this path produces only a diagnostic."
+  "why": "the refusal has to name both versions. An earlier Python message rendered a literal '{CONTRACT}' here while TypeScript rendered the number, which is a divergence no vector reached: the suite compared encodings and this path produces only a diagnostic. The map declared 2 until contract 2 shipped, at which point the shape it refused became a valid one - so it declares 3 now. That edit is a contract change and section 11 asks for it to be deliberate, which is what this sentence is. A version above the ceiling is refused because what came after this library cannot be known; one below it is accepted, which every other map vector here exercises by declaring 1."
 }
