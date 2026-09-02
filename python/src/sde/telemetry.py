@@ -35,6 +35,7 @@ from typing import Any
 
 from .internal import guard
 from .logging import log
+from .shapes import WRITE_KINDS
 
 __all__ = [
     "GroupFeatures",
@@ -178,8 +179,8 @@ class Window:
                 missing=frozenset({"no_traffic"}), complete=self.complete, distinct_shapes=0
             )
 
-        writes = sum(s.calls for s in records if s.kind in _WRITE_KINDS)
-        reads = sum(s.calls for s in records if s.kind not in _WRITE_KINDS)
+        writes = sum(s.calls for s in records if s.kind in WRITE_KINDS)
+        reads = sum(s.calls for s in records if s.kind not in WRITE_KINDS)
         calls = writes + reads
 
         latency = Histogram()
@@ -191,7 +192,7 @@ class Window:
             mix[record.kind] = mix.get(record.kind, 0.0) + record.calls
         mix = {kind: hits / calls for kind, hits in sorted(mix.items())} if calls else {}
 
-        read_records = [s for s in records if s.kind not in _WRITE_KINDS and s.calls]
+        read_records = [s for s in records if s.kind not in WRITE_KINDS and s.calls]
         cardinalities = sorted(s.rows / s.calls for s in read_records)
 
         pk_calls = sum(s.calls for s in records if s.kind == "point_read")
@@ -224,7 +225,6 @@ class Window:
         )
 
 
-_WRITE_KINDS = frozenset({"write", "bulk_write"})
 
 
 def _at(ordered: list[float], fraction: float) -> float | None:
