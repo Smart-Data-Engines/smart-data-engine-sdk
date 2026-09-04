@@ -38,6 +38,8 @@ from .logging import log
 from .shapes import WRITE_KINDS
 
 __all__ = [
+    "CopyFreshness",
+    "FanOutStats",
     "GroupFeatures",
     "Histogram",
     "Recorder",
@@ -118,6 +120,89 @@ class ShapeStats:
         self.latency.record(nanoseconds)
 
 
+@dataclass
+class FanOutStats:
+    """What was observed writing one row to one derived copy. No values, by construction.
+
+    Deliberately **not** a :class:`ShapeStats`, and that is the load-bearing decision. A fan-out is
+    not an operation the application asked for - it is the library keeping a copy current - so
+    recording it as a shape would add a write to the very counters a placement is scored on:
+    ``read_write_ratio`` would move because a copy exists, and a group with one copy would look
+    twice as write-heavy as the same group without one. The set of shape kinds that count as writes
+    already had four copies once (:data:`sde.shapes.WRITE_KINDS`); this is the same failure
+    arriving from the other side.
+
+    It is also not in :class:`GroupFeatures`, for a reason worth stating: a copy's freshness does
+    not score a placement. It reports the health of a copy the placement already made. Putting it
+    in the feature vector would bump the frozen scoring model to add an input nothing scores.
+    """
+
+    group: str
+    materialization: str
+    writes: int = 0
+    failures: int = 0
+    """Rows that did not reach the copy. Absence, not lateness - see :class:`CopyFreshness`."""
+    latency: Histogram = field(default_factory=Histogram)
+
+    def record(self, nanoseconds: int, failed: bool) -> None:
+        self.writes += 1
+        if failed:
+            self.failures += 1
+        # Recorded either way. A failed fan-out took time too, and dropping it would make the
+        # measured window look better precisely when the copy is in trouble.
+        self.latency.record(nanoseconds)
+
+
+@dataclass(frozen=True)
+class CopyFreshness:
+    """How far behind one derived copy is, measured. Requirement 5.2.
+
+    **What "behind" means here was settled by looking at the mechanism rather than at the word.**
+    A derived copy in this library is maintained by the fan-out in
+    :meth:`sde.session.Session.save` - a write in the client's own process, to the copy, straight
+    after the source. There is no asynchronous replication anywhere, so there is no queue to fall
+    behind in. Two things can therefore be true of a copy, and only two:
+
+    - it is **late** by at most the duration of that one write, which is what ``lag_p50_ms`` and
+      ``lag_p99_ms`` measure;
+    - or the write **failed**, and the row is absent rather than late. That is ``failures``, and it
+      is the number a lag figure would hide: a copy missing a thousand rows can have an excellent
+      p99.
+
+    Both are reported because they are different problems with different fixes, and a client told
+    only the first would read "0.9 ms behind" off a copy that is missing yesterday.
+
+    Inside a write transaction the fan-out is deferred to commit, so the window measured there
+    starts when the row was queued - inside the transaction - rather than at the commit. That
+    **overstates** the staleness by the rest of the transaction, and overstating a staleness bound
+    is the safe direction: the number is used to ask whether a copy is inside the budget a map
+    declared, and a bound that flatters is a bound nobody can rely on.
+    """
+
+    group: str
+    materialization: str
+    writes: int
+    failures: int
+    lag_p50_ms: float | None
+    lag_p99_ms: float | None
+
+    @property
+    def complete(self) -> bool:
+        """Whether every write reached the copy in this window."""
+        return self.failures == 0
+
+    def as_record(self) -> dict[str, Any]:
+        return {
+            "group": self.group,
+            "materialization": self.materialization,
+            "writes": self.writes,
+            "failures": self.failures,
+            "lag_p50_ms": self.lag_p50_ms,
+            "lag_p99_ms": self.lag_p99_ms,
+            "complete": self.complete,
+        }
+
+
 @dataclass(frozen=True)
 class GroupFeatures:
     """The contract between telemetry and the planner.
@@ -170,6 +255,31 @@ class Window:
     shapes: Sequence[ShapeStats]
     complete: bool = True
     dropped_windows: int = 0
+    fanned: Sequence[FanOutStats] = ()
+    """What the fan-out to each derived copy did. Empty when the group has no copy, which is the
+    ordinary case - a copy exists during a migration and while a derived materialisation is in the
+    map, not otherwise."""
+
+    def copies(self, group: str) -> tuple[CopyFreshness, ...]:
+        """How far behind each of this group's derived copies ran, sorted by materialisation.
+
+        Read out of the histogram rather than stored, like every other percentile here. A stored
+        percentile is a second copy of a fact that changes when the samples do.
+        """
+        return tuple(
+            CopyFreshness(
+                group=stats.group,
+                materialization=stats.materialization,
+                writes=stats.writes,
+                failures=stats.failures,
+                lag_p50_ms=stats.latency.percentile_ms(0.50),
+                lag_p99_ms=stats.latency.percentile_ms(0.99),
+            )
+            for stats in sorted(
+                (s for s in self.fanned if s.group == group),
+                key=lambda s: s.materialization,
+            )
+        )
 
     def features(self, group: str, *, has_time_dimension: bool = False) -> GroupFeatures:
         """Fold this window's records for one group into the planner's feature vector."""
@@ -274,6 +384,7 @@ class Recorder:
         self._model_version = model_version
         self._lock = threading.Lock()
         self._current: dict[str, ShapeStats] = {}
+        self._fanned: dict[tuple[str, str], FanOutStats] = {}
         self._started_ns = _now()
         self._windows: deque[Window] = deque(maxlen=max_windows)
         self._dropped = 0
@@ -320,6 +431,32 @@ class Recorder:
                     self._current[shape_id] = stats
         stats.record(nanoseconds, rows, failed)
 
+    def record_fan_out(
+        self, *, group: str, materialization: str, nanoseconds: int, failed: bool = False
+    ) -> None:
+        """Record one write to one derived copy. Never raises, never blocks on the common path.
+
+        A separate entry point from :meth:`record` rather than a shape kind, because a fan-out is
+        not an operation the application asked for - see :class:`FanOutStats`.
+        """
+        guard(
+            "telemetry.record_fan_out",
+            lambda: self._record_fan_out(group, materialization, nanoseconds, failed),
+        )
+
+    def _record_fan_out(
+        self, group: str, materialization: str, nanoseconds: int, failed: bool
+    ) -> None:
+        key = (group, materialization)
+        stats = self._fanned.get(key)
+        if stats is None:
+            with self._lock:
+                stats = self._fanned.get(key)
+                if stats is None:
+                    stats = FanOutStats(group=group, materialization=materialization)
+                    self._fanned[key] = stats
+        stats.record(nanoseconds, failed)
+
     # --- windows -----------------------------------------------------------------------------
 
     def roll(self) -> Window | None:
@@ -331,7 +468,11 @@ class Recorder:
 
     def _roll(self) -> Window | None:
         with self._lock:
-            if not self._current:
+            if not self._current and not self._fanned:
+                # `not self._current` alone would drop a window holding only fan-out records. That
+                # cannot arise from an application write - a write records a shape and then fans
+                # out - but it can from a backfill replaying rows, and a window silently discarded
+                # is the shape of gap that makes a client's copy look healthier than it is.
                 return None
             window = Window(
                 model_version=self._model_version,
@@ -340,8 +481,10 @@ class Recorder:
                 shapes=tuple(self._current.values()),
                 complete=not self._incomplete,
                 dropped_windows=self._dropped,
+                fanned=tuple(self._fanned.values()),
             )
             self._current = {}
+            self._fanned = {}
             self._started_ns = _now()
             self._incomplete = False
 
