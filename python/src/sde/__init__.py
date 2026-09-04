@@ -90,7 +90,7 @@ from .placement import (
     load_map,
 )
 from .routing import Router, resolve
-from .schema import schema_is_fixed, schema_statements
+from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .telemetry import (
@@ -132,6 +132,7 @@ __all__ = [
     "WRITE_KINDS",
     "BackfillProgress",
     "CanonicalError",
+    "CompatibilityViews",
     "DeclarationError",
     "DerivedLayout",
     "Difference",
@@ -178,6 +179,7 @@ __all__ = [
     "canonical_str",
     "clear_registry",
     "colocation_groups",
+    "compatibility_views",
     "default_layout",
     "denormalized_layout",
     "digest16",
