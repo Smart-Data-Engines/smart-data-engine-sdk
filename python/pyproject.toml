@@ -10,7 +10,7 @@ name = "smart-data-engine"
 dynamic = ["version"]
 description = "Smart Data Engine client library: declare a data model, we place it and move it"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Smart Data Engines" }]
 keywords = ["database", "placement", "polystore", "postgresql", "clickhouse"]
