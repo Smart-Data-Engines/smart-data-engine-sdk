@@ -43,6 +43,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from ..errors import EngineError
+from ..explain import QueryPlan
 from ..layout import ORDERBOOK_KEY, ORDERBOOK_SHAPE, ORDERBOOK_TABLE
 from ..logging import log
 from ..placement import PhysicalLayout
@@ -210,6 +211,28 @@ class OrderbookEngine:
         log("sde.schema.applied", engine=self.dialect, statements=0)
 
     # --- data ------------------------------------------------------------------------------
+
+    def explain_plan(self, sql: str) -> QueryPlan:
+        """Refuses. There is no query planner here, and that is a property of the engine.
+
+        Requirement 19.4 asks for an execution plan and a cost estimate from a live engine. This
+        engine has neither to give, and the reason is the same one that makes it worth having: it
+        was built for one access path over one fixed shape, so there is nothing for a planner to
+        choose between and no alternative whose cost would need estimating. A plan saying "read the
+        book for this symbol" would be true, uninformative, and the fourth thing in this adapter
+        that pretends a difference away.
+
+        Named rather than returned empty. An empty plan reads as "nothing to worry about", which
+        is a stronger claim than this adapter can make about a query it cannot see.
+        """
+        raise EngineError(
+            "the orderbook engine has no query planner, so there is no plan and no cost estimate "
+            "to give you. That is what it is for: one fixed shape and one access path, so nothing "
+            "is chosen at query time and nothing needs estimating. Refused rather than answered "
+            "with an empty plan, because an empty plan reads as 'nothing to worry about'. This is "
+            "the fourth named difference in this adapter - no transactions, no key enforcement, "
+            "writes as level updates - and it is named for the same reason as the other three."
+        )
 
     def insert(self, table: str, values: Mapping[str, Any]) -> None:
         """One depth level, at level 0, or a refusal.

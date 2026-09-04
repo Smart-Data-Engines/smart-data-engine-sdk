@@ -22,6 +22,12 @@ from contextlib import contextmanager
 from typing import Any
 
 from ..errors import EngineError
+from ..explain import (
+    Cost,
+    QueryPlan,
+    QueryPlanRefused,
+    postgres_findings,
+)
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
@@ -161,6 +167,108 @@ class PostgresEngine:
                 log("sde.schema.extra_columns", table=table, columns=extra)
 
     # --- data ------------------------------------------------------------------------------
+
+    def explain_plan(self, sql: str) -> QueryPlan:
+        """Plan an analyst's query without running it, inside a read-only transaction.
+
+        Requirement 19.4. Two ``EXPLAIN``s in one transaction: ``FORMAT JSON`` for the numbers and
+        the node types, and the plain one for the text a person reads - the engine's own rendering
+        rather than mine, because a plan reformatted by us is a plan whose wording somebody will
+        compare against the documentation and not find.
+
+        ``SET TRANSACTION READ ONLY``, and a **corrected** account of what it is for. The first
+        version of this docstring said planning could reach a write, because constant folding
+        evaluates immutable functions - ``EXPLAIN SELECT 1/0`` raises at plan time - so an
+        immutable function that lied about being immutable would run. Measured: it cannot.
+        PostgreSQL refuses the write itself, with *"INSERT is not allowed in a non-volatile
+        function"*, in a read-only transaction and outside one alike. And a ``VOLATILE`` function
+        is not folded at all. So **planning cannot write, and the read-only transaction guards
+        against nothing reachable through ``EXPLAIN`` today.**
+
+        It is kept, and the reason is an edit inside this block rather than a query outside it. One
+        word - ``ANALYZE`` - turns either statement below into an execution, and with the
+        transaction read-only that mistake fails loudly instead of running an analyst's
+        data-modifying CTE. A guard whose present hazard is zero and whose future hazard is one
+        keyword is worth a statement.
+
+        ``force_rollback=True`` has **no observable effect through EXPLAIN** and is kept for the
+        same reason one level along: it covers what read-only does not - a temporary table, a
+        ``SET LOCAL``, an advisory lock - none of which anything here creates today. Said plainly
+        rather than counted as a tested guarantee, because a mutation of it changes no output and
+        a mutation that changes no output is not one.
+
+        What gets reported is the transaction, not a claim about the query: this library has no SQL
+        parser and cannot say it checked the SQL.
+        """
+        with self._cx.transaction(force_rollback=True) as _tx, self._cx.cursor() as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            # Read it back, because a statement that says nothing does not mean something
+            # happened - the lesson three GitHub API endpoints taught this project by returning
+            # 200 and changing nothing. It also turns this guard from unverifiable into checked:
+            # without the read-back, deleting the line above changes no observable behaviour, so
+            # nothing could fail when somebody did.
+            cursor.execute("SHOW transaction_read_only")
+            state = cursor.fetchone()
+            if not state or str(state[0]).strip().lower() != "on":
+                raise EngineError(
+                    f"this connection would not go read-only for planning: "
+                    f"transaction_read_only is {state[0] if state else 'unreadable'!r}. Refusing "
+                    f"to plan anything: requirement 19.2 keeps this product out of the data path, "
+                    f"and the one keyword between EXPLAIN and execution is ANALYZE - measured, an "
+                    f"EXPLAIN (ANALYZE) of a write runs in a read-write transaction and is "
+                    f"refused in a read-only one."
+                )
+            try:
+                cursor.execute(f"EXPLAIN (FORMAT JSON) {sql}")
+                raw = cursor.fetchone()
+                cursor.execute(f"EXPLAIN {sql}")
+                text = tuple(str(row[0]) for row in cursor.fetchall())
+            except Exception as exc:
+                # The refusal *is* the validation. Re-raised with the engine's own wording,
+                # because the case requirement 19.4 exists for - a column our map says exists
+                # and this database says does not - is one where the engine names the column
+                # and any summary of ours would lose it.
+                raise QueryPlanRefused(
+                    f"{self.dialect} would not plan this query: {exc} Nothing was executed. "
+                    f"This is what validating against a live engine means: the control plane "
+                    f"checked the query against the schema it authored, and this is the schema "
+                    f"that exists."
+                ) from exc
+        if not raw or not raw[0]:
+            raise QueryPlanRefused(
+                f"{self.dialect} returned no plan for this query and did not say why"
+            )
+        node = dict(raw[0][0]).get("Plan") or {}
+        return QueryPlan(
+            engine=self.dialect,
+            dialect=self.dialect,
+            plan=text or ("(the engine returned an empty plan)",),
+            cost=Cost(
+                units="PostgreSQL planner cost units",
+                basis=(
+                    "arbitrary units, not seconds and not rows. The figure depends on this "
+                    "machine and on this database's planner settings (seq_page_cost, "
+                    "random_page_cost, the cost constants), so it is comparable between two plans "
+                    "on this database and meaningless against a number from anywhere else. "
+                    "plan_rows is the planner's estimate of rows returned, from statistics that "
+                    "are as fresh as the last ANALYZE."
+                ),
+                values={
+                    "total_cost": str(node.get("Total Cost", "")),
+                    "startup_cost": str(node.get("Startup Cost", "")),
+                    "plan_rows": str(node.get("Plan Rows", "")),
+                    "plan_width": str(node.get("Plan Width", "")),
+                    "root_node": str(node.get("Node Type", "")),
+                },
+            ),
+            findings=postgres_findings(node),
+            read_only_enforced=(
+                "SET TRANSACTION READ ONLY, and the transaction is rolled back. PostgreSQL "
+                "refuses a write in such a transaction whatever the statement looks like - "
+                "measured: a data-modifying CTE fails with 'cannot execute SELECT in a read-only "
+                "transaction'."
+            ),
+        )
 
     def insert(self, table: str, values: Mapping[str, Any]) -> None:
         if not values:
