@@ -199,6 +199,57 @@ def test_saving_the_same_key_twice_replaces_rather_than_raising(
         engine._cx.command("SYSTEM START MERGES `event`")
 
 
+def test_a_compatibility_view_carries_final_and_therefore_counts_entities(
+    engine: ClickHouseEngine, model: sde.LogicalModel
+) -> None:
+    """Requirement 19.7's view, and the reason it is not a cosmetic wrapper around a table name.
+
+    A hand-written query moved verbatim to a ClickHouse target reads a `ReplacingMergeTree` without
+    `FINAL` and counts a row written twice under one key twice - no error, just a bigger number.
+    The library's own reads use `FINAL`; a person's do not. So a compatibility view that omitted it
+    would be worse than no view: it would look like the thing that made the old query safe.
+
+    Merges are stopped for the same reason `test_saving_the_same_key_twice_replaces_rather_than_
+    raising` stops them: a background merge collapses the duplicate within seconds, after which the
+    two reads agree and deleting `FINAL` passes.
+    """
+    group = sde.colocation_groups(model)[0]
+    layout = default_layout(model, group, dialect="clickhouse")
+    views = sde.compatibility_views(layout, was={"Event": "old_event"}, dialect="clickhouse")
+    assert views.create, "a renamed table has a view to render"
+
+    engine._cx.command("SYSTEM STOP MERGES `event`")
+    try:
+        for statement in views.create:
+            # Twice, because rendering is idempotent by construction everywhere else here.
+            engine._cx.command(statement)
+            engine._cx.command(statement)
+        values = _event(name="first")
+        engine.insert("event", values)
+        engine.insert("event", {**values, "name": "second"})
+
+        stored = engine._cx.query("SELECT count() FROM `event`").result_rows[0][0]
+        assert stored == 2, "two parts were expected; the rest of this test is about the view"
+        through = engine._cx.query("SELECT count() FROM `old_event`").result_rows[0][0]
+        assert through == 1, (
+            "the compatibility view returned the duplicate, so it went out without FINAL. A query "
+            "reading it would report one entity as two and get no error to notice."
+        )
+        rows = engine._cx.query("SELECT `name` FROM `old_event`").result_rows
+        assert rows == [("second",)], "and it is the newest row that survives, as on any read"
+    finally:
+        for statement in views.drop:
+            engine._cx.command(statement)
+        engine._cx.command("SYSTEM START MERGES `event`")
+    assert (
+        engine._cx.query(
+            "SELECT count() FROM system.tables WHERE database = currentDatabase() "
+            "AND name = 'old_event'"
+        ).result_rows[0][0]
+        == 0
+    ), "the view goes with the source it stood in for"
+
+
 def test_a_range_read_is_ordered_and_bounded(engine: ClickHouseEngine) -> None:
     base = dt.datetime(2026, 8, 27, 0, 0, tzinfo=dt.UTC)
     for hour in range(6):

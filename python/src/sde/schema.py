@@ -21,6 +21,7 @@ disagree on the DDL place the same entity in tables with different columns.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 
 from .errors import EngineError
 from .layout import DIALECTS, FIXED_SCHEMA
@@ -196,3 +197,144 @@ def schema_statements(
             f"looks right on the wrong engine creates a table with the wrong storage semantics."
         ) from None
     return build(layout, keys)
+
+
+@dataclass(frozen=True)
+class CompatibilityViews:
+    """What can stand under a table's old name after a group has moved, and what cannot.
+
+    Requirement 19.7 of the product specification: during a migration's grace period a view stays
+    under the old table name, so a query somebody wrote by hand - outside the entity API, against
+    the physical schema - does not fail in the second of the switch. It is removed with the source
+    when the period ends.
+
+    ``not_possible`` is the field worth reading, because in this library's engine set it is usually
+    the populated one, and the reasons are structural rather than missing work:
+
+    - **The two engines call the table the same thing.** A layout's table name is derived from the
+      entity name and nothing else, so ``postgres`` and ``clickhouse`` agree on it. There is no old
+      name for a view to occupy - the name is not what moved. What moved is the dialect, and the
+      sentence says so.
+    - **The engine imposes its own schema.** A fixed-schema engine takes no DDL from us at all, so
+      there is nowhere to put a view. Its table name *is* different, which is exactly the case a
+      view would help with, and it is the case that cannot have one.
+
+    So the honest output is often "no view, here is why, and here is what the query has to become",
+    and that is a better artefact than an empty tuple: a caller who gets nothing back cannot tell
+    "nothing needed" from "nothing thought about".
+    """
+
+    create: tuple[str, ...]
+    """Statements to run on the **target** when reads switch, in order."""
+    drop: tuple[str, ...]
+    """Statements to run when the source is dropped, so the view goes with what it replaced."""
+    not_possible: tuple[tuple[str, str], ...]
+    """``(entity, why)`` for each table that cannot have one. Sorted by entity."""
+
+    @property
+    def complete(self) -> bool:
+        """Whether every table of the group got one. False is ordinary - see the class docstring."""
+        return not self.not_possible
+
+
+def compatibility_views(
+    layout: PhysicalLayout, *, was: Mapping[str, str], dialect: str
+) -> CompatibilityViews:
+    """Views on the target under the table names the group had in the engine it left.
+
+    ``layout`` is the group's layout in the target and ``was`` is entity name to the table name it
+    had in the source - both from :func:`~sde.layout.default_layout`, one per dialect, so the two
+    names come from the same derivation the DDL uses rather than from a caller's memory of it.
+
+    **A view cannot cross engines, and that is why this renders on the target.** The old table is
+    in the old engine; no dialect here has a way to select from another server, and the one
+    PostgreSQL function that could - ``dblink`` - is refused by the control plane's read-only gate
+    by name. So what this offers is for the case where somebody re-points their tool at the new
+    engine and their SQL still says the old table name.
+
+    Columns are listed rather than ``SELECT *``, so the view names exactly what the map names: a
+    column added to the table later does not silently appear in a view somebody's query is
+    counting on the shape of. They are listed **in the layout's order**, which is the order the
+    ``CREATE TABLE`` uses - a view whose columns came out in a different order would break anything
+    reading them by position, which is most of what a hand-written query does with ``SELECT *``.
+
+    For ClickHouse the view reads ``FINAL``, and that is the substance rather than a detail. The
+    table is a ``ReplacingMergeTree``, so a plain read returns rows the declared key should have
+    collapsed until a background merge happens - which means a hand-written query moved verbatim
+    to the target returns numbers that are too big, silently, and gets no error to notice. A view
+    that quietly reproduced that would be worse than no view.
+    """
+    if dialect not in _BY_DIALECT:
+        raise EngineError(
+            f"no compatibility view for dialect {dialect!r}; this library renders "
+            f"{sorted(_BY_DIALECT)}."
+        )
+    if dialect in FIXED_SCHEMA:
+        return CompatibilityViews(
+            create=(),
+            drop=(),
+            not_possible=tuple(
+                (
+                    entity,
+                    f"{dialect} imposes its own schema and accepts no DDL from this library, so "
+                    f"there is nowhere to put a view. Its table is {layout.tables.get(entity)!r} "
+                    f"and the old name was {was.get(entity)!r}: a query naming the old one has to "
+                    f"be edited.",
+                )
+                for entity in sorted(layout.tables)
+            ),
+        )
+
+    quote = QUOTE[dialect]
+    # Idempotent like every statement `schema_statements` renders, and the two dialects spell that
+    # differently - measured against both servers rather than assumed. PostgreSQL has no
+    # `CREATE VIEW IF NOT EXISTS`: it is a syntax error, and the first draft of this function had
+    # one. `CREATE OR REPLACE VIEW` is idempotent there and running it twice is a no-op.
+    opening = "CREATE OR REPLACE VIEW" if dialect == "postgres" else "CREATE VIEW IF NOT EXISTS"
+    final = " FINAL" if dialect == "clickhouse" else ""
+    create: list[str] = []
+    drop: list[str] = []
+    not_possible: list[tuple[str, str]] = []
+    for entity, table in sorted(layout.tables.items()):
+        old = was.get(entity)
+        if old is None:
+            not_possible.append(
+                (
+                    entity,
+                    f"the source layout gives no table for {entity!r}, so there is no old name to "
+                    f"stand in for.",
+                )
+            )
+            continue
+        if old == table:
+            not_possible.append(
+                (
+                    entity,
+                    f"both engines call this table {table!r}, so the name is not what moved - the "
+                    f"dialect is."
+                    + (
+                        f" A query moved here verbatim must read `FROM {quote(table)} FINAL`: the "
+                        f"table is a ReplacingMergeTree, so without it a row written twice "
+                        f"under one key is counted twice until a background merge collapses it - "
+                        f"measured, two rows against one."
+                        if dialect == "clickhouse"
+                        else ""
+                    ),
+                )
+            )
+            continue
+        cols = layout.columns.get(entity, {})
+        if not cols:
+            raise EngineError(f"the layout gives no columns for {entity!r}")
+        # The layout's order, not a fresh sort. `_neutral_columns` already returns columns sorted
+        # by name, so sorting here was a second guarantee of the same thing - and a duplicated
+        # guarantee cannot be mutated separately, which is how it survived its own mutation test.
+        # What matters is the property rather than the branch: a view whose columns are in a
+        # different order from the table's would break anything reading them by position, so the
+        # useful statement is that the two renderings agree, and that is what the test asserts.
+        selected = ", ".join(quote(column) for column in cols)
+        create.append(f"{opening} {quote(old)} AS SELECT {selected} FROM {quote(table)}{final}")
+        drop.append(f"DROP VIEW IF EXISTS {quote(old)}")
+    return CompatibilityViews(
+        create=tuple(create), drop=tuple(drop), not_possible=tuple(not_possible)
+    )

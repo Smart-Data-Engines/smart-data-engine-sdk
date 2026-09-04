@@ -134,6 +134,40 @@ def test_schema_creation_is_idempotent(
         engine.ensure_schema(layout, keys={n: model.entity(n).key for n in group.members})
 
 
+def test_a_compatibility_view_runs_twice_and_answers_from_the_table(
+    engine: PostgresEngine, model: sde.LogicalModel, placement: sde.PlacementMap
+) -> None:
+    """Requirement 19.7's statements, against the server rather than against a string.
+
+    This is the class of defect that reads correctly and does not run, and it caught one: the first
+    draft of `compatibility_views` emitted `CREATE VIEW IF NOT EXISTS`, which PostgreSQL does not
+    have - it is a syntax error, not a subtle difference. Rendering is idempotent by construction
+    everywhere else in this module, so it is run twice here.
+    """
+    group = next(g for g in sde.colocation_groups(model) if "User" in g)
+    layout = placement.placement_of(group.name).source.layout
+    views = sde.compatibility_views(
+        layout, was={name: f"old_{name.lower()}" for name in group.members}, dialect="postgres"
+    )
+    assert views.create, "a renamed table has a view to render"
+
+    session = sde.Session(model, placement, {"pg-test": engine})
+    session.save("User", {"id": uuid.uuid4(), "email": "compat@example.test"})
+
+    with engine._cx.cursor() as cur:
+        for _ in range(2):
+            for statement in views.create:
+                cur.execute(statement)  # type: ignore[arg-type]
+        cur.execute('SELECT "email" FROM "old_user"')  # type: ignore[arg-type]
+        assert cur.fetchall() == [("compat@example.test",)]
+        for statement in views.drop:
+            cur.execute(statement)  # type: ignore[arg-type]
+        cur.execute(
+            "SELECT count(*) FROM information_schema.views WHERE table_name = 'old_user'"  # type: ignore[arg-type]
+        )
+        assert cur.fetchall() == [(0,)], "the view goes with the source it stood in for"
+
+
 def test_write_and_read_back_without_naming_a_table(
     engine: PostgresEngine, model: sde.LogicalModel, placement: sde.PlacementMap
 ) -> None:
