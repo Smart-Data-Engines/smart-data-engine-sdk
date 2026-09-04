@@ -45,6 +45,7 @@ from .errors import (
     ModelPlanningError,
     SdeError,
 )
+from .explain import Cost, Explains, PlanFinding, QueryPlan, QueryPlanRefused, explain
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .infer import InferredModel, Note, infer_model, infer_models
@@ -136,12 +137,14 @@ __all__ = [
     "CanonicalError",
     "CompatibilityViews",
     "CopyFreshness",
+    "Cost",
     "DeclarationError",
     "DerivedLayout",
     "Difference",
     "Engine",
     "EngineError",
     "EntityProgress",
+    "Explains",
     "FanOutStats",
     "Float32",
     "Group",
@@ -163,7 +166,10 @@ __all__ = [
     "OperationShape",
     "PhysicalLayout",
     "PlacementMap",
+    "PlanFinding",
     "Protection",
+    "QueryPlan",
+    "QueryPlanRefused",
     "Recorder",
     "Ref",
     "Router",
@@ -190,6 +196,7 @@ __all__ = [
     "enforce_forward_only",
     "entity",
     "enumerate_shapes",
+    "explain",
     "fixed_schema_mismatch",
     "group_columns",
     "group_of",

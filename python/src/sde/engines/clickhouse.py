@@ -55,6 +55,12 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from ..errors import EngineError
+from ..explain import (
+    Cost,
+    QueryPlan,
+    QueryPlanRefused,
+    replacing_merge_tree_finding,
+)
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
@@ -214,6 +220,138 @@ class ClickHouseEngine:
                 log("sde.schema.extra_columns", table=table, columns=extra)
 
     # --- data ------------------------------------------------------------------------------
+
+    def explain_plan(self, sql: str) -> QueryPlan:
+        """Plan an analyst's query without running it, with ``readonly=1`` on every statement.
+
+        Requirement 19.4. Four questions to the server, all under ``readonly=1`` - which ClickHouse
+        refuses a mutation under (code 164) and which leaves the rest working, both halves
+        measured, because a write protection that also blocked the measurement would be one nobody
+        would keep switched on.
+
+        The plan tree, ``EXPLAIN ESTIMATE`` for the numbers, ``EXPLAIN QUERY TREE`` for the table
+        names, and ``system.tables`` for each table's engine.
+
+        **The third question exists because of a measurement that broke the obvious design.** The
+        table names came from ``EXPLAIN ESTIMATE`` first, and for ``SELECT count() FROM t`` that
+        returns **no rows at all** - ClickHouse answers a trivial count from part metadata and
+        reads nothing, so there is no table in the estimate. That is precisely the query where
+        9.7's hazard is worst: a count over a ``ReplacingMergeTree`` without ``FINAL`` returns the
+        uncollapsed number. So the one query that most needs the warning was the one the estimate
+        could not see. ``EXPLAIN QUERY TREE`` names every table in the join tree whatever the read
+        optimisation does.
+        """
+        settings = {"readonly": 1}
+        # Read it back. Same reason as the PostgreSQL side: without this, dropping the setting
+        # changes nothing observable - nothing EXPLAIN does would write - so the guard would be
+        # unverifiable and its removal silent.
+        confirmed = self._cx.query("SELECT getSetting('readonly')", settings=settings)
+        answer = confirmed.result_rows[0][0] if confirmed.result_rows else None
+        if int(answer or 0) < 1:
+            raise EngineError(
+                f"this server would not accept readonly=1 for planning: getSetting('readonly') "
+                f"came back {answer!r}. Refusing to plan anything: requirement 19.2 keeps this "
+                f"product out of the data path, and readonly=1 is the whole of what stops a "
+                f"statement here from writing - measured, it refuses a mutation with code 164 and "
+                f"still answers EXPLAIN ESTIMATE."
+            )
+        try:
+            tree = self._cx.query(f"EXPLAIN {sql}", settings=settings)
+            plan = tuple(str(row[0]) for row in tree.result_rows)
+            estimate = self._cx.query(f"EXPLAIN ESTIMATE {sql}", settings=settings)
+        except Exception as exc:
+            raise QueryPlanRefused(
+                f"{self.dialect} would not plan this query: {exc} Nothing was executed. This is "
+                f"what validating against a live engine means: the control plane checked the query "
+                f"against the schema it authored, and this is the schema that exists."
+            ) from exc
+
+        columns = list(estimate.column_names)
+        rows = [dict(zip(columns, row, strict=False)) for row in estimate.result_rows]
+        values: dict[str, str] = {}
+        for name in ("parts", "rows", "marks"):
+            if name in columns:
+                values[name] = str(sum(int(row.get(name) or 0) for row in rows))
+        values["tables"] = str(len(rows))
+
+        named = self._tables_in(sql, settings=settings) or [
+            # The estimate's own names, as a fallback for a server whose analyzer does not answer
+            # EXPLAIN QUERY TREE. Both parts come from the answer rather than from this
+            # connection's default database: a query can read a table elsewhere, and the default
+            # would name the wrong one quietly, because system.tables would simply find nothing.
+            (str(row.get("table", "")), str(row.get("database", "")))
+            for row in rows
+            if row.get("table") and row.get("database")
+        ]
+        engines: list[tuple[str, str]] = []
+        for table, database in named:
+            try:
+                answer = self._cx.query(
+                    "SELECT engine FROM system.tables WHERE database = {db:String} "
+                    "AND name = {tb:String}",
+                    parameters={"db": database, "tb": table},
+                    settings=settings,
+                )
+            except Exception:  # pragma: no cover - a client without system.tables access
+                # Not fatal and not silent: the plan is still worth having, and the finding this
+                # would have produced is a property of the table rather than of the query, so its
+                # absence costs a warning rather than a guarantee.
+                continue
+            for row in answer.result_rows:
+                engines.append((table, str(row[0])))
+
+        return QueryPlan(
+            engine=self.dialect,
+            dialect=self.dialect,
+            plan=plan or ("(the engine returned an empty plan)",),
+            cost=Cost(
+                units="parts, rows and marks to read",
+                basis=(
+                    "real counts rather than arbitrary units, and coarse below one granule: a "
+                    "mark covers 8192 rows by default, so a small table reports every row and one "
+                    "mark whether or not the key filter prunes anything - measured on a "
+                    "thousand-row table. The figures are what the primary key can rule out before "
+                    "reading, so they move when the query filters on a key prefix and not when it "
+                    "filters on anything else. Zero across the board means the engine reads "
+                    "nothing at all: a trivial count() is answered from part metadata, and the "
+                    "estimate correctly reports no rows read - which is not the same as a query "
+                    "that returns nothing."
+                ),
+                values=values,
+            ),
+            findings=replacing_merge_tree_finding(engines),
+            read_only_enforced=(
+                "every statement sent with readonly=1. ClickHouse refuses a mutation under it "
+                "(code 164, READONLY) and still answers EXPLAIN ESTIMATE - both measured. There "
+                "is no transaction here to roll back, which is the same absence transaction() "
+                "refuses rather than pretends about."
+            ),
+        )
+
+    def _tables_in(self, sql: str, *, settings: Mapping[str, Any]) -> list[tuple[str, str]]:
+        """Every table the query reads, from the analyzer's own tree. ``(table, database)`` pairs.
+
+        A regex over ``EXPLAIN QUERY TREE`` output, which is the engine's own rendering and could
+        change between versions. The cost of that is a **missing** warning rather than a wrong one:
+        the finding this feeds is a property of a table, so losing it costs an analyst a sentence
+        and costs no guarantee. Worth having anyway, because the alternative loses it for the one
+        query where it matters most - see :meth:`explain_plan`.
+        """
+        import re
+
+        try:
+            tree = self._cx.query(f"EXPLAIN QUERY TREE {sql}", settings=dict(settings))
+        except Exception as exc:  # pragma: no cover - a server without the new analyzer
+            log("sde.explain.no_query_tree", reason=str(exc)[:120])
+            return []
+        found: list[tuple[str, str]] = []
+        for row in tree.result_rows:
+            for match in re.finditer(r"table_name:\s*(\S+)", str(row[0])):
+                qualified = match.group(1)
+                database, _, table = qualified.rpartition(".")
+                if table and (table, database) not in found:
+                    found.append((table, database))
+        return found
 
     def insert(self, table: str, values: Mapping[str, Any]) -> None:
         if not values:
