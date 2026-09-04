@@ -94,6 +94,8 @@ from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, sc
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .telemetry import (
+    CopyFreshness,
+    FanOutStats,
     GroupFeatures,
     Histogram,
     Recorder,
@@ -133,12 +135,14 @@ __all__ = [
     "BackfillProgress",
     "CanonicalError",
     "CompatibilityViews",
+    "CopyFreshness",
     "DeclarationError",
     "DerivedLayout",
     "Difference",
     "Engine",
     "EngineError",
     "EntityProgress",
+    "FanOutStats",
     "Float32",
     "Group",
     "GroupFeatures",

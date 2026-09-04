@@ -98,7 +98,14 @@ class Session:
             (s.entity, s.kind, s.fields): s for s in enumerate_shapes(model)
         }
         self._in_write_transaction = False
-        self._deferred: list[tuple[str, str, dict[str, Any]]] = []
+        self._deferred: list[tuple[str, str, str, str, int, dict[str, Any]]] = []
+        """Rows waiting for their transaction to commit before reaching a copy.
+
+        Six-wide rather than three because requirement 5.2 has us report how far behind a copy
+        runs, and the honest start of that interval is when the row was **queued** - not when the
+        replay ran. Carrying the group and the materialisation id too means the measurement is
+        attributed without looking anything up on a path that must not do work.
+        """
 
         missing = sorted(
             {m.engine for p in placement.groups.values() for m in p.all()} - set(self._engines)
@@ -298,11 +305,30 @@ class Session:
         for copy in placement.also_write:
             table = copy.layout.table_for(entity)
             if self._in_write_transaction:
-                self._deferred.append((copy.engine, table, dict(values)))
+                self._deferred.append(
+                    (copy.engine, table, group, copy.id, perf_counter_ns(), dict(values))
+                )
                 continue
-            self._replay_one(copy.engine, table, dict(values))
+            self._replay_one(copy.engine, table, group, copy.id, perf_counter_ns(), dict(values))
 
-    def _replay_one(self, engine_name: str, table: str, values: dict[str, Any]) -> None:
+    def _replay_one(
+        self,
+        engine_name: str,
+        table: str,
+        group: str,
+        materialization: str,
+        queued_ns: int,
+        values: dict[str, Any],
+    ) -> None:
+        """Write one row to one copy, measure how long the copy was behind, and never raise.
+
+        ``queued_ns`` is when the row was handed to the fan-out, so the interval measured is the
+        whole time the copy did not have a row the source did. Outside a transaction that is the
+        duration of this write; inside one it also includes the rest of the transaction, which
+        **overstates** the staleness - the safe direction for a bound somebody checks a budget
+        against.
+        """
+        failed = False
         try:
             self._engines[engine_name].insert(table, values)
         except Exception as exc:
@@ -310,11 +336,27 @@ class Session:
             # failure. The narrow `Exception` rather than `BaseException` matters: a
             # KeyboardInterrupt or a SystemExit during a fan-out is not a divergence, it is a
             # process being told to stop, and treating it as one would log a lie and continue.
+            failed = True
             log(
                 "sde.migration.divergence",
                 engine=engine_name,
                 table=table,
                 error=type(exc).__name__,
+            )
+        # After the `except` rather than in a `finally`, and the difference is one case. A failed
+        # fan-out must be counted - a copy missing a thousand rows with an excellent p99 is the
+        # report this measurement exists to make impossible - and `except Exception` above already
+        # falls through to here, so both paths record. What a `finally` would add is the
+        # **BaseException** path: a KeyboardInterrupt or SystemExit while the copy is being written
+        # would record a fan-out that completed, with `failed=False`, for a row that never landed.
+        # The comment above says an interrupt is not a divergence; recording it as a success would
+        # be worse than not recording it, so it is not recorded at all.
+        if self._recorder is not None:
+            self._recorder.record_fan_out(
+                group=group,
+                materialization=materialization,
+                nanoseconds=perf_counter_ns() - queued_ns,
+                failed=failed,
             )
 
     def get(self, entity: str, key: Mapping[str, Any], *, fresh: bool = False) -> Any:
@@ -420,8 +462,10 @@ class Session:
                 # Replayed after the source transaction has committed, and only by the outermost
                 # one: a nested block that returns to a still-open transaction has not committed
                 # anything yet, so its rows go back on the queue rather than to the copy.
-                for engine_name, table, values in pending:
-                    self._replay_one(engine_name, table, values)
+                for engine_name, table, group_name, copy_id, queued_ns, values in pending:
+                    self._replay_one(
+                        engine_name, table, group_name, copy_id, queued_ns, values
+                    )
             elif not committed:
                 # Rolled back. The rows never existed in the source, so they must never exist in
                 # the copy - dropping them is the whole reason the fan-out was deferred.

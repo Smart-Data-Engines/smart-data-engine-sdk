@@ -125,7 +125,9 @@ def _model() -> sde.LogicalModel:
     return sde.build_model(Reading)
 
 
-def _session(model: sde.LogicalModel, source: Any, target: Any) -> tuple[sde.Session, str]:
+def _session(
+    model: sde.LogicalModel, source: Any, target: Any, *, recorder: Any = None
+) -> tuple[sde.Session, str]:
     group = sde.colocation_groups(model)[0].name
     columns = {
         "Reading": {
@@ -171,7 +173,10 @@ def _session(model: sde.LogicalModel, source: Any, target: Any) -> tuple[sde.Ses
         },
     }
     session = sde.Session(
-        model, sde.load_map(raw, model=model), {"source": source, "target": target}
+        model,
+        sde.load_map(raw, model=model),
+        {"source": source, "target": target},
+        recorder=recorder,
     )
     session.ensure_schema()
     return session, group
@@ -344,3 +349,43 @@ def test_an_untouched_engine_reports_no_marker_and_creates_the_table(
     assert target.backfill_marker(materialization="dst", entity="Reading") == 3, (
         "append-only, and the answer is max() - a stale row cannot lower the marker"
     )
+
+
+def test_the_measured_lag_of_a_copy_is_a_real_engine_s_write_not_a_fake_s(
+    pair: tuple[Any, Any],
+) -> None:
+    """Requirement 5.2 against two real servers, because the number is the point.
+
+    A fake engine's insert takes microseconds and agrees with whatever this library believes about
+    round trips; a real one crosses a socket. So the assertion is not that a percentile exists - the
+    unit tests cover that - but that the interval measured here is a **plausible network write** and
+    that every fan-out was attributed to the copy that received it.
+
+    The lower bound is deliberately loose. This is a measurement, and pinning a measurement to a
+    tight range on somebody else's machine is how a real test becomes a flaky one; what would be a
+    defect is a number that cannot have come from a socket at all.
+    """
+    source, target = pair
+    model = _model()
+    recorder = sde.Recorder(model.version)
+    session, group = _session(model, source, target, recorder=recorder)
+
+    for n in range(1, 11):
+        session.save("Reading", {"tenant": 1, "seq": n, "station": f"s{n}"})
+
+    window = recorder.roll()
+    assert window is not None
+    (copy,) = window.copies(group)
+    assert copy.materialization == "dst"
+    assert copy.writes == 10
+    assert copy.failures == 0
+    assert copy.complete
+    assert copy.lag_p50_ms is not None
+    assert copy.lag_p99_ms is not None
+    assert copy.lag_p50_ms >= 0.001, (
+        f"a fan-out to a real engine measured {copy.lag_p50_ms} ms, which is not a round trip"
+    )
+    assert copy.lag_p99_ms < 5_000, "and it is a write, not a hang"
+
+    # And the copy really did receive them, so the number is about work that happened.
+    assert target.count(TARGET_TABLE) == 10

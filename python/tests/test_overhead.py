@@ -162,6 +162,18 @@ def test_end_to_end_comparison_is_reported_but_not_asserted(
     is well inside the run-to-run spread, so a strict assertion here would fail on noise - and a
     test that fails on noise teaches a team to rerun until it goes green, which is worse than
     having no test.
+
+    **The one assertion here used to do that to itself**, and the fix is a correction rather than a
+    loosening. It compared ``through_p99`` against ``direct_p99 * 3`` - a ratio of two *tail*
+    samples over a live socket, where one scheduler hiccup in the numerator is the whole
+    difference. Measured on a busier suite: one failure in sixteen runs on a branch that changed
+    nothing on the read path, none in eight on the branch before it. That is a load effect, not a
+    regression, and the paragraph above says exactly what such a test teaches.
+
+    What the assertion is *for* is a second round trip or a connection opened per call, and both of
+    those move the **median** - a connection is milliseconds against a round trip's microseconds,
+    every single call. So the guard is on p50, where it detects what it claims to, and the p99
+    difference stays reported. A tail comparison detects the operating system.
     """
     session = sde.Session(model, placement, {"pg": engine})
     table = placement.placement_of("Reading").source.layout.table_for("Reading")
@@ -189,10 +201,13 @@ def test_end_to_end_comparison_is_reported_but_not_asserted(
 
     # The only thing worth asserting: the session did not make the operation an order of magnitude
     # slower. That would not be noise, it would be a bug - a second round trip, or a connection
-    # opened per call.
-    assert through_p99 < direct_p99 * 3, (
-        f"going through the session made a point read {through_p99 / direct_p99:.1f}x slower at "
-        "p99. "
-        "That is far outside measurement noise; look for a second round trip or a connection being "
-        "opened per operation."
+    # opened per call - and both of those move the median, which is why the comparison is there
+    # rather than on the tail. See the docstring: on the tail this assertion measured the
+    # scheduler and failed once in sixteen runs against unchanged read-path code.
+    direct_p50 = _percentile(direct, 0.5)
+    through_p50 = _percentile(through, 0.5)
+    assert through_p50 < direct_p50 * 3, (
+        f"going through the session made a point read {through_p50 / direct_p50:.1f}x slower at "
+        "the median. That is not measurement noise - a median moves only if every call pays - so "
+        "look for a second round trip or a connection being opened per operation."
     )
