@@ -1,0 +1,4 @@
+{
+  "verified_with": "k1",
+  "why": "the claim requirement 14.2 can actually keep: a rotation that does not break the client. The client adds our new key and every map already in their hands still verifies - so the two sides do not have to change in the same second, which matters because our signing key is never overwritten and theirs is a configuration change in their deployment. This is the half that makes adding safe; removing is the irreversible half and is theirs to time."
+}

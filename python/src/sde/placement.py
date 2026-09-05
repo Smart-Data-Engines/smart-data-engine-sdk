@@ -123,6 +123,19 @@ class PlacementMap:
     groups: Mapping[str, GroupPlacement]
     routing: Mapping[str, str]
     signed: bool
+    verified_with: str | None = None
+    """Which of the caller's public keys verified this map, by the caller's own name for it.
+
+    ``None`` for an unsigned map and also for one verified against a bare key, where there was no
+    name to report; :attr:`signed` tells those apart. A default is allowed here because this field
+    is *reported* and never acted on - nothing routes or writes differently because of it - unlike
+    the dialect in a materialisation plan, which has no default precisely because a wrong one
+    produces a document that verifies and cannot be applied.
+
+    Public because a rotation needs it. Adding a key is safe and reversible; **removing** one is
+    the irreversible half, and a client cannot know when the old key is safe to drop without
+    seeing which key the maps they are actually receiving were signed with.
+    """
 
     def placement_of(self, group: str) -> GroupPlacement:
         try:
@@ -346,7 +359,67 @@ def _materialization(raw: Mapping[str, Any], where: str, *, source: bool) -> Mat
     )
 
 
-def _verify_signature(raw: Mapping[str, Any], public_key: bytes) -> None:
+def _key_set(public_key: bytes | Mapping[str, bytes]) -> tuple[tuple[str, bytes], ...]:
+    """Normalise what the caller supplied into named keys, refusing what cannot be a key.
+
+    A bare ``bytes`` is the ordinary case and keeps the empty name, because the caller gave us no
+    name to report back. A mapping is the rotation case, and the names are the caller's own: what a
+    rotation runbook needs is not a key but something to *remove*, and "remove k1" is only an
+    instruction if k1 is what they wrote in their configuration.
+
+    A key of the wrong length is refused here rather than left to fail verification. It is the
+    client's configuration, and a rotation that silently did not take effect - because the new key
+    was pasted a byte short - is the failure mode this whole mechanism exists to avoid. Before this
+    it raised a bare ``ValueError`` out of ``load_map`` on the application's start path.
+    """
+    pairs: tuple[tuple[str, bytes], ...]
+    if isinstance(public_key, (bytes, bytearray)):
+        pairs = (("", bytes(public_key)),)
+    else:
+        if not public_key:
+            raise MapError(
+                "an empty set of public keys was supplied. That is not the no-account mode - a map "
+                "with no signature is - it is a configuration that can verify nothing. Pass the "
+                "keys, or load an unsigned map."
+            )
+        pairs = tuple(sorted((str(k), bytes(v)) for k, v in public_key.items()))
+    for name, value in pairs:
+        if len(value) != 32:
+            raise MapError(
+                f"the public key {name or '(unnamed)'!r} is {len(value)} bytes and an Ed25519 "
+                f"public key is 32. Refused here rather than at verification: a key pasted a byte "
+                f"short would look like a map that does not verify, and the two have completely "
+                f"different fixes."
+            )
+    return pairs
+
+
+def _verify_signature(
+    raw: Mapping[str, Any], public_key: bytes | Mapping[str, bytes]
+) -> str | None:
+    """Verify, and report **which** of the caller's keys did it.
+
+    Returns the caller's own name for the key that verified, or ``None`` when a bare key was
+    supplied and there was no name to report. That does not collide with an unsigned map:
+    :attr:`PlacementMap.signed` tells those two apart, and one field meaning two things is how a
+    value ends up standing for four (see the coordinator's three-state answer in the engine).
+
+    **Every key is tried, and ``key_id`` only decides the order.** The signature block is excluded
+    from the signed payload in its entirety, so ``key_id`` is not covered by the signature and
+    anybody can edit it. Making it authoritative would therefore be trusting an attacker's
+    annotation; making it *authenticated* would mean changing what the payload is, which recomputes
+    every signature ever issued and is a contract bump in every language at once. As an ordering it
+    costs nothing to be wrong about: a bad hint makes verification try the keys in a worse order
+    and reach the same answer.
+
+    The cost of accepting a set is real and belongs written down here rather than in a document:
+    **an old key verifies for as long as the client keeps it.** This library has no clock - it is
+    never told when a map was issued, and reads the wall clock exactly once in the whole package -
+    so it cannot expire a key, and that same absence is what makes "you stop paying and nothing
+    breaks" true. Revocation is therefore the client removing a key from their own configuration,
+    which is why the id that verified is reported: a client who cannot see which key is in use
+    cannot know when the old one is safe to drop.
+    """
     try:
         from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -367,22 +440,38 @@ def _verify_signature(raw: Mapping[str, Any], public_key: bytes) -> None:
     except Exception as exc:
         raise MapError("the signature is not valid base64") from exc
 
+    claimed = signature.get("key_id")
+    claimed = str(claimed) if isinstance(claimed, str) else None
+    keys = _key_set(public_key)
+    if claimed is None:
+        ordered = list(keys)
+    else:
+        hinted = [pair for pair in keys if pair[0] == claimed]
+        ordered = hinted + [pair for pair in keys if pair[0] != claimed]
+
     payload = canonical_bytes({k: v for k, v in raw.items() if k != "signature"})
-    try:
-        Ed25519PublicKey.from_public_bytes(public_key).verify(value, payload)
-    except InvalidSignature as exc:
-        raise MapError(
-            "the map's signature does not verify. This is refused rather than warned about: the "
-            "map "
-            "decides where your data is written."
-        ) from exc
+    for name, key in ordered:
+        try:
+            Ed25519PublicKey.from_public_bytes(key).verify(value, payload)
+        except InvalidSignature:
+            continue
+        return name or None
+
+    tried = [name or "(unnamed)" for name, _ in ordered]
+    raise MapError(
+        f"the map's signature does not verify against any of the {len(ordered)} key(s) supplied "
+        f"({tried}); the map says it was signed with {claimed!r}. This is refused rather than "
+        f"warned about: the map decides where your data is written. If a rotation is in progress, "
+        f"the key named above is the one to add - and while both are configured, maps signed with "
+        f"either are accepted."
+    )
 
 
 def load_map(
     raw: Mapping[str, Any],
     *,
     model: LogicalModel | None = None,
-    public_key: bytes | None = None,
+    public_key: bytes | Mapping[str, bytes] | None = None,
     require_signature: bool = False,
 ) -> PlacementMap:
     """Parse and validate a placement map, and put the outcome on the record either way.
@@ -423,6 +512,7 @@ def load_map(
         map_version=placement.map_version,
         signed=placement.signed,
         forward_only=placement.signed,
+        key=placement.verified_with,
     )
     return placement
 
@@ -431,7 +521,7 @@ def _parse_map(
     raw: Mapping[str, Any],
     *,
     model: LogicalModel | None = None,
-    public_key: bytes | None = None,
+    public_key: bytes | Mapping[str, bytes] | None = None,
     require_signature: bool = False,
 ) -> PlacementMap:
     """The parse itself. Separate so that the reporting above wraps every refusal in it, including
@@ -479,7 +569,9 @@ def _parse_map(
                 "provided to check that claim. Either pass the key, or use an unsigned map - an "
                 "unsigned map is a supported mode, an unverifiable claim is not."
             )
-        _verify_signature(raw, public_key)
+        verified_with = _verify_signature(raw, public_key)
+    else:
+        verified_with = None
 
     groups_raw = raw.get("groups")
     if not isinstance(groups_raw, dict) or not groups_raw:
@@ -556,6 +648,7 @@ def _parse_map(
         groups=groups,
         routing={str(k): str(v) for k, v in routing.items()},
         signed=signature_present,
+        verified_with=verified_with,
     )
 
 

@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "31 bytes and an Ed25519 public key is 32",
+  "why": "the client's configuration, not the map. Refused before verification is attempted, because a key pasted a byte short would otherwise look identical to a map that does not verify - and the two have completely different fixes. Before this it was a bare ValueError out of the parser on the application's start path."
+}

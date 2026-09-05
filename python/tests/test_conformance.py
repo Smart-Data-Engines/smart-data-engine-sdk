@@ -117,6 +117,53 @@ def test_routing_vector(case: Path) -> None:
             )
 
 
+@pytest.mark.parametrize("case", _cases("signature"), ids=_ident)
+def test_signature_vector(case: Path) -> None:
+    """Accepting a **set** of public keys, which is what makes rotating our key possible.
+
+    Shared rather than Python-only for the usual reason: an acceptance rule that holds in one
+    runtime and not another is one map with two meanings, and nothing compiles differently. This
+    family is also the only one whose expectations were produced by openssl rather than by this
+    library - see ``conformance/tools/signature_vectors.py``.
+    """
+    model = model_from_neutral(_read_json(case / "model.json"))
+    document = _read_json(case / "map.json")
+    encoded: Mapping[str, str] = _read_json(case / "keys.json")
+    expected = _read_json(case / "expected.json")
+
+    # A single entry under the empty name is the bare-key form. It is not the same call as a
+    # one-entry mapping, and the difference is what the library reports back afterwards.
+    keys: Any
+    if list(encoded) == [""]:
+        keys = b64decode(encoded[""])
+    else:
+        keys = {name: b64decode(value) for name, value in encoded.items()}
+
+    if "error" in expected:
+        with pytest.raises(_ERRORS[expected["error"]], match=expected["match"]):
+            sde.load_map(document, model=model, public_key=keys, require_signature=True)
+        return
+
+    placement = sde.load_map(document, model=model, public_key=keys, require_signature=True)
+    assert placement.signed is True
+    assert placement.verified_with == expected["verified_with"], (
+        f"the map verified with {placement.verified_with!r}, the vector expects "
+        f"{expected['verified_with']!r}"
+    )
+
+
+def test_the_signature_family_covers_both_outcomes() -> None:
+    """A family of nothing but refusals proves a library can refuse, never that it can accept.
+
+    Both directions, in one place, for the reason 12.11 needed its second half: a gate that
+    rejects everything does not demonstrate a gate.
+    """
+    outcomes = {
+        "error" in _read_json(case / "expected.json") for case in _cases("signature")
+    }
+    assert outcomes == {True, False}, "the signature vectors only cover one outcome"
+
+
 _ERRORS: dict[str, type[Exception]] = {
     "DeclarationError": DeclarationError,
     "MapError": MapError,

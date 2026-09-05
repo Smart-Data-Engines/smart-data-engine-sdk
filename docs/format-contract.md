@@ -423,6 +423,53 @@ worse than no claim.
 Publishing the library does not weaken any of this. The public key is in the library, the private key
 is in the control plane, and a signature was never a secret.
 
+#### `key_id`, and why a library takes a *set* of public keys
+
+A library accepts **either one public key or several under names of the caller's choosing**. The
+several-keys form is what makes rotating the signing key possible without breaking anybody: while
+both are configured, maps signed with either verify, so the two sides do not have to change in the
+same second. Our signing key is never overwritten — doing that silently would invalidate every map
+in the field and the libraries would rightly refuse to start — and the client's side is a
+configuration change in their own deployment.
+
+A library reports back **which** of the caller's keys verified the map. That is not decoration:
+adding a key is safe and reversible, removing one is not, and a client cannot know when the old key
+is safe to drop without seeing which key the maps they are actually receiving were signed with.
+
+`key_id` in the signature block **orders the attempts and decides nothing**. Every configured key is
+tried. The reason is in the definition above: the signature covers
+`canonical_bytes(map without the "signature" key)`, so the whole signature block — `key_id`
+included — is *outside* what is signed, and anybody can edit it. A library that treated it as
+authoritative would refuse a perfectly good map on the strength of an attacker's annotation.
+Authenticating it would mean changing what the payload is, which recomputes every signature ever
+issued and is a bump in every language at once, for no gain: as an ordering, being wrong about
+`key_id` costs one failed verification and reaches the same answer.
+
+Two refusals belong to the caller's configuration rather than to the document, and are raised before
+verification is attempted:
+
+| Configuration | Result |
+|---|---|
+| a public key that is not 32 bytes | **refused**, naming the key and its length |
+| an empty set of keys | **refused**: this is not the no-account mode, it is a configuration that can verify nothing |
+
+Both exist because of what the alternative looks like. A key pasted a byte short would otherwise
+present as "this map does not verify" — identical to a map from the wrong source, and with a
+completely different fix.
+
+**What this does not give you is expiry.** A library is never told when a map was issued (section
+7 has no date in it anywhere) and has no clock to compare one against, so it cannot stop trusting a
+key on its own: **an old key verifies for as long as the client keeps it.** Revocation is therefore
+the client removing a key from their configuration, and a rotation forced by a compromised key is
+that same act done urgently rather than an overlap — the two are different runbooks and the
+difference is the order of the steps. This is the same absence that makes "you stop paying and
+nothing breaks" true, and it is not a gap to be closed later.
+
+None of this is a change to the document. The bytes a producer writes are the same; the
+`signature` block is unchanged, `key_id` was already in it, and a library that ignores `key_id`
+entirely still reads every map correctly. Section 11's rule is about what a *document* may say — so
+this is neither a tightening nor a loosening, and the contract version does not move.
+
 ### Forward only: a signed map is never accepted below one already applied
 
 A signature says a document is authentic. It says nothing about whether it is current, and it cannot:

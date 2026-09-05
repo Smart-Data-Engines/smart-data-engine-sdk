@@ -1,0 +1,4 @@
+{
+  "verified_with": "k2",
+  "why": "this map is signed with k2 and says k1. The signature block is excluded from the signed payload in its entirety, so key_id is not covered by the signature and anybody can edit it - a library that treated it as authoritative would be refusing a perfectly good map on an attacker's annotation. It orders the attempts and nothing else, so being wrong about it costs one failed verification and reaches the same answer."
+}
