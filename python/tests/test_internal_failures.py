@@ -88,7 +88,7 @@ def test_a_broken_logging_handler_does_not_break_an_operation() -> None:
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
     try:
-        sde.logging.log("sde.map.unsigned", model_version="abc")  # type: ignore[attr-defined]
+        sde.logging.log("sde.model.built", model_version="abc")  # type: ignore[attr-defined]
         assert internal_failures()["logging.emit"] == 1
     finally:
         logger.removeHandler(handler)
@@ -104,19 +104,52 @@ def test_a_broken_logging_filter_does_not_break_an_operation() -> None:
     logger.setLevel(logging.INFO)
     logger.addFilter(log_filter)
     try:
-        sde.logging.log("sde.map.unsigned", model_version="abc")  # type: ignore[attr-defined]
+        sde.logging.log("sde.model.built", model_version="abc")  # type: ignore[attr-defined]
         assert internal_failures()["logging.emit"] == 1
     finally:
         logger.removeFilter(log_filter)
         logger.setLevel(previous)
 
 
-def test_an_unknown_event_name_still_raises() -> None:
-    # Not swallowed, because it is our programming error and the test suite is where it should
-    # surface. The closed vocabulary is only worth having if a client can alert on a name and have
-    # it keep working.
-    with pytest.raises(ValueError, match="not a known event"):
+def test_an_unknown_event_name_is_counted_rather_than_raised() -> None:
+    """This used to raise, and the argument for raising was falsified by measurement.
+
+    The argument was that an unknown name is our programming error and the test suite is where it
+    should surface. It did not surface there: the names that go unnoticed live on rare paths, and a
+    rare path is where no test goes. ``sde.explain.no_query_tree`` shipped missing from the
+    vocabulary behind a ``pragma: no cover``, and a client planning a query on a ClickHouse without
+    the new analyzer got our note to ourselves - "add it to EVENTS" - instead of a plan.
+
+    The guard is now the static test in test_no_account.py, which reads every call site in the
+    package and agrees the vocabulary in both directions. That is total, and it fails in CI rather
+    than in somebody's request. Here the name is counted, so it is visible without being fatal, and
+    nothing is emitted, so the vocabulary a client alerts on stays closed.
+    """
+    before = internal_failures().get("logging.unknown_event", 0)
+    sde.logging.log("sde.made.this.up")  # type: ignore[attr-defined]
+    assert internal_failures()["logging.unknown_event"] == before + 1
+
+
+def test_an_unknown_event_name_reaches_no_handler() -> None:
+    """The half that makes the vocabulary closed rather than merely documented."""
+    logger = logging.getLogger("sde")
+    seen: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append(record.getMessage())
+
+    handler = Collect()
+    previous = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
         sde.logging.log("sde.made.this.up")  # type: ignore[attr-defined]
+        sde.logging.log("sde.model.built", model_version="abc")  # type: ignore[attr-defined]
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+    assert seen == ["sde.model.built"]
 
 
 # --- the other direction: what must NOT be swallowed -------------------------------------------

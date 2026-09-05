@@ -385,12 +385,57 @@ def load_map(
     public_key: bytes | None = None,
     require_signature: bool = False,
 ) -> PlacementMap:
-    """Parse and validate a placement map.
+    """Parse and validate a placement map, and put the outcome on the record either way.
 
     ``model`` is optional only so that the conformance vectors can exercise parsing on its own; in
     an application it is always passed, because a map for a different model version has to be
     refused rather than half-applied.
+
+    Both outcomes are logged, and the pair is the point. Until this wrapper existed the only line
+    a map load produced was ``sde.map.unsigned``, which fired **only** when the map had no
+    signature - so the one thing this library said about a map was said exclusively to clients
+    without an account. That is the shape requirement 12.6 forbids, arrived at from the other
+    direction: not a complaint anybody wrote, but a line that exists in one mode because nobody
+    wrote the other one.
+
+    So the event is the same in both modes and the mode is a **field**. That is what the closed
+    vocabulary is for - structured fields, and no interpolated values in the event name - and it
+    means the account-free mode emits no event the account mode does not. ``forward_only`` is the
+    single thing that actually differs; the sentence explaining it lives on
+    :attr:`Session.rollback_protection`, where a client can read it rather than grep for it.
+
+    A refusal is logged too, because ``MapError`` reaches the application while the log reaches the
+    operator, and those are different people at four in the morning. Its ``reason`` is the
+    engine-facing message, which in this library is always about structure - contract versions,
+    model versions, group, engine, table and materialisation names - and never about a value: there
+    is no code path by which one of the client's rows reaches a map.
     """
+    try:
+        placement = _parse_map(
+            raw, model=model, public_key=public_key, require_signature=require_signature
+        )
+    except MapError as exc:
+        log("sde.map.rejected", error=type(exc).__name__, reason=str(exc)[:200])
+        raise
+    log(
+        "sde.map.loaded",
+        model_version=placement.model_version,
+        map_version=placement.map_version,
+        signed=placement.signed,
+        forward_only=placement.signed,
+    )
+    return placement
+
+
+def _parse_map(
+    raw: Mapping[str, Any],
+    *,
+    model: LogicalModel | None = None,
+    public_key: bytes | None = None,
+    require_signature: bool = False,
+) -> PlacementMap:
+    """The parse itself. Separate so that the reporting above wraps every refusal in it, including
+    the ones added later by somebody who has not read this file."""
     if not isinstance(raw, dict):
         raise MapError("a placement map is an object")
 
@@ -435,12 +480,6 @@ def load_map(
                 "unsigned map is a supported mode, an unverifiable claim is not."
             )
         _verify_signature(raw, public_key)
-    else:
-        log(
-            "sde.map.unsigned",
-            model_version=model_version,
-            detail="running without an account; no telemetry will be sent",
-        )
 
     groups_raw = raw.get("groups")
     if not isinstance(groups_raw, dict) or not groups_raw:

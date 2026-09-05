@@ -21,9 +21,16 @@ logger: Final = logging.getLogger("sde")
 
 EVENTS: Final[frozenset[str]] = frozenset(
     {
+        # Once per process, and the single most useful line here: it names the model_version every
+        # other artefact keys on. "Why was my map refused for model version X" is answerable from
+        # this line and unanswerable without it.
         "sde.model.built",
+        # A map parsed and was accepted. `signed` says which kind of document it was and
+        # `forward_only` whether the rollback check applies - fields rather than two event names,
+        # so that the account-free mode emits nothing the account mode does not.
         "sde.map.loaded",
-        "sde.map.unsigned",
+        # A map was refused, with the error class and the structural reason. The exception goes to
+        # the application; this goes to whoever is looking at why it will not start.
         "sde.map.rejected",
         # A signed map was accepted and is not older than any already applied here. Emitted once
         # per session, so the fields are the ones an operator wants when a start is refused later.
@@ -54,10 +61,22 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # flush() in local mode tears the engine down and reopens it - 3.4 ms measured. Reads flush
         # lazily, so this line is where the cost shows up and how many rows it bought.
         "sde.orderbook.flushed",
+        # A ClickHouse server whose analyzer does not answer EXPLAIN QUERY TREE, so the table
+        # names behind a plan come from EXPLAIN ESTIMATE instead. Not a failure - the plan is
+        # returned - but the ReplacingMergeTree finding is a property of a table, so an operator
+        # who was expecting one and did not get it should be able to see why.
+        "sde.explain.no_query_tree",
         "sde.internal.error",
-        # Telemetry. dropped fires when the buffer is full and the oldest window is discarded -
-        # telemetry is the thing that gets lost when we run out of room, never an operation.
-        "sde.telemetry.window_sent",
+        # Telemetry. `window_closed` fires when a period ends and its aggregate is buffered for
+        # the application to collect; it was called `window_sent` until somebody read the log to
+        # check whether this library phones home and found a line saying it had. Nothing here
+        # sends anything - there is no channel, no address and no dependency that could open one -
+        # so the old name described an event that cannot happen, and a closed vocabulary exists so
+        # that an alert built on a name keeps working, not so that a wrong name outlives the
+        # reading of it. Renamed while the cost of renaming is zero.
+        "sde.telemetry.window_closed",
+        # dropped fires when the buffer is full and the oldest window is discarded - telemetry is
+        # the thing that gets lost when we run out of room, never an operation.
         "sde.telemetry.dropped",
     }
 )
@@ -66,20 +85,28 @@ EVENTS: Final[frozenset[str]] = frozenset(
 def log(event: str, /, **fields: Any) -> None:
     """Emit one structured event.
 
-    An unknown event name raises, because the whole value of a closed vocabulary is that a client
-    can build an alert on a name and have it keep working. That is a programming error on our side
-    and the test suite is where it should surface.
+    Nothing here can raise. The handler belongs to the client's application: it might write to a
+    socket that just closed, or be a custom formatter with a bug in it. A library that fails a
+    request because its own log line could not be written has no business being in somebody else's
+    process.
 
-    The *emission* is a different matter and is deliberately incapable of raising. The handler
-    belongs to the client's application: it might write to a socket that just closed, or be a custom
-    formatter with a bug in it. A library that fails a request because its own log line could not be
-    written has no business being in somebody else's process.
+    An unknown event name used to raise, on the argument that it is our programming error and the
+    test suite is where it should surface. **Measured, it did not.** The names that go unnoticed
+    are the ones on rare paths, and a rare path is precisely where no test goes:
+    ``sde.explain.no_query_tree`` shipped absent from the vocabulary behind a ``pragma: no cover``,
+    and a client on a ClickHouse without the new analyzer got ``ValueError: ... is not a known
+    event. Add it to EVENTS ...`` - a note addressed to us, delivered to them, instead of the query
+    plan, on the one path written to degrade gracefully.
+
+    So the guard moved to where it can be total: a static test reads every ``log()`` call site in
+    the package and requires the vocabulary and the code to agree in both directions. That fails in
+    CI on every path rather than in production on one. Here an unknown name is counted through the
+    same registry as a broken handler and nothing is emitted - so the vocabulary stays closed, a
+    client can still see that it happened, and it costs them no call.
     """
     if event not in EVENTS:
-        raise ValueError(
-            f"{event!r} is not a known event. Add it to EVENTS with a comment explaining when it "
-            "fires - the vocabulary is closed so that alerts built on these names keep working."
-        )
+        _count("logging.unknown_event")
+        return
     # Checked before anything is built. Routing logs on every operation and an unconfigured logger
     # is
     # the normal case in production, so the cost of a log line nobody consumes has to be one
@@ -91,9 +118,15 @@ def log(event: str, /, **fields: Any) -> None:
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
-        # No guard() here, and no logging of the logging failure: guard() reports through log(), so
-        # calling it would be a loop. Counted instead, through the same registry, by hand.
-        from .internal import _failures, _lock
+        _count("logging.emit")
 
-        with _lock:
-            _failures["logging.emit"] = _failures.get("logging.emit", 0) + 1
+
+def _count(what: str) -> None:
+    """Record one of our own failures without going through :func:`~sde.internal.guard`.
+
+    guard() reports through log(), so calling it from here would be a loop. Same registry, by hand.
+    """
+    from .internal import _failures, _lock
+
+    with _lock:
+        _failures[what] = _failures.get(what, 0) + 1
