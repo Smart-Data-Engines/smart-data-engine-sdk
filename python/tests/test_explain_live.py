@@ -358,6 +358,42 @@ def test_the_table_names_come_from_the_analyzer_and_not_from_the_estimate(ch: ob
 
 
 @clickhouse
+def test_a_server_without_the_new_analyzer_still_gets_a_plan(ch: object) -> None:
+    """The fallback path, which shipped raising a ValueError at the client.
+
+    ``EXPLAIN QUERY TREE`` needs the new analyzer, so the branch behind it is a real deployment
+    condition and it carried a ``pragma: no cover``. Behind that marker sat a ``log()`` call with
+    an event name absent from the vocabulary, and ``log()`` raised on an unknown name - so a client
+    on an older ClickHouse asked for a query plan and got our note to ourselves, "add it to
+    EVENTS", instead of one. The marker saying no test comes here was one line above the call that
+    needed a test.
+
+    Two things changed and this pins both: the name is in the vocabulary, and an unknown name is
+    counted rather than raised. The path is exercised by making the analyzer query fail, which is
+    what an older server does.
+    """
+    engine = ch
+    real_query = engine._cx.query  # type: ignore[attr-defined]
+
+    def older_server(sql: str, *args: object, **kwargs: object) -> object:
+        if sql.startswith("EXPLAIN QUERY TREE"):
+            raise RuntimeError("Code: 46. Unknown expression identifier (older analyzer)")
+        return real_query(sql, *args, **kwargs)
+
+    engine._cx.query = older_server  # type: ignore[attr-defined]
+    try:
+        plan = sde.explain(engine, f"SELECT id FROM `{CH_TABLE}` WHERE id = 3")
+    finally:
+        engine._cx.query = real_query  # type: ignore[attr-defined]
+
+    assert plan.plan, "a plan is still returned; only the table names lose their source"
+    assert plan.cost is not None
+    # The estimate's own names take over, so the ReplacingMergeTree finding survives for a query
+    # whose plan reads granules. It is the trivial count() that loses it - see the test above.
+    assert any(CH_TABLE in finding.detail for finding in plan.findings)
+
+
+@clickhouse
 def test_clickhouse_refuses_to_plan_a_mutation_as_a_syntax_error(ch: object) -> None:
     """Measured, and it is a stronger position than PostgreSQL's.
 

@@ -341,7 +341,11 @@ class ClickHouseEngine:
 
         try:
             tree = self._cx.query(f"EXPLAIN QUERY TREE {sql}", settings=dict(settings))
-        except Exception as exc:  # pragma: no cover - a server without the new analyzer
+        except Exception as exc:
+            # No pragma here any more, and that is the point. The marker that used to say "no test
+            # comes here" sat one line above a log() call whose event name was missing from the
+            # vocabulary, and log() raised on an unknown name - so the graceful path was the one
+            # that crashed, in the client's process, on an older server.
             log("sde.explain.no_query_tree", reason=str(exc)[:120])
             return []
         found: list[tuple[str, str]] = []

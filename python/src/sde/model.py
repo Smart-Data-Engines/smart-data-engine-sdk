@@ -22,6 +22,7 @@ from typing import Any, get_args, get_origin, get_type_hints
 from .canonical import canonical_bytes, digest16
 from .entity import EntityDecl, Ref, registry
 from .errors import DeclarationError
+from .logging import log
 from .types import resolve_type
 
 __all__ = [
@@ -334,7 +335,7 @@ def assemble(
         "cost_ceiling": dict(cost_ceiling) if cost_ceiling is not None else None,
     }
 
-    return LogicalModel(
+    model = LogicalModel(
         entities=specs,
         relations=rels,
         atomic=atomic,
@@ -342,3 +343,14 @@ def assemble(
         ir=ir,
         version=digest16(ir),
     )
+    # Once per process. `model_version` is the identifier every other artefact is keyed on - a map
+    # naming a different one is refused, and that refusal is the most common thing anybody will
+    # ever ask us about - so the version this process computed has to be readable from the client's
+    # own log rather than reconstructed from their source.
+    log(
+        "sde.model.built",
+        model_version=model.version,
+        entities=len(specs),
+        groups=len(atomic),
+    )
+    return model

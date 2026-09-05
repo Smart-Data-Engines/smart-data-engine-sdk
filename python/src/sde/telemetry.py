@@ -495,7 +495,7 @@ class Recorder:
                 log("sde.telemetry.dropped", dropped=self._dropped)
             self._windows.append(window)
         log(
-            "sde.telemetry.window_sent",
+            "sde.telemetry.window_closed",
             model_version=window.model_version,
             shapes=len(window.shapes),
             complete=window.complete,
@@ -507,11 +507,25 @@ class Recorder:
             return tuple(self._windows)
 
     def mark_incomplete(self) -> None:
-        """Called when the library could not reach us for part of the current period."""
+        """Called by the application when part of the current period was not recorded.
+
+        The flag travels to us in :attr:`Window.complete` and the planner reads it, because a
+        window missing a slice of the traffic must not be scored as though it were the whole
+        period: an application that was down for six of the last twenty-four hours looks
+        idle-and-cheap on figures nobody marked as partial.
+
+        Nothing here decides when that happened. The application collects these windows and hands
+        them to us; only it knows whether a collection was skipped.
+        """
         self._incomplete = True
 
     def acknowledge(self, count: int) -> None:
-        """Drop the oldest ``count`` windows after they were delivered."""
+        """Drop the oldest ``count`` windows once the application has taken them.
+
+        The delivering party is the client's own process, and there is no other. This library
+        never opens a connection to us - the buffer is read with :meth:`pending`, written wherever
+        the application writes it, and that file is what we are handed.
+        """
         with self._lock:
             for _ in range(min(count, len(self._windows))):
                 self._windows.popleft()
