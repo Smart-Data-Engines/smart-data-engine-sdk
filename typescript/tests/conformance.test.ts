@@ -220,6 +220,67 @@ it('covers both error stages with actual vectors', () => {
 })
 
 
+// --- signature vectors ------------------------------------------------------------------------
+//
+// Accepting a **set** of public keys is what makes rotating our signing key possible without
+// breaking a client, and an acceptance rule that holds in one runtime and not another is one map
+// with two meanings, with nothing compiling differently. This family is also the only one whose
+// expectations were produced by openssl rather than by either library - see
+// conformance/tools/signature_vectors.py.
+
+interface SignatureExpectation {
+  readonly verified_with?: string | null
+  readonly error?: string
+  readonly match?: string
+}
+
+describe('signature vectors', () => {
+  for (const name of cases('signature')) {
+    it(name, () => {
+      const dir = join(VECTORS, 'signature', name)
+      const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      const raw = readJson<unknown>(join(dir, 'map.json'))
+      const encoded = readJson<Record<string, string>>(join(dir, 'keys.json'))
+      const expected = readJson<SignatureExpectation>(join(dir, 'expected.json'))
+
+      // A single entry under the empty name is the bare-key form. It is not the same call as a
+      // one-entry mapping, and the difference is what the library reports back afterwards.
+      const names = Object.keys(encoded)
+      const publicKey: Uint8Array | Record<string, Uint8Array> =
+        names.length === 1 && names[0] === ''
+          ? Buffer.from(encoded[''] as string, 'base64')
+          : Object.fromEntries(
+              Object.entries(encoded).map(([id, value]) => [id, Buffer.from(value, 'base64')]),
+            )
+
+      const options = { model, publicKey, requireSignature: true }
+      if (expected.error !== undefined) {
+        expect(ERRORS[expected.error], `unknown error class ${expected.error}`).toBeDefined()
+        expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match as string))
+        return
+      }
+
+      const placement = loadMap(raw, options)
+      expect(placement.signed).toBe(true)
+      expect(placement.verifiedWith).toEqual(expected.verified_with ?? null)
+    })
+  }
+})
+
+it('covers both signature outcomes with actual vectors', () => {
+  // A family of nothing but refusals proves a library can refuse, never that it can accept - the
+  // reason 12.11 needed its second half.
+  const outcomes = new Set(
+    cases('signature').map(
+      (name) =>
+        readJson<SignatureExpectation>(join(VECTORS, 'signature', name, 'expected.json')).error !==
+        undefined,
+    ),
+  )
+  expect([...outcomes].sort()).toEqual([false, true])
+})
+
+
 // --- canonical vectors ------------------------------------------------------------------------
 //
 // These feed a value straight into the encoder rather than going through a model, and they exist

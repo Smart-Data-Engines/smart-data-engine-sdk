@@ -1,0 +1,4 @@
+{
+  "verified_with": "k2",
+  "why": "the overlap window during a rotation, which is the whole point of accepting a set: we sign with the new key while the client still has both, and nothing about their deployment has to change at the same moment ours does. The id that verified is reported because adding a key is reversible and removing one is not - a client cannot know when the old key is safe to drop otherwise."
+}

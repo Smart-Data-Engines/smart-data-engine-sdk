@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "empty set of public keys",
+  "why": "an empty set is not the no-account mode - a map with no signature is. It is a configuration that can verify nothing, and saying so is better than a refusal blaming the map."
+}

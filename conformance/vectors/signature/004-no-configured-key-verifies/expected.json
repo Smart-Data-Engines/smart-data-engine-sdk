@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "does not verify against any of the 2 key",
+  "why": "signed with a key the client does not have. The refusal has to name how many keys were tried and which one the map asked for, because during a rotation this is the message that says whether the new key is missing from the client's configuration or the map came from somewhere else entirely."
+}

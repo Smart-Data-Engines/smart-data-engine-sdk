@@ -59,12 +59,30 @@ export interface PlacementMap {
   readonly groups: Readonly<Record<string, GroupPlacement>>
   readonly routing: Readonly<Record<string, string>>
   readonly signed: boolean
+  /**
+   * Which of the caller's public keys verified this map, by the caller's own name for it.
+   *
+   * `null` for an unsigned map and also for one verified against a bare key, where there was no
+   * name to report; `signed` tells those apart.
+   *
+   * Public because a rotation needs it. Adding a key is safe and reversible; **removing** one is
+   * the irreversible half, and a client cannot know when the old key is safe to drop without
+   * seeing which key the maps they are actually receiving were signed with.
+   */
+  readonly verifiedWith: string | null
 }
 
 export interface LoadOptions {
   readonly model?: LogicalModel
-  /** Raw 32-byte Ed25519 public key. */
-  readonly publicKey?: Uint8Array
+  /**
+   * Raw 32-byte Ed25519 public key, or several of them under the caller's own names.
+   *
+   * The mapping form is what makes a rotation possible without breaking the client: while both
+   * keys are configured, maps signed with either are accepted. What a runbook needs is not a key
+   * but something to *remove*, and "remove k1" is only an instruction if k1 is what the client
+   * wrote in their configuration.
+   */
+  readonly publicKey?: Uint8Array | Readonly<Record<string, Uint8Array>>
   readonly requireSignature?: boolean
 }
 
@@ -307,7 +325,60 @@ function defaultLayout(model: LogicalModel, members: readonly string[]): Physica
   return { tables, columns: {}, indexes: [], partitionBy: {} }
 }
 
-function verifyMapSignature(raw: Record<string, unknown>, publicKey: Uint8Array): void {
+/**
+ * Normalise what the caller supplied into named keys, refusing what cannot be a key.
+ *
+ * A key of the wrong length is refused here rather than left to fail verification: it is the
+ * client's configuration, and a rotation that silently did not take effect - because the new key
+ * was pasted a byte short - is the failure this whole mechanism exists to avoid.
+ */
+function keySet(
+  publicKey: Uint8Array | Readonly<Record<string, Uint8Array>>,
+): Array<[string, Uint8Array]> {
+  let pairs: Array<[string, Uint8Array]>
+  if (publicKey instanceof Uint8Array) {
+    pairs = [['', publicKey]]
+  } else {
+    pairs = Object.entries(publicKey).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    if (pairs.length === 0) {
+      throw new MapError(
+        'an empty set of public keys was supplied. That is not the no-account mode - a map with ' +
+          'no signature is - it is a configuration that can verify nothing. Pass the keys, or ' +
+          'load an unsigned map.',
+      )
+    }
+  }
+  for (const [name, value] of pairs) {
+    if (value.length !== 32) {
+      throw new MapError(
+        `the public key ${JSON.stringify(name || '(unnamed)')} is ${value.length} bytes and an ` +
+          'Ed25519 public key is 32. Refused here rather than at verification: a key pasted a ' +
+          'byte short would look like a map that does not verify, and the two have completely ' +
+          'different fixes.',
+      )
+    }
+  }
+  return pairs
+}
+
+/**
+ * Verify, and report **which** of the caller's keys did it.
+ *
+ * **Every key is tried, and `key_id` only decides the order.** The signature block is excluded
+ * from the signed payload in its entirety, so `key_id` is not covered by the signature and anybody
+ * can edit it. Treating it as authoritative would be trusting an attacker's annotation; making it
+ * authenticated would change what the payload is, which recomputes every signature ever issued and
+ * is a contract bump in every language at once. As an ordering it costs nothing to be wrong about.
+ *
+ * The cost of accepting a set is real: **an old key verifies for as long as the client keeps it.**
+ * This library has no clock, so it cannot expire one - and that same absence is what makes "you
+ * stop paying and nothing breaks" true. Revocation is the client removing a key from their own
+ * configuration, which is why the id that verified is reported.
+ */
+function verifyMapSignature(
+  raw: Record<string, unknown>,
+  publicKey: Uint8Array | Readonly<Record<string, Uint8Array>>,
+): string | null {
   const signature = asRecord(raw['signature'], 'signature')
   if (signature['alg'] !== 'ed25519') {
     throw new MapError('only ed25519 signatures are understood')
@@ -316,20 +387,34 @@ function verifyMapSignature(raw: Record<string, unknown>, publicKey: Uint8Array)
   const { signature: _omit, ...rest } = raw
   const payload = canonicalBytes(rest)
 
-  // Node wants a KeyObject; a raw 32-byte Ed25519 key becomes one via a minimal DER wrapper. The
-  // alternative is asking callers for PEM, which is a worse interface for a key that is 32 bytes.
-  const der = Buffer.concat([
-    Buffer.from('302a300506032b6570032100', 'hex'),
-    Buffer.from(publicKey),
-  ])
-  const key = createPublicKey({ key: der, format: 'der', type: 'spki' })
+  const claimed = typeof signature['key_id'] === 'string' ? signature['key_id'] : null
+  const keys = keySet(publicKey)
+  const ordered =
+    claimed === null
+      ? keys
+      : [...keys.filter(([name]) => name === claimed), ...keys.filter(([name]) => name !== claimed)]
 
-  if (!verifySignature(null, payload, key, value)) {
-    throw new MapError(
-      "the map's signature does not verify. This is refused rather than warned about: the map " +
-        'decides where your data is written.',
-    )
+  for (const [name, raw32] of ordered) {
+    // Node wants a KeyObject; a raw 32-byte Ed25519 key becomes one via a minimal DER wrapper. The
+    // alternative is asking callers for PEM, which is a worse interface for a key that is 32 bytes.
+    const der = Buffer.concat([
+      Buffer.from('302a300506032b6570032100', 'hex'),
+      Buffer.from(raw32),
+    ])
+    const key = createPublicKey({ key: der, format: 'der', type: 'spki' })
+    if (verifySignature(null, payload, key, value)) {
+      return name === '' ? null : name
+    }
   }
+
+  const tried = ordered.map(([name]) => name || '(unnamed)')
+  throw new MapError(
+    `the map's signature does not verify against any of the ${ordered.length} key(s) supplied ` +
+      `(${JSON.stringify(tried)}); the map says it was signed with ${JSON.stringify(claimed)}. ` +
+      'This is refused rather than warned about: the map decides where your data is written. If a ' +
+      'rotation is in progress, the key named above is the one to add - and while both are ' +
+      'configured, maps signed with either are accepted.',
+  )
 }
 
 /**
@@ -437,6 +522,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     )
   }
 
+  let verifiedWith: string | null = null
   const signaturePresent = body['signature'] !== undefined && body['signature'] !== null
   if (options.requireSignature === true && !signaturePresent) {
     throw new MapError('a signature was required and this map has none')
@@ -449,7 +535,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
           'supported mode, an unverifiable claim is not.',
       )
     }
-    verifyMapSignature(body, options.publicKey)
+    verifiedWith = verifyMapSignature(body, options.publicKey)
   }
 
   const groupsRaw = body['groups']
@@ -561,6 +647,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     groups,
     routing: routingRaw as Record<string, string>,
     signed: signaturePresent,
+    verifiedWith,
   }
 }
 

@@ -1,0 +1,4 @@
+{
+  "verified_with": null,
+  "why": "the ordinary case: one key, no rotation in progress. The empty name is how a caller passing a bare key is represented, and the library reports no name back because it was given none. `signed` is what tells this apart from an unsigned map; one field meaning two things is how a value ends up standing for four."
+}

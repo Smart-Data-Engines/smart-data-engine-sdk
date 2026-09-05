@@ -22,6 +22,11 @@ vectors/
   errors/<nnn>-<name>/
     model.json
     expected.json             which error, and at what point it must be raised
+  signature/<nnn>-<name>/
+    model.json
+    map.json                  a signed placement map
+    keys.json                 the public keys the caller holds, by the caller's own names
+    expected.json             which key verified it, or which error it must raise
   canonical/<nnn>-<name>/
     value.json                a value fed straight to the encoder
     bytes.json                the exact bytes it must produce
@@ -55,6 +60,11 @@ vectors exist to catch, and it is invisible after parsing.
 5. For routing vectors, load `map.json` and assert each case resolves as `cases.json` says.
 6. For error vectors, assert the error is raised, and raised at the stage `expected.json` names -
    a library that raises the right error at the wrong time has a different bug, not the same one.
+7. For signature vectors, load `map.json` with the keys in `keys.json` and assert which one
+   verified it. A single entry under the **empty** name means the caller passed one bare key and
+   the library reports no name back; that is a different call from a one-entry mapping, and the
+   difference is the whole reason this family exists. `key_id` in the map orders the attempts and
+   decides nothing - vector `003` is signed with one key and says another.
 
 ## Where the expected values came from
 
@@ -62,6 +72,15 @@ vectors exist to catch, and it is invisible after parsing.
 `docs/format-contract.md`, not produced by any implementation, and it is the vector that proves the
 document is sufficient to implement from. If the reference implementation ever disagrees with it, the
 implementation is wrong until somebody argues otherwise in writing.
+
+`signature/` is the second family without that limitation, and for the same reason as `hashing/`:
+every signature in it was produced **by openssl**, which shares no code with either library, and the
+generator refuses to write a file whose signature openssl will not verify. What still comes from this
+implementation is the *payload* - the canonical encoding of the map without its signature block -
+because openssl cannot compute our canonical form. That part is pinned separately and harder, by
+`model/001-single-entity`. No private key is committed: each pair is generated in a temporary
+directory and discarded, so regenerating means new keys and new signatures, which costs nothing
+because a signature is not one of the artefacts that has to stay byte-stable.
 
 The rest were generated from the Python implementation and reviewed by hand. That is honest but
 weaker: a bug in the reference implementation would have been frozen into them. So the rule is that
