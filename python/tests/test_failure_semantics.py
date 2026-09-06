@@ -31,6 +31,7 @@ import signal
 import socket
 import threading
 import time
+import urllib.parse
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -70,6 +71,30 @@ def _flat() -> str:
     """
     return " ".join(_document().split())
 
+
+def _with_port(dsn: str, port: int) -> str:
+    """The same DSN, pointed at another port.
+
+    Not a string replacement of the port this machine happens to use. The first version of this
+    file did `dsn.replace(":55432", ":55499")`, which is a no-op against CI's `:5432` - so four
+    tests connected to the *real* engine, found it healthy, and failed on "DID NOT RAISE". A test
+    whose setup silently does nothing is worse than a missing test: it reports on something else.
+    """
+    parsed = urllib.parse.urlsplit(dsn)
+    host = parsed.hostname or "127.0.0.1"
+    credentials = ""
+    if parsed.username:
+        credentials = parsed.username + (f":{parsed.password}" if parsed.password else "") + "@"
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, f"{credentials}{host}:{port}", parsed.path, parsed.query, parsed.fragment)
+    )
+
+
+def _free_port() -> int:
+    """A port with nothing on it. Bound and released, so the number is known to be unused."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
 
 @contextlib.contextmanager
 def _within(seconds: int) -> Iterator[None]:
@@ -151,7 +176,10 @@ def silent_port() -> Iterator[int]:
 def test_an_engine_that_is_not_listening_fails_immediately_and_says_why() -> None:
     if PG_DSN is None:
         pytest.skip("set SDE_POSTGRES_DSN")
-    closed = PG_DSN.replace(":55432", ":55499")
+    closed = _with_port(PG_DSN, _free_port())
+    # The setup has to have done something. This is the assertion the first version of this file
+    # was missing, and without it four tests connected to a healthy engine and reported on it.
+    assert closed != PG_DSN
     started = time.monotonic()
     with pytest.raises(EngineError, match="could not connect to PostgreSQL") as raised:
         PostgresEngine(closed).connect()
@@ -174,7 +202,8 @@ def test_an_engine_that_accepts_and_stays_silent_is_bounded(silent_port: int) ->
     """
     if PG_DSN is None:
         pytest.skip("set SDE_POSTGRES_DSN")
-    hung = PG_DSN.replace(":55432", f":{silent_port}")
+    hung = _with_port(PG_DSN, silent_port)
+    assert hung != PG_DSN
     started = time.monotonic()
     refused = pytest.raises(EngineError, match="could not connect to PostgreSQL")
     with _within(PG_CONNECT + 5), refused:
@@ -188,7 +217,7 @@ def test_a_timeout_the_caller_chose_wins_over_ours(silent_port: int) -> None:
     about their own network, and a library that overrode it would be the wrong kind of helpful."""
     if PG_DSN is None:
         pytest.skip("set SDE_POSTGRES_DSN")
-    hung = PG_DSN.replace(":55432", f":{silent_port}") + "?connect_timeout=2"
+    hung = _with_port(PG_DSN, silent_port) + "?connect_timeout=2"
     started = time.monotonic()
     with pytest.raises(EngineError):
         PostgresEngine(hung).connect()
@@ -201,7 +230,8 @@ def test_clickhouse_bounds_the_handshake_rather_than_the_query(silent_port: int)
     read timeout is what is left. The handshake is bounded; a query deliberately is not."""
     if CH_DSN is None:
         pytest.skip("set SDE_CLICKHOUSE_DSN")
-    hung = CH_DSN.replace(":58123", f":{silent_port}")
+    hung = _with_port(CH_DSN, silent_port)
+    assert hung != CH_DSN
     started = time.monotonic()
     refused = pytest.raises(EngineError, match="could not connect to ClickHouse")
     with _within(CH_HANDSHAKE + 5), refused:
@@ -279,7 +309,10 @@ def test_the_three_rules_are_on_the_page_and_each_one_holds() -> None:
     assert "We are not in your data path" in _flat()
     # The mechanism: an engine has nowhere to put an address of ours, and the library imports no
     # network module. Both are their own tests; named here so that dropping one fails the page too.
-    from tests.test_no_account import MAY_IMPORT
+    # A sibling module, imported the way pytest makes it available: `tests/` is not a package,
+    # so its directory is on sys.path and `tests.test_no_account` only resolved locally, as an
+    # implicit namespace package. CI said ModuleNotFoundError.
+    from test_no_account import MAY_IMPORT
 
     assert not {"http", "urllib", "socket", "requests"} & set(MAY_IMPORT)
 
