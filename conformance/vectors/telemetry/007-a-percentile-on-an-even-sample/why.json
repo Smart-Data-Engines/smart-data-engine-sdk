@@ -1,0 +1,3 @@
+{
+  "why": "Which of two samples a percentile picks. Every other case in this family has an odd sample count or every sample in one bucket, so nearest-rank - the smallest value at least p of the data is below - and floor(p*n) choose the same row and the rule was undetermined: a third implementation swapped one for the other and the whole family stayed green. They differ exactly when p*n is an integer, which is what two samples at p50 is. Nearest-rank reports the lower of the two, 0.002 rather than 0.008, and the same rank rule picks 3 rather than 300 for the cardinality. Two libraries disagreeing here would report a different p50 for identical traffic, which is a number a placement decision is made on."
+}

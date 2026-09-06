@@ -1,0 +1,178 @@
+[
+  {
+    "engine": "pg-copy2",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg3",
+    "entity": "Reading"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": null,
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 4
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg3",
+    "entity": "Reading",
+    "rows": 4
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      4
+    ],
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 3
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg3",
+    "entity": "Reading",
+    "rows": 7
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg3",
+    "entity": "Sample"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": null,
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "copy_in",
+    "table": "sample",
+    "rows": 4
+  },
+  {
+    "engine": "pg-copy2",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg3",
+    "entity": "Sample",
+    "rows": 4
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": [
+      "beta",
+      2
+    ],
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": null,
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 4
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading",
+    "rows": 4
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      4
+    ],
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading",
+    "rows": 7
+  },
+  {
+    "engine": "pg-copy",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Sample"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": null,
+    "upto": null,
+    "limit": 4
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "sample",
+    "rows": 4
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Sample",
+    "rows": 4
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": [
+      "beta",
+      2
+    ],
+    "upto": null,
+    "limit": 4
+  }
+]

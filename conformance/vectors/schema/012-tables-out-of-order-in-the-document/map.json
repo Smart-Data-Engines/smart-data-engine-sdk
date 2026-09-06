@@ -1,0 +1,29 @@
+{
+  "contract": 1,
+  "model_version": "f87db68bb2f1830c",
+  "map_version": 1,
+  "groups": {
+    "Alpha": {
+      "source": {
+        "id": "Alpha@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Beta": "beta",
+            "Alpha": "alpha"
+          },
+          "columns": {
+            "Beta": {
+              "note": "text",
+              "id": "uuid"
+            },
+            "Alpha": {
+              "note": "text",
+              "id": "uuid"
+            }
+          }
+        }
+      }
+    }
+  }
+}

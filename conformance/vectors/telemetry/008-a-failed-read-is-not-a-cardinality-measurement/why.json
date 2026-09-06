@@ -1,0 +1,3 @@
+{
+  "why": "A failed call counts in the latency histogram and not in the result cardinality, and the two answers have different reasons rather than one convention. A failure took time, so dropping it from the histogram would make a window look better precisely when the engine is in trouble - which is the rule 005 states for a failed fan-out. It returned no rows because it failed, not because the data is sparse, so averaging that zero in understates how many rows a read of this shape actually returns, and error_share already carries the failure. Ten, not five. Neither answer was pinned before: both passed every case in this family."
+}

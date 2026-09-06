@@ -1,0 +1,12 @@
+[
+  {
+    "materialization": "Alpha@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"alpha\" (\"id\" uuid, \"note\" text, PRIMARY KEY (\"id\"))",
+      "CREATE TABLE IF NOT EXISTS \"beta\" (\"id\" uuid, \"note\" text, PRIMARY KEY (\"id\"))"
+    ],
+    "why": "The twin of 009, for tables rather than columns. 009 feeds a document whose columns are reversed; every other layout in this family already writes its tables in sorted key order, so the sentence in 001's own why - that a library iterating the document's order would drift the day a planner emitted them differently - was not exercised by anything. Python dicts and JavaScript objects both preserve insertion order, so a library reading the order off the document emits beta first here. The two entities are declared atomic so they form one group and one materialisation renders both tables, which is the only shape in which the order of two tables is observable at all."
+  }
+]

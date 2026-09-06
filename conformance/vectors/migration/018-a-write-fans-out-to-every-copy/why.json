@@ -1,0 +1,3 @@
+{
+  "why": "`also_write` is a list and every other case in this family declares exactly one entry, so a library that wrote to the **first** copy and ignored the rest passed the whole family - demonstrated with a mutation by a third implementation. During a migration with two copies that is rows reaching one of them, silently. Two things are pinned here and they are deliberately different: the writes go in the **document's** order, because an array's order is the document's and \u00a78a only sorts what a JSON object's keys make parser-dependent - which is why `also_write` here is written out of alphabetical order - while the telemetry records come out **sorted by materialisation**, because that is a report a person reads."
+}

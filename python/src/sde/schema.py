@@ -33,13 +33,34 @@ def _quote_ansi(identifier: str) -> str:
 
 
 def _quote_backtick(identifier: str) -> str:
-    """Backticks, doubled to escape.
+    r"""Backticks, with a backslash escape for the backtick **and for the backslash**.
 
     ClickHouse accepts double quotes too. Backticks are the idiomatic form and, more usefully, they
     make a generated statement obviously ClickHouse when it turns up in a log next to a PostgreSQL
     one.
+
+    **Doubling the backtick alone was not enough and the missing half was the backslash.** Inside a
+    backtick-quoted identifier this lexer reads ``\X`` as an escape, so a field a client called
+    ``a\nb`` reached the server as a column called ``a``, a newline, ``b`` - a different name,
+    accepted without a word. Measured against the ClickHouse this repository tests against, reading
+    the name back out of ``system.columns`` rather than trusting that the statement was accepted:
+    ``a\nb`` left raw creates the two-line name, ``a\\nb`` creates the one the model declared, and
+    ``back\slash`` survives untouched because ``\s`` is not an escape the lexer knows - which is
+    exactly what made the defect look absent.
+
+    PostgreSQL is the other way round: a backslash is literal inside ``"..."`` and doubling the
+    quote is the whole rule, and backslash-escaping the quote there is a *syntax error* (measured).
+    So the two dialects genuinely differ and there is no escaper to share, which is why this
+    mapping has two.
+
+    One pass rather than two ``replace`` calls, because the order of two would matter: escaping the
+    backtick first and the backslash afterwards turns ``a\`b`` into ``a\\`b``, whose backslash the
+    lexer eats and whose backtick then closes the identifier early. A single pass cannot be
+    sequenced wrongly. ``schema/011`` pins both dialects, and the live schema test runs them
+    against real servers and reads the names back out of the catalogue.
     """
-    return "`" + identifier.replace("`", "``") + "`"
+    escaped = "".join("\\" + c if c in "\\`" else c for c in identifier)
+    return f"`{escaped}`"
 
 
 # Quoting is a property of the dialect rather than of DDL, and it is here because this is the only

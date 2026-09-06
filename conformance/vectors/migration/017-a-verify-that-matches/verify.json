@@ -1,0 +1,18 @@
+{
+  "group": "Reading",
+  "options": {
+    "chunk_rows": 3
+  },
+  "report": {
+    "at": "<any>",
+    "chunks_compared": 5,
+    "chunks_mismatched": 0,
+    "tail_rows_read": 0,
+    "tail_rows_missing_in_target": 0,
+    "rows_source": 11,
+    "rows_target": 11
+  },
+  "matched": true,
+  "differences": [],
+  "why": "The other half, and without it this family proved nothing about the answer it exists to give. Both of the verify cases here are failures, so a library reporting matched: false unconditionally passed all of them - demonstrated with a mutation by a third implementation, which is the same lesson 12.11 wrote down for the control plane's own gate: a gate that refuses everything is not evidence. Note what a match does not mean: the counters still split at the marker, the chunk below it is capped so a read never straddles it, and there is no `get` in the call list because nothing disagreed."
+}

@@ -1,0 +1,24 @@
+[
+  {
+    "materialization": "Reading@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `reading` (`celsius` Int32, `id` Int64) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+    ],
+    "views": {
+      "was": {
+        "Reading": "reading_v1"
+      },
+      "create": [
+        "CREATE VIEW IF NOT EXISTS `reading_v1` AS SELECT `celsius`, `id` FROM `reading` FINAL"
+      ],
+      "drop": [
+        "DROP VIEW IF EXISTS `reading_v1`"
+      ],
+      "not_possible": [],
+      "complete": true
+    },
+    "why": "008's only ClickHouse case has the old table name equal to the new one, so 'the name is not what moved' and 'this engine cannot host a view' were the same input and a library that refused every ClickHouse view passed the family - demonstrated with a mutation by a third implementation. Here the name did move, so the view is renderable, and the two things this case pins are the ones a query moved verbatim depends on: the opening is CREATE VIEW IF NOT EXISTS rather than CREATE OR REPLACE VIEW, which is the idempotent spelling on this server and the opposite of PostgreSQL's, and the select carries FINAL."
+  }
+]

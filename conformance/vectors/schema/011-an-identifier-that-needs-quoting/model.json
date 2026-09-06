@@ -1,0 +1,32 @@
+{
+  "entities": [
+    {
+      "name": "Odd",
+      "key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "a\\nb",
+          "type": "string"
+        },
+        {
+          "name": "he said \"hi\"",
+          "type": "string"
+        },
+        {
+          "name": "it's",
+          "type": "string"
+        },
+        {
+          "name": "tick`plain`",
+          "type": "string"
+        }
+      ]
+    }
+  ]
+}

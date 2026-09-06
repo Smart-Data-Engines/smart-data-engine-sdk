@@ -381,9 +381,21 @@ export function windowCopies(window: Window, group: string): CopyFreshness[] {
     }))
 }
 
+/**
+ * Nearest-rank: the smallest sample at least `fraction` of the data is not above.
+ *
+ * **The same rank rule as `Histogram.percentileMs`, and it did not used to be.** This took the
+ * floor while the histogram takes the first bucket whose cumulative count reaches
+ * `fraction * count`, which is the ceiling. The two agree on every sample set with an odd count,
+ * and every case in `telemetry/` had one, so one window document carried two percentile
+ * conventions and nothing could see it. They differ exactly when `fraction * length` is an
+ * integer, which is what two samples at p50 is: `[3, 300]` reported 300 here and the *lower*
+ * bucket in the histogram. `telemetry/007` pins it.
+ */
 function at(ordered: readonly number[], fraction: number): number | null {
   if (ordered.length === 0) return null
-  return ordered[Math.min(ordered.length - 1, Math.trunc(ordered.length * fraction))] ?? null
+  const rank = Math.max(1, Math.ceil(fraction * ordered.length)) - 1
+  return ordered[Math.min(ordered.length - 1, rank)] ?? null
 }
 
 export interface FeatureOptions {
@@ -425,10 +437,21 @@ export function windowFeatures(
     }
   }
 
-  const readRecords = records.filter((stats) => !WRITE_KINDS.has(stats.kind) && stats.calls > 0)
+  // A failed call counts in the latency histogram and **not** here, and the two answers have
+  // different reasons rather than one convention. A failure took time, so dropping it from the
+  // histogram would flatter a window precisely when the engine is in trouble. It returned no rows
+  // because it failed rather than because the data is sparse, so averaging that zero in
+  // understates how many rows a read of this shape returns - and `errorShare` already carries the
+  // failure rate, so smearing it into a second feature is one fact in two places. A shape whose
+  // every call failed contributes nothing rather than a zero. `telemetry/008`.
+  const readRecords = records.filter(
+    (stats) => !WRITE_KINDS.has(stats.kind) && stats.calls > stats.errors,
+  )
   // A numeric comparator, because the default one sorts lexicographically and would put 10 before
   // 2. `telemetry/003` has cardinalities that expose it.
-  const cardinalities = readRecords.map((stats) => stats.rows / stats.calls).sort((a, b) => a - b)
+  const cardinalities = readRecords
+    .map((stats) => stats.rows / (stats.calls - stats.errors))
+    .sort((a, b) => a - b)
 
   const pkCalls = records
     .filter((stats) => stats.kind === 'point_read')

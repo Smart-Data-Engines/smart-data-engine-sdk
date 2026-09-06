@@ -195,6 +195,19 @@ function readLayout(raw: unknown, where: string): MaybeLayout {
       )
     }
   }
+  // `partition_by` is refused rather than ignored: the key is parsed, the control plane emits it
+  // when non-empty, and **no renderer has ever applied it** - a layout declaring it produced an
+  // unpartitioned table and said nothing. Fails closed until partitioning exists. See §7a and
+  // `errors/037`; the reference's comment carries the whole argument.
+  if (Object.keys((body['partition_by'] ?? {}) as Record<string, unknown>).length > 0) {
+    throw new MapError(
+      `${where}: this layout declares partition_by, and no library renders it - the table would ` +
+        'be created unpartitioned and nothing would say so. A storage decision in a signed ' +
+        'document that is silently dropped is worse than a refusal, so this refuses until ' +
+        'partitioning is implemented. Remove the key to apply the rest of the layout.',
+    )
+  }
+
   return {
     tables: tables as Record<string, string>,
     columns: (body['columns'] ?? {}) as PhysicalLayout['columns'],

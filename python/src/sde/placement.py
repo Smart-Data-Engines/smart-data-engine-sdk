@@ -265,6 +265,20 @@ def _layout(raw: Mapping[str, Any], where: str) -> PhysicalLayout | object:
                 f"would be read as bookkeeping and written to as bookkeeping. Rename the table; "
                 f"the name is yours to choose everywhere else."
             )
+    # `partition_by` is refused rather than ignored, and the refusal is the whole point: this key
+    # is parsed here, the control plane emits it when non-empty, and **no renderer has ever applied
+    # it** - a layout declaring it produced an unpartitioned table and said nothing. Nothing
+    # populates it today, so no issued map has carried one, but a hand-written map legally may and
+    # the no-account mode is a documented mode. Rendering it instead would mean designing two
+    # dialect-specific features with no requirement behind them and interpolating a caller's SQL
+    # fragment into DDL. Fails closed until partitioning exists; §7a and `errors/037`.
+    if raw.get("partition_by"):
+        raise MapError(
+            f"{where}: this layout declares partition_by, and no library renders it - the table "
+            f"would be created unpartitioned and nothing would say so. A storage decision in a "
+            f"signed document that is silently dropped is worse than a refusal, so this refuses "
+            f"until partitioning is implemented. Remove the key to apply the rest of the layout."
+        )
     return PhysicalLayout(
         tables=dict(tables),
         columns={k: dict(v) for k, v in (raw.get("columns") or {}).items()},
