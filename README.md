@@ -210,6 +210,16 @@ implementation nobody keeps working is worse for a client than none.
 a table of what each language does to you. [`docs/implementations.md`](docs/implementations.md) is the
 list of which libraries exist, what each one really does, and who fixes it when it breaks.
 
+## What happens when something fails
+
+[`docs/failure-semantics.md`](docs/failure-semantics.md), one row per failure: the engine not
+listening, a host that accepts the socket and says nothing, a connection cut under an operation, a
+write during a migration, a map from the wrong model, us being unreachable, your subscription
+lapsing. Each row says what your call does, what is retried, what can be lost, and which test pins
+it. Written before the first sale rather than after the first incident, and two of the three
+connection failures it documents turned out to be defects rather than gaps: neither adapter bounded
+opening a connection, so a silent host hung the caller's request path.
+
 ## Getting started
 
 ```bash

@@ -104,6 +104,14 @@ def _row(names: Sequence[str], types: Sequence[Any], row: Sequence[Any]) -> dict
     return out
 
 
+# Seconds, and the same argument as the PostgreSQL adapter's constant of the same name.
+CONNECT_TIMEOUT_SECONDS = 10
+# Seconds, for the version handshake `get_client` performs. The driver's own default is 300, which
+# is a sensible ceiling for a query and a very long time to sit inside a caller's request path
+# waiting for a host that has already accepted the socket and said nothing.
+HANDSHAKE_TIMEOUT_SECONDS = 15
+
+
 class ClickHouseEngine:
     """A thin adapter over clickhouse-connect. Executes decisions, makes none."""
 
@@ -126,9 +134,27 @@ class ClickHouseEngine:
     # --- connection ------------------------------------------------------------------------
 
     def connect(self) -> None:
+        """Open the client, with a bound on how long that may take.
+
+        Same measurement as the PostgreSQL adapter, and the same absence: a host that accepts the
+        connection and never answers hung for as long as the test would wait. Here the reason is
+        one layer up - the TCP connect succeeds, so ``connect_timeout`` never fires, and what is
+        left is ``send_receive_timeout``, whose driver default is 300 seconds.
+
+        So both are set, and they are set to different things on purpose. Opening is bounded
+        tightly. Reading is **not**, past this handshake: an analytical query legitimately takes
+        minutes and a library that timed it out would be deciding something about the caller's
+        workload. The handshake is the one exchange whose duration this library knows anything
+        about.
+        """
         if self._client is None:
+            options: dict[str, Any] = {}
+            if "connect_timeout" not in self._dsn:
+                options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
+            if "send_receive_timeout" not in self._dsn:
+                options["send_receive_timeout"] = HANDSHAKE_TIMEOUT_SECONDS
             try:
-                self._client = self._module.get_client(dsn=self._dsn)
+                self._client = self._module.get_client(dsn=self._dsn, **options)
             except Exception as exc:
                 raise EngineError(f"could not connect to ClickHouse: {exc}") from exc
 
