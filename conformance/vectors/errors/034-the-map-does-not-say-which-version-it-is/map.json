@@ -1,0 +1,34 @@
+{
+  "contract": 1,
+  "model_version": "59a263d15793fb78",
+  "groups": {
+    "Event": {
+      "source": {
+        "id": "Event@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Event": "event",
+            "Order": "order",
+            "Payment": "payment",
+            "User": "user"
+          }
+        }
+      }
+    },
+    "Order": {
+      "source": {
+        "id": "Order@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Event": "event",
+            "Order": "order",
+            "Payment": "payment",
+            "User": "user"
+          }
+        }
+      }
+    }
+  }
+}

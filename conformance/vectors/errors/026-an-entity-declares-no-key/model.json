@@ -1,0 +1,17 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "at",
+          "type": "timestamptz"
+        }
+      ]
+    }
+  ]
+}

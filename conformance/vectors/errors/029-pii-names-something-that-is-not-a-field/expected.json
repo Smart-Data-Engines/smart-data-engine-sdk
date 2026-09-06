@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "pii names",
+  "why": "A pii entry that is not a field silently protects nothing. Section 7 says the exclusion of personal data from a derived copy is meant to be readable in the library rather than taken on trust, and a declaration that names a field which does not exist is the one shape where reading it gives the wrong answer. Both libraries checked this at one front door and not at the other, so the vectors ran the one without it."
+}

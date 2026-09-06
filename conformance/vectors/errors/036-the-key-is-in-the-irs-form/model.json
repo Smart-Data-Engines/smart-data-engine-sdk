@@ -1,0 +1,32 @@
+{
+  "entities": [
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false
+        },
+        {
+          "name": "tenant",
+          "type": "uuid",
+          "nullable": false
+        }
+      ],
+      "key": [
+        {
+          "field": "tenant",
+          "position": 0
+        },
+        {
+          "field": "id",
+          "position": 1
+        }
+      ],
+      "pii": [],
+      "residency": null
+    }
+  ],
+  "relations": []
+}

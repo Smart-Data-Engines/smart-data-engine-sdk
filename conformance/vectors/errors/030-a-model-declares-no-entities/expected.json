@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "no entities declared",
+  "why": "An empty model builds without error, places nothing, and the failure surfaces as a placement map with no groups - which reads like a planner defect. Both loaders computed a version for it and agreed on the bytes, which is the worst case: two libraries agreeing on a document neither should have produced."
+}

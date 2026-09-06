@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "has no fields",
+  "why": "An entity that stores nothing cannot be placed, so there is nothing for a map to say about it. It comes before the key refusal deliberately (see the order in section 8a): a relation-only entity refused for having no key sends the reader looking for a key declaration when the problem is that nothing is stored, and that is exactly what the Python decorator path did until this vector."
+}

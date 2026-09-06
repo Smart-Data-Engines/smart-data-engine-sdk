@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "in two positions",
+  "why": "The IR records key order as an explicit position, so a repeated field is a composite key with one column in two positions - a document that says the same column is both the first and the third part of the identity of a row. Accepted by both libraries and by the third implementation, which is what makes it worth a vector rather than a sentence."
+}

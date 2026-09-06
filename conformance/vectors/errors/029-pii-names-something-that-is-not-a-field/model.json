@@ -1,0 +1,23 @@
+{
+  "entities": [
+    {
+      "name": "User",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "email",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ],
+      "pii": [
+        "nickname"
+      ]
+    }
+  ]
+}

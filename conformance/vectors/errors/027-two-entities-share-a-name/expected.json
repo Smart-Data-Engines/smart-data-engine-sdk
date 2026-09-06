@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "two entities are called",
+  "why": "Entity names reach the IR and the colocation graph, so a duplicate makes 'which entity is this' unanswerable in the document whose job is to answer it. Refused by TypeScript's front door, accepted by its own conformance loader and by Python entirely - which is how a rule ends up holding for one of two callers. The measured consequence in Python was a colocation group whose members were ('Order', 'Order')."
+}

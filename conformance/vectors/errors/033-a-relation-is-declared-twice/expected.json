@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "declared twice",
+  "why": "Two relations of one name on one entity are two edges the colocation graph cannot tell apart, and two identical objects in the IR's relations array - which changes the model version without changing the model. A relation may share a name with a field (section 2a says the digest collision is intended) but not with another relation on the same entity."
+}

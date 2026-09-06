@@ -56,25 +56,49 @@ export interface NeutralModel {
  * the positioned form the IR uses is this library's job - which is the point: if the vector carried
  * the positioned form, passing it would only prove we can copy JSON.
  */
+/**
+ * The shapes a person can plausibly hand this function, named rather than crashed on.
+ *
+ * The first one is the whole reason this exists. The IR (§4) and the neutral form (§4a) are close
+ * enough to be confused - our own control-plane tests declared a model's IR for weeks and got away
+ * with it, because nothing read the stored document back - and they differ exactly where a key is
+ * written. Vector `errors/036`.
+ */
+function checkShape(raw: NeutralEntity): void {
+  for (const part of raw.key ?? []) {
+    if (typeof part === 'object' && part !== null && 'field' in part && 'position' in part) {
+      throw new DeclarationError(
+        `${raw.name}: 'key' holds ${JSON.stringify(part)}, which is the IR's key form rather ` +
+          'than the neutral one. The IR records a position because array order is not ' +
+          'load-bearing anywhere else in it; a declaration states a key as a list of field names, ' +
+          'in order. If you meant to hand over a model you already built, neutralDeclaration() ' +
+          'produces this document from it.',
+      )
+    }
+    if (typeof part !== 'string') {
+      throw new DeclarationError(
+        `${raw.name}: 'key' names fields as strings, not ${JSON.stringify(part)}`,
+      )
+    }
+  }
+}
+
 export function modelFromNeutral(data: NeutralModel): LogicalModel {
   const entities: EntitySpec[] = []
 
   for (const raw of data.entities ?? []) {
+    checkShape(raw)
     const fields: FieldSpec[] = (raw.fields ?? []).map((f) => ({
       name: f.name,
       type: checkType(f.type, `${raw.name}.${f.name}`),
       nullable: f.nullable === true,
     }))
-    if (fields.length === 0) throw new DeclarationError(`${raw.name} has no fields`)
 
-    const key = raw.key ?? ['id']
-    const known = new Set(fields.map((f) => f.name))
-    const missing = key.filter((k) => !known.has(k))
-    if (missing.length > 0) {
-      throw new DeclarationError(
-        `${raw.name}: key names ${JSON.stringify(missing)}, which are not fields`,
-      )
-    }
+    // No default. This read `raw.key ?? ['id']` and the Python port spelled the same thing with
+    // `or`, which differs on exactly one input: `"key": []` stayed keyless here and invented a key
+    // there, so one declaration had two model versions and no vector could see it. The rule is
+    // format-contract §4a now and the refusal is in `assemble`, where both front doors meet.
+    const key = raw.key ?? []
 
     entities.push({
       name: raw.name,

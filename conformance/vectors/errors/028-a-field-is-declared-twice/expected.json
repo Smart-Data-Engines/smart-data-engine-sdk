@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "more than once",
+  "why": "Two fields of one name reach the layout as two columns of one name, and the refusal then arrives from the client's engine at CREATE TABLE - a message about a column, in a deployment, for a defect that was in the declaration. TypeScript cannot express this at its front door because its fields are an object; the neutral form is a list, so its loader can and did."
+}
