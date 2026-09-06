@@ -41,6 +41,14 @@ __all__ = ["PostgresEngine"]
 _quote = QUOTE["postgres"]
 
 
+# Seconds. Not a guess about networks: this bounds *opening* a connection, which either completes
+# in milliseconds on a healthy link or is not going to complete. Ten seconds leaves room for a
+# saturated cross-region hop and still fails long before a request timeout that a caller sets. It
+# is a default rather than a rule - a `connect_timeout` in the DSN wins - and it exists because the
+# alternative, measured, is a call that never returns.
+CONNECT_TIMEOUT_SECONDS = 10
+
+
 class PostgresEngine:
     """A thin adapter over psycopg. Deliberately thin: it executes decisions, it makes none."""
 
@@ -63,9 +71,23 @@ class PostgresEngine:
     # --- connection ------------------------------------------------------------------------
 
     def connect(self) -> None:
+        """Open the connection, with a bound on how long that may take.
+
+        Measured before this bound existed: a host that accepts the TCP connection and never
+        answers hung the call **for as long as the test was willing to wait**, because libpq has no
+        default ``connect_timeout`` and neither did we. That is not an exotic case - it is a
+        firewall that accepts, a load balancer with no healthy backend, a server mid-restart - and
+        without a bound it happens inside the caller's request path with nothing to time out.
+
+        The default is only applied when the caller has not chosen one. A ``connect_timeout`` in
+        the DSN is their decision about their own network and this must not override it.
+        """
         if self._conn is None:
+            options: dict[str, Any] = {}
+            if "connect_timeout" not in self._dsn:
+                options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
             try:
-                self._conn = self._psycopg.connect(self._dsn, autocommit=True)
+                self._conn = self._psycopg.connect(self._dsn, autocommit=True, **options)
             except Exception as exc:
                 raise EngineError(f"could not connect to PostgreSQL: {exc}") from exc
 
@@ -86,6 +108,26 @@ class PostgresEngine:
         if self._conn is None:
             raise EngineError("not connected; call connect() first")
         return self._conn
+
+    def _explain(self, exc: Exception) -> str:
+        """The driver's message, plus the one sentence it cannot know to add.
+
+        Measured: cut the connection under a live session and the first failing call reports what
+        the server said ("terminating connection due to administrator command"), which is right.
+        **Every call after it reports "the connection is closed"** - true, unhelpful, and the point
+        at which a reader needs to be told that this library holds the connection it was handed and
+        does not reopen it. Reconnecting is one line and it is the caller's, because a library that
+        silently reconnected would also silently retry, and requirement 6.4 allows a retry only for
+        an operation known to be idempotent.
+        """
+        message = str(exc)
+        if self._conn is not None and getattr(self._conn, "closed", False):
+            message += (
+                ". The connection is gone and this library does not reopen one it was handed: "
+                "call close() then connect() on the engine, or hand the session a new one. "
+                "Nothing was retried, so no write reached the engine twice."
+            )
+        return message
 
     # --- schema ----------------------------------------------------------------------------
 
@@ -285,7 +327,7 @@ class PostgresEngine:
         except Exception as exc:
             # Surfaced, not swallowed and not rerouted. See the module docstring.
             log("sde.write.failed", table=table, error=type(exc).__name__)
-            raise EngineError(f"insert into {table} failed: {exc}") from exc
+            raise EngineError(f"insert into {table} failed: {self._explain(exc)}") from exc
 
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:
         where = " AND ".join(f"{_quote(c)} = %s" for c in sorted(key))
@@ -299,7 +341,7 @@ class PostgresEngine:
                 names = [d.name for d in cur.description or ()]
                 return dict(zip(names, row, strict=True))
         except Exception as exc:
-            raise EngineError(f"select from {table} failed: {exc}") from exc
+            raise EngineError(f"select from {table} failed: {self._explain(exc)}") from exc
 
     # --- rollback protection ------------------------------------------------------------------
     #
@@ -327,7 +369,7 @@ class PostgresEngine:
                 cur.execute(f"SELECT max({_quote('map_version')}) FROM {_quote(WATERMARK_TABLE)}")
                 row = cur.fetchone()
         except Exception as exc:
-            raise EngineError(f"reading {WATERMARK_TABLE} failed: {exc}") from exc
+            raise EngineError(f"reading {WATERMARK_TABLE} failed: {self._explain(exc)}") from exc
         if row is None or row[0] is None:
             return None
         return int(row[0])
