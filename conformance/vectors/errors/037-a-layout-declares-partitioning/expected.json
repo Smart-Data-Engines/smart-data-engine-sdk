@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "partition_by",
+  "stage": "map",
+  "why": "The key was parsed by both libraries, emitted by the control plane when non-empty, and applied by no renderer: a layout declaring it produced an unpartitioned table and said nothing. Nothing populates it today so no issued map has ever carried one, but a hand-written map legally may - the no-account mode is a documented mode - and a storage decision silently dropped out of a signed document is the worst of the three available answers. Rendering it would mean designing two dialect-specific features with no requirement behind them and interpolating a caller's SQL fragment into DDL, so it fails closed instead. Found by a third implementation while writing \u00a77a, which is the same class as `provisional`, `basis`, `in_use` and `key_id` before it: a field whose value reaches nobody. Accepting it again the day partitioning exists is a loosening and therefore a bump, which is the right price for the key starting to mean something."
+}

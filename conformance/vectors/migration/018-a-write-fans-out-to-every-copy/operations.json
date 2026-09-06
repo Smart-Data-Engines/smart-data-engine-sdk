@@ -1,0 +1,10 @@
+[
+  {
+    "op": "save",
+    "entity": "Reading",
+    "values": {
+      "id": 1,
+      "celsius": 20
+    }
+  }
+]

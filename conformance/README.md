@@ -22,7 +22,10 @@ vectors/
     cases.json                (shape, in a write transaction?, needs freshness?) -> materialisation
   errors/<nnn>-<name>/
     model.json
-    expected.json             which error, and at what point it must be raised
+    map.json                  for the `map` stage cases
+    keys.json                 the public keys the caller holds - only where a case needs one
+    expected.json             which error, at what point it must be raised, and optionally a
+                              `load` block of arguments the runner must pass to the loader
   signature/<nnn>-<name>/
     model.json
     map.json                  a signed placement map
@@ -120,6 +123,14 @@ describes takes the place of one that would have.
 trailing newline**: compare them exactly. The `.txt` files - `version.txt`, `salt.hex` and the rest -
 are text and do end with one, so strip it. That is not a rule anybody would guess, and a runner that
 gets it wrong fails with a diff nobody can see.
+
+**`expected.json` may carry a `load` block, and one case does.** It is arguments for the loader
+rather than anything about the refusal: `errors/015` sets `require_signature` there, because the map
+in it is unsigned and §7 says an unsigned map is *accepted* — so without the block the case is
+unpassable and its natural reading is that the vector is wrong. One vector in thirty-seven needs it,
+which is exactly why it is written down here: a runner built from this file and not from the tree
+fails that one case with "expected MapError, got no refusal" and no clue why. Treat an absent block
+as no arguments.
 
 **`expected.json`'s `match` is a required substring of your refusal's own message**, compared
 literally and case-sensitively. Diagnostics are part of the contract here, which is deliberate: a

@@ -1,0 +1,42 @@
+{
+  "entities": [
+    {
+      "name": "Alpha",
+      "key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "note",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Beta",
+      "key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "note",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "atomic": [
+    [
+      "Alpha",
+      "Beta"
+    ]
+  ]
+}

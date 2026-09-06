@@ -25,6 +25,7 @@ reservoir sampling gets the tail wrong in exactly the region the planner looks a
 
 from __future__ import annotations
 
+import math
 import sys
 import threading
 from collections import deque
@@ -373,8 +374,17 @@ class Window:
             mix[record.kind] = mix.get(record.kind, 0.0) + record.calls
         mix = {kind: hits / calls for kind, hits in sorted(mix.items())} if calls else {}
 
-        read_records = [s for s in records if s.kind not in WRITE_KINDS and s.calls]
-        cardinalities = sorted(s.rows / s.calls for s in read_records)
+        # A failed call counts in the latency histogram and **not** here, and the two answers have
+        # different reasons rather than one convention. A failure took time, so dropping it from
+        # the histogram would flatter a window precisely when the engine is in trouble. It returned
+        # no rows because it failed rather than because the data is sparse, so averaging that zero
+        # in understates how many rows a read of this shape returns - and `error_share` already
+        # carries the failure rate, so smearing it into a second feature is one fact in two places.
+        # A shape whose every call failed contributes nothing rather than a zero. `telemetry/008`.
+        read_records = [
+            s for s in records if s.kind not in WRITE_KINDS and s.calls > s.errors
+        ]
+        cardinalities = sorted(s.rows / (s.calls - s.errors) for s in read_records)
 
         pk_calls = sum(s.calls for s in records if s.kind == "point_read")
         errors = sum(s.errors for s in records)
@@ -496,9 +506,23 @@ def _with_missing(
 
 
 def _at(ordered: list[float], fraction: float) -> float | None:
+    """Nearest-rank: the smallest sample at least ``fraction`` of the data is not above.
+
+    **The same rank rule as** :meth:`Histogram.percentile_ms`, and it did not used to be. This
+    function selected ``ordered[int(len * fraction)]`` - the floor - while the histogram takes the
+    first bucket whose cumulative count reaches ``fraction * count``, which is the ceiling. The two
+    agree on every sample set with an odd count, and every case in ``telemetry/`` had one, so one
+    window document carried two percentile conventions and nothing could see it: a third
+    implementation swapped one for the other and the whole family stayed green.
+
+    They differ exactly when ``fraction * len`` is an integer. Two samples at p50 is that case:
+    ``[3.0, 300.0]`` reported 300 here and the *lower* bucket in the histogram, for the same
+    reason applied twice in opposite directions. ``telemetry/007`` pins it.
+    """
     if not ordered:
         return None
-    return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))]
+    rank = max(1, math.ceil(fraction * len(ordered))) - 1
+    return ordered[min(len(ordered) - 1, rank)]
 
 
 # Types that make a field a time dimension. Recognised by **type**, never by name - see below.

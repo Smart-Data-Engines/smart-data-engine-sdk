@@ -1,0 +1,20 @@
+[
+  {
+    "materialization": "Odd@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"t\\nx\" (\"a\\nb\" text, \"he said \"\"hi\"\"\" text, \"id\" uuid, \"it's\" text, \"tick`plain`\" text, PRIMARY KEY (\"id\"))"
+    ],
+    "why": "PostgreSQL escapes a quote inside a quoted identifier by doubling it and leaves the backslash, the backtick and the apostrophe alone - measured, and backslash-escaping the quote there is a syntax error. Nothing else in this family carries a delimiter at all, so before this case the escaper could be deleted outright and every schema vector stayed green; a third implementation demonstrated that with a mutation."
+  },
+  {
+    "materialization": "Odd@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `t\\\\nx` (`a\\\\nb` String, `he said \"hi\"` String, `id` UUID, `it's` String, `tick\\`plain\\`` String) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+    ],
+    "why": "ClickHouse escapes with a backslash and the backslash itself has to be escaped: inside backticks its lexer reads a backslash as an escape introducer, so a field called a-backslash-n-b reached the server as a column called a, a newline and b - a different name, accepted in silence. Measured by reading the name back out of system.columns rather than by asking whether the statement was accepted, because it is. The apostrophe and the double quote are left alone, which is the half CodeQL flagged in PR #37: an escaper that escaped the apostrophe instead of the backslash."
+  }
+]

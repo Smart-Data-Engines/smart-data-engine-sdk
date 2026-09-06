@@ -140,6 +140,11 @@ Five conventions that are not obvious from the tree:
   it.
 - **`expected.json`'s `match` is a required substring of your refusal's own message**, compared
   literally. Diagnostics are part of the contract; §10 says why.
+- **An `errors/` case may carry a `load` block in `expected.json`,** and it is arguments for the
+  loader rather than anything about the refusal. `errors/015` sets `require_signature` there because
+  its map is unsigned and §7 accepts unsigned maps, so the case is unpassable without it — and the
+  natural conclusion from a red run is that the vector is wrong rather than that the runner missed a
+  field. One case in thirty-seven, which is what makes it worth a line.
 - **An `errors/` case's `stage` says where the refusal belongs.** A `map` case builds the model first,
   outside the assertion, then loads the map. A runner that meets a stage it does not implement
   **fails**; it does not skip. A stage nobody runs is a rule nobody checks.
@@ -174,6 +179,10 @@ it is about the format.
 | A driver ignores a bound your caller wrote | Node: `pg` derives its connect timeout from a code-level option and *overwrites* whatever the connection string said | So "apply our default unless the DSN already sets one" - which is right in psycopg, where the parameter reaches libpq - leaves **no bound at all**. Translate the parameter yourself. Found by the test that asserts the caller's value wins, which failed by hanging until its own deadline |
 | An unhandled driver event kills the process | Node: `pg.Client` is an `EventEmitter` and emits `error` when the server terminates a connection between queries | Node throws an `error` event with no listener, with no call of the client's on the stack. A restart of their database becomes an uncatchable crash in their event loop. Listen, record it, and put it in the next call's message |
 | A skipped suite is not a reported skip | Node: vitest fails a file whose every suite was skipped, and calls it "no tests" | So a CI guard looking for the word "skipped" sees nothing and passes, and the file is unrunnable for anybody without servers. One test at the top level whose purpose is its own skip fixes both |
+| A capability cannot be a missing method | Rust, Java, C#, Go with non-optional interfaces | The reference asks "can this engine keep the bookkeeping" and "can it be a migration target" by looking for members. In a language with static dispatch that question does not exist: a type implements a trait or interface at compile time. Make the capability **data on the value**, which §7 already requires anyway - "an engine that cannot keep the bookkeeping does not take part, and that is reported" - so a readable field is the shape that works in both kinds of language |
+| ... and asking about presence is not asking about callability | Python `hasattr`, JavaScript `in` | The reference asks whether the member is *there*, on purpose: one that exists and is not callable fails at the call with a message naming it, which beats a capability check that quietly answers "no". A port that asked `typeof === 'function'` disagreed on exactly that input |
+| The JSON parser loses a number's lexical form, again | Rust: `serde_json` decodes to `i64`/`u64`/`f64` unless the `arbitrary_precision` feature is on, and it is off by default | Same hazard as Go's `json.Number` and Java's `BigDecimal`, and the same vector finds it: `canonical/005`. Worth knowing that the fix is a feature flag rather than a different call |
+| Map iteration order is randomised, again | Rust: `HashMap` seeds its hasher per process | §8a's ordering rules bind here exactly as they do in Go. `BTreeMap` sidesteps it and is the right default for anything that reaches a document |
 | A skipped suite still runs its body | Node: `describe.skipIf` evaluates its callback, because it has to register the tests it then skips | An engine constructed at that level parses a DSN that is not there and takes the file down at collection, with a refusal that reads like a real one. Build the connection in the hook |
 
 ## Measuring your overhead
@@ -230,12 +239,17 @@ library and not a better SDE one.
   zone — pick a default, document it in *your* documentation, and offer an explicit way to ask for
   the other one. Do not guess silently, and do not extend the vocabulary.
 - **How to shape your API.** See above.
-- **Anything about Tier 1 or Tier 2 behaviour that the vectors do not cover.** Three of the vector
-  sets §9's table names do not exist yet: `telemetry/`, `schema/` and `migration/`. Until they do, a
-  Tier 1 or Tier 2 claim is not something the vectors can check, which is stated in §10 rather than
-  left to be discovered from an empty directory. If you are going there, talk to us first — not
-  because we want to approve it, but because the vectors get written before the second claim is
-  accepted rather than after.
+- **Anything about Tier 1 or Tier 2 behaviour that the vectors do not cover.** That used to be a
+  much larger category and it used to end with "talk to us first", because three of the sets §9's
+  table names — `telemetry/`, `schema/` and `migration/` — did not exist, so those two tiers were
+  claims nothing could check. They exist now, every set in the tier table does, and the two
+  documents they pin have sections of their own: §6a for the window a Tier 1 library produces and
+  §7a for the DDL a Tier 2 library renders. Steps 9 to 11 above are the path through them.
+  What is left in this category is narrower and worth naming, because a third implementation found
+  it by having to choose: a fan-out to **two** copies, and a `verify` that **matches**, are both
+  legal and neither had a vector until the measurement below. If you meet something the vectors
+  underdetermine, the answer is not to ask us — it is that the vector is missing, which is a bug
+  report we would rather have than a conversation.
 
 If something you need is in none of these documents, that is a bug in the contract and worth
 reporting as one. It is not a matter of politeness: a contract that needs a conversation is a
@@ -310,3 +324,71 @@ that is the bug report we want most.
 
 The experiment is repeatable and cheap — a day, one language, one file of vectors — and it is worth
 repeating whenever this document changes in a way that adds a rule rather than a sentence.
+
+### The second measurement, and why there was one
+
+The turn that raised a second library to Tier 2 added three vector families and their rules, which
+is exactly the trigger the paragraph above names. So it was done again the same day, in **Rust** —
+chosen for the same reason Go was, that no SDE library exists in it, plus one it does not share: its
+traits are statically dispatched, so a capability cannot be a missing method and the reference's way
+of asking has no translation. Tier 0, Tier 1 and Tier 2, all nine families, from this page and
+`format-contract.md` and `conformance/` alone.
+
+**Result: 234 assertions, one red.** The red one was `errors/006`, whose `match` requires the
+refusal to name the ceiling and got a message naming the range instead — a mistake on the
+implementation's side, and the reason §7 now says the two directions are two refusals.
+
+The value was again in what the vectors did not reach. Ten findings, and the seven about the suite
+were each demonstrated by a mutation that **survived**:
+
+1. **This page told an implementer Tier 1 and Tier 2 were unavailable**, in the closing section,
+   for a release after their vectors were written — contradicting steps 9 to 11 of the same file and
+   ending with "talk to us first", against requirement 16.7. The guard built for exactly this went
+   quiet at exactly the wrong moment: it compared family *names* against the tree rather than the
+   guide's claim about them, and both are consistent when the guide is wrong.
+2. **The window document and the DDL had no prose anywhere.** Everything Tier 1 and Tier 2 need was
+   reconstructed from fourteen vectors, which worked — and is the same gap §4a was written to close
+   for the neutral declaration, with the same consequence, because the control plane parses a window
+   to score a placement. They are §6a and §7a now.
+3. **Two percentile conventions in one document.** The histogram took the ceiling and the
+   cardinality took the floor. They agree on every sample set with an odd count, which every case in
+   `telemetry/` had. `telemetry/007`.
+4. **A failed read's zero rows were averaged into the result cardinality**, which understates what a
+   read of that shape returns for a reason `error_share` already carries. `telemetry/008`.
+5. **The ClickHouse identifier quoter escaped the backtick and not the backslash.** Inside backticks
+   that lexer reads a backslash as an escape introducer, so a field called `a\nb` became a column
+   called `a`, a newline and `b` — accepted in silence. Nothing in `schema/` carried a delimiter at
+   all, so the escaping could be deleted outright and the family stayed green, and the live test
+   stopped at "the server accepted it". `schema/011`, and the live test now reads the names back out
+   of the catalogue.
+6. **`partition_by` was in the format, emitted by the control plane, and rendered by nobody** — a
+   layout declaring it produced an unpartitioned table and said nothing. The fifth field of this
+   shape after `provisional`, `basis`, `in_use` and `key_id`. Refused on both sides now;
+   `errors/037`.
+7. **The live schema test's coverage depended on vector order.** One statement in the family — a
+   ClickHouse layout rendered with the `postgres` dialect — had never executed, because an earlier
+   vector created a table of the same name and `CREATE TABLE IF NOT EXISTS` never parsed the body.
+   Cases get a schema each now and the unrunnable one says so.
+8. **`verify` never had to match.** Both verify cases were failures, so `matched: false`
+   unconditionally passed the family — the lesson the control plane had already written down for its
+   own migration gate. `migration/017`.
+9. **A fan-out to two copies was unexercised** on both the write path and the backfill path, so a
+   library serving only the first `also_write` target passed. Both references were right; the
+   vectors could not see it. `migration/018`, `migration/019`.
+10. **Two smaller ones**: a compatibility view's refusal was undetermined for a non-PostgreSQL
+    engine, because the only ClickHouse case had the old and new names equal (`schema/013`); and the
+    table-order claim in `schema/001`'s own note was not exercised, because every layout in the
+    family already writes its tables sorted (`schema/012`).
+
+Eight vectors were added, one existing case gained a `runs: false` flag, and all of them were
+mutation-tested in **both** runners: twenty mutations, every one fatal, and each killing only the
+vector written for it.
+
+**What this measurement is not** is the same as last time and worth repeating: not an outsider. The
+isolation was of the source tree, not of the person, and this time it was weaker still — the same
+engineer had written the three families being probed a few hours earlier. What survives that
+weakness is the class of finding that does not depend on ignorance: a document that is silent, a
+rule the language forces differently, and a mutation the suite does not notice. All ten above are
+one of those three. Neither implementation is in this repository, and the reason is 17.6: publishing
+either would be a claim of support nobody is maintaining, plus a fourth and fifth implementation to
+keep in step with every change to this document.

@@ -308,7 +308,9 @@ Seven refusals, all `DeclarationError`, and all of them tightenings under §11:
    duplicate makes "which entity is this" unanswerable in a document whose whole job is to answer it;
 4. field names are unique within an entity, or the layout has two columns of one name and the refusal
    arrives from the client's engine at `CREATE TABLE`;
-5. `key` is present, non-empty, names fields of its own entity, and names each of them once. A key is
+5. `key` is present, non-empty, written as a **list of field names** rather than in the IR's form
+   (`errors/036` — see the paragraph below), names fields of its own entity, and names each of
+   them once. A key is
    what makes a row addressable, migratable and verifiable: §12's backfill compares rows by it, so an
    entity without one is a group that cannot be moved, and that would be discovered during the
    migration rather than when the model was declared;
@@ -383,6 +385,142 @@ by hash.
 **A shape never contains a value.** It is assembled from the structure of an operation and never sees
 the arguments, which is what makes telemetry safe by construction rather than by redaction.
 
+## 6a. The telemetry window document
+
+This is what a Tier 1 library hands over: one document describing one window of traffic, aggregated
+**in the client's process**. Nothing here is sent by a library — `docs/observability.md` says so and
+a test measures it — so this section describes a document a client produces and gives us, in the
+same sense §4a describes the one they declare.
+
+It is written down for the same reason §4a was. Until this section existed the format was defined
+only by example, by whatever `conformance/vectors/telemetry/` happened to contain, and that is a
+real gap rather than a tidiness one: the control plane parses this document to score a placement, so
+two libraries disagreeing about a field name or a denominator hand the planner different features
+for identical traffic and nothing raises. A third implementation reconstructed all of it from four
+vectors, which worked, and found two rules that were undetermined while doing it.
+
+**It is the one document not bound by §1.** §1 rejects floating point outright because a float's
+textual form differs between languages, and this document is almost entirely floats. It is not
+signed, not hashed and never compared for equality, so that rule does not bind it. What makes it
+comparable is narrower: **every number in it is either a ratio of two integers or a bucket edge
+divided by a million**, and IEEE 754 requires division to be correctly rounded, so two languages
+compute the same double even where they would print it differently.
+
+**It carries no clock**, which is what makes it deterministic. Two of its features would need a
+duration and both are declared unmeasurable instead.
+
+```jsonc
+{
+  "model_version": "1ff3e78b85e2ec40",   // the model this traffic was measured against
+  "complete": true,                       // false if a window was evicted; see dropped_windows
+  "dropped_windows": 0,                   // windows a full buffer discarded, oldest first
+  "groups": {                             // only groups that saw traffic
+    "Event": {
+      "calls": 15,
+      "read_write_ratio": 2.75,
+      "shape_mix": {"point_read": 0.4, "write": 0.2},
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 2.048,
+      "result_cardinality_p50": 3.0,
+      "result_cardinality_p99": 4100.0,
+      "pk_access_share": 0.4,
+      "has_time_dimension": true,
+      "distinct_shapes": 7,
+      "error_share": 0.06666666666666667,
+      "missing": ["total_bytes"],          // sorted; see below
+      "complete": true,
+      "copies": [                          // optional, absent when the group has no derived copy
+        {"group": "Event", "materialization": "Event@ch", "writes": 3, "failures": 1,
+         "lag_p50_ms": 0.008, "lag_p99_ms": 1.024, "complete": false}
+      ]
+    }
+  }
+}
+```
+
+**A group with no traffic is not in the document at all** — a document lists what was observed. A
+caller reporting on every group asks for its features directly and gets the measurements whose
+answer is zero (`calls`, `shape_mix`, `distinct_shapes`) with everything else in `missing`, and
+`no_traffic` named there as the reason. `telemetry/004`.
+
+| Field | How it is derived |
+|---|---|
+| `calls` | operations recorded for the group, failures included |
+| `read_write_ratio` | reads ÷ writes. **Omitted** when there are no writes, because the alternative is a division; `shape_mix` still carries the fact |
+| `shape_mix` | per §6 `kind`, that kind's calls ÷ `calls`. Only kinds with traffic appear |
+| `latency_p50_ms`, `latency_p99_ms` | the **upper edge** of the bucket the percentile falls in, in milliseconds |
+| `result_cardinality_p50`, `result_cardinality_p99` | percentiles over the **mean rows per call of each read shape** — one sample per shape, not per call. Omitted when no read shape has a successful call |
+| `pk_access_share` | `point_read` calls ÷ `calls` |
+| `has_time_dimension` | whether any entity of the group declares a field of type `date`, `timestamp` or `timestamptz`. By **type**, never by name: a `created_at` of type `string` is not one |
+| `distinct_shapes` | distinct shape identifiers seen, failures included |
+| `error_share` | failed calls ÷ `calls` |
+| `missing` | sorted names of every field above whose value is unknown, plus `no_traffic` when there was none |
+| `complete` | whether this group's own measurement is whole |
+
+**`missing` is derived from the values, never written by hand.** It exists so a reader never has to
+infer absence from a null, and the planner treats unknown and zero as opposite evidence. Five
+features are in it always, because no library can measure them from traffic: `daily_growth_bytes`,
+`index_to_table_ratio`, `time_filtered_share`, `total_bytes`, `write_burstiness`. A hand-written
+list of them was wrong by one the day a sixth field was added, which is why it is derived.
+
+### The histogram
+
+Twenty-five buckets, the first one every duration below a microsecond and the last one clamped:
+
+```
+bucket(ns) = 0                                  if ns / 1000 == 0
+             min(24, 1 + floor(log2(ns / 1000)))  otherwise      // integer division
+edge(i)    = 1000 * 2^i nanoseconds                              // reported in milliseconds
+```
+
+The index is arithmetic and not a logarithm, and the reason is not that a logarithm is wrong here:
+`telemetry/002` pins the three rows around every power of two and a `log2` passes all of them,
+because the libms available are exact at a power of two. A property no output can distinguish is not
+one a vector can hold, so both reference libraries check it over their own source instead and say
+so. What the integer form has is no libm in it at all.
+
+### One rank rule for the whole document
+
+A percentile is **nearest-rank**: the smallest sample that at least `fraction` of the data is not
+above — index `ceil(fraction × n) − 1` of the ordered sample, and for the histogram the first
+bucket whose cumulative count reaches `fraction × n`.
+
+That sentence is here because the two percentiles in this document used to disagree. The histogram
+took the ceiling and the cardinality took the floor, and the two coincide on every sample set with
+an odd count — which every case in `telemetry/` had — so one document carried two conventions and
+nothing could see it. They differ exactly when `fraction × n` is an integer: two samples at p50.
+`telemetry/007`.
+
+**A failed call counts in the histogram and not in the cardinality**, and the two answers have
+different reasons rather than one convention. A failure took time, so dropping it would flatter a
+window precisely when an engine is in trouble. It returned no rows because it failed rather than
+because the data is sparse, so averaging that zero in understates what a read of that shape
+returns — and `error_share` already carries the failure rate, so smearing it into a second feature
+puts one fact in two places. `telemetry/008`.
+
+### Copies
+
+A `copies` entry is what a derived copy's write cost and health look like from the client's process,
+and there is exactly one thing to know about it: **a fan-out is not a shape.** It is not an
+operation the application asked for, so recording it as a write would move `read_write_ratio` and
+`shape_mix` — the features a placement is scored on — *because a copy exists*, and the same
+application would look twice as write-heavy under a map with a copy. `writes` counts every attempt,
+`failures` the ones that did not land, `complete` is `failures == 0`, and the lag percentiles come
+out of the same histogram as everything else. Entries are sorted by materialisation.
+
+`complete` on a copy is what a lag figure hides: **a copy missing a thousand rows can have an
+excellent p99.** Both are reported for that reason.
+
+### Refusing a model it did not measure
+
+Serialising a window needs exactly one fact from a model — whether a group carries a time
+dimension — and reading it from a different model would attach that fact to the wrong groups and
+claim `has_time_dimension: false` for a group that has one. False is a claim. So a window refuses to
+be serialised against a model whose version is not the one it recorded, rather than defaulting: this
+document is what a placement decision is adjudicated against years later. The error class is not
+part of the contract, because this is a caller's mistake rather than a document a library was
+handed; the message is. `telemetry/006`.
+
 ## 7. The placement map
 
 ```jsonc
@@ -428,6 +566,13 @@ a complete meaning. What came *after* a library cannot be known, so a higher num
 rather than interpreted. Strict equality, which is what contract 1 required, coupled a library
 upgrade to a control-plane action - and in the no-account mode there is nobody to issue a new map,
 so it would have broken the promise that hand-writing one is enough.
+
+**The two directions are two refusals and they name different numbers**, which is worth saying
+because a library that merges them into one message about the range fails `errors/006`. Too new
+names the **ceiling**: the document is from after this library and the ceiling is the fact that
+matters. Too old names the **floor**: the oldest it still reads. A single message naming
+`1 through 2` names both and tells the reader neither of the two things they came for, and a third
+implementation wrote exactly that.
 
 Rules a library must enforce, all of them refusals rather than warnings, because this document decides
 where data is written:
@@ -695,6 +840,128 @@ runtime implements the parsing and the four refusals and nothing else. `routing/
 pins the parse in both, and its cases assert the thing most likely to go wrong quietly: a **write
 shape still resolves to the source**.
 
+## 7a. The DDL a layout renders
+
+A Tier 2 library turns a layout into statements. They are **bytes a server receives**, so two
+libraries have to produce the same ones: a client running two languages against one model would
+otherwise end up with two physical schemas, which is the failure §4a's `model_version` exists to
+prevent one level up. `schema/` compares them exactly.
+
+Written down here for the reason §6a is: until this section existed the statements were defined by
+whatever the vectors happened to contain, and a third implementation reconstructed them from ten
+cases. That worked, and it also found that the escaping rule was not pinned by any of them.
+
+**The layout is the authority on type spelling and this renderer never translates one.** A
+layout's `columns` already carry dialect types — the planner put them there — so rendering supplies
+syntax and nothing else. `schema/002` is the case that says so out loud: it renders a ClickHouse
+layout with the `postgres` dialect and expects `DateTime64(3, 'UTC')` to come out unchanged. A
+renderer that mapped neutral types to dialect types would pass every other case in the family and
+fail that one, and it would be a second copy of the type mapping to keep in step with the planner's.
+
+### Order
+
+| What | Order |
+|---|---|
+| tables | code point order of the **entity** name, not the document's key order (`schema/012`) |
+| columns | code point order of the column name (`schema/003`, `schema/009`) |
+| the key | **the order the model declared**, never sorted — `(tenant, id)` and `(id, tenant)` are different keys (§4) |
+| indexes | code point order of the index name; each index's columns in the order the layout gives |
+
+Reading either order off the document is the mistake to avoid, and it is not hypothetical: the
+compatibility view below read its column order off the layout on the stated grounds that the
+document was sorted, and it is not, because a foreign-key column is appended per relation. Every
+entity with a relation had a view and a table listing the same columns two ways.
+
+### Identifiers
+
+**The two dialects escape differently and there is no escaper to share.** Both rules are measured
+against the servers this repository tests against, by creating the table and reading the name back
+out of the catalogue rather than by asking whether the statement was accepted:
+
+| Dialect | Delimiter | Escape |
+|---|---|---|
+| `postgres` | `"` | the delimiter is **doubled**. A backslash, a backtick and an apostrophe are literal, and backslash-escaping the delimiter is a *syntax error* |
+| `clickhouse` | `` ` `` | the delimiter **and the backslash** take a backslash escape. A double quote and an apostrophe are literal |
+
+The ClickHouse backslash is the half that had been missing and the way it fails is worth knowing:
+inside a backtick-quoted identifier that lexer reads a backslash as an escape introducer, so a field
+called `a\nb` reaches the server as a column called `a`, a newline and `b` — a different name,
+accepted in silence. A backslash before a letter the lexer does not know (`back\slash`) survives
+untouched, which is exactly what makes the defect look absent. `schema/011` pins both dialects, and
+nothing in the family carried a delimiter at all before it: the escaping could be deleted outright
+and every schema vector stayed green.
+
+### Statements
+
+```sql
+-- postgres
+CREATE TABLE IF NOT EXISTS "order" ("id" uuid, "tenant" uuid, PRIMARY KEY ("tenant", "id"))
+CREATE INDEX IF NOT EXISTS "payment_order_idx" ON "payment" ("order_tenant", "order_id")
+
+-- clickhouse
+CREATE TABLE IF NOT EXISTS `order` (`id` UUID, `tenant` UUID)
+  ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`)
+```
+
+Every statement is idempotent, and that is not decoration: a statement that is correct once is a
+deployment that works until the first restart. The `schema/` statements are executed against a real
+PostgreSQL and a real ClickHouse **twice each** for that reason.
+
+Four things a renderer refuses rather than approximating:
+
+- **an index for ClickHouse.** It has no B-tree to put one in. A layout carrying an index is a valid
+  document that signs and loads correctly, and this is where it stops being applicable — which is
+  why the control plane asks a library rather than reimplementing the answer;
+- **a layout with no columns for an entity it names a table for** — there is nothing to create;
+- **a key naming a column the layout does not have** — the `PRIMARY KEY` or `ORDER BY` would name a
+  column that is not in the table;
+- **no key for a table** — a table without one cannot be addressed, migrated or verified (§4a.5).
+
+And two things are not refusals:
+
+- **`partition_by` is refused too, and the refusal is why this bullet exists.** The key is parsed,
+  the control plane emits it when non-empty, and **no renderer has ever applied it**: a layout
+  declaring it produced an unpartitioned table and said nothing. Nothing populates it today, so no
+  issued map has ever carried one, but a hand-written map legally may — the no-account mode is a
+  documented mode — and silently ignoring a storage decision in a signed document is the worst of
+  the three available answers. Rendering it would mean designing two dialect-specific features with
+  no requirement behind them and interpolating a caller's SQL fragment into DDL. So it fails closed
+  until partitioning is implemented, at which point accepting it again is a *loosening* and
+  therefore a contract bump, which is the right price for the key starting to mean something.
+  A tightening under §11, so no bump now. `errors/037`;
+- **an engine whose schema is fixed in its own source renders no statements at all**, and "no
+  statements" there means "nothing to run" rather than "no tables in this layout". The two answers
+  are different questions and a library needs both, so they are separate calls: "render this
+  layout" and "does this engine take DDL from us". They also refuse an unknown dialect
+  *differently* — "there is no DDL for that dialect" against "that is not a dialect" — because the
+  questions are different (`schema/005`).
+
+### Compatibility views
+
+A view on the **target**, under the table name the group had in the engine it left, so hand-written
+SQL naming the old table keeps working across a migration. It renders on the target because a view
+cannot cross engines: the old table is in the old engine and no dialect here can select from another
+server.
+
+The column list is sorted the same way `CREATE TABLE` sorts it — a view exists for hand-written SQL
+alone, so a view and a table listing one table's columns in two orders is the whole defect this
+sort was written to fix. The two dialects differ in two places, both measured:
+
+| Dialect | Opening | Select |
+|---|---|---|
+| `postgres` | `CREATE OR REPLACE VIEW` — it has **no** `CREATE VIEW IF NOT EXISTS`, which is a syntax error there | plain |
+| `clickhouse` | `CREATE VIEW IF NOT EXISTS` | `... FROM \`t\` FINAL` |
+
+`FINAL` is the part that costs money if it is missed: a query moved verbatim onto a
+`ReplacingMergeTree` counts a row written twice under one key twice, until a background merge
+collapses it. Measured with merges stopped: two rows against one.
+
+A table can also have **no** view, and each reason is reported rather than skipped: the old name and
+the new one are the same (the dialect moved, not the name), the source layout gives no old name at
+all, or the engine imposes its own schema and has nowhere to put one. `schema/008` is the
+name-did-not-move case and `schema/013` is the one where it did — and before `013` existed those two
+answers were the same input for ClickHouse, so a library refusing every ClickHouse view passed.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read
@@ -753,7 +1020,7 @@ depends on how the caller's JSON parser preserves keys.
 2. every relation's `from` and `to` is a declared entity, and every atomicity names declared
    entities — references before constraints, because a name that points nowhere makes every later
    check about a thing that is not there;
-3. the eight refusals of §4a, in the order they are written there.
+3. the seven refusals of §4a, in the order they are written there.
 
 **The map stage:**
 

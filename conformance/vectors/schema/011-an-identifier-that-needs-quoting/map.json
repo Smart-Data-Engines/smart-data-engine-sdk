@@ -1,0 +1,48 @@
+{
+  "contract": 1,
+  "model_version": "dbbcd6272a1cda23",
+  "map_version": 1,
+  "groups": {
+    "Odd": {
+      "source": {
+        "id": "Odd@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Odd": "t\\nx"
+          },
+          "columns": {
+            "Odd": {
+              "a\\nb": "text",
+              "he said \"hi\"": "text",
+              "id": "uuid",
+              "it's": "text",
+              "tick`plain`": "text"
+            }
+          }
+        }
+      },
+      "derived": [
+        {
+          "id": "Odd@ch",
+          "engine": "ch-1",
+          "lag_budget_ms": 30000,
+          "layout": {
+            "tables": {
+              "Odd": "t\\nx"
+            },
+            "columns": {
+              "Odd": {
+                "a\\nb": "String",
+                "he said \"hi\"": "String",
+                "id": "UUID",
+                "it's": "String",
+                "tick`plain`": "String"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

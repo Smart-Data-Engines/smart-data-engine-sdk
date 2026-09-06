@@ -42,14 +42,28 @@ function quoteAnsi(identifier: string): string {
 }
 
 /**
- * Backticks, doubled to escape.
+ * Backticks, with a backslash escape for the backtick **and for the backslash**.
  *
  * ClickHouse accepts double quotes too. Backticks are the idiomatic form and, more usefully, they
  * make a generated statement obviously ClickHouse when it turns up in a log next to a PostgreSQL
  * one.
+ *
+ * PostgreSQL is the other way round: a backslash is literal inside `"..."` and doubling the quote
+ * is the whole rule, and backslash-escaping the quote there is a syntax error. Measured. So the
+ * two dialects genuinely differ and there is no escaper to share, which is why `QUOTE` has two.
  */
 function quoteBacktick(identifier: string): string {
-  return '`' + identifier.replaceAll('`', '``') + '`'
+  // One pass, escaping the backtick **and** the backslash. Doubling the backtick alone left the
+  // backslash as an escape introducer, so a field called `a\nb` reached the server as a column
+  // called `a`, a newline and `b` - a different name, accepted in silence. Measured against a real
+  // server by reading the name back out of `system.columns`. Two `replaceAll` calls would have to
+  // be sequenced correctly; one pass cannot be sequenced wrongly. See the reference's docstring.
+  let out = '`'
+  for (const character of identifier) {
+    if (character === '\\' || character === '`') out += '\\'
+    out += character
+  }
+  return out + '`'
 }
 
 /**

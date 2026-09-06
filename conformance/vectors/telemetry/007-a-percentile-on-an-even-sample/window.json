@@ -1,0 +1,31 @@
+{
+  "model_version": "1ff3e78b85e2ec40",
+  "complete": true,
+  "dropped_windows": 0,
+  "groups": {
+    "Detail": {
+      "calls": 2,
+      "shape_mix": {
+        "full_scan": 0.5,
+        "point_read": 0.5
+      },
+      "latency_p50_ms": 0.002,
+      "latency_p99_ms": 0.008,
+      "result_cardinality_p50": 3.0,
+      "result_cardinality_p99": 300.0,
+      "pk_access_share": 0.5,
+      "has_time_dimension": true,
+      "distinct_shapes": 2,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "read_write_ratio",
+        "time_filtered_share",
+        "total_bytes",
+        "write_burstiness"
+      ],
+      "complete": true
+    }
+  }
+}

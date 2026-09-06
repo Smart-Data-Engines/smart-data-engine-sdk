@@ -1,0 +1,20 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "key": [
+        "id"
+      ],
+      "fields": [
+        {
+          "name": "celsius",
+          "type": "int32"
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "entities": [
+    {
+      "name": "Detail",
+      "fields": [
+        {
+          "name": "body",
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Event",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Label",
+      "fields": [
+        {
+          "name": "created_at",
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "event",
+      "from": "Detail",
+      "to": "Event"
+    }
+  ]
+}

@@ -97,9 +97,11 @@ this contract rather than another version of the product, which is the whole arg
 contract being a byte-level document — but it is still a cost, and a library nobody keeps working is
 worse for a client than no library in that language.
 
-A Tier 0 implementation was written in **Go** on 6 September 2026 and is deliberately **not** on this
-page and not in this repository. It was a measurement, not a library: its purpose was to find out
-whether `format-contract.md` is sufficient to implement from without asking us, and it found six
-defects in the two libraries above. Publishing it would be a support claim we cannot keep, and a
-fourth implementation to hold in sync with every contract change. What it produced is written down in
+Two implementations were written as **measurements** and are deliberately **not** on this page and
+not in this repository: a Tier 0 one in **Go** and, once the Tier 1 and Tier 2 vectors existed, a
+Tier 0 + Tier 1 + Tier 2 one in **Rust**. Both dates are 6 September 2026. Their purpose was to find
+out whether `format-contract.md` is sufficient to implement from without asking us; the first found
+six defects in the two libraries above and the second found ten. Publishing either would be a
+support claim we cannot keep, and a fourth and fifth implementation to hold in sync with every
+contract change. What they produced is written down in
 [`implementing.md`](implementing.md#the-measurement).

@@ -87,6 +87,55 @@ def test_the_guide_names_every_vector_family_and_no_others() -> None:
     )
 
 
+# Present tense only. The guide is allowed - and now required - to say that three sets *did* not
+# exist, because that history is the argument for the order the work was done in.
+_ABSENCE = re.compile(r"\b(?:do|does) not exist yet")
+_FAMILY = re.compile(r"`([a-z]+)/`")
+
+
+def _claimed_absent(text: str) -> set[str]:
+    """Families a text says, in the present tense, are not written.
+
+    Read per sentence rather than by pairing a name with the phrase: the claim that mattered listed
+    three families after a colon, and a pattern that pairs them one at a time captures whichever
+    one it reaches first and reports the other two as fine.
+    """
+    out: set[str] = set()
+    for sentence in re.split(r"(?<=\.)\s", _flat(text)):
+        if _ABSENCE.search(sentence):
+            out |= set(_FAMILY.findall(sentence))
+    return out
+
+
+def test_the_guide_does_not_claim_a_family_is_missing_that_exists() -> None:
+    """The guide's claim about the families, audited against the contract's.
+
+    This is a second check rather than a stronger one, and the first is why. The test below
+    compares the family *names* the guide mentions against the tree, and
+    :func:`_unwritten_families` returns the empty set the moment §10 says nothing is missing - so
+    the assertion becomes ``named - families == set()``, which is true of a guide that mentions
+    every family correctly *and* tells an implementer none of them are written.
+
+    That is not hypothetical. It happened: the three Tier 1 and Tier 2 sets were written, §10 was
+    rewritten to say every set in the tier table exists, and the guide's closing section went on
+    saying they did not and ending with "talk to us first" for another release - in the one
+    paragraph a community implementer reads before deciding whether those tiers are open to them,
+    and against requirement 16.7, which says a contract that needs a conversation is a bug rather
+    than a property. A third implementation found it by reading the page.
+
+    A check that passes by finding nothing needs a case it finds, so the pattern is shown one.
+    """
+    planted = "The `telemetry/` and `schema/` sets do not exist yet, so ask us."
+    assert _claimed_absent(planted) == {"telemetry", "schema"}, (
+        "the pattern no longer recognises a claim of absence, so this test would pass a guide that "
+        "made one. That is the failure mode it exists for."
+    )
+    assert _claimed_absent(GUIDE.read_text()) == _unwritten_families(), (
+        "the guide says a vector family is not written and the contract disagrees. A tier whose "
+        "vectors exist and whose guide says they do not is a tier nobody outside will attempt."
+    )
+
+
 def test_the_guide_names_the_step_each_family_belongs_to() -> None:
     """A family listed somewhere in the prose is not the same as a family with a place in the
     order. The ordered list is the part of this guide that is worth more than the contract, because
@@ -254,13 +303,22 @@ def test_the_list_says_who_fixes_a_defect_in_each_kind() -> None:
     assert "belongs to its author" in text[theirs:]
 
 
-def test_the_go_implementation_is_named_as_a_measurement_and_is_not_here() -> None:
-    """It found six defects and it is still not a library. Keeping it would be a support claim we
-    cannot hold and a fourth implementation to keep in sync with every contract change."""
+@pytest.mark.parametrize(
+    ("language", "suffix"), [("**Go**", ".go"), ("**Rust**", ".rs")]
+)
+def test_a_measurement_is_named_as_one_and_is_not_here(language: str, suffix: str) -> None:
+    """Between them they found sixteen defects and neither is a library.
+
+    Keeping one would be a support claim we cannot hold and another implementation to keep in sync
+    with every contract change - which is 17.6 applied to ourselves. Parameterised over both
+    because the second was written the day the first one's lesson was reused: the check that only
+    knew about Go would have said nothing about a Rust tree appearing next to it.
+    """
     text = LIST.read_text()
-    assert "**Go**" in text
+    assert language in text, f"{language} is not named on the list of implementations"
     assert "not in this repository" in text
-    assert list(ROOT.glob("**/*.go")) == [], "there is Go source in this repository"
+    found = [p for p in ROOT.glob(f"**/*{suffix}") if ".venv" not in p.parts]
+    assert found == [], f"there is {language} source in this repository: {found[:3]}"
 
 
 @pytest.mark.parametrize("document", [GUIDE, LIST])
