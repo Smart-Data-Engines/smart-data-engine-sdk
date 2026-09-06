@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "declares no key",
+  "why": "Both of our libraries used to default an absent key to ['id'] - Python with `or` and TypeScript with `??`, which differ on exactly one input, so `\"key\": []` invented a key in one language and stayed keyless in the other: one declaration, two model versions, and no vector could see it because none declared an empty key. A third implementation written from the contract read the document literally and produced a keyless model, which is a third answer. The default is gone: a key is what makes a row addressable, migratable and verifiable, so an entity without one is a group that cannot be moved, and a key nobody declared would reach a client's table as a primary key they never chose. Inference emits a declaration with no key on purpose and says so in a note; this refusal is the other half of that sentence."
+}

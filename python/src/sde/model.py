@@ -236,22 +236,18 @@ def build_model(
     for decl in decls:
         hints = _resolve_hints(decl)
         fields, rels = _split_fields(decl, hints, known)
-        if not fields:
-            raise DeclarationError(
-                f"{decl.name} has no fields, only relations. An entity that stores nothing cannot "
-                "be "
-                "placed, and a relation-only entity is usually a join table that wants to be one."
-            )
-        bad_pii = [p for p in decl.pii if p not in {f.name for f in fields}]
-        if bad_pii:
-            raise DeclarationError(
-                f"{decl.name}.Meta.pii names {bad_pii}, which are not fields of {decl.name}"
-            )
+        # "no fields" and "pii names something that is not a field" used to be checked here and
+        # not on the neutral-JSON path. They are in `assemble` now, which both paths go through: a
+        # guarantee that holds at one of two front doors holds for one of two callers.
         specs.append(
             EntitySpec(
                 name=decl.name,
                 fields=tuple(sorted(fields, key=lambda f: f.name)),
-                key=_resolve_key(decl, fields),
+                # Not resolved for an entity with no fields: `assemble` refuses that first (§8a),
+                # and resolving here would refuse a relation-only entity for having no key - which
+                # sends the reader looking for a Meta.key when the problem is that nothing is
+                # stored.
+                key=_resolve_key(decl, fields) if fields else (),
                 pii=tuple(sorted(decl.pii)),
                 residency=decl.residency,
             )
@@ -276,6 +272,134 @@ def build_model(
     )
 
 
+def neutral_declaration(model: LogicalModel) -> dict[str, Any]:
+    """The model as the neutral form of format-contract §4a.
+
+    The inverse of :func:`sde.testing.loader.model_from_neutral`, and it exists because the control
+    plane takes a client's model as *that* document while a client declares it in whichever way
+    their language is comfortable with. Without this, a client using the decorator API has to write
+    their model a second time by hand for `declare`, and the two copies then drift.
+
+    **The IR is not this document.** They look close enough to be confused - our own tests declared
+    ``model.ir`` and got away with it because nothing read the stored file back - and they differ
+    exactly where it matters: the IR records key order as ``[{"field": "id", "position": 0}]``
+    because array order is not load-bearing anywhere else in it, and the neutral form states a key
+    as ``["id"]`` because that is what a person writes. Feeding the IR to the loader is refused, and
+    ``test_neutral_declaration.py`` pins that as well as the round trip.
+    """
+    entities: list[dict[str, Any]] = []
+    for spec in model.entities:
+        entity: dict[str, Any] = {
+            "name": spec.name,
+            "fields": [
+                {"name": f.name, "type": f.type, **({"nullable": True} if f.nullable else {})}
+                for f in spec.fields
+            ],
+            "key": list(spec.key),
+        }
+        if spec.pii:
+            entity["pii"] = list(spec.pii)
+        if spec.residency is not None:
+            entity["residency"] = spec.residency
+        entities.append(entity)
+
+    document: dict[str, Any] = {"entities": entities}
+    if model.relations:
+        document["relations"] = [
+            {"name": r.name, "from": r.source, "to": r.target} for r in model.relations
+        ]
+    if model.atomic:
+        document["atomic"] = [list(group) for group in model.atomic]
+    if model.cost_ceiling is not None:
+        document["cost_ceiling"] = dict(model.cost_ceiling)
+    return document
+
+def _refuse_a_declaration_that_is_not_a_model(
+    entities: tuple[EntitySpec, ...],
+    relations: tuple[RelationSpec, ...],
+) -> None:
+    """The seven refusals of format-contract §4a, in the order that section writes them.
+
+    They live here rather than at each front door because there are two front doors - the
+    decorator path and the neutral-JSON path the conformance vectors use - and until this function
+    existed each of them enforced a different subset. The vectors therefore ran a *weaker*
+    validator than any application does, which is the suite's own stated failure mode: a vector
+    that passes without reaching the code it describes takes the place of one that would have.
+
+    Every one of these was measured against a third implementation written from the contract alone.
+    Three of them were accepted by both of our libraries and refused by that one, and one - an empty
+    ``key`` list - produced two different ``model_version`` values here, because Python spelled the
+    invented default ``or`` and TypeScript spelled it ``??``.
+    """
+    if not entities:
+        raise DeclarationError("no entities declared, so there is no model to build")
+
+    seen: dict[str, EntitySpec] = {}
+    for spec in entities:
+        if not spec.fields:
+            raise DeclarationError(
+                f"{spec.name} has no fields. An entity that stores nothing cannot be placed, so "
+                "there is nothing for a map to say about it."
+            )
+        if spec.name in seen:
+            raise DeclarationError(
+                f"two entities are called {spec.name!r}. Entity names reach the canonical IR and "
+                "the colocation graph, so a duplicate makes 'which entity is this' unanswerable in "
+                "the document whose job is to answer it."
+            )
+        seen[spec.name] = spec
+
+    relations_of: dict[str, set[str]] = {}
+    for rel in relations:
+        for side in (rel.source, rel.target):
+            if side not in seen:
+                raise DeclarationError(
+                    f"relation {rel.name!r} names unknown entity {side!r}"
+                )
+        named = relations_of.setdefault(rel.source, set())
+        if rel.name in named:
+            raise DeclarationError(
+                f"{rel.source}.{rel.name} is declared twice. Two relations of one name on one "
+                "entity are two edges the colocation graph cannot tell apart."
+            )
+        named.add(rel.name)
+
+    for spec in entities:
+        fields = [f.name for f in spec.fields]
+        duplicates = sorted({name for name in fields if fields.count(name) > 1})
+        if duplicates:
+            raise DeclarationError(
+                f"{spec.name} declares the fields {duplicates} more than once. The layout would "
+                "have two columns of one name, and the refusal would arrive from the client's "
+                "engine at CREATE TABLE."
+            )
+        if not spec.key:
+            raise DeclarationError(
+                f"{spec.name} declares no key. A key is what makes a row addressable, migratable "
+                "and verifiable - a backfill compares rows by it - so an entity without one is a "
+                "group that cannot be moved, and that is worth knowing when the model is declared "
+                "rather than in the middle of a migration. No key is invented for you."
+            )
+        missing = [k for k in spec.key if k not in set(fields)]
+        if missing:
+            raise DeclarationError(
+                f"{spec.name}: key names {missing}, which are not fields of {spec.name}"
+            )
+        repeated = sorted({k for k in spec.key if list(spec.key).count(k) > 1})
+        if repeated:
+            raise DeclarationError(
+                f"{spec.name}: key names {repeated} more than once, which is a composite key with "
+                "one column in two positions."
+            )
+        bad_pii = [pii for pii in spec.pii if pii not in set(fields)]
+        if bad_pii:
+            raise DeclarationError(
+                f"{spec.name}: pii names {bad_pii}, which are not fields of {spec.name}. A pii "
+                "entry that is not a field silently protects nothing, and the exclusion of "
+                "personal data from a derived copy is meant to be readable rather than trusted."
+            )
+
+
 def assemble(
     *,
     entities: tuple[EntitySpec, ...],
@@ -290,6 +414,8 @@ def assemble(
     if the vectors exercised a second implementation of this encoding, they would be verifying
     something no application ever runs, which is the most expensive kind of green test.
     """
+    _refuse_a_declaration_that_is_not_a_model(entities, relations)
+
     specs = tuple(sorted(entities, key=lambda s: s.name))
     rels = tuple(sorted(relations, key=lambda r: (r.source, r.name, r.target)))
 

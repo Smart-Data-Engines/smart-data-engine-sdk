@@ -258,6 +258,89 @@ a reader never has to know which arrays in this document are load-bearing.
 on one side, and if A is atomic with B and B with C then all three commit together — there is nothing
 else a single engine's transaction could deliver.
 
+## 4a. The neutral declaration form
+
+The IR above is what a library *produces*. This is the JSON it is produced **from**, and until this
+section was written the format was defined only by example — by whatever the conformance vectors
+happened to contain. That was a real gap rather than a tidiness one: `conformance/vectors/**/model.json`
+is the only input every implementation shares, so a library that reads it differently computes a
+different `model_version` from the same file and the vectors cannot see it, because a vector asserting
+a refusal passes whatever model was built on the way to the refusal.
+
+It is also not only a test format. The control plane stores a client's declared model in exactly this
+shape and rebuilds it to issue every map, so a rule invented here reaches a client's physical schema.
+
+```jsonc
+{
+  "entities": [
+    {
+      "name": "Order",                                   // required
+      "fields": [                                        // required, non-empty
+        {"name": "id", "type": "uuid"},                  // nullable defaults to false
+        {"name": "note", "type": "string", "nullable": true}
+      ],
+      "key": ["tenant", "id"],                           // required, non-empty, order is the key's
+      "pii": ["email"],                                  // optional; absent means none
+      "residency": "EU"                                  // optional; absent means null
+    }
+  ],
+  "relations": [{"name": "user", "from": "Order", "to": "User"}],   // optional
+  "atomic": [["Order", "Payment"]],                                 // optional
+  "cost_ceiling": {"amount": "500.00", "currency": "EUR"}           // optional; absent means null
+}
+```
+
+**No key is ever invented.** Both of our libraries used to default an absent `key` to `["id"]`, which
+is the one thing §3 forbids in the neighbouring case — "a host type with no mapping is an error, do
+not guess" — and it had two costs. A third implementation reading the vectors could not know the rule
+existed, so it produced a keyless model and a different `model_version` for the same document with
+nothing failing. And a client who omits the key would be issued a map for a model with a primary key
+they never declared, on a table our layout then creates with it. Python spelled the default `or` and
+TypeScript spelled it `??`, which differ on exactly one input: `"key": []` invented a key in one
+language and stayed keyless in the other. One declaration, two model versions, and the vectors were
+silent because no vector declares an empty key.
+
+Seven refusals, all `DeclarationError`, and all of them tightenings under §11:
+
+1. a model declares at least one entity;
+2. an entity declares at least one field — an entity that stores nothing cannot be placed;
+3. entity names are unique within a model. Names reach the IR and the colocation graph, and a
+   duplicate makes "which entity is this" unanswerable in a document whose whole job is to answer it;
+4. field names are unique within an entity, or the layout has two columns of one name and the refusal
+   arrives from the client's engine at `CREATE TABLE`;
+5. `key` is present, non-empty, names fields of its own entity, and names each of them once. A key is
+   what makes a row addressable, migratable and verifiable: §12's backfill compares rows by it, so an
+   entity without one is a group that cannot be moved, and that would be discovered during the
+   migration rather than when the model was declared;
+6. `pii` names fields of its own entity. This one is not cosmetic — a `pii` entry that is not a field
+   silently protects nothing, and §7 says the exclusion of personal data from a derived copy is meant
+   to be *readable* in the library rather than taken on trust;
+7. `relations` has at most one entry per (`from`, `name`), and every `from` and `to` is a declared
+   entity.
+
+A field and a relation on one entity **may** share a name, and the rule that would have refused it
+was written and then deleted: §2a says the digest collision between them is intended, and
+`hashing/003-reserved-object-keys` declares exactly that shape. It is legal because a relation does
+not reach a layout under its own name — it reaches it as `<relation>_<target key field>` — so there
+is no column for it to collide with. Our TypeScript library refuses it in `buildModel` today, which
+means the model that vector pins cannot be declared through that library's own front door. That check
+is the one that should go.
+
+**The IR is not this document, and the difference is one key.** They are close enough to be
+confused: an IR entity has `name`, `fields`, `pii` and `residency` in the same places, and differs
+where a key is written — `[{"field": "id", "position": 0}]` there, because array order is not
+load-bearing anywhere else in the IR, and `["id"]` here, because that is what a person writes. Three
+of our own control-plane tests handed the IR over as a declaration and nothing noticed for weeks,
+because nothing read the stored document back. A library that offers a way *out* of its own model
+type — ours are `neutral_declaration()` and `neutralDeclaration()` — spares a client writing their
+model twice, and the confusion is worth a named refusal rather than whatever a dictionary lookup
+raises: `errors/036`.
+
+These are enforced where the IR is assembled rather than at each front door. Both libraries had some
+of them on the decorator path and not on the loader path, so the vectors ran a weaker validator than
+any application does — which is the suite's own failure mode written down in §10: a vector that
+passes without reaching the code it describes takes the place of one that would have.
+
 ## 5. Colocation groups
 
 A group is a connected component of the graph whose vertices are entities and whose edges are:
@@ -352,6 +435,11 @@ where data is written:
 - `contract` must equal the version the library implements. Not "at least" — equal.
 - `model_version` must equal the version of the declared model. A mismatch is refused, never
   reconciled.
+- `map_version` must be present and a positive integer. Both libraries used to read it as
+  `int(document.get("map_version", 0))`, so a document without one loaded as version **0** — and this
+  is the number the forward-only rule below compares against a watermark in the client's own engine.
+  A map that forgot to say which version it is cannot be the one that decides whether an older map is
+  being replayed.
 - Exactly one `source` per group. It must **not** carry `lag_budget_ms`: the source is where writes
   land, so it is not behind anything.
 - Every `derived` materialisation **must** carry `lag_budget_ms`. Without it nobody can tell a healthy
@@ -642,6 +730,47 @@ cannot show a write the caller just made. Everything else is a lookup, which is 
 need telemetry, a cost model and an explanation, and reimplementing that judgement four times and
 keeping the four identical forever is not a plan.
 
+## 8a. The order a refusal comes in
+
+A document can have two defects. Which one a library reports has to be the same everywhere, or one
+document has two meanings again — this time in the message rather than in the routing, which is the
+half of a library a person actually reads during an incident.
+
+This is not hypothetical and it was not free. `errors/019-layout-names-the-reserved-bookkeeping-table`
+carries **two** defects: a reserved table name in the layout of group `Event`, and a layout that is
+both `auto` and explicit in group `Order`. It pins the first one, and it did so only because `Event`
+happens to be written earlier in the file and both of our languages iterate an object in insertion
+order. A third implementation in Go, whose maps are deliberately iterated in a randomised order,
+failed that vector in **5 of 20 runs** — a conformance suite that is flaky against correct code,
+which is the shape of test that teaches people to press the button again.
+
+So the order is fixed, and it is fixed by name rather than by document order. Nothing in either list
+depends on how the caller's JSON parser preserves keys.
+
+**The model stage:**
+
+1. every field's type is in the vocabulary (§3);
+2. every relation's `from` and `to` is a declared entity, and every atomicity names declared
+   entities — references before constraints, because a name that points nowhere makes every later
+   check about a thing that is not there;
+3. the eight refusals of §4a, in the order they are written there.
+
+**The map stage:**
+
+1. the document is an object; `contract` is in range; `model_version` matches; `map_version` is a
+   positive integer;
+2. `require_signature`, then the signature itself. Before the structure, deliberately: a document
+   whose origin cannot be established is not worth a detailed reading, and the refusal a client needs
+   is the one about the key rather than the one about the seventh group;
+3. every group, **in name order**, and within a group: the source, then the derived copies in
+   document order (an array's order is the document's), then id uniqueness, then `also_write`;
+4. group coverage, both directions (§7);
+5. `routing`, entries **in shape-id order**.
+
+Both libraries already sorted the routing entries and neither sorted the groups, which is how a rule
+gets half-applied: the reason for sorting was understood in one loop and read as a detail in the
+other.
+
 ## 9. Capability tiers
 
 An implementation declares which tier it reaches, and "supported" has to mean the same thing across
@@ -683,6 +812,13 @@ that is currently false. The reference implementation has both, covered by its o
 slice against a real PostgreSQL — which verifies that it works, not that a second implementation would
 agree with it. The gap costs nothing while one library claims those tiers and everything on the day two
 do, so the vectors are written before a second claim is accepted, not after.
+
+**An `errors/` case pins the message, not only the class.** Its `match` field is a substring that
+the refusal's own text must contain, compared literally and case-sensitively. That makes diagnostics
+part of this contract, which is deliberate and was earned: a refusal of an incompatible contract
+version once rendered a literal `{CONTRACT}` in Python and the number in TypeScript, and no vector
+reached it because the suite compared encodings and that path produces only a diagnostic. A library
+may say more than `match` and in any language it likes; it may not say less.
 
 An `errors/` case carries a `stage`. `model` cases feed `model.json` to the model builder; `map`
 cases build the model **first, outside the assertion**, then feed `map.json` to the map loader with

@@ -559,6 +559,15 @@ def _parse_map(
             "running against this one, because the difference cannot be guessed."
         )
 
+    map_version = raw.get("map_version")
+    if not isinstance(map_version, int) or isinstance(map_version, bool) or map_version < 1:
+        raise MapError(
+            f"this map declares map_version {map_version!r}, which is not a version number. It "
+            "used to be read as int(document.get('map_version', 0)), so a document without one "
+            "loaded as version 0 - and this is the number that decides whether an older map is "
+            "being replayed over a newer one against the client's own engines."
+        )
+
     signature_present = "signature" in raw and raw["signature"] is not None
     if require_signature and not signature_present:
         raise MapError("a signature was required and this map has none")
@@ -578,7 +587,14 @@ def _parse_map(
         raise MapError("the map places no groups")
 
     groups: dict[str, GroupPlacement] = {}
-    for name, body in groups_raw.items():
+    # By name, not in the document's order. A map with two defects has to refuse the same way in
+    # every language (format-contract §8a): `errors/019` carries a reserved table name in one group
+    # and an auto-plus-explicit layout in another, and it pinned the first only because that group
+    # is written earlier in the file and both of our runtimes iterate an object in insertion order.
+    # A third implementation in Go, whose maps iterate in a randomised order, failed that vector in
+    # 5 of 20 runs. The routing loop below has sorted since it was written; this one had not.
+    for name in sorted(groups_raw):
+        body = groups_raw[name]
         where = f"group {name!r}"
         if not isinstance(body, dict) or "source" not in body:
             raise MapError(f"{where}: needs a 'source' materialisation")
@@ -644,7 +660,7 @@ def _parse_map(
     return PlacementMap(
         contract=contract,
         model_version=model_version,
-        map_version=int(raw.get("map_version", 0)),
+        map_version=map_version,
         groups=groups,
         routing={str(k): str(v) for k, v in routing.items()},
         signed=signature_present,

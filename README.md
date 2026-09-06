@@ -106,6 +106,10 @@ implementation works, not that a second implementation would agree with it. Toda
 since no other library claims those tiers. It costs on the day one does, so the vectors come before
 the claim does.
 
+The table above is this repository's layout. The list of what each library *supports*, and who fixes
+it when it breaks, is [`docs/implementations.md`](docs/implementations.md), and that is the one to
+read before depending on any of it.
+
 ## What you declare, and what you do not
 
 You declare entities, relations, and four invariants. Everything else about storage is ours.
@@ -189,6 +193,22 @@ object key in the model IR is fixed ASCII, so swapping the object-key comparator
 passed the whole suite; field names reach the IR as array elements, through a different comparator. The
 `canonical/` vectors exist to close that, and both call sites are now verified by deliberately breaking
 them and watching the suite go red.
+
+### What the third implementation found
+
+The same experiment, done deliberately: on 6 September 2026 a Tier 0 library was written in **Go**,
+from the contract and the vectors alone, to find out whether that document really is sufficient to
+implement from without asking us. All 49 vectors passed on the first run, so the encoding half of the
+claim held. Everything the vectors did not reach did not: **six defects in these two libraries**, the
+worst of them a placement map whose groups were validated in the document's own key order, so one
+document refused differently depending on how a JSON parser handed the keys over — and the vector
+that was supposed to cover it failed in Go, whose maps iterate in a randomised order, in 5 of 20 runs.
+
+Ten vectors came out of it. The Go code did not: it was a measurement, not a library, and a fourth
+implementation nobody keeps working is worse for a client than none.
+[`docs/implementing.md`](docs/implementing.md) has the findings, the order to build a library in, and
+a table of what each language does to you. [`docs/implementations.md`](docs/implementations.md) is the
+list of which libraries exist, what each one really does, and who fixes it when it breaks.
 
 ## Getting started
 

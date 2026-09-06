@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "map",
+  "match": "not a version number",
+  "why": "Both libraries read this field as int(document.get('map_version', 0)), so a document without one loaded as version 0 - and this is the number the forward-only rule compares against a watermark in the client's own engine. A map that forgot to say which version it is cannot be the one that decides whether an older map is being replayed. A third implementation written from the contract required the field, because the example in section 7 shows it; the reference defaulted it, and nothing disagreed out loud."
+}

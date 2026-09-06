@@ -173,12 +173,117 @@ function normaliseAtomic(entities: readonly Entity[]): readonly (readonly string
 }
 
 /** Assemble already-resolved specs into a model. Shared by `buildModel` and the vector loader. */
+/**
+ * The seven refusals of format-contract §4a, in the order that section writes them.
+ *
+ * Here rather than at each front door, because there are two - `buildModel` and the neutral-JSON
+ * loader the conformance vectors use - and each of them enforced a different subset. The vectors
+ * therefore ran a weaker validator than any application does, which is the suite's own failure
+ * mode: a vector that passes without reaching the code it describes takes the place of one that
+ * would have.
+ */
+function refuseADeclarationThatIsNotAModel(
+  entities: readonly EntitySpec[],
+  relations: readonly RelationSpec[],
+): void {
+  if (entities.length === 0) {
+    throw new DeclarationError('no entities declared, so there is no model to build')
+  }
+
+  const known = new Set<string>()
+  for (const spec of entities) {
+    if (spec.fields.length === 0) {
+      throw new DeclarationError(
+        `${spec.name} has no fields. An entity that stores nothing cannot be placed, so there is ` +
+          'nothing for a map to say about it.',
+      )
+    }
+    if (known.has(spec.name)) {
+      throw new DeclarationError(
+        `two entities are called ${JSON.stringify(spec.name)}. Entity names reach the canonical ` +
+          "IR and the colocation graph, so a duplicate makes 'which entity is this' unanswerable " +
+          'in the document whose job is to answer it.',
+      )
+    }
+    known.add(spec.name)
+  }
+
+  const relationsOf = new Map<string, Set<string>>()
+  for (const rel of relations) {
+    for (const side of [rel.source, rel.target]) {
+      if (!known.has(side)) {
+        throw new DeclarationError(
+          `relation '${rel.name}' names unknown entity '${side}'`,
+        )
+      }
+    }
+    const named = relationsOf.get(rel.source) ?? new Set<string>()
+    if (named.has(rel.name)) {
+      throw new DeclarationError(
+        `${rel.source}.${rel.name} is declared twice. Two relations of one name on one entity are ` +
+          'two edges the colocation graph cannot tell apart.',
+      )
+    }
+    named.add(rel.name)
+    relationsOf.set(rel.source, named)
+  }
+
+  for (const spec of entities) {
+    const names = spec.fields.map((f) => f.name)
+    const duplicates = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))].sort(
+      compareCodePoints,
+    )
+    if (duplicates.length > 0) {
+      throw new DeclarationError(
+        `${spec.name} declares the fields ${JSON.stringify(duplicates)} more than once. The ` +
+          "layout would have two columns of one name, and the refusal would arrive from the " +
+          'client\'s engine at CREATE TABLE.',
+      )
+    }
+    const known_fields = new Set(names)
+    if (spec.key.length === 0) {
+      throw new DeclarationError(
+        `${spec.name} declares no key. A key is what makes a row addressable, migratable and ` +
+          'verifiable - a backfill compares rows by it - so an entity without one is a group that ' +
+          'cannot be moved, and that is worth knowing when the model is declared rather than in ' +
+          'the middle of a migration. No key is invented for you.',
+      )
+    }
+    const missing = spec.key.filter((k) => !known_fields.has(k))
+    if (missing.length > 0) {
+      throw new DeclarationError(
+        `${spec.name}: key names ${JSON.stringify(missing)}, which are not fields of ${spec.name}`,
+      )
+    }
+    const repeated = [
+      ...new Set(spec.key.filter((k, i) => spec.key.indexOf(k) !== i)),
+    ].sort(compareCodePoints)
+    if (repeated.length > 0) {
+      throw new DeclarationError(
+        `${spec.name}: key names ${JSON.stringify(repeated)} more than once, which is a ` +
+          'composite key with one column in two positions.',
+      )
+    }
+    const badPii = spec.pii.filter((f) => !known_fields.has(f))
+    if (badPii.length > 0) {
+      throw new DeclarationError(
+        `${spec.name}: pii names ${JSON.stringify(badPii)}, which are not fields of ` +
+          `${spec.name}. A pii entry that is not a field silently protects nothing, and the ` +
+          'exclusion of personal data from a derived copy is meant to be readable rather than ' +
+          'trusted.',
+      )
+    }
+  }
+}
+
 export function assemble(
   entities: readonly EntitySpec[],
   relations: readonly RelationSpec[],
   atomic: readonly (readonly string[])[],
   costCeiling: CostCeiling | null,
 ): LogicalModel {
+  refuseADeclarationThatIsNotAModel(entities, relations)
+
   const specs = [...entities].sort((a, b) => compareCodePoints(a.name, b.name))
   const rels = [...relations].sort(
     (a, b) =>
@@ -221,16 +326,10 @@ export function buildModel(
   if (entities.length === 0) {
     throw new DeclarationError('no entities declared, so there is no model to build')
   }
-  const names = new Set<string>()
-  for (const ent of entities) {
-    if (names.has(ent.name)) {
-      throw new DeclarationError(
-        `two entities are called ${JSON.stringify(ent.name)}. Entity names reach the canonical IR ` +
-          'and the colocation graph, so they have to be unique within a model.',
-      )
-    }
-    names.add(ent.name)
-  }
+  // Uniqueness, pii and the key are checked in `assemble` now, which both front doors go through.
+  // A guarantee that holds at one of two doors holds for one of two callers, and the conformance
+  // vectors come through the other one.
+  const names = new Set<string>(entities.map((e) => e.name))
 
   const specs: EntitySpec[] = []
   const relations: RelationSpec[] = []
@@ -250,20 +349,13 @@ export function buildModel(
             'it in the model you are building.',
         )
       }
-      if (fieldNames.has(name)) {
-        throw new DeclarationError(
-          `${ent.name}.${name} is declared as both a field and a relation. It reaches the physical ` +
-            'layout as one column or as a foreign key, and it cannot be both.',
-        )
-      }
+      // No refusal for a field and a relation sharing a name. This check used to be here and it
+      // contradicted the contract: §2a says the digest collision between the two is intended, and
+      // `hashing/003-reserved-object-keys` declares exactly that shape - so this library refused a
+      // model its own conformance vector pins. It is legal because a relation reaches a layout as
+      // `<relation>_<target key field>` and never under its own name, so there is no column for it
+      // to collide with.
       relations.push({ name, source: ent.name, target: relation.to })
-    }
-
-    const badPii = (ent.pii ?? []).filter((f) => !fieldNames.has(f))
-    if (badPii.length > 0) {
-      throw new DeclarationError(
-        `${ent.name}: pii names ${JSON.stringify(badPii)}, which are not fields of ${ent.name}`,
-      )
     }
 
     specs.push({
@@ -276,6 +368,45 @@ export function buildModel(
   }
 
   return assemble(specs, relations, normaliseAtomic(entities), options.costCeiling ?? null)
+}
+
+/**
+ * The model as the neutral form of format-contract §4a: the inverse of `modelFromNeutral`.
+ *
+ * It exists because the control plane takes a client's model as *that* document while a client
+ * declares it in whichever way their language is comfortable with. Without this, a client has to
+ * write their model a second time by hand, and the two copies then drift.
+ *
+ * **The IR is not this document.** They differ exactly where a key is written; see `checkShape` in
+ * the neutral loader.
+ */
+export function neutralDeclaration(model: LogicalModel): Record<string, unknown> {
+  const entities = model.entities.map((spec) => {
+    const entity: Record<string, unknown> = {
+      name: spec.name,
+      fields: spec.fields.map((f) => ({
+        name: f.name,
+        type: f.type,
+        ...(f.nullable ? { nullable: true } : {}),
+      })),
+      key: [...spec.key],
+    }
+    if (spec.pii.length > 0) entity['pii'] = [...spec.pii]
+    if (spec.residency !== null) entity['residency'] = spec.residency
+    return entity
+  })
+
+  const document: Record<string, unknown> = { entities }
+  if (model.relations.length > 0) {
+    document['relations'] = model.relations.map((r) => ({
+      name: r.name,
+      from: r.source,
+      to: r.target,
+    }))
+  }
+  if (model.atomic.length > 0) document['atomic'] = model.atomic.map((g) => [...g])
+  if (model.costCeiling !== null) document['cost_ceiling'] = { ...model.costCeiling }
+  return document
 }
 
 export function irBytes(model: LogicalModel): Buffer {

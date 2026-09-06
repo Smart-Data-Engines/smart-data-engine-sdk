@@ -78,7 +78,7 @@ from .migration import (
     backfill,
     verify,
 )
-from .model import CONTRACT, LogicalModel, build_model
+from .model import CONTRACT, LogicalModel, build_model, neutral_declaration
 from .placement import (
     ALSO_WRITE_SINCE,
     MAP_CONTRACT,
@@ -208,6 +208,7 @@ __all__ = [
     "load_map",
     "load_or_create_salt",
     "members_of",
+    "neutral_declaration",
     "precision",
     "registry",
     "reset_internal_failures",

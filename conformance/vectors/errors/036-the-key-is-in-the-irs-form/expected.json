@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "the IR's key form",
+  "why": "The IR (section 4) and the neutral declaration form (section 4a) are close enough to be confused and differ exactly where a key is written: the IR records an explicit position because array order is not load-bearing anywhere else in it, and a declaration states a key as a list of field names in order. This entity is otherwise a faithful IR entity, which is the point - our own control-plane tests declared a model's IR for weeks and got away with it because nothing read the stored document back, and the reference implementation answered a set-membership test on a dict with TypeError: unhashable type: 'dict' from inside the encoder. A library exception with no explanation, on the path whose whole job is to explain, and it is the single most likely mistake this pair of shapes invites - so the diagnostic is pinned rather than the class alone."
+}

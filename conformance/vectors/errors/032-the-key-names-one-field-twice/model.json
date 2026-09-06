@@ -1,0 +1,22 @@
+{
+  "entities": [
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "tenant",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "tenant",
+        "id",
+        "tenant"
+      ]
+    }
+  ]
+}

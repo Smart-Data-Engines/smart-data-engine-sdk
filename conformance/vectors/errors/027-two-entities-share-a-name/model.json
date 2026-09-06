@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "x",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "x"
+      ]
+    }
+  ]
+}

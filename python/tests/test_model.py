@@ -201,7 +201,11 @@ def test_pii_must_name_real_fields() -> None:
         class Meta:
             pii = ["nickname"]
 
-    with pytest.raises(DeclarationError, match=r"Meta.pii names"):
+    # The message no longer names `Meta.pii`. The check moved into `assemble`, where the decorator
+    # path and the neutral-JSON path meet, and one of those two has no Meta to name. That is the
+    # trade: a slightly less specific message in exchange for a rule that holds for both callers,
+    # where before it held for one and the conformance vectors ran the one without it.
+    with pytest.raises(DeclarationError, match=r"pii names"):
         sde.build_model(User)
 
 
@@ -275,7 +279,7 @@ def test_entity_without_fields_is_refused() -> None:
     class Membership:
         user: sde.Ref[User]
 
-    with pytest.raises(DeclarationError, match="no fields, only relations"):
+    with pytest.raises(DeclarationError, match="has no fields"):
         sde.build_model(User, Membership)
 
 

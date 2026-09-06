@@ -14,7 +14,8 @@ vectors/
     ir.json                   the exact canonical IR bytes it must produce
     version.txt               the exact model_version
     groups.json               the colocation groups, in order
-    shapes.json               every operation shape, with its identifier
+    shapes.json               every operation shape, with its identifier - optional, and absent
+                              from 001, which predates it
   routing/<nnn>-<name>/
     model.json
     map.json                  a placement map
@@ -44,6 +45,17 @@ The lesson generalises, and it is worth applying to any vector added here: **bre
 deliberately and check that this suite notices.** A vector that passes without reaching the code it
 describes takes the place of one that would have.
 
+**Which files are bytes and which are text.** `ir.json` and `bytes.json` hold bytes and have **no
+trailing newline**: compare them exactly. The `.txt` files - `version.txt`, `salt.hex` and the rest -
+are text and do end with one, so strip it. That is not a rule anybody would guess, and a runner that
+gets it wrong fails with a diff nobody can see.
+
+**`expected.json`'s `match` is a required substring of your refusal's own message**, compared
+literally and case-sensitively. Diagnostics are part of the contract here, which is deliberate: a
+refusal of an incompatible contract version once rendered a literal `{CONTRACT}` in one language and
+the number in the other, and no vector reached it because the suite compares encodings and that path
+produces only a diagnostic. Say more than `match` if you like, in any language you like; not less.
+
 `ir.json` holds bytes, not a document to be re-parsed. Compare it as bytes. A library that parses it
 and compares the parsed structures is not testing the thing that breaks - two libraries agreeing on
 the *structure* while disagreeing on key order or Unicode normalisation is exactly the failure these
@@ -60,6 +72,9 @@ vectors exist to catch, and it is invisible after parsing.
 5. For routing vectors, load `map.json` and assert each case resolves as `cases.json` says.
 6. For error vectors, assert the error is raised, and raised at the stage `expected.json` names -
    a library that raises the right error at the wrong time has a different bug, not the same one.
+   The `model` stage is the loader **and** the model builder: a refusal about the shape of the
+   declaration comes out of the loader, so calling it outside the assertion makes those cases
+   unpassable. A `map` case is the other way round - its model must build, outside the assertion.
 7. For signature vectors, load `map.json` with the keys in `keys.json` and assert which one
    verified it. A single entry under the **empty** name means the caller passed one bare key and
    the library reports no name back; that is a different call from a one-entry mapping, and the
@@ -91,6 +106,22 @@ Once committed, a vector is frozen. Changing one is changing the contract, which
 `contract-version.txt`, and every library declaring which version it implements. There is no such
 thing as fixing a vector quietly: a vector that was wrong was a contract that was wrong, and somebody
 may have stored a placement map against it.
+
+## Where these came from, part two
+
+Ten of the `errors/` vectors - `026` through `035` - were added on 6 September 2026 after a Tier 0
+implementation was written in Go from `docs/format-contract.md` and this directory alone, to find out
+whether that document is sufficient to implement from without asking us. It is, for the encoding: all
+49 vectors passed on the first run. It was not for anything the vectors did not reach, and the ten
+new ones are the rules that came out of that - six of which were defects in the two libraries above,
+including a map whose groups were validated in the document's own key order, so one document refused
+differently depending on the JSON parser. `docs/implementing.md` has the whole list.
+
+Two of them are worth knowing about as a pair. `errors/019` and `errors/035` carry the same two
+defects in the same document with the group keys written in opposite orders, and they pin that the
+refusal does not depend on which order a parser hands them over in. `019` alone passed in both of our
+languages because both iterate an object in insertion order, and failed in Go - whose maps are
+iterated in a randomised order - in 5 of 20 runs.
 
 ## Adding a vector
 

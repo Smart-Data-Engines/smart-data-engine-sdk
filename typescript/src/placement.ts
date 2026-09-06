@@ -12,7 +12,7 @@
 
 import { createPublicKey, verify as verifySignature } from 'node:crypto'
 
-import { canonicalBytes } from './canonical.js'
+import { canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError } from './errors.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
@@ -522,6 +522,16 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     )
   }
 
+  const mapVersion = body['map_version']
+  if (typeof mapVersion !== 'number' || !Number.isInteger(mapVersion) || mapVersion < 1) {
+    throw new MapError(
+      `this map declares map_version ${JSON.stringify(mapVersion)}, which is not a version ` +
+        "number. It used to be read as Number(body['map_version'] ?? 0), so a document without " +
+        'one loaded as version 0 - and this is the number that decides whether an older map is ' +
+        "being replayed over a newer one against the client's own engines.",
+    )
+  }
+
   let verifiedWith: string | null = null
   const signaturePresent = body['signature'] !== undefined && body['signature'] !== null
   if (options.requireSignature === true && !signaturePresent) {
@@ -547,7 +557,15 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   const membersOf = new Map(modelGroups.map((g) => [g.name, g.members]))
 
   const groups: Record<string, GroupPlacement> = {}
-  for (const [name, value] of Object.entries(groupsRaw as Record<string, unknown>)) {
+  // By name, not in the document's order. A map with two defects has to refuse the same way in
+  // every language (format-contract §8a): `errors/019` carries a reserved table name in one group
+  // and an auto-plus-explicit layout in another, and it pinned the first only because that group is
+  // written earlier in the file and both of our runtimes iterate an object in insertion order. A
+  // third implementation in Go, whose maps iterate in a randomised order, failed that vector in 5
+  // of 20 runs. `checkRoutingTargets` has sorted since it was written; this loop had not.
+  const groupNames = Object.keys(groupsRaw as Record<string, unknown>).sort(compareCodePoints)
+  for (const name of groupNames) {
+    const value = (groupsRaw as Record<string, unknown>)[name]
     const where = `group '${name}'`
     const placement = asRecord(value, where)
     if (!('source' in placement)) {
@@ -641,9 +659,12 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   checkRoutingTargets(routingRaw as Record<string, unknown>, groups, options.model)
 
   return {
-    contract: CONTRACT,
+    // The document's number, not this library's. Reporting CONTRACT here said "this map declares
+    // contract 2" of a document declaring 1, and the Python field has always carried the
+    // document's.
+    contract,
     modelVersion,
-    mapVersion: Number(body['map_version'] ?? 0),
+    mapVersion,
     groups,
     routing: routingRaw as Record<string, string>,
     signed: signaturePresent,

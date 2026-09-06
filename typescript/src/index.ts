@@ -34,7 +34,16 @@ export type {
   LogicalModel,
   RelationSpec,
 } from './model.js'
-export { assemble, buildModel, CONTRACT, entity, entityOf, irBytes, ref } from './model.js'
+export {
+  assemble,
+  buildModel,
+  CONTRACT,
+  entity,
+  entityOf,
+  irBytes,
+  neutralDeclaration,
+  ref,
+} from './model.js'
 export type {
   GroupPlacement,
   LoadOptions,

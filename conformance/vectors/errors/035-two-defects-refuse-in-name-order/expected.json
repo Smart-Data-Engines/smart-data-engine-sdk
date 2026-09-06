@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "map",
+  "match": "sde_map_state",
+  "why": "One document, two defects, and the two groups are written in the reverse of their name order. The refusal that must come out is the one belonging to the group that sorts first, which is `Event` and its reserved table name - not `Order` and its auto-plus-explicit layout, which is what an implementation iterating the document's own key order reports. This is the pair for vector 019, whose file happens to be written in name order: together they pin that the answer does not depend on the order a JSON parser hands the keys over in. 019 alone was passed by both of our libraries iterating in insertion order, and failed by a third implementation in Go in 5 of 20 runs, because Go randomises map iteration deliberately. A conformance suite that is flaky against correct code teaches people to press the button again."
+}
