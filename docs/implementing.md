@@ -118,6 +118,33 @@ it is about the format.
 | JSON writers escape more than §1 allows | JavaScript-aware writers escape U+2028; many escape non-ASCII and `/` | Any of them changes the hash. `canonical/004` |
 | A typed unmarshal is not a loader | Go, Java, C#, Rust: the obvious way to read `model.json` is into a struct | Then every malformed document fails with the *runtime's* error, and an `errors/` case at the model stage asserts the *contract's* error class. Map your parse failures onto it. Measured: `errors/036` was unpassable in Go until the unmarshal error was wrapped |
 
+## Measuring your overhead
+
+Requirement 3.5 gives the library one percent of an operation, and it is release-blocking. Measure it
+**in your own runtime**: a garbage collection pause in one language and a naive async wrapper in
+another are different problems with the same threshold, so a number carried over from another
+implementation is not a measurement of yours.
+
+Two rules and one warning, all of them learned here rather than reasoned out:
+
+- **Measure the work you added, not the difference between two totals.** A round trip over loopback
+  is hundreds of microseconds with a run-to-run spread of several percent, and the thing being looked
+  for is a fraction of that. Time the added path directly — resolving a shape, finding a table name —
+  and divide by a separately measured round trip.
+- **Gate on the median.** Both of our tests once divided a tail by a tail, and the added work's own
+  p99 is a collection pause rather than a property of the library: measured, a one-microsecond
+  Python call's p99 moved 2.7–9.9 µs run to run while its p50 sat at 0.98 µs. Assert the tail too,
+  against an allowance well above that noise — ours is five times the budget — so a tail that is a
+  *code path* still fails.
+- **If your library performs no operation, say what you divided by.** A Tier 0 library opens no
+  socket, so there is nothing for it to be one percent *of*. Our TypeScript library measures against
+  the **floor** — the cheapest round trip that runtime can make at all, a loopback socket the test
+  starts itself — because everything a real engine does is slower, so one percent of the floor
+  implies one percent of every real operation. Measured on an i3-7100U: the floor's p50 is ~115 µs,
+  a ClickHouse query over HTTP from the same process is ~3.4 ms, and the library adds ~140 ns, which
+  is 0.13% of the floor. Reporting the **break-even** is worth more than the ratio: an operation
+  would have to complete in under ~14 µs before this library cost one percent of it.
+
 ## Versions, tiers, and the word "supported"
 
 Declare two things and mean them.
