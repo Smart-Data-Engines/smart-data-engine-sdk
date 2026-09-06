@@ -28,7 +28,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { EngineError } from '../src/index.js'
-import { ClickHouseEngine } from '../src/engines/clickhouse.js'
+import { ClickHouseEngine, literal } from '../src/engines/clickhouse.js'
 
 const SOURCE = join(__dirname, '..', 'src', 'engines')
 
@@ -101,5 +101,35 @@ describe('the ClickHouse literal renderer is total', () => {
     // At construction rather than at the first query, because a typo in a connection string is a
     // deployment mistake and the moment to report it is the moment it is read.
     expect(() => new ClickHouseEngine('not a dsn')).toThrow('is not a ClickHouse DSN')
+  })
+})
+
+describe('there is exactly one string escaper, and it escapes both characters', () => {
+  it('escapes a quote and a backslash', () => {
+    // Both, and the backslash is the one that was missing. `'a\'` is an unterminated string, so a
+    // value ending in a backslash closed the literal early - which is a query that is wrong rather
+    // than one that fails, and the values here are table names from a placement map, which a client
+    // hand-writing one in the no-account mode chooses.
+    expect(literal("it's")).toBe("'it\\'s'")
+    expect(literal('a\\')).toBe("'a\\\\'")
+    expect(literal('plain')).toBe("'plain'")
+  })
+
+  it('is the only escaper in the file', () => {
+    // The defect was not a missing branch, it was a **second implementation**: a list of table
+    // names was escaped inline, next to a function that already did it correctly. CodeQL found it
+    // as `js/incomplete-sanitization`; what makes it impossible now is that there is one of them.
+    //
+    // Counted over the source with comments stripped, for the use-and-mention reason every check
+    // in this repository has had to learn: the paragraph above mentions a quote and a backslash.
+    const source = readFileSync(join(SOURCE, 'clickhouse.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    const escapers = source.match(/\.replace\(\/\\?['\\\\]/g) ?? []
+    expect(
+      escapers.length,
+      `found ${escapers.length} string-escaping expressions; there must be exactly the two inside ` +
+        'literal(), because a second escaper is how one of them ends up missing a character',
+    ).toBe(2)
   })
 })

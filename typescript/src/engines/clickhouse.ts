@@ -44,6 +44,7 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 
+import { compareCodePoints } from '../canonical.js'
 import { EngineError } from '../errors.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import type { PhysicalLayout } from '../placement.js'
@@ -332,8 +333,14 @@ export class ClickHouseEngine {
       expected.set(table, new Set(Object.keys(layout.columns[entity] ?? {})))
     }
     if (expected.size === 0) return
-    const names = [...expected.keys()].sort()
-    const list = names.map((name) => `'${name.replace(/'/g, "\\'")}'`).join(', ')
+    const names = [...expected.keys()].sort(compareCodePoints)
+    // Through `literal`, not through a second escaper. The first version of this line inlined one
+    // that escaped a quote and **not** a backslash, so a table name ending in one would have
+    // closed the string early - and a table name is not always ours: a hand-written map is a
+    // supported mode, and an unhashed entity name can contain anything. Found by CodeQL
+    // (`js/incomplete-sanitization`), which is the same finding as the module docstring's rule
+    // about quoting identifiers in one place, arriving one level down.
+    const list = names.map(literal).join(', ')
     const rows = await this.query(
       `SELECT table, name FROM system.columns WHERE database = currentDatabase() ` +
         `AND table IN (${list})`,
@@ -624,7 +631,14 @@ export class ClickHouseEngine {
 }
 
 /**
- * A SQL literal for one key value.
+ * A SQL literal for one value, and **the only place in this file that escapes a string**.
+ *
+ * Exported so it can be checked directly, because the alternative is checking it through a server
+ * and a server reinterprets escapes inside identifiers: a table name carrying a backslash comes
+ * back as a *different* name rather than as a syntax error, so a live test on one cannot isolate
+ * this rule. `adapters.test.ts` pins the two characters and also refuses a second escaper anywhere
+ * else in this file - which is the class of defect that produced it, found by CodeQL as
+ * `js/incomplete-sanitization`.
  *
  * ClickHouse's HTTP interface has no bound parameters in the sense the PostgreSQL protocol does -
  * it has `param_name` substitution, which needs the declared type of every parameter in the query
@@ -632,7 +646,7 @@ export class ClickHouseEngine {
  * a branch, and an unknown kind throws rather than falling through to a string. A value that
  * reached a query as an unquoted `[object Object]` would be a syntax error at best.
  */
-function literal(value: unknown): string {
+export function literal(value: unknown): string {
   if (value === null || value === undefined) return 'NULL'
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {

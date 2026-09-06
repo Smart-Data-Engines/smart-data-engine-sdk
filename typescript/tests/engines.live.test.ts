@@ -350,6 +350,33 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect(await engine.backfillMarker(marker)).toBe(start + 3)
   })
 
+  it("survives a table name with a quote in it", async () => {
+    // Half of the defect CodeQL found, measured. `verifySchema` lists the table names it is looking
+    // for as SQL literals, and the first version inlined an escaper that handled a quote and
+    // **not** a backslash. A table name is not always ours: a hand-written map is a supported
+    // mode, and an unhashed entity name can contain anything a client typed.
+    //
+    // Only the quote, and the reason is worth stating: a backslash inside a backtick-quoted
+    // identifier is reinterpreted by the server, so a table created with one in its name comes back
+    // under a *different* name rather than as a syntax error - which makes a live table the wrong
+    // instrument for that half. It is pinned directly instead, in `adapters.test.ts`, along with
+    // the rule that there is only one escaper to get wrong.
+    const table = `odd'name${randomUUID().slice(0, 8)}`
+    const layoutForOddName = {
+      tables: { Sample: table },
+      columns: layout?.columns ?? {},
+      indexes: [],
+      partitionBy: {},
+    }
+    // The assertion is that this returns at all: `ensureSchema` creates the table and then reads
+    // `system.columns` back, which is the query the escaping is in.
+    await engine.ensureSchema(layoutForOddName, { keys: KEYS })
+    const id = randomUUID()
+    await engine.insert(table, sample(id))
+    expect((await engine.get(table, { id }))?.['id']).toBe(id)
+    await raw(`DROP TABLE ${'`'}${table.replace(/`/g, '``')}${'`'}`)
+  })
+
   it('refuses a key value it cannot render rather than rendering it wrong', async () => {
     // The rendering is total: every kind this library can hold has a branch, and an unknown kind
     // throws. A value that reached a query as an unquoted [object Object] would be a syntax error

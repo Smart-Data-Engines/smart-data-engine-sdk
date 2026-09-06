@@ -189,6 +189,14 @@ jobs:
 
       - name: the integration slices actually ran
         working-directory: typescript
+        # Read out of the **JSON reporter**, not out of the summary line, and that is the second
+        # version of this guard. The first grepped the human output for `Tests +[1-9]` - which
+        # matched locally, where the output was piped and therefore plain, and matched nothing in
+        # CI, where vitest colours it and the escape codes sit between the word and the number. So
+        # the job failed with "ran no tests at all" printed directly beneath sixteen passing tests:
+        # a guard that reports on its own formatting instead of on its subject, which is the same
+        # class of defect as a test whose setup silently does nothing.
+        #
         # A skipped integration test is indistinguishable from a passing one in a summary line, and
         # these are the only things here that prove the adapters work against a real engine. The
         # agreement slice inside `engines.live` is the one that matters most and the easiest to
@@ -205,19 +213,21 @@ jobs:
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
           for slice in engines.live cut-connection.live; do
-            npx vitest run "tests/$slice.test.ts" --reporter=verbose | tee /tmp/slice.txt
-            # `if` rather than `grep ... && exit 1`: under `set -e` a grep that finds nothing exits
-            # 1, and an `&&` chain whose left side fails takes the whole step down. That is the
-            # shape of guard the engine repository already paid for once, where a skip check
-            # matched "0 skipped" and failed on a green suite.
-            if grep -q "skipped" /tmp/slice.txt; then
-              echo "$slice was skipped, so the adapters were checked by nothing"
-              exit 1
-            fi
-            if ! grep -qE "Tests +[1-9]" /tmp/slice.txt; then
-              echo "$slice ran no tests at all"
-              exit 1
-            fi
+            npx vitest run "tests/$slice.test.ts" --reporter=json --outputFile=/tmp/$slice.json
+            node -e '
+              const report = require("/tmp/" + process.argv[1] + ".json")
+              const slice = process.argv[1]
+              if (report.numPendingTests > 0) {
+                console.error(slice + ": " + report.numPendingTests +
+                  " test(s) skipped, so the adapters were checked by nothing")
+                process.exit(1)
+              }
+              if (report.numPassedTests < 1) {
+                console.error(slice + ": ran no tests at all")
+                process.exit(1)
+              }
+              console.log(slice + ": " + report.numPassedTests + " passed, none skipped")
+            ' "$slice"
           done
 
   contract:
