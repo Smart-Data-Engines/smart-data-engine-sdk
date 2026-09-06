@@ -1,0 +1,19 @@
+[
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "names columns the layout does not have",
+    "why": "The key becomes ORDER BY, so a key column that is not in the table is a statement that will not parse - refused here rather than by the engine, because the engine's message names a column and not the cause. PostgreSQL would refuse the same layout for its own reason; the two are separate refusals because ORDER BY and PRIMARY KEY are separate mechanisms."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {},
+    "error": "EngineError",
+    "match": "gives no columns for",
+    "why": "A layout with tables and no columns is not a layout this library can apply. It is reachable: `columns` is optional in the document because the routing families do not need it, so a hand-written map naming tables alone loads cleanly and fails here. `layout_columns` replaces the materialisation's columns in the runner, which is the one place a case edits its own input - there is no other way to express 'the map said nothing about columns' once the loader has parsed it."
+  }
+]

@@ -64,6 +64,15 @@ export {
 } from './placement.js'
 export type { ResolveOptions } from './routing.js'
 export { resolve } from './routing.js'
+export type { CompatibilityViews, Dialect, SchemaOptions, ViewOptions } from './schema.js'
+export {
+  compatibilityViews,
+  DIALECTS,
+  FIXED_SCHEMA,
+  QUOTE,
+  schemaIsFixed,
+  schemaStatements,
+} from './schema.js'
 export type { OperationShape, ShapeKind } from './shapes.js'
 export { enumerateShapes, SHAPE_KINDS, shapeId, shapeIr } from './shapes.js'
 export type { FieldType, NeutralType } from './types.js'

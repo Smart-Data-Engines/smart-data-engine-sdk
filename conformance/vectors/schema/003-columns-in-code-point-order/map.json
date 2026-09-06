@@ -1,0 +1,26 @@
+{
+  "contract": 1,
+  "model_version": "2a1280ebaf7bea13",
+  "map_version": 1,
+  "groups": {
+    "Astral": {
+      "source": {
+        "id": "Astral@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Astral": "astral"
+          },
+          "columns": {
+            "Astral": {
+              "a": "text",
+              "id": "uuid",
+              "\ue000": "text",
+              "\ud83d\ude00": "text"
+            }
+          }
+        }
+      }
+    }
+  }
+}

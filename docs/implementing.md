@@ -70,6 +70,33 @@ not optional is agreement, because a client running two languages against one mo
 derive the same digests. If you skip it, say so where a user can read it, and make skipping it
 visible in your test output.
 
+Everything above is Tier 0 plus the hashing mode, and it is where most implementations should stop
+until somebody is using them. The three steps below are Tier 1 and Tier 2, in the order the vectors
+make checkable.
+
+**9. Telemetry (Tier 1). Vectors: `telemetry/`.**
+Counts and a histogram, no values, and never a lock on the path that records. The vectors feed
+durations as integers rather than measuring anything, because a vector that timed something would
+pin your machine. Two things in here have been defects in our own libraries and are the reason the
+family exists: the set of shape kinds that count as **writes** — it had four copies once, and two
+copies in one process is how the same operation becomes a write for routing and a read for scoring —
+and the `missing` set, because unknown and zero lead a planner to opposite conclusions.
+
+**10. Schema (Tier 2, first half). Vectors: `schema/`.**
+A layout and a set of keys in, statements out, and no connection anywhere: render DDL as a value in
+a module your engine adapters import, not inside the function that applies it. The vectors compare
+statements **exactly** — they are bytes a server receives — and compare refusals by substring, like
+`errors/`. Sort identifiers by **code point**, not by whatever your platform's default comparator
+does; `schema/003` is the case that tells the two apart, and `schema/009` pins that a view and its
+table list columns in the same order, which is a defect we shipped.
+
+**11. Migration participation (Tier 2, second half). Vectors: `migration/`.**
+Dual write, the resume marker, and the forward-only check. A migration reaches a library as a map
+with `also_write` and nothing else — there is no phase name in the document, and adding one would be
+a second representation of a fact the fan-out and the routing table already carry. The marker is a
+**row count and never a key**: a key needs a codec, and a lossy codec resumes *after* rows nobody
+copied, which is silent data loss that differs per language.
+
 ## Running the vectors
 
 Read `conformance/vectors/**` in your own test runner, in your own CI. That is the whole mechanism by

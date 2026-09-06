@@ -1,0 +1,9 @@
+[
+  {
+    "materialization": "Depth@ob",
+    "dialect": "orderbook",
+    "fixed": true,
+    "statements": [],
+    "why": "No statements, and `fixed` is what tells that apart from 'no tables in this layout'. An engine whose schema is fixed in its own source takes no DDL from us; running nothing is the correct action, and a caller *reporting* what the client must do has a different sentence to write. A library that threw here would push the branch out to every caller."
+  }
+]

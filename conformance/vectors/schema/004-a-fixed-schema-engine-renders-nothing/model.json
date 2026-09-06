@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "name": "Depth",
+      "fields": [
+        {
+          "name": "exchange",
+          "type": "string"
+        },
+        {
+          "name": "level",
+          "type": "int32"
+        },
+        {
+          "name": "order_count",
+          "type": "int32"
+        },
+        {
+          "name": "price",
+          "type": "int64"
+        },
+        {
+          "name": "quantity",
+          "type": "int64"
+        },
+        {
+          "name": "sequence_number",
+          "type": "int64"
+        },
+        {
+          "name": "side",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "timestamp_ns",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "symbol",
+        "exchange",
+        "timestamp_ns",
+        "side",
+        "level"
+      ]
+    }
+  ]
+}

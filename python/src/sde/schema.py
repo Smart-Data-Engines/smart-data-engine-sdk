@@ -254,9 +254,22 @@ def compatibility_views(
 
     Columns are listed rather than ``SELECT *``, so the view names exactly what the map names: a
     column added to the table later does not silently appear in a view somebody's query is
-    counting on the shape of. They are listed **in the layout's order**, which is the order the
-    ``CREATE TABLE`` uses - a view whose columns came out in a different order would break anything
-    reading them by position, which is most of what a hand-written query does with ``SELECT *``.
+    counting on the shape of. They are listed **sorted by name, exactly as ``CREATE TABLE`` sorts
+    them** - a view whose columns came out in a different order would break anything reading them
+    by position, which is most of what a hand-written query does with ``SELECT *``.
+
+    **That sort is a fix, and the sentence it replaced was false.** This function used to list the
+    columns in the layout document's own order, on the stated grounds that the order was already
+    sorted and a second sort would be a duplicated guarantee. It is not sorted:
+    :func:`~sde.layout._neutral_columns` returns declared fields first and then a foreign-key
+    column per relation, and says so in its own docstring. So for any entity with a relation - the
+    ordinary case - the view listed its columns in one order and its table declared them in
+    another, and a query moved verbatim onto the view read them by position and got different
+    values. The test that was meant to hold this used a fixture with no relations, which is why it
+    passed: a check whose fixture cannot reach the case reports on something else. Found by writing
+    the ``schema/`` vectors, and ``schema/009`` now feeds a document whose columns are deliberately
+    out of order, so removing either sort changes a different string and neither can hide behind
+    the other.
 
     For ClickHouse the view reads ``FINAL``, and that is the substance rather than a detail. The
     table is a ``ReplacingMergeTree``, so a plain read returns rows the declared key should have
@@ -326,13 +339,9 @@ def compatibility_views(
         cols = layout.columns.get(entity, {})
         if not cols:
             raise EngineError(f"the layout gives no columns for {entity!r}")
-        # The layout's order, not a fresh sort. `_neutral_columns` already returns columns sorted
-        # by name, so sorting here was a second guarantee of the same thing - and a duplicated
-        # guarantee cannot be mutated separately, which is how it survived its own mutation test.
-        # What matters is the property rather than the branch: a view whose columns are in a
-        # different order from the table's would break anything reading them by position, so the
-        # useful statement is that the two renderings agree, and that is what the test asserts.
-        selected = ", ".join(quote(column) for column in cols)
+        # Sorted by name, which is what `CREATE TABLE` does. See the docstring: reading this order
+        # off the document instead was wrong, and wrong in a way one fixture could not show.
+        selected = ", ".join(quote(column) for column in sorted(cols))
         create.append(f"{opening} {quote(old)} AS SELECT {selected} FROM {quote(table)}{final}")
         drop.append(f"DROP VIEW IF EXISTS {quote(old)}")
     return CompatibilityViews(

@@ -35,15 +35,37 @@ def _families() -> set[str]:
 NOT_A_FAMILY = frozenset({"conformance"})
 
 
+def _flat(text: str) -> str:
+    """One line, single-spaced.
+
+    Every parser in this file reads a Markdown document, and a Markdown document is hard-wrapped at
+    a column nobody promised to keep. A pattern written against the wrapping matches until somebody
+    edits a word earlier in the paragraph - which happened to the failure-semantics checks and cost
+    a confusing red run, so it is collapsed here before anything is matched.
+    """
+    return " ".join(text.split())
+
+
 def _unwritten_families() -> set[str]:
     """The families the contract itself admits do not exist yet.
 
     Parsed out of §10 rather than listed here, so that the day one of them is written the contract
-    sentence changes and this test starts insisting the guide be updated too."""
-    sentence = re.search(
-        r"do not exist yet:\*\* (.+?)\. That is worth stating", CONTRACT.read_text(), re.S
-    )
-    assert sentence, "format-contract §10 no longer says which vector sets are missing"
+    sentence changes and this test starts insisting the guide be updated too.
+
+    Two forms are accepted and one is not: the sentence naming what is missing, or the sentence
+    saying nothing is. Removing both is what this refuses, because a contract that stopped saying
+    either would silently switch this check off - and §9 says a tier claim is one the vectors can
+    check, which is the sentence the missing sets make false.
+    """
+    text = _flat(CONTRACT.read_text())
+    sentence = re.search(r"do not exist yet:\*\* (.+?)\. That is worth stating", text)
+    if sentence is None:
+        assert "**Every set named in the tier table exists.**" in text, (
+            "format-contract §10 says neither which vector sets are missing nor that none are. One "
+            "of the two has to be there: §9 promises a tier claim the vectors can check, and this "
+            "is the only place that promise is audited."
+        )
+        return set()
     return set(re.findall(r"`([a-z]+)/`", sentence.group(1)))
 
 

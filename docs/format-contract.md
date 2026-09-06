@@ -805,13 +805,24 @@ There are five kinds:
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
 
-**Three of the sets named in the tier table above do not exist yet:** `telemetry/`, `schema/` and
-`migration/`. That is worth stating in the contract rather than leaving it to be discovered from an
-empty directory, because §9 says a tier claim is one the vectors can check, and for Tier 1 and Tier 2
-that is currently false. The reference implementation has both, covered by its own tests and by a
-slice against a real PostgreSQL — which verifies that it works, not that a second implementation would
-agree with it. The gap costs nothing while one library claims those tiers and everything on the day two
-do, so the vectors are written before a second claim is accepted, not after.
+**Two of the sets named in the tier table above do not exist yet:** `telemetry/` and `migration/`.
+That is worth stating in the contract rather than leaving it to be discovered from an empty
+directory, because §9 says a tier claim is one the vectors can check, and for those two that is
+currently false. The reference implementation has both, covered by its own tests and by a slice
+against a real PostgreSQL — which verifies that it works, not that a second implementation would
+agree with it. The gap costs nothing while one library claims those tiers and everything on the day
+two do, so the vectors are written before a second claim is accepted, not after.
+
+`schema/` was the third and now exists, written on the day a second library reached Tier 2 rather
+than after it. It is worth reading for what it found: the DDL renderer and the compatibility-view
+renderer listed one table's columns in two different orders, because the view read the order off the
+layout document on the stated grounds that the document was already sorted — and it is not, since a
+foreign-key column is appended per relation. The test meant to hold that property used a fixture
+with no relations. Both renderings are sorted by name now, `schema/009` feeds a document whose
+columns are deliberately reversed so that removing either sort changes a different string, and every
+statement in the family is executed against a real PostgreSQL and a real ClickHouse **twice** —
+because every statement here claims to be idempotent, and one that is correct once is a deployment
+that works until the first restart.
 
 **An `errors/` case pins the message, not only the class.** Its `match` field is a substring that
 the refusal's own text must contain, compared literally and case-sensitively. That makes diagnostics

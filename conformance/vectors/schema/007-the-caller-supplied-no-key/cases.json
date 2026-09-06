@@ -1,0 +1,17 @@
+[
+  {
+    "materialization": "Order@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "keys": {
+      "Order": [
+        "tenant",
+        "id"
+      ],
+      "Payment": []
+    },
+    "error": "EngineError",
+    "match": "a table without one cannot be addressed",
+    "why": "Reachable from a caller and not from a model: an entity declaring no key is refused at the model stage (errors/026), so the keys this renderer receives are assembled by whoever calls it - the control plane does, per group. A table with no PRIMARY KEY cannot be addressed, migrated or verified, so emitting one would produce a group that looks placed and cannot be moved. `keys` in a case replaces the mapping derived from the model, which is the only way to reach this."
+  }
+]

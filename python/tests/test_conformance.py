@@ -14,8 +14,10 @@ these vectors exist to catch, and it is invisible the moment you parse.
 from __future__ import annotations
 
 import json
+import re
 from base64 import b64decode
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ import pytest
 
 import sde
 from sde.canonical import CanonicalError, canonical_bytes
-from sde.errors import DeclarationError, MapError
+from sde.errors import DeclarationError, EngineError, MapError
 from sde.hashing import hash_identifiers
 from sde.testing.loader import model_from_neutral
 
@@ -117,6 +119,111 @@ def test_routing_vector(case: Path) -> None:
             )
 
 
+def _materialization(placement: sde.PlacementMap, mat_id: str) -> tuple[str, Any]:
+    """The materialisation with this id, and the group it belongs to.
+
+    Searched across every group rather than taken from a field in the case, because a map's ids are
+    unique across the whole document - ``errors/013`` is the vector that pins that - so a case
+    naming the group as well would carry a fact the map already carries.
+    """
+    for name, group in sorted(placement.groups.items()):
+        for materialization in group.all():
+            if materialization.id == mat_id:
+                return name, materialization
+    raise AssertionError(f"the vector names materialisation {mat_id!r}, which this map has no")
+
+
+@pytest.mark.parametrize("case", _cases("schema"), ids=_ident)
+def test_schema_vector(case: Path) -> None:
+    """Tier 2, first half: the DDL a layout renders to, byte for byte.
+
+    The input reaches the renderer through the same map loader production uses - a whole
+    ``map.json`` rather than a bare layout document - so a case can only pin DDL for a layout this
+    library would accept in the first place, and there is no second parser written for the vectors.
+
+    Statements are compared **exactly**, because they are bytes an engine receives. Refusals are
+    compared by substring, because they are diagnostics, exactly as the ``errors/`` family does.
+    """
+    model = model_from_neutral(_read_json(case / "model.json"))
+    placement = sde.load_map(_read_json(case / "map.json"), model=model)
+
+    for expectation in _read_json(case / "cases.json"):
+        group, materialization = _materialization(placement, expectation["materialization"])
+        layout = materialization.layout
+        if "layout_columns" in expectation:
+            # The one place a case edits its own input. `columns` is optional in the document, so a
+            # map naming tables alone loads cleanly - and once it has loaded there is no other way
+            # to express "the map said nothing about columns".
+            layout = replace(layout, columns=expectation["layout_columns"])
+        members = next(g for g in sde.colocation_groups(model) if g.name == group)
+        keys: Mapping[str, Sequence[str]] = expectation.get("keys") or {
+            name: list(model.entity(name).key) for name in members.members
+        }
+        dialect = expectation["dialect"]
+
+        if "fixed" in expectation:
+            assert sde.schema_is_fixed(dialect) is expectation["fixed"], (
+                f"schema_is_fixed({dialect!r}) disagrees with the vector. An engine that imposes "
+                f"its own schema renders no DDL, and 'no statements' has to be distinguishable "
+                f"from 'no tables in this layout'."
+            )
+        else:
+            want = expectation["fixed_error"]
+            with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+                sde.schema_is_fixed(dialect)
+
+        if "error" in expectation:
+            with pytest.raises(
+                _ERRORS[expectation["error"]], match=re.escape(expectation["match"])
+            ):
+                sde.schema_statements(layout, keys=keys, dialect=dialect)
+            continue
+
+        statements = list(sde.schema_statements(layout, keys=keys, dialect=dialect))
+        assert statements == expectation["statements"], (
+            f"{_ident(case)} [{materialization.id} as {dialect}]: the DDL differs from the "
+            f"vector. Two libraries that agree on a map and disagree here place one entity in "
+            f"tables with different columns, and each of them created a table successfully."
+        )
+
+        views = expectation.get("views")
+        if views is not None:
+            rendered = sde.compatibility_views(layout, was=views["was"], dialect=dialect)
+            assert list(rendered.create) == views["create"]
+            assert list(rendered.drop) == views["drop"]
+            assert rendered.complete is views["complete"]
+            assert [entity for entity, _ in rendered.not_possible] == [
+                entry["entity"] for entry in views["not_possible"]
+            ]
+            for (entity, why), entry in zip(
+                rendered.not_possible, views["not_possible"], strict=True
+            ):
+                for fragment in entry["match"]:
+                    assert fragment in why, (
+                        f"the reason {entity} cannot have a view does not contain "
+                        f"{fragment!r}. A reason may say more than the vector, in any language, "
+                        f"and may not say less."
+                    )
+
+
+def test_there_are_schema_vectors() -> None:
+    # This library reaches Tier 2, so these do not get to be skipped. A tier claim the vectors
+    # cannot check is what section 10 said the gap was, and it is closed.
+    assert _cases("schema"), "no schema vectors found, but this library claims Tier 2"
+
+
+def test_every_dialect_this_library_renders_appears_in_the_schema_vectors() -> None:
+    """Totality, in the direction that rots. A dialect with no vector is one where two libraries
+    can disagree and nothing shared would notice - which is how section 7 came to have eleven
+    refusals and no shared coverage."""
+    covered = {
+        expectation["dialect"]
+        for case in _cases("schema")
+        for expectation in _read_json(case / "cases.json")
+    }
+    assert set(sde.DIALECTS) <= covered, f"no schema vector renders {set(sde.DIALECTS) - covered}"
+
+
 @pytest.mark.parametrize("case", _cases("signature"), ids=_ident)
 def test_signature_vector(case: Path) -> None:
     """Accepting a **set** of public keys, which is what makes rotating our key possible.
@@ -166,6 +273,10 @@ def test_the_signature_family_covers_both_outcomes() -> None:
 
 _ERRORS: dict[str, type[Exception]] = {
     "DeclarationError": DeclarationError,
+    # Named here rather than in a second table for the `schema/` family: one mapping from the name a
+    # vector writes to the class, so a family added later cannot introduce a second spelling of
+    # "which error".
+    "EngineError": EngineError,
     "MapError": MapError,
 }
 

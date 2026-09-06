@@ -1,0 +1,65 @@
+[
+  {
+    "materialization": "Order@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"order\" (\"id\" uuid, \"placed_at\" timestamptz, \"tenant\" uuid, \"total\" numeric(12,2), PRIMARY KEY (\"tenant\", \"id\"))",
+      "CREATE TABLE IF NOT EXISTS \"payment\" (\"amount\" numeric(12,2), \"id\" uuid, \"order_id\" uuid, \"order_tenant\" uuid, \"paid_at\" timestamp, PRIMARY KEY (\"id\"))",
+      "CREATE INDEX IF NOT EXISTS \"payment_order_idx\" ON \"payment\" (\"order_tenant\", \"order_id\")"
+    ],
+    "views": {
+      "was": {
+        "Order": "orders_v1",
+        "Payment": "payments_v1"
+      },
+      "create": [
+        "CREATE OR REPLACE VIEW \"orders_v1\" AS SELECT \"id\", \"placed_at\", \"tenant\", \"total\" FROM \"order\"",
+        "CREATE OR REPLACE VIEW \"payments_v1\" AS SELECT \"amount\", \"id\", \"order_id\", \"order_tenant\", \"paid_at\" FROM \"payment\""
+      ],
+      "drop": [
+        "DROP VIEW IF EXISTS \"orders_v1\"",
+        "DROP VIEW IF EXISTS \"payments_v1\""
+      ],
+      "not_possible": [],
+      "complete": true
+    },
+    "why": "The tables were called something else in the engine the group left, so a view can stand under each old name. CREATE OR REPLACE VIEW, because PostgreSQL has no CREATE VIEW IF NOT EXISTS - measured against the server, and the first draft of the renderer emitted the form that is a syntax error. Columns are listed rather than SELECT *, in the layout's order, so a query reading them by position sees what CREATE TABLE produced."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `order` (`id` UUID, `placed_at` DateTime64(3, 'UTC'), `tenant` UUID, `total` Decimal(12, 2)) ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`)",
+      "CREATE TABLE IF NOT EXISTS `payment` (`amount` Decimal(12, 2), `id` UUID, `order_id` UUID, `order_tenant` UUID, `paid_at` DateTime64(3)) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+    ],
+    "views": {
+      "was": {
+        "Order": "order",
+        "Payment": "payment"
+      },
+      "create": [],
+      "drop": [],
+      "not_possible": [
+        {
+          "entity": "Order",
+          "match": [
+            "the name is not what moved",
+            "FINAL",
+            "counted twice"
+          ]
+        },
+        {
+          "entity": "Payment",
+          "match": [
+            "the name is not what moved",
+            "FINAL"
+          ]
+        }
+      ],
+      "complete": false
+    },
+    "why": "Both engines derive the table name from the entity name and nothing else, so after a move between them the name is not what changed - the dialect is, and there is no old name for a view to occupy. That is the ordinary answer in this engine set, and the useful part of it is the sentence: a query moved here verbatim must read FINAL, because the table is a ReplacingMergeTree and without it a row written twice under one key is counted twice until a background merge - measured, two rows against one."
+  }
+]

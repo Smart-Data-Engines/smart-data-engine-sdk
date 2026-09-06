@@ -19,18 +19,23 @@ import {
   canonicalBytes,
   CanonicalError,
   colocationGroups,
+  compatibilityViews,
   CONTRACT,
   DeclarationError,
+  DIALECTS,
+  EngineError,
   enumerateShapes,
   hashIdentifiers,
   loadMap,
   MapError,
   placementOf,
   resolve,
+  schemaIsFixed,
+  schemaStatements,
   shapeId,
   shapeIr,
 } from '../src/index.js'
-import type { LogicalModel } from '../src/index.js'
+import type { LogicalModel, Materialization, PlacementMap } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
 const CONFORMANCE = join(import.meta.dirname ?? __dirname, '..', '..', 'conformance')
@@ -149,8 +154,11 @@ describe('routing vectors', () => {
   }
 })
 
+// One mapping from the name a vector writes to the class, shared by every family, so that a
+// family added later cannot introduce a second spelling of "which error".
 const ERRORS: Record<string, new (...args: never[]) => Error> = {
   DeclarationError,
+  EngineError,
   MapError,
 }
 
@@ -392,4 +400,153 @@ describe('hashing vectors', () => {
       }
     })
   }
+})
+
+/**
+ * Tier 2, first half: the DDL a layout renders to, byte for byte.
+ *
+ * The input reaches the renderer through the same map loader production uses - a whole `map.json`
+ * rather than a bare layout document - so a case can only pin DDL for a layout this library would
+ * accept in the first place, and there is no second parser written for the vectors.
+ *
+ * Statements are compared **exactly**, because they are bytes an engine receives. Refusals are
+ * compared by substring, because they are diagnostics, exactly as the `errors/` family does.
+ */
+
+interface SchemaCase {
+  readonly materialization: string
+  readonly dialect: string
+  readonly fixed?: boolean
+  readonly fixed_error?: { readonly error: string; readonly match: string }
+  readonly statements?: readonly string[]
+  readonly error?: string
+  readonly match?: string
+  readonly keys?: Readonly<Record<string, readonly string[]>>
+  readonly layout_columns?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  readonly views?: {
+    readonly was: Readonly<Record<string, string>>
+    readonly create: readonly string[]
+    readonly drop: readonly string[]
+    readonly complete: boolean
+    readonly not_possible: readonly { readonly entity: string; readonly match: readonly string[] }[]
+  }
+}
+
+/**
+ * The materialisation with this id, and the group it belongs to.
+ *
+ * Searched across every group rather than taken from a field in the case, because a map's ids are
+ * unique across the whole document - `errors/013` pins that - so a case naming the group as well
+ * would carry a fact the map already carries.
+ */
+function materialization(map: PlacementMap, id: string): [string, Materialization] {
+  for (const group of Object.keys(map.groups).sort()) {
+    const placement = placementOf(map, group)
+    for (const found of [placement.source, ...placement.derived]) {
+      if (found.id === id) return [group, found]
+    }
+  }
+  throw new Error(`the vector names materialisation ${id}, which this map does not have`)
+}
+
+function refuses(fn: () => unknown, name: string, match: string): void {
+  let thrown: unknown
+  try {
+    fn()
+  } catch (error) {
+    thrown = error
+  }
+  const expected = ERRORS[name]
+  expect(thrown, `expected a ${name} containing ${match}`).toBeInstanceOf(expected)
+  expect((thrown as Error).message).toContain(match)
+}
+
+describe('schema vectors', () => {
+  for (const name of cases('schema')) {
+    it(name, () => {
+      const dir = join(VECTORS, 'schema', name)
+      const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      const map = loadMap(readJson(join(dir, 'map.json')), { model })
+
+      for (const expectation of readJson<SchemaCase[]>(join(dir, 'cases.json'))) {
+        const [group, found] = materialization(map, expectation.materialization)
+        // The one place a case edits its own input. `columns` is optional in the document, so a map
+        // naming tables alone loads cleanly - and once it has loaded there is no other way to
+        // express "the map said nothing about columns".
+        const layout =
+          expectation.layout_columns === undefined
+            ? found.layout
+            : { ...found.layout, columns: expectation.layout_columns }
+        const members = colocationGroups(model).find((g) => g.name === group)!
+        const keys =
+          expectation.keys ??
+          Object.fromEntries(
+            members.members.map((entity) => [
+              entity,
+              model.entities.find((e) => e.name === entity)!.key,
+            ]),
+          )
+        const dialect = expectation.dialect
+
+        if (expectation.fixed !== undefined) {
+          expect(schemaIsFixed(dialect), `schemaIsFixed(${dialect})`).toBe(expectation.fixed)
+        } else {
+          const want = expectation.fixed_error!
+          refuses(() => schemaIsFixed(dialect), want.error, want.match)
+        }
+
+        if (expectation.error !== undefined) {
+          refuses(
+            () => schemaStatements(layout, { keys, dialect }),
+            expectation.error,
+            expectation.match!,
+          )
+          continue
+        }
+
+        expect(
+          [...schemaStatements(layout, { keys, dialect })],
+          `${found.id} as ${dialect}: the DDL differs from the vector. Two libraries that agree ` +
+            'on a map and disagree here place one entity in tables with different columns, and ' +
+            'each of them created a table successfully.',
+        ).toEqual(expectation.statements)
+
+        const views = expectation.views
+        if (views !== undefined) {
+          const rendered = compatibilityViews(layout, { was: views.was, dialect })
+          expect([...rendered.create]).toEqual(views.create)
+          expect([...rendered.drop]).toEqual(views.drop)
+          expect(rendered.complete).toBe(views.complete)
+          expect(rendered.notPossible.map(([entity]) => entity)).toEqual(
+            views.not_possible.map((entry) => entry.entity),
+          )
+          rendered.notPossible.forEach(([entity, why], index) => {
+            for (const fragment of views.not_possible[index]!.match) {
+              expect(
+                why,
+                `the reason ${entity} cannot have a view has to contain ${fragment}. A reason may ` +
+                  'say more than the vector, in any language, and may not say less.',
+              ).toContain(fragment)
+            }
+          })
+        }
+      }
+    })
+  }
+
+  it('found schema vectors at all', () => {
+    // This library reaches Tier 2, so these do not get to be skipped.
+    expect(cases('schema').length).toBeGreaterThan(0)
+  })
+
+  it('covers every dialect this library renders', () => {
+    // Totality, in the direction that rots. A dialect with no vector is one where two libraries can
+    // disagree and nothing shared would notice.
+    const covered = new Set(
+      cases('schema').flatMap((name) =>
+        readJson<SchemaCase[]>(join(VECTORS, 'schema', name, 'cases.json')).map((c) => c.dialect),
+      ),
+    )
+    expect(DIALECTS.filter((d) => !covered.has(d))).toEqual([])
+  })
 })

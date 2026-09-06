@@ -1,0 +1,31 @@
+{
+  "contract": 1,
+  "model_version": "3dceac28efa7f75b",
+  "map_version": 1,
+  "groups": {
+    "Depth": {
+      "source": {
+        "id": "Depth@ob",
+        "engine": "ob-1",
+        "layout": {
+          "tables": {
+            "Depth": "orderbook"
+          },
+          "columns": {
+            "Depth": {
+              "symbol": "char*",
+              "exchange": "char*",
+              "timestamp_ns": "int64_t",
+              "side": "char*",
+              "level": "uint32_t",
+              "price": "int64_t",
+              "quantity": "int64_t",
+              "order_count": "uint32_t",
+              "sequence_number": "int64_t"
+            }
+          }
+        }
+      }
+    }
+  }
+}

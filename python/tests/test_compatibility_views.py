@@ -42,6 +42,37 @@ def _model() -> sde.LogicalModel:
     return sde.build_model(Reading)
 
 
+def _related_model() -> sde.LogicalModel:
+    """One entity with a **relation**, which is the fixture the ordering test needs.
+
+    A relation appends a foreign-key column to the layout *after* the declared fields, so the
+    layout document is not in name order. That is the only condition under which "the view lists
+    columns in the layout's order" and "the table declares them sorted" are different sentences -
+    with no relation anywhere the two coincide, and an assertion about them holds for a renderer
+    that does either. Which is why the renderer was wrong for months under a green test: a fixture
+    that cannot reach the case reports on something else.
+    """
+    sde.clear_registry()
+
+    @sde.entity
+    class Station:
+        id: uuid.UUID
+        label: str
+
+    @sde.entity
+    class Reading:
+        station: uuid.UUID
+        at: dt.datetime
+        celsius: Annotated[decimal.Decimal, sde.precision(12, 2)]
+        origin: sde.Ref[Station]
+
+        class Meta:
+            key = ["station", "at"]
+            atomic_with = ["Station"]
+
+    return sde.build_model(Station, Reading)
+
+
 def _layout(dialect: str) -> sde.PhysicalLayout:
     model = _model()
     (group,) = sde.colocation_groups(model)
@@ -140,29 +171,56 @@ def test_columns_are_listed_rather_than_starred() -> None:
 
 
 @pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
-def test_the_view_lists_columns_in_the_order_the_table_declares_them(dialect: str) -> None:
-    """The property, rather than the branch that happens to produce it.
+@pytest.mark.parametrize("related", [False, True], ids=["plain", "with-a-relation"])
+def test_the_view_lists_columns_in_the_same_order_the_table_declares_them(
+    dialect: str, related: bool
+) -> None:
+    """The property, and the fixture that can actually fail it.
 
-    The first version sorted the columns here, which is a second guarantee of something the layout
-    already does - `_neutral_columns` returns them sorted - and a duplicated guarantee cannot be
-    mutated separately: it survived its own mutation test. What is worth asserting is that the two
-    renderings **agree**, because a view whose columns come out in a different order from the
-    table's breaks anything reading them by position, which is most of what a hand-written
-    `SELECT *` does.
+    A view whose columns come out in a different order from the table's breaks anything reading
+    them by position, which is most of what a hand-written ``SELECT *`` does - and a compatibility
+    view exists precisely for hand-written SQL. So the statement worth asserting is that the two
+    renderings **agree**.
+
+    ``related=True`` is the case that matters. The earlier version of this test had one fixture,
+    with no relations, and passed against a renderer that read the view's order off the layout
+    document - which is *not* sorted once a relation appends a foreign-key column. The two orders
+    coincided in the fixture and nowhere else. Found by writing the ``schema/`` vectors, where
+    ``009`` feeds a deliberately reversed document and pins both statements.
     """
-    layout = _layout(dialect)
-    view = compatibility_views(layout, was={"Reading": "old"}, dialect=dialect).create[0]
-    create = schema_statements(
-        layout, keys={"Reading": ("station", "at")}, dialect=dialect
-    )[0]
+    model = _related_model() if related else _model()
+    group = next(g for g in sde.colocation_groups(model) if "Reading" in g.members)
+    layout = sde.default_layout(model, group, dialect=dialect)
+    keys = {name: model.entity(name).key for name in group.members}
+    was = {name: f"old_{name.lower()}" for name in group.members}
     quote = QUOTE[dialect]
-    order = [quote(column) for column in layout.columns["Reading"]]
 
-    def positions(statement: str) -> list[int]:
-        return [statement.index(name) for name in order]
+    statements = schema_statements(layout, keys=keys, dialect=dialect)
+    views = compatibility_views(layout, was=was, dialect=dialect)
+    assert views.create, "no view was rendered, so this test would prove nothing"
 
-    assert positions(view) == sorted(positions(view)), "the view is in the layout's order"
-    assert positions(create) == sorted(positions(create)), "and so is the table"
+    def order_in(statement: str, quoted: list[str]) -> list[str]:
+        """The quoted column names in the order this statement mentions them.
+
+        Read out of the statement rather than derived from the layout, because deriving both sides
+        from one source is the tautology that let three mutations survive in the control plane. The
+        quoted form is unambiguous as a substring: a closing quote follows the name, so 'order_id'
+        does not match inside 'order_ident'. ClickHouse repeats key columns in ORDER BY and only
+        the first occurrence is taken, which is the definition list.
+        """
+        return [name for _, name in sorted((statement.index(n), n) for n in quoted)]
+
+    for entity, table in sorted(layout.tables.items()):
+        quoted = [quote(column) for column in layout.columns[entity]]
+        create = next(s for s in statements if f"EXISTS {quote(table)} (" in s)
+        view = next((s for s in views.create if f" FROM {quote(table)}" in s), None)
+        if view is None:
+            continue
+        assert order_in(view, quoted) == order_in(create, quoted), (
+            f"the view on {table} lists its columns in a different order from the CREATE TABLE. A "
+            f"query moved onto this view and reading columns by position gets different values, "
+            f"and hand-written SQL is the only reason this view exists."
+        )
 
 
 def test_a_fixed_schema_engine_has_nowhere_to_put_one_and_says_so() -> None:

@@ -33,7 +33,24 @@ vectors/
     bytes.json                the exact bytes it must produce
     expected.json             for cases that must be refused instead
     why.txt                   what would break if this vector were not here
+  schema/<nnn>-<name>/
+    model.json
+    map.json                  a placement map, so the layout reaches the renderer through the
+                              same loader production uses rather than a second parser
+    cases.json                (materialisation, dialect) -> the exact DDL, or the refusal
 ```
+
+`schema/` is Tier 2 and compares statements **exactly**, because a statement is bytes a server
+receives. Two conventions of its own: a case pins `fixed`, which is the answer to "does this engine
+take DDL from us at all" and is what distinguishes no statements from no tables; and `views`, whose
+`create` and `drop` are exact while its `not_possible` reasons are pinned as a **list** of
+substrings, because the useful reasons carry two claims - which name moved, and what a query has to
+become - and one substring cannot straddle both.
+
+The statements in this family are also executed against a real PostgreSQL and a real ClickHouse, in
+`python/tests/test_schema_vectors_live.py`, twice each. That is not belt and braces: a vector holding
+DDL no server accepts would be a frozen mistake every future implementation is *required* to
+reproduce, and the suite's authority is exactly what makes it dangerous when wrong.
 
 `canonical/` is the newest kind and the most instructive. It exists because a mutation that should
 have failed did not: every object key in the model IR is fixed ASCII, so no model vector reaches the
