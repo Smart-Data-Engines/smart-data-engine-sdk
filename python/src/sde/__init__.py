@@ -95,6 +95,7 @@ from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, sc
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .telemetry import (
+    MEASURED_FIELDS,
     CopyFreshness,
     FanOutStats,
     GroupFeatures,
@@ -125,6 +126,7 @@ __all__ = [
     "FIXED_SCHEMA",
     "MAP_CONTRACT",
     "MAP_CONTRACT_FLOOR",
+    "MEASURED_FIELDS",
     "ORDERBOOK_KEY",
     "ORDERBOOK_SHAPE",
     "ORDERBOOK_TABLE",

@@ -1,0 +1,3 @@
+{
+  "why": "Two things at once. A fan-out is **not** a shape: read_write_ratio and shape_mix here are exactly what they would be without any copy, because recording a fan-out as a write would make a group look twice as write-heavy for the reason that a copy exists - and the set of kinds that count as writes had four copies in one process once. And a failed fan-out is counted in both `failures` and the latency histogram: a failed write took time too, and dropping it would make the window look better precisely when the copy is in trouble. `complete` on a copy is what a lag figure hides - a copy missing a thousand rows can have an excellent p99. Copies come out sorted by materialisation, so the archive copy precedes the ClickHouse one."
+}

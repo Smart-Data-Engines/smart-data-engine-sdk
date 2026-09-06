@@ -7,7 +7,10 @@ from us, or worse, does not.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import textwrap
 import uuid
 from typing import Any
 
@@ -15,6 +18,7 @@ import pytest
 
 import sde
 from sde.internal import internal_failures, reset_internal_failures
+from sde.shapes import SHAPE_KINDS, WRITE_KINDS
 from sde.telemetry import Histogram, Recorder, ShapeStats, Window
 
 
@@ -107,7 +111,12 @@ def test_the_buffer_is_bounded_and_says_what_it_dropped() -> None:
         recorder.roll()
     pending = recorder.pending()
     assert len(pending) == 2
-    assert pending[-1].dropped_windows >= 1
+    # Exactly one, not "at least one". A window is built before the eviction its own roll performs,
+    # so the count appears in the **next** window rather than in the one that caused the drop - and
+    # an inequality here would let the TypeScript library disagree about a field the planner reads
+    # while both suites stayed green. There is no artefact for a vector to compare, so the two
+    # assertions are the only thing holding the two implementations together.
+    assert [w.dropped_windows for w in pending] == [0, 1]
 
 
 def test_acknowledging_frees_room() -> None:
@@ -396,3 +405,57 @@ def test_a_date_counts_as_a_time_dimension() -> None:
 
     model = sde.build_model(Daily)
     assert sde.has_time_dimension(model, sde.colocation_groups(model)[0]) is True
+
+def test_the_bucket_index_never_reaches_for_a_logarithm() -> None:
+    """A property no output can distinguish on the machines we have, so it is checked statically.
+
+    ``Histogram.record`` computes the bucket from the **bit length of an integer quotient**. The
+    obvious form is ``int(math.log2(ns / BUCKET_BASE_NS)) + 1``, which is the same function - the
+    two were compared over every value below 40 000, every power-of-two boundary and its
+    neighbours, and 400 000 random durations, with zero disagreements.
+
+    It is still the wrong way to compute it in a library that has to agree with another
+    implementation: ``log2`` is not required by IEEE 754 to be correctly rounded, so a third libm
+    may differ in the last bit, and one bit at a power-of-two boundary is a different bucket - a
+    different p99 for identical traffic, in a number a placement decision is made from.
+
+    **The vectors cannot see this.** Measured: putting the logarithm back passes every case in
+    ``telemetry/``, because glibc's ``log2`` and V8's are both exact at a power of two. So the check
+    has to be over the source, and the TypeScript library has the same one over its own file.
+
+    Read through the syntax tree rather than as text, and that is not fastidiousness: the docstring
+    of the method being checked *explains* why there is no logarithm in it, so a textual search
+    fails on the paragraph that exists because of this test. Use against mention, for the fourth
+    time in this project - it cost four attempts on the control plane's prose checks and one here.
+    ``ast.unparse`` drops comments and docstrings entirely, so the only thing left is code.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Histogram.record)))
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    body = function.body
+    if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    code = "\n".join(ast.unparse(node) for node in body)
+    assert "log" not in code, (
+        "the bucket index is computed with a logarithm again. See this test's docstring: the "
+        "vectors agree with either form on both of our runtimes, which is exactly why this is "
+        "static."
+    )
+    # The other half. A check that passes by finding nothing has to be shown a case it finds.
+    assert "log" in "index = int(math.log2(nanoseconds / BUCKET_BASE_NS)) + 1"
+    # And that the reader is really looking at the code rather than at the prose around it.
+    assert "buckets" in code
+
+
+def test_the_write_kinds_are_shape_kinds_and_both_of_them() -> None:
+    """Membership, not merely a subset relation.
+
+    Removing ``bulk_write`` from this set survived its first mutation against the shared vectors,
+    because no vector recorded a bulk write - a classification nothing exercises is one nothing
+    shared checks, and the consequence is a group scored as read-heavy while it takes every bulk
+    load the application sends. ``telemetry/001`` records one operation of every kind now, and this
+    is the local half of the same statement.
+    """
+    assert set(WRITE_KINDS) <= set(SHAPE_KINDS)
+    assert sorted(WRITE_KINDS) == ["bulk_write", "write"]
+

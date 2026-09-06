@@ -1,0 +1,16 @@
+{
+  "entities": [
+    {
+      "name": "Event",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}

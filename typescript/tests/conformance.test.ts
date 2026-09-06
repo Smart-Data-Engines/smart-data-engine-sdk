@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
+  BUCKET_COUNT,
   canonicalBytes,
   CanonicalError,
   colocationGroups,
@@ -25,15 +26,23 @@ import {
   DIALECTS,
   EngineError,
   enumerateShapes,
+  featuresRecord,
   hashIdentifiers,
+  hasTimeDimension,
+  Histogram,
   loadMap,
   MapError,
+  MEASURED_FIELDS,
   placementOf,
+  Recorder,
   resolve,
   schemaIsFixed,
   schemaStatements,
+  SHAPE_KINDS,
   shapeId,
   shapeIr,
+  windowFeatures,
+  windowRecord,
 } from '../src/index.js'
 import type { LogicalModel, Materialization, PlacementMap } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
@@ -548,5 +557,196 @@ describe('schema vectors', () => {
       ),
     )
     expect(DIALECTS.filter((d) => !covered.has(d))).toEqual([])
+  })
+})
+
+/**
+ * Tier 1: the window document, and every derivation behind it.
+ *
+ * **Compared as numbers rather than as bytes, and that is the one exception in this suite.**
+ * Section 1 of the contract rejects floating point outright because a float's textual form differs
+ * between languages, and almost every number in a window is a float. The document is not signed,
+ * not hashed and never compared for equality, so the rule does not apply - and the property that
+ * makes this family checkable is narrower: every number here is either a ratio of two integers or a
+ * bucket edge divided by a million, and IEEE 754 requires division to be correctly rounded. Two
+ * languages compute the same double; only their printing differs.
+ */
+
+interface Operation {
+  readonly shape: string
+  readonly ns: number
+  readonly rows?: number
+  readonly failed?: boolean
+}
+
+interface FanOutEntry {
+  readonly group: string
+  readonly materialization: string
+  readonly ns: number
+  readonly failed?: boolean
+}
+
+/**
+ * Feed a case's operations to a recorder and close the window.
+ *
+ * Shapes are named by **identifier**, like the `routing/` cases, so the runner has to enumerate the
+ * model and look them up - which means the group, the entity and the kind reach the recorder from
+ * this library's own enumeration rather than from the vector. A case cannot therefore pin a
+ * classification by asserting it in its own input.
+ */
+function recorded(model: LogicalModel, operations: readonly Operation[], dir: string) {
+  const byId = new Map(enumerateShapes(model).map((shape) => [shapeId(shape), shape]))
+  const recorder = new Recorder(model.version)
+  for (const operation of operations) {
+    const shape = byId.get(operation.shape)
+    expect(
+      shape,
+      `the vector refers to shape ${operation.shape}, which this library does not enumerate`,
+    ).toBeDefined()
+    recorder.record({
+      shapeId: shapeId(shape!),
+      group: shape!.group,
+      entity: shape!.entity,
+      kind: shape!.kind,
+      nanoseconds: operation.ns,
+      rows: operation.rows ?? 0,
+      failed: operation.failed === true,
+    })
+  }
+  const fanOutFile = join(dir, 'fan_out.json')
+  if (existsSync(fanOutFile)) {
+    for (const entry of readJson<FanOutEntry[]>(fanOutFile)) {
+      recorder.recordFanOut({
+        group: entry.group,
+        materialization: entry.materialization,
+        nanoseconds: entry.ns,
+        failed: entry.failed === true,
+      })
+    }
+  }
+  const window = recorder.roll()
+  expect(window, 'the case recorded nothing, so it pins nothing').toBeDefined()
+  return window!
+}
+
+describe('telemetry vectors', () => {
+  for (const name of cases('telemetry')) {
+    it(name, () => {
+      const dir = join(VECTORS, 'telemetry', name)
+
+      const boundaries = join(dir, 'buckets.json')
+      if (existsSync(boundaries)) {
+        const edges = readJson<{ edges_ms: number[] }>(join(dir, 'percentiles.json')).edges_ms
+        expect(edges).toHaveLength(BUCKET_COUNT)
+        for (const [nanoseconds, index] of readJson<[number, number][]>(boundaries)) {
+          const histogram = new Histogram()
+          histogram.record(nanoseconds)
+          const landed = histogram.buckets
+            .map((hits, at) => (hits > 0 ? at : -1))
+            .filter((at) => at >= 0)
+          expect(
+            landed,
+            `${nanoseconds} ns has to land in bucket ${index}. An implementation computing this ` +
+              'with a logarithm agrees until a libm rounds the last bit differently, and then ' +
+              'disagrees on exactly the boundary rows.',
+          ).toEqual([index])
+          expect(histogram.percentileMs(0.5)).toBe(edges[index])
+        }
+      }
+
+      const operationsFile = join(dir, 'operations.json')
+      if (!existsSync(operationsFile)) return
+
+      const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      const operations = readJson<Operation[]>(operationsFile)
+      const window = recorded(model, operations, dir)
+
+      const expectedError = join(dir, 'expected.json')
+      if (existsSync(expectedError)) {
+        const want = readJson<{ match: string }>(expectedError)
+        const against = modelFromNeutral(readJson(join(dir, 'against.json')))
+        // The class is deliberately not pinned - see the vector's own note. A caller handing this
+        // the wrong model is a caller mistake rather than a document the library was given.
+        expect(() => windowRecord(window, against)).toThrow(want.match)
+        return
+      }
+
+      const documentFile = join(dir, 'window.json')
+      if (existsSync(documentFile)) {
+        expect(
+          windowRecord(window, model),
+          'the window document differs from the vector. Two libraries disagreeing here hand the ' +
+            'planner different features for identical traffic, and nothing raises - the numbers ' +
+            'are plausible either way.',
+        ).toEqual(readJson(documentFile))
+      }
+
+      const explicitFile = join(dir, 'features_for.json')
+      if (existsSync(explicitFile)) {
+        const explicit = readJson<Record<string, unknown>>(explicitFile)
+        for (const group of Object.keys(explicit).sort()) {
+          const members = colocationGroups(model).find((g) => g.name === group)!
+          const got = windowFeatures(window, group, {
+            hasTimeDimension: hasTimeDimension(model, members),
+          })
+          expect(featuresRecord(got), `features for ${group}`).toEqual(explicit[group])
+        }
+      }
+    })
+  }
+
+  it('exercises every shape kind', () => {
+    // Totality over the operation kinds, and it is here because a mutation survived. Removing
+    // `bulk_write` from the set of kinds that count as writes passed the whole shared suite: no
+    // vector recorded a bulk write, so nothing measured the classification. Kinds are resolved
+    // through each family's *model*, so a case cannot satisfy this by naming a kind in its own text.
+    const seen = new Set<string>()
+    for (const [family, field] of [
+      ['telemetry', 'operations.json'],
+      ['routing', 'cases.json'],
+    ] as const) {
+      for (const name of cases(family)) {
+        const dir = join(VECTORS, family, name)
+        if (!existsSync(join(dir, field))) continue
+        const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+        const byId = new Map(enumerateShapes(model).map((shape) => [shapeId(shape), shape]))
+        for (const entry of readJson<{ shape?: string }[]>(join(dir, field))) {
+          const shape = entry.shape === undefined ? undefined : byId.get(entry.shape)
+          if (shape !== undefined) seen.add(shape.kind)
+        }
+      }
+    }
+    expect(SHAPE_KINDS.filter((kind) => !seen.has(kind))).toEqual([])
+  })
+
+  it('found telemetry vectors at all', () => {
+    // This library reaches Tier 1, so these do not get to be skipped either.
+    expect(cases('telemetry').length).toBeGreaterThan(0)
+  })
+
+  it('reaches every measured field', () => {
+    // Totality over the feature vector. A field this family never emits and never names as missing
+    // is one where two libraries can disagree with nothing shared to notice.
+    const seen = new Set<string>()
+    for (const name of cases('telemetry')) {
+      const dir = join(VECTORS, 'telemetry', name)
+      const documentFile = join(dir, 'window.json')
+      if (existsSync(documentFile)) {
+        const document = readJson<{ groups: Record<string, Record<string, unknown>> }>(documentFile)
+        for (const body of Object.values(document.groups)) {
+          for (const key of Object.keys(body)) if (key !== 'copies') seen.add(key)
+          for (const key of (body['missing'] as string[] | undefined) ?? []) seen.add(key)
+        }
+      }
+      const explicitFile = join(dir, 'features_for.json')
+      if (existsSync(explicitFile)) {
+        for (const body of Object.values(readJson<Record<string, Record<string, unknown>>>(explicitFile))) {
+          for (const key of Object.keys(body)) seen.add(key)
+          for (const key of (body['missing'] as string[] | undefined) ?? []) seen.add(key)
+        }
+      }
+    }
+    const unreached = MEASURED_FIELDS.map(([key]) => key).filter((key) => !seen.has(key))
+    expect(unreached).toEqual([])
   })
 })

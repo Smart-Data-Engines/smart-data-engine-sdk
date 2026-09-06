@@ -74,7 +74,32 @@ export {
   schemaStatements,
 } from './schema.js'
 export type { OperationShape, ShapeKind } from './shapes.js'
-export { enumerateShapes, SHAPE_KINDS, shapeId, shapeIr } from './shapes.js'
+export { enumerateShapes, SHAPE_KINDS, shapeId, shapeIr, WRITE_KINDS } from './shapes.js'
+export { guard, internalFailures, resetInternalFailures } from './internal.js'
+export type {
+  CopyFreshness,
+  FanOutOptions,
+  FeatureOptions,
+  GroupFeatures,
+  RecordOptions,
+  Window,
+} from './telemetry.js'
+export {
+  BUCKET_BASE_NS,
+  BUCKET_COUNT,
+  copyFreshnessRecord,
+  FanOutStats,
+  featuresRecord,
+  FIELD_LIST_IS_TOTAL,
+  hasTimeDimension,
+  Histogram,
+  MEASURED_FIELDS,
+  Recorder,
+  ShapeStats,
+  windowCopies,
+  windowFeatures,
+  windowRecord,
+} from './telemetry.js'
 export type { FieldType, NeutralType } from './types.js'
 export { checkType, NEUTRAL_TYPES, T } from './types.js'
 
@@ -82,4 +107,4 @@ export { checkType, NEUTRAL_TYPES, T } from './types.js'
 export const CONTRACT_VERSION = 1
 
 /** The capability tier this library reaches. See docs/format-contract.md, section 9. */
-export const TIER = 0
+export const TIER = 1

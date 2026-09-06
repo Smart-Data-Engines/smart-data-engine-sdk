@@ -24,6 +24,17 @@ export const SHAPE_KINDS = [
 export type ShapeKind = (typeof SHAPE_KINDS)[number]
 
 /**
+ * The kinds that are writes, in one place.
+ *
+ * Two callers need it - routing, to send a write to the source, and telemetry, to compute the
+ * read/write ratio a placement is scored on - and it lives here because a second copy is how the
+ * *same* operation becomes a write for one of them and a read for the other. The reference
+ * implementation had four copies of this set once, in one process, and nothing threw; the defect
+ * surfaced as a group that looked twice as write-heavy as it was.
+ */
+export const WRITE_KINDS: ReadonlySet<ShapeKind> = new Set(['write', 'bulk_write'] as const)
+
+/**
  * Types over which a range predicate is meaningful. Ranges over strings and uuids are legal in every
  * engine and almost never what anybody means, so they are not enumerated.
  */

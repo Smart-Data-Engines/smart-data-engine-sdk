@@ -1,0 +1,3 @@
+{
+  "why": "Mean rows per call come out as 2, 10 and 300. A language whose default sort is lexicographic - JavaScript's is - orders them 10, 2, 300 and reports a different median and a different p99 for the same traffic. Nothing about the shape of the document changes, which is why this needs a vector rather than a review: the numbers are plausible either way."
+}

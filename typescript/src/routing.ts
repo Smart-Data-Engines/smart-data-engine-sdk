@@ -20,9 +20,7 @@
 import type { Materialization, PlacementMap } from './placement.js'
 import { materializationById, placementOf } from './placement.js'
 import type { OperationShape } from './shapes.js'
-import { shapeId } from './shapes.js'
-
-const WRITE_KINDS = new Set(['write', 'bulk_write'])
+import { shapeId, WRITE_KINDS } from './shapes.js'
 
 export interface ResolveOptions {
   readonly inWriteTransaction?: boolean

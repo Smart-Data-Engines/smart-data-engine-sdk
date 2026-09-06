@@ -1,0 +1,23 @@
+[
+  {
+    "group": "Detail",
+    "materialization": "Detail@ch",
+    "ns": 3000
+  },
+  {
+    "group": "Detail",
+    "materialization": "Detail@ch",
+    "ns": 5000
+  },
+  {
+    "group": "Detail",
+    "materialization": "Detail@ch",
+    "ns": 900000,
+    "failed": true
+  },
+  {
+    "group": "Detail",
+    "materialization": "Detail@arch",
+    "ns": 1500
+  }
+]

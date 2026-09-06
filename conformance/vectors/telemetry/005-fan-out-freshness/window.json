@@ -1,0 +1,50 @@
+{
+  "model_version": "1ff3e78b85e2ec40",
+  "complete": true,
+  "dropped_windows": 0,
+  "groups": {
+    "Detail": {
+      "calls": 4,
+      "read_write_ratio": 0.0,
+      "shape_mix": {
+        "write": 1.0
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 0.004,
+      "pk_access_share": 0.0,
+      "has_time_dimension": true,
+      "distinct_shapes": 1,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "result_cardinality_p50",
+        "result_cardinality_p99",
+        "time_filtered_share",
+        "total_bytes",
+        "write_burstiness"
+      ],
+      "complete": true,
+      "copies": [
+        {
+          "group": "Detail",
+          "materialization": "Detail@arch",
+          "writes": 1,
+          "failures": 0,
+          "lag_p50_ms": 0.002,
+          "lag_p99_ms": 0.002,
+          "complete": true
+        },
+        {
+          "group": "Detail",
+          "materialization": "Detail@ch",
+          "writes": 3,
+          "failures": 1,
+          "lag_p50_ms": 0.008,
+          "lag_p99_ms": 1.024,
+          "complete": false
+        }
+      ]
+    }
+  }
+}

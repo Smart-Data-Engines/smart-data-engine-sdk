@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 import sde
+import sde.telemetry
 from sde.canonical import CanonicalError, canonical_bytes
 from sde.errors import DeclarationError, EngineError, MapError
 from sde.hashing import hash_identifiers
@@ -204,6 +205,175 @@ def test_schema_vector(case: Path) -> None:
                         f"{fragment!r}. A reason may say more than the vector, in any language, "
                         f"and may not say less."
                     )
+
+
+def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: Path) -> sde.Window:
+    """Feed a case's operations to a recorder and close the window.
+
+    Shapes are named by **identifier**, like the ``routing/`` cases, so the runner has to enumerate
+    the model and look them up - which means the group, the entity and the kind reach the recorder
+    from this library's own shape enumeration rather than from the vector. A case cannot therefore
+    pin a classification by asserting it in its own input.
+    """
+    by_id = {shape.id: shape for shape in sde.enumerate_shapes(model)}
+    recorder = sde.Recorder(model.version)
+    for operation in operations:
+        shape = by_id.get(operation["shape"])
+        assert shape is not None, (
+            f"{_ident(case)} refers to shape {operation['shape']}, which this library does not "
+            "enumerate. Either the enumeration diverged or the vector is stale."
+        )
+        recorder.record(
+            shape_id=shape.id,
+            group=shape.group,
+            entity=shape.entity,
+            kind=shape.kind,
+            nanoseconds=int(operation["ns"]),
+            rows=int(operation.get("rows", 0)),
+            failed=bool(operation.get("failed", False)),
+        )
+    fan_out = case / "fan_out.json"
+    if fan_out.is_file():
+        for entry in _read_json(fan_out):
+            recorder.record_fan_out(
+                group=str(entry["group"]),
+                materialization=str(entry["materialization"]),
+                nanoseconds=int(entry["ns"]),
+                failed=bool(entry.get("failed", False)),
+            )
+    window = recorder.roll()
+    assert window is not None, f"{_ident(case)} recorded nothing, so it pins nothing"
+    return window
+
+
+@pytest.mark.parametrize("case", _cases("telemetry"), ids=_ident)
+def test_telemetry_vector(case: Path) -> None:
+    """Tier 1: the window document, and every derivation behind it.
+
+    **Compared as numbers rather than as bytes, and that is the one exception in this suite.**
+    Section 1 of the contract rejects floating point outright because a float's textual form differs
+    between languages, and almost every number in a window is a float. The document is not signed,
+    not hashed and never compared for equality, so the rule does not apply - and the property that
+    makes this family checkable is narrower: every number here is either a ratio of two integers or
+    a bucket edge divided by a million, and IEEE 754 requires division to be correctly rounded. Two
+    languages compute the same double; only their printing differs.
+    """
+    boundaries = case / "buckets.json"
+    if boundaries.is_file():
+        edges = _read_json(case / "percentiles.json")["edges_ms"]
+        assert len(edges) == sde.telemetry.BUCKET_COUNT
+        for nanoseconds, index in _read_json(boundaries):
+            histogram = sde.Histogram()
+            histogram.record(int(nanoseconds))
+            landed = [i for i, hits in enumerate(histogram.buckets) if hits]
+            assert landed == [index], (
+                f"{nanoseconds} ns landed in bucket(s) {landed}, the vector says {index}. An "
+                "implementation computing this with a logarithm agrees until a libm rounds the "
+                "last bit differently, and then disagrees on exactly the boundary rows."
+            )
+            assert histogram.percentile_ms(0.5) == edges[index], (
+                "the percentile a single sample reports is the upper edge of its bucket"
+            )
+
+    operations_file = case / "operations.json"
+    if not operations_file.is_file():
+        return
+
+    model = model_from_neutral(_read_json(case / "model.json"))
+    operations = _read_json(operations_file)
+
+    expected_error = case / "expected.json"
+    if expected_error.is_file():
+        want = _read_json(expected_error)
+        window = _recorded(model, operations, case)
+        against = model_from_neutral(_read_json(case / "against.json"))
+        # The class is deliberately not pinned - see the vector's own note. A caller handing this
+        # the wrong model is a caller mistake rather than a document the library was given, so each
+        # language raises whatever it raises for a bad argument and the message is what a reader
+        # needs.
+        with pytest.raises(Exception, match=re.escape(want["match"])):
+            window.as_record(against)
+        return
+
+    window = _recorded(model, operations, case)
+    document = case / "window.json"
+    if document.is_file():
+        assert window.as_record(model) == _read_json(document), (
+            f"{_ident(case)}: the window document differs from the vector. Two libraries "
+            "disagreeing here hand the planner different features for identical traffic, and "
+            "nothing raises - the numbers are plausible either way."
+        )
+
+    explicit = case / "features_for.json"
+    if explicit.is_file():
+        for group, expected in sorted(_read_json(explicit).items()):
+            members = next(g for g in sde.colocation_groups(model) if g.name == group)
+            got = window.features(
+                group, has_time_dimension=sde.has_time_dimension(model, members)
+            )
+            assert got.as_record() == expected, f"features for {group} differ from the vector"
+
+
+def test_every_shape_kind_is_exercised_by_a_vector() -> None:
+    """Totality over the operation kinds, and it is here because a mutation survived.
+
+    Removing ``bulk_write`` from the set of kinds that count as writes passed the whole shared
+    suite: no vector recorded a bulk write, so nothing measured the classification. The consequence
+    is not subtle - a group that takes every bulk load the application sends would be scored as
+    read-heavy, and the planner would place it accordingly - but it is invisible, because the
+    numbers are plausible either way.
+
+    Kinds are resolved through each family's *model*, so a case cannot satisfy this by naming a kind
+    in its own text.
+    """
+    seen: set[str] = set()
+    for family, field in (("telemetry", "operations.json"), ("routing", "cases.json")):
+        for case in _cases(family):
+            document = case / field
+            if not document.is_file():
+                continue
+            model = model_from_neutral(_read_json(case / "model.json"))
+            by_id = {shape.id: shape for shape in sde.enumerate_shapes(model)}
+            for entry in _read_json(document):
+                shape = by_id.get(entry.get("shape", ""))
+                if shape is not None:
+                    seen.add(shape.kind)
+    unreached = set(sde.SHAPE_KINDS) - seen
+    assert unreached == set(), (
+        f"no vector exercises {sorted(unreached)}. A kind nothing records is a classification "
+        f"nothing shared checks."
+    )
+
+
+def test_there_are_telemetry_vectors() -> None:
+    # This library reaches Tier 1, so these do not get to be skipped either.
+    assert _cases("telemetry"), "no telemetry vectors found, but this library claims Tier 1"
+
+
+def test_every_measured_field_is_reachable_from_the_telemetry_vectors() -> None:
+    """Totality over the feature vector, in the direction that rots.
+
+    A field this family never emits and never names as missing is one where two libraries can
+    disagree with nothing shared to notice. Both halves count: emitting it and declaring it absent
+    are the two things a window can say about a field, and a field that appears in neither is one
+    this suite has no opinion about.
+    """
+    seen: set[str] = set()
+    for case in _cases("telemetry"):
+        documents = [case / "window.json"]
+        for path in documents:
+            if not path.is_file():
+                continue
+            for body in _read_json(path)["groups"].values():
+                seen |= {key for key in body if key not in ("copies",)}
+                seen |= set(body.get("missing", ()))
+        explicit = case / "features_for.json"
+        if explicit.is_file():
+            for body in _read_json(explicit).values():
+                seen |= set(body)
+                seen |= set(body.get("missing", ()))
+    unreached = set(sde.MEASURED_FIELDS) - seen
+    assert unreached == set(), f"no telemetry vector reaches {sorted(unreached)}"
 
 
 def test_there_are_schema_vectors() -> None:

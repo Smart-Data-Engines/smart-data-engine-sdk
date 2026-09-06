@@ -1,0 +1,3 @@
+{
+  "why": "A duration below one microsecond is bucket 0 and everything above 16.8 seconds is bucket 24, clamped. The interesting rows are the three around each power of two: an implementation using a logarithm agrees with these until a libm rounds the last bit differently, and then disagrees on exactly the boundary rows. `edges_ms` is the upper edge each bucket reports as a percentile - the *upper* edge, because a placement decision made on an optimistic latency figure is the wrong kind of wrong."
+}

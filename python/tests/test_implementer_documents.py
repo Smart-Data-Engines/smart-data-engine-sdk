@@ -58,7 +58,10 @@ def _unwritten_families() -> set[str]:
     check, which is the sentence the missing sets make false.
     """
     text = _flat(CONTRACT.read_text())
-    sentence = re.search(r"do not exist yet:\*\* (.+?)\. That is worth stating", text)
+    # `does?` because the sentence is grammatical in both numbers and the count shrinks as the
+    # families get written. A parser that forced "do not" would have the document read badly to
+    # keep a test happy, which is the wrong way round.
+    sentence = re.search(r"does? not exist yet:\*\* (.+?)\. That is worth stating", text)
     if sentence is None:
         assert "**Every set named in the tier table exists.**" in text, (
             "format-contract §10 says neither which vector sets are missing nor that none are. One "
@@ -165,12 +168,34 @@ def test_the_python_row_agrees_with_the_library() -> None:
     assert len(present) == len(named), (present, named)
 
 
+def test_the_typescript_row_agrees_with_the_librarys_own_tier() -> None:
+    """The row and the constant, which is a claim in two places.
+
+    Requirement 17.6 is about "supported" meaning one thing, and a table saying Tier 0 while the
+    library declares Tier 1 is the same defect one level down. Read out of the source rather than
+    imported, because this suite runs in Python: the TypeScript library's own tests cannot see this
+    document and this one cannot run its code.
+    """
+    source = (ROOT / "typescript" / "src" / "index.ts").read_text()
+    declared = re.search(r"export const TIER = (\d+)", source)
+    assert declared, "the TypeScript library no longer declares a TIER"
+    row = _row("@smart-data-engines/sde")
+    assert row[2].strip() == declared.group(1), (
+        f"docs/implementations.md says Tier {row[2].strip()} and the library says Tier "
+        f"{declared.group(1)}"
+    )
+
+
 def test_the_typescript_row_claims_no_engines_and_has_none() -> None:
     """A ratchet, not a description. The day that library grows an engine adapter this test fails,
-    and the table is the thing that has to change - because at that moment the word "Tier 0" in it
-    stops being true and a client reading it would size their deployment on it."""
+    and the table is the thing that has to change - because at that moment "none" in its engines
+    column stops being true and a client reading it would size their deployment on it.
+
+    The **tier** used to be asserted here as a literal too, and it moved out when it started
+    changing: it is a fact about the library, so the test for it reads the library's own constant
+    rather than a number typed twice. One fact, one place - two literals agreeing is not a check.
+    """
     row = _row("@smart-data-engines/sde")
-    assert row[2] == "0", row
     assert row[6] == "none", row
     source = ROOT / "typescript" / "src"
     assert not (source / "engines").exists(), "the TypeScript library has an engines directory"

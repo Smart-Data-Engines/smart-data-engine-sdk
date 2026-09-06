@@ -38,6 +38,16 @@ vectors/
     map.json                  a placement map, so the layout reaches the renderer through the
                               same loader production uses rather than a second parser
     cases.json                (materialisation, dialect) -> the exact DDL, or the refusal
+  telemetry/<nnn>-<name>/
+    model.json
+    operations.json           operations to record, each naming a shape by identifier
+    fan_out.json              writes to a derived copy - optional
+    window.json               the exact window document the library must produce
+    features_for.json         features for a group with no traffic, which is not in the document
+    buckets.json              (nanoseconds, bucket index) fed straight to the histogram
+    percentiles.json          the upper edge each bucket reports
+    expected.json             for the case that must be refused instead
+    why.json                  what would break if this vector were not here
 ```
 
 `schema/` is Tier 2 and compares statements **exactly**, because a statement is bytes a server
@@ -51,6 +61,26 @@ The statements in this family are also executed against a real PostgreSQL and a 
 `python/tests/test_schema_vectors_live.py`, twice each. That is not belt and braces: a vector holding
 DDL no server accepts would be a frozen mistake every future implementation is *required* to
 reproduce, and the suite's authority is exactly what makes it dangerous when wrong.
+
+`telemetry/` is Tier 1 and it is the **one family compared parsed rather than as bytes**. Section 1
+of the contract rejects floating point outright, because a float's textual form differs between
+languages - and a window document is almost entirely floats. It is not signed, not hashed and never
+compared for equality, so that rule does not bind it; what makes the family checkable is narrower:
+every number in a window is either a ratio of two integers or a bucket edge divided by a million,
+and IEEE 754 requires division to be correctly rounded, so two languages compute the same double
+even where they print it differently.
+
+Two things it deliberately leaves out. **A clock**: the document carries none, which is what makes
+it deterministic, and the two features that would need a duration are declared unmeasurable anyway.
+And **buffer eviction**: `dropped_windows` is in the document and zero in every case, because a full
+buffer dropping its oldest window is behaviour with no artefact - each library asserts it directly,
+and the two assertions are the only thing holding those two implementations together.
+
+One case here is worth reading before adding to any family: `002` pins bucket boundaries, and the
+alternative implementation - a logarithm - **passes all of them**, because glibc's `log2` and V8's
+are both exact at a power of two. A property no output can distinguish on the machines available is
+not one a vector can hold, and pretending otherwise is worse than admitting it: both libraries check
+that one statically instead, over their own source.
 
 `canonical/` is the newest kind and the most instructive. It exists because a mutation that should
 have failed did not: every object key in the model IR is fixed ASCII, so no model vector reaches the

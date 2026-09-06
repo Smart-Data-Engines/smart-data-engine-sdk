@@ -23,7 +23,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 | Library | Language | Tier | Hashing (§2a) | IR contract | Map contract | Engines |
 |---|---|---|---|---|---|---|
 | `smart-data-engine` | Python 3.11–3.13 | 2 | yes | 1 | 1–2 | `clickhouse`, `orderbook`, `postgres` |
-| `@smart-data-engines/sde` | TypeScript / Node 18–22 | 0 | yes | 1 | 1–2 | none |
+| `@smart-data-engines/sde` | TypeScript / Node 18–22 | 1 | yes | 1 | 1–2 | none |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
@@ -37,12 +37,18 @@ right and the library is wrong — with one exception, stated in the contract it
 so if the reference disagrees with *it*, the reference is wrong until somebody argues otherwise in
 writing.
 
-**TypeScript is Tier 0 and that is a decision, not a gap.** It has no engine adapters, so it opens no
-connections and applies no schema; it parses maps, resolves routing, hashes identifiers and enforces
-every parsing rule — including the two reserved table names it will never write to, because a rule
-that holds in one runtime and not the other is one map with two meanings. Its second purpose is
-structural: the contract's neutrality is checked by a second implementation, not by a fourth, and
-several rules in the contract exist because these two disagreed.
+**TypeScript reached Tier 1 on 6 September 2026, and the vectors for that tier were written first.**
+Section 10 of the contract says the vectors for a tier are written before a second library claims it,
+not after — so `telemetry/` and `schema/` exist because of this claim rather than alongside it. It
+now measures traffic, aggregates windows, buffers them locally and produces the same window document
+the reference does; it renders DDL as a value; and it still opens no connections, because engine
+adapters are Tier 2. Its second purpose remains structural: the contract's neutrality is checked by a
+second implementation, not by a fourth, and several rules in it exist because these two disagreed —
+including two found while writing those vector families.
+
+The tier in the table above is checked against the library's own `TIER` constant by a test, because a
+list that says one thing while the code says another is the failure requirement 17.6 exists to
+prevent, and prose does not fail.
 
 Neither library is published to a package registry yet. `pip install smart-data-engine` and
 `npm install @smart-data-engines/sde` do not install ours today, and both names are unclaimed — which

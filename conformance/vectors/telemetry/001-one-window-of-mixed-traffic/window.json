@@ -1,0 +1,59 @@
+{
+  "model_version": "1ff3e78b85e2ec40",
+  "complete": true,
+  "dropped_windows": 0,
+  "groups": {
+    "Detail": {
+      "calls": 15,
+      "read_write_ratio": 2.75,
+      "shape_mix": {
+        "aggregate": 0.06666666666666667,
+        "bulk_write": 0.06666666666666667,
+        "full_scan": 0.13333333333333333,
+        "point_read": 0.4,
+        "range_read": 0.06666666666666667,
+        "relation_walk": 0.06666666666666667,
+        "write": 0.2
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 2.048,
+      "result_cardinality_p50": 3.0,
+      "result_cardinality_p99": 4100.0,
+      "pk_access_share": 0.4,
+      "has_time_dimension": true,
+      "distinct_shapes": 7,
+      "error_share": 0.06666666666666667,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "time_filtered_share",
+        "total_bytes",
+        "write_burstiness"
+      ],
+      "complete": true
+    },
+    "Label": {
+      "calls": 1,
+      "shape_mix": {
+        "point_read": 1.0
+      },
+      "latency_p50_ms": 0.001,
+      "latency_p99_ms": 0.001,
+      "result_cardinality_p50": 1.0,
+      "result_cardinality_p99": 1.0,
+      "pk_access_share": 1.0,
+      "has_time_dimension": false,
+      "distinct_shapes": 1,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "read_write_ratio",
+        "time_filtered_share",
+        "total_bytes",
+        "write_burstiness"
+      ],
+      "complete": true
+    }
+  }
+}

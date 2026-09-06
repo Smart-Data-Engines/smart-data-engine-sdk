@@ -1,0 +1,3 @@
+{
+  "why": "An idle group is not in the window document at all - a document lists the groups that were observed - so this case asks for its features directly, which is what a caller reporting on every group does. `no_traffic` is the *reason* and the unknown fields are named alongside it, by the same derivation as every other case: two branches of one function computing `missing` by different rules is the defect that set exists to prevent. Note what is **not** missing: calls is 0, shape_mix is empty and distinct_shapes is 0, because those are measurements and their answer is zero."
+}

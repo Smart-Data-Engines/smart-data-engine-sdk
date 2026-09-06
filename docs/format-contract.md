@@ -805,13 +805,13 @@ There are five kinds:
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
 
-**Two of the sets named in the tier table above do not exist yet:** `telemetry/` and `migration/`.
-That is worth stating in the contract rather than leaving it to be discovered from an empty
-directory, because §9 says a tier claim is one the vectors can check, and for those two that is
-currently false. The reference implementation has both, covered by its own tests and by a slice
-against a real PostgreSQL — which verifies that it works, not that a second implementation would
-agree with it. The gap costs nothing while one library claims those tiers and everything on the day
-two do, so the vectors are written before a second claim is accepted, not after.
+**One of the sets named in the tier table above does not exist yet:** `migration/`. That is worth
+stating in the contract rather than leaving it to be discovered from an empty directory, because §9
+says a tier claim is one the vectors can check, and for that half of Tier 2 it is currently false.
+The reference implementation has it, covered by its own tests and by a slice against a real
+PostgreSQL — which verifies that it works, not that a second implementation would agree with it. The
+gap costs nothing while one library claims that tier and everything on the day two do, so the
+vectors are written before a second claim is accepted, not after.
 
 `schema/` was the third and now exists, written on the day a second library reached Tier 2 rather
 than after it. It is worth reading for what it found: the DDL renderer and the compatibility-view
@@ -823,6 +823,26 @@ columns are deliberately reversed so that removing either sort changes a differe
 statement in the family is executed against a real PostgreSQL and a real ClickHouse **twice** —
 because every statement here claims to be idempotent, and one that is correct once is a deployment
 that works until the first restart.
+
+`telemetry/` was written the same day and for the same reason, and it is the one family whose
+expectations are compared **parsed rather than as bytes**. That is an exception to §1, which rejects
+floating point outright because a float's textual form differs between languages — and a window
+document is almost entirely floats. It is not signed, not hashed and never compared for equality, so
+the rule does not bind it; what makes the family checkable is narrower and is the sentence to
+remember: **every number in a window is either a ratio of two integers or a bucket edge divided by a
+million**, and IEEE 754 requires division to be correctly rounded, so two languages compute the same
+double even where they would print it differently. The document also carries no clock, which is what
+makes it deterministic.
+
+Two findings came out of writing it, and the second is about a mechanism rather than about code.
+The reference had **no serialiser for the window at all** — it measured traffic and the walkthrough
+typed the resulting document in by hand, so every client in every language would have written their
+own and two clients of one model would have produced two documents from identical traffic. And
+`missing`, the set that exists so a reader never has to infer absence from a null, was a
+hand-written list of four names against a feature vector with five unknown fields; it is derived
+from the values now. The set of kinds that count as **writes** is pinned by `telemetry/001`, which
+records one operation of every kind: removing `bulk_write` from it survived its first mutation
+because no vector had ever recorded one.
 
 **An `errors/` case pins the message, not only the class.** Its `match` field is a substring that
 the refusal's own text must contain, compared literally and case-sensitively. That makes diagnostics
