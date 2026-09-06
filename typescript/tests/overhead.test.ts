@@ -20,12 +20,14 @@
  * floor is therefore about thirty times stricter than the nearest real engine, which is the point of
  * using it.
  *
- * The floor is deliberately loose. A machine-specific absolute number would be a test that fails on
- * whoever has the slowest laptop, and a test that fails for reasons unrelated to the code teaches
- * people to rerun the suite until it passes. What it does catch is the mistake this exists for: the
- * Python implementation computed a SHA-256 over a canonically encoded object on every route
- * resolution, which measured 41 microseconds median. At that cost, no machine reaches even a tenth of
- * the floor below.
+ * A second test here predates that one and stays: a **throughput** floor, deliberately loose. Two
+ * meanings of the word in one file is unfortunate, and the distinction is worth keeping straight -
+ * one is the cheapest round trip this runtime can make, the other is a resolutions-per-second bar.
+ * A machine-specific absolute number would be a test that fails on whoever has the slowest laptop,
+ * and a test that fails for reasons unrelated to the code teaches people to rerun the suite until it
+ * passes. What the throughput bar catches is the mistake it exists for: the Python implementation
+ * computed a SHA-256 over a canonically encoded object on every route resolution, which measured 41
+ * microseconds median. At that cost, no machine reaches even a tenth of it.
  */
 
 import net from 'node:net'
