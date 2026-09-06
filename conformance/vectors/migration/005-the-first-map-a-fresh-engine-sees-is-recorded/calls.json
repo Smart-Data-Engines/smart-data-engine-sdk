@@ -1,0 +1,11 @@
+[
+  {
+    "engine": "pg-main",
+    "call": "map_watermark"
+  },
+  {
+    "engine": "pg-main",
+    "call": "record_map_version",
+    "version": 7
+  }
+]

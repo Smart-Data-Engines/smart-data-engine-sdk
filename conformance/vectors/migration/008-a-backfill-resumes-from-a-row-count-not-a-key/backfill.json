@@ -1,0 +1,32 @@
+{
+  "group": "Reading",
+  "options": {
+    "chunk_rows": 2
+  },
+  "progress": {
+    "group": "Reading",
+    "complete": true,
+    "rows_this_run": 5,
+    "entities": [
+      {
+        "entity": "Reading",
+        "engine": "pg-copy",
+        "table": "reading",
+        "rows_copied": 7,
+        "rows_this_run": 3,
+        "chunks": 2,
+        "complete": true
+      },
+      {
+        "entity": "Sample",
+        "engine": "pg-copy",
+        "table": "sample",
+        "rows_copied": 4,
+        "rows_this_run": 2,
+        "chunks": 1,
+        "complete": true
+      }
+    ]
+  },
+  "why": "The marker is a row **count**, so resuming asks the source for the key of row N - the `nth_key` call in this sequence - and carries on strictly after it. A key marker would resume exactly and would need a codec in every language that writes an adapter, and a lossy round trip there puts the resume point *after* rows nobody copied: silent data loss, different per language. The `OFFSET`-shaped scan is paid once per resume rather than once per chunk, which is the trade that makes the count acceptable."
+}

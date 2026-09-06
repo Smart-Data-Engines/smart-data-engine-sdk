@@ -1,0 +1,11 @@
+{
+  "pg-main": {
+    "tables": {}
+  },
+  "pg-copy": {
+    "tables": {},
+    "fail_inserts": {
+      "reading": 1
+    }
+  }
+}

@@ -20,7 +20,15 @@
  */
 
 export { CanonicalError, canonicalBytes, canonicalString, compareCodePoints, digest16 } from './canonical.js'
-export { DeclarationError, EngineError, MapError, ModelPlanningError, SdeError } from './errors.js'
+export {
+  DeclarationError,
+  EngineError,
+  MapError,
+  MapRolledBack,
+  MigrationRefused,
+  ModelPlanningError,
+  SdeError,
+} from './errors.js'
 export type { NameMap } from './hashing.js'
 export { DIGEST_CHARS, hashIdentifiers } from './hashing.js'
 export type { Group } from './groups.js'
@@ -62,6 +70,40 @@ export {
   materializationById,
   placementOf,
 } from './placement.js'
+export { groupColumns } from './layout.js'
+export type {
+  BackfillOptions,
+  BackfillProgress,
+  Difference,
+  EntityProgress,
+  Migratable,
+  VerifyOptions,
+  VerifyReport,
+} from './migration.js'
+export {
+  backfill,
+  backfillForAHuman,
+  backfillRecord,
+  CHUNK_ROWS,
+  DIALECT_PRECISION,
+  entityProgressRecord,
+  keyColumns,
+  MIGRATABLE_IS_TOTAL,
+  PRECISION_INDEPENDENT,
+  sameWidth,
+  verify,
+  verifyForAHuman,
+  verifyRecord,
+} from './migration.js'
+export type { Engine, Row, SessionOptions } from './session.js'
+export { Session, tableFor } from './session.js'
+export type { Protection, WatermarkCheck, WatermarkStore } from './watermark.js'
+export {
+  enforceForwardOnly,
+  WATERMARK_STORE_IS_TOTAL,
+  watermarkRecord,
+} from './watermark.js'
+export { MIGRATABLE_MEMBERS, satisfies, WATERMARK_MEMBERS } from './capabilities.js'
 export type { ResolveOptions } from './routing.js'
 export { resolve } from './routing.js'
 export type { CompatibilityViews, Dialect, SchemaOptions, ViewOptions } from './schema.js'

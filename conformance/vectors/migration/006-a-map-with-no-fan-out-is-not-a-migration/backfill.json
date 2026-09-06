@@ -1,0 +1,7 @@
+{
+  "group": "Reading",
+  "options": {},
+  "error": "MigrationRefused",
+  "match": "has no fan-out target in this map",
+  "why": "A migration reaches a library as a placement map with `also_write` and nothing else - there is no phase name in the document and no second channel - so a map without that key says this group is not being migrated. Refused rather than answered with an empty progress record, because a backfill that copies nothing and reports success is the worst outcome this module has available."
+}

@@ -1,0 +1,21 @@
+[
+  {
+    "engine": "pg-main",
+    "call": "insert",
+    "table": "reading"
+  },
+  {
+    "engine": "pg-copy",
+    "call": "insert",
+    "table": "reading"
+  },
+  {
+    "engine": "pg-main",
+    "call": "transaction"
+  },
+  {
+    "engine": "pg-main",
+    "call": "insert",
+    "table": "reading"
+  }
+]

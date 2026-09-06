@@ -38,6 +38,18 @@ vectors/
     map.json                  a placement map, so the layout reaches the renderer through the
                               same loader production uses rather than a second parser
     cases.json                (materialisation, dialect) -> the exact DDL, or the refusal
+  migration/<nnn>-<name>/
+    model.json
+    map.json                  signed for the forward-only cases, because only a signed map is
+                              checked - an unsigned one is the client's own document
+    keys.json, load.json      the public key the caller holds, and how to load with it
+    engines.json              the engine set: tables, markers, watermarks, and which capabilities
+                              each adapter has
+    watermark.json            the forward-only decision, or the refusal
+    backfill.json             the progress record, or the refusal
+    verify.json               the seven counts, and the differences that stay on the client's side
+    calls.json                every call each engine received, in order
+    why.json
   telemetry/<nnn>-<name>/
     model.json
     operations.json           operations to record, each naming a shape by identifier
@@ -75,6 +87,18 @@ it deterministic, and the two features that would need a duration are declared u
 And **buffer eviction**: `dropped_windows` is in the document and zero in every case, because a full
 buffer dropping its oldest window is behaviour with no artefact - each library asserts it directly,
 and the two assertions are the only thing holding those two implementations together.
+
+`migration/` is Tier 2's second half and the only family that pins **the calls a library makes** as
+well as the answer it reaches. A library that arrived at the same counts by scanning the whole table
+and filtering in memory would satisfy every number and be unusable against a real one, so the
+sequence is the part that says *how*. The fixture is each library's own in-memory engine, in its
+`testing` package rather than in its runner: a runner that writes its own is a runner whose fixture
+can be the thing that differs, and a red vector would then say "one of two tables disagreed".
+
+Read `001` first. Its expected call list is **empty**, because the no-account mode promises no
+table, no query and no cost - and the TypeScript port gathered every engine's watermark and *then*
+noticed the map was unsigned. The right answer with the promise broken, which is the one shape of
+defect a record of the decision cannot show.
 
 One case here is worth reading before adding to any family: `002` pins bucket boundaries, and the
 alternative implementation - a logarithm - **passes all of them**, because glibc's `log2` and V8's

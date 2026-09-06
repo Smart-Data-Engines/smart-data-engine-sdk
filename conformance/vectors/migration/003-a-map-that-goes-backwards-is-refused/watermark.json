@@ -1,0 +1,5 @@
+{
+  "error": "MapRolledBack",
+  "match": "Refusing to go backwards",
+  "why": "The whole reason this module exists: an older signed map verifies perfectly, so nothing else in the library would notice that the file was replaced, and the writes would go to the previous placement. Cryptographic verification is not replay protection. The maximum is taken across engines, so the engine at 4 does not lower the bar the engine at 5 set."
+}

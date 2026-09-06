@@ -1,0 +1,44 @@
+{
+  "pg-main": {
+    "tables": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 2
+        },
+        {
+          "id": 2,
+          "celsius": 4
+        }
+      ],
+      "sample": [
+        {
+          "station": "alpha",
+          "seq": 1,
+          "note": "alpha-1"
+        },
+        {
+          "station": "alpha",
+          "seq": 2,
+          "note": "alpha-2"
+        },
+        {
+          "station": "beta",
+          "seq": 1,
+          "note": "beta-1"
+        },
+        {
+          "station": "beta",
+          "seq": 2,
+          "note": "beta-2"
+        }
+      ]
+    }
+  },
+  "pg-copy": {
+    "tables": {},
+    "markers": {
+      "Reading@pg2|Reading": 5
+    }
+  }
+}

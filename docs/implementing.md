@@ -97,6 +97,33 @@ a second representation of a fact the fan-out and the routing table already carr
 **row count and never a key**: a key needs a codec, and a lossy codec resumes *after* rows nobody
 copied, which is silent data loss that differs per language.
 
+These are the only vectors that need an engine, so they come with one: put an in-memory engine in
+your `testing` package rather than in your test runner, matching `MemoryEngine`'s behaviour. Two
+things about the cases are worth knowing before you start. They pin **the calls you make**, in one
+sequence across the whole engine set — because the guarantee that a row reaches the source before
+anything is attempted against the copy cannot be expressed in per-engine lists, which is a mistake
+this family made first. And `001` expects **no calls at all**: an unsigned map is the client's own
+document, so the no-account mode reads nothing, and gathering the watermarks before checking whether
+the map is signed is the right answer with the promise broken.
+
+### If your language's I/O is asynchronous
+
+Tier 0 and Tier 1 touch no socket, so they can be synchronous in any language. Tier 2 talks to a
+database, and in a runtime whose drivers are asynchronous a synchronous wrapper around them means
+blocking the thread that runs everything else — which is a worse thing to do to a client's process
+than a promise in a signature. So split the surface the way the tiers already do rather than
+choosing one style for the whole library: the TypeScript implementation is synchronous through Tier 1
+and asynchronous from Tier 2, and its session is *opened* rather than constructed, because the
+forward-only check reads a table and a constructor cannot await. That last point is not a
+workaround — it means a caller cannot hold a session that has not been checked, which is the
+guarantee the reference gets from doing it in its constructor.
+
+Two consequences to expect. The overhead budget below still applies to the work **your** library
+adds, which is synchronous and sits between two awaits; measure that, not the round trip you are
+inside. And a naive wrapper — one promise per row, or an await inside a loop that could have batched
+— is the failure mode this note exists for, because it does not show up as a slow function but as a
+saturated event loop under a load nobody tested.
+
 ## Running the vectors
 
 Read `conformance/vectors/**` in your own test runner, in your own CI. That is the whole mechanism by

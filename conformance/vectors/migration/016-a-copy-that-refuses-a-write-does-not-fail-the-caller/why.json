@@ -1,0 +1,3 @@
+{
+  "why": "The copy refuses the first row and the client's `save` returns normally: the row is in the source, which is the copy that counts, and turning a migration into an application outage would make the safest thing this product does the most dangerous. The divergence is not lost - `copies.json` carries it as a **failure** rather than as lateness, because a copy missing a thousand rows can have an excellent p99, and verify is the gate that refuses to switch reads while any remain. Two writes and one failure, so `complete` is false."
+}

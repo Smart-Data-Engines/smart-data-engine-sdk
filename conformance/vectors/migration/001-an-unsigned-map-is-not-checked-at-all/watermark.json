@@ -1,0 +1,16 @@
+{
+  "expect": {
+    "protection": "not_applicable",
+    "map_version": 1,
+    "highest_seen": null,
+    "participating": [],
+    "unable": [
+      "pg-main"
+    ]
+  },
+  "why_match": [
+    "this map is unsigned",
+    "no-account mode"
+  ],
+  "why": "An unsigned map is the client's own document, so there is no newest version for us to be the authority on. The `calls.json` of this case is the load-bearing part and it is **empty**: the no-account mode promises no table, no query and no cost, so an implementation that gathered the watermarks and then noticed the map was unsigned would return the right answer and break that promise - which is the one shape of defect the decision record cannot show. The TypeScript port did exactly that until this case existed."
+}

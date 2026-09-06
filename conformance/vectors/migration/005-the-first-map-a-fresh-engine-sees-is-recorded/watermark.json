@@ -1,0 +1,16 @@
+{
+  "expect": {
+    "protection": "enforced",
+    "map_version": 7,
+    "highest_seen": null,
+    "participating": [
+      "pg-main"
+    ],
+    "unable": []
+  },
+  "why_match": [
+    "the highest map version applied against these engines is",
+    "sde_map_state"
+  ],
+  "why": "Nothing has been applied yet, so there is no bar to be under and the version is written. `highest_seen` is null rather than zero: zero would be a map version, and a map version nobody issued is worse than an absence."
+}

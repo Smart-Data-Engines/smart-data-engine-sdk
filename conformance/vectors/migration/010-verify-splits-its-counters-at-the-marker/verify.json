@@ -1,0 +1,43 @@
+{
+  "group": "Reading",
+  "options": {
+    "chunk_rows": 2
+  },
+  "report": {
+    "at": "<any>",
+    "chunks_compared": 4,
+    "chunks_mismatched": 0,
+    "tail_rows_read": 3,
+    "tail_rows_missing_in_target": 3,
+    "rows_source": 11,
+    "rows_target": 8
+  },
+  "matched": false,
+  "differences": [
+    {
+      "entity": "Reading",
+      "table": "reading",
+      "key": {
+        "id": 5
+      },
+      "columns": []
+    },
+    {
+      "entity": "Reading",
+      "table": "reading",
+      "key": {
+        "id": 6
+      },
+      "columns": []
+    },
+    {
+      "entity": "Reading",
+      "table": "reading",
+      "key": {
+        "id": 7
+      },
+      "columns": []
+    }
+  ],
+  "why": "Below the marker the copy matches, so `chunks_compared` moves and `chunks_mismatched` does not. Above it the three uncopied rows are read as tail and reported as missing - which is correct and is **not** a failure of the backfill: they are rows the fan-out would have carried in a real migration. Two pairs of counters because two mechanisms can fail, and a single pair would send an operator to the wrong half of the system. `rows_source` and `rows_target` are reported and not gated on: two counts of live tables are taken at different instants."
+}

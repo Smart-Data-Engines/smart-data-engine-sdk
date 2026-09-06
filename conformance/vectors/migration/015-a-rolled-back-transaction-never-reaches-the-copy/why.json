@@ -1,0 +1,3 @@
+{
+  "why": "The rolled-back row never existed in the source, so it must never exist in the copy - dropping it is the whole reason the fan-out was deferred rather than done inline. `calls.json` shows the insert reaching the source (and being undone by the transaction) and **no** insert reaching the copy for it. The row saved before the transaction is in both, which is what makes this case a comparison rather than an absence."
+}

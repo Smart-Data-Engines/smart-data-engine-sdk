@@ -26,9 +26,16 @@ import pytest
 import sde
 import sde.telemetry
 from sde.canonical import CanonicalError, canonical_bytes
-from sde.errors import DeclarationError, EngineError, MapError
+from sde.errors import (
+    DeclarationError,
+    EngineError,
+    MapError,
+    MapRolledBack,
+    MigrationRefused,
+)
 from sde.hashing import hash_identifiers
 from sde.testing.loader import model_from_neutral
+from sde.testing.memory import engines_from
 
 VECTORS = Path(__file__).resolve().parents[2] / "conformance" / "vectors"
 CONTRACT_FILE = Path(__file__).resolve().parents[2] / "conformance" / "contract-version.txt"
@@ -314,6 +321,216 @@ def test_telemetry_vector(case: Path) -> None:
             assert got.as_record() == expected, f"features for {group} differ from the vector"
 
 
+def _placement_of(case: Path, model: sde.LogicalModel) -> sde.PlacementMap:
+    """Load a case's map, with the signature options the case names.
+
+    Signed maps appear in this family because the forward-only check only applies to one: an
+    unsigned map is the client's own document and there is no newest version for us to be the
+    authority on.
+    """
+    load = _read_json(case / "load.json") if (case / "load.json").is_file() else {}
+    keys = _read_json(case / "keys.json") if (case / "keys.json").is_file() else {}
+    named = load.get("public_key")
+    return sde.load_map(
+        _read_json(case / "map.json"),
+        model=model,
+        public_key=b64decode(keys[named]) if named else None,
+        require_signature=bool(load.get("require_signature", False)),
+    )
+
+
+class _Rollback(Exception):
+    """How a case asks its transaction to roll back.
+
+    An exception raised by the runner rather than a flag on the session, because a rollback is what
+    an application's own failure looks like: the guarantee under test is that a transaction which
+    does not complete leaves nothing in the copy, and the only honest way to reach it is to fail.
+    """
+
+
+def _drive_session(
+    case: Path,
+    model: sde.LogicalModel,
+    placement: sde.PlacementMap,
+    engines: Mapping[str, Any],
+) -> None:
+    """Run a case's session operations and compare what each engine ended up holding.
+
+    The heart of Tier 2 and the part no document transformation can reach: a fan-out is a second
+    write in the client's own process, and every rule about it is about *when* it happens.
+    """
+    recorder = sde.Recorder(model.version)
+    session = sde.Session(model, placement, engines, recorder=recorder)
+
+    def run(steps: list[dict[str, Any]]) -> None:
+        for step in steps:
+            if step["op"] == "save":
+                session.save(step["entity"], step["values"])
+            elif step["op"] == "transaction":
+                try:
+                    with session.transaction(*step.get("entities", ())):
+                        run(step["body"])
+                        if step.get("rollback"):
+                            raise _Rollback
+                except _Rollback:
+                    pass
+            else:
+                raise AssertionError(f"unknown operation {step['op']!r}")
+
+    run(_read_json(case / "operations.json"))
+
+    expected_tables = _read_json(case / "tables.json")
+    got_tables = {
+        name: {
+            table: sorted(
+                (dict(row) for row in rows), key=lambda row: json.dumps(row, sort_keys=True)
+            )
+            for table, rows in sorted(engine.tables.items())
+        }
+        for name, engine in sorted(engines.items())
+    }
+    assert got_tables == expected_tables, (
+        f"{_ident(case)}: the engines do not hold what the vector says. A fan-out written at the "
+        "wrong moment loses exactly the rows a migration exists not to lose, and nothing raises."
+    )
+
+    window = recorder.roll()
+    group = next(iter(sorted(placement.groups)))
+    copies = [] if window is None else list(window.copies(group))
+    expected_copies = _read_json(case / "copies.json")
+    assert len(copies) == len(expected_copies)
+    for copy, want in zip(copies, expected_copies, strict=True):
+        record = copy.as_record()
+        for measured in ("lag_p50_ms", "lag_p99_ms"):
+            # Elapsed time, so the vector carries a placeholder. What is a property of the library
+            # rather than of the clock is that the field is there and is a number or null.
+            assert want[measured] == "<any>"
+            assert record[measured] is None or isinstance(record[measured], float)
+            record[measured] = "<any>"
+        assert record == want
+
+
+
+@pytest.mark.parametrize("case", _cases("migration"), ids=_ident)
+def test_migration_vector(case: Path) -> None:
+    """Tier 2, second half: taking part in a migration.
+
+    Two things are pinned and the second is the unusual one. **The record** is what a gate on our
+    side reads - a backfill's progress, a verify's seven counts. **The calls** are how that record
+    was obtained: a library that reached the same counts by scanning the whole table and filtering
+    in memory would satisfy every number and be unusable on a real one.
+
+    The fixture is the library's own in-memory engine rather than one written here, because a runner
+    that writes its own is a runner whose *fixture* can be the thing that differs - and then a red
+    vector says "one of two tables disagreed" instead of "one of two libraries disagreed".
+    """
+    model = model_from_neutral(_read_json(case / "model.json"))
+    placement = _placement_of(case, model)
+    engines = engines_from(_read_json(case / "engines.json"))
+
+    watermark = case / "watermark.json"
+    if watermark.is_file():
+        want = _read_json(watermark)
+        if "error" in want:
+            with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+                sde.enforce_forward_only(placement, engines)
+        else:
+            got = sde.enforce_forward_only(placement, engines)
+            record = {key: value for key, value in got.as_record().items() if key != "why"}
+            assert record == want["expect"], (
+                f"{_ident(case)}: the forward-only check disagrees with the vector. This decides "
+                "whether a client can be silently reverted to a previous placement."
+            )
+            # `why` is prose, so it is pinned by substring like every other diagnostic here.
+            for fragment in want["why_match"]:
+                assert fragment in got.why, (
+                    f"the explanation does not contain {fragment!r}. A protection whose state "
+                    "cannot be read is a protection taken on trust, so the sentence is part of "
+                    "what this check produces."
+                )
+
+    session: sde.Session | None = None
+    backfill = case / "backfill.json"
+    if backfill.is_file():
+        want = _read_json(backfill)
+        session = sde.Session(model, placement, engines)
+        options = want.get("options") or {}
+        if "error" in want:
+            with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+                sde.backfill(session, want["group"], **options)
+        else:
+            progress = sde.backfill(session, want["group"], **options)
+            assert progress.as_record() == want["progress"], (
+                f"{_ident(case)}: the backfill progress differs from the vector"
+            )
+
+    check = case / "verify.json"
+    if check.is_file():
+        want = _read_json(check)
+        if session is None:
+            session = sde.Session(model, placement, engines)
+        report = sde.verify(session, want["group"], **(want.get("options") or {}))
+        # `at` is a clock reading, so the vector carries a placeholder rather than an instant: a
+        # vector with a timestamp in it is a vector that expires.
+        assert {**report.as_record(), "at": "<any>"} == want["report"]
+        assert report.matched is want["matched"]
+        assert [
+            {
+                "entity": difference.entity,
+                "table": difference.table,
+                "key": dict(difference.key),
+                "columns": list(difference.columns),
+            }
+            for difference in report.differences
+        ] == want["differences"], (
+            "the differences differ. These hold the client's own key values and are deliberately "
+            "absent from the record that crosses the boundary, so they are compared here and "
+            "nowhere else."
+        )
+
+    operations = case / "operations.json"
+    if operations.is_file():
+        _drive_session(case, model, placement, engines)
+
+    calls = case / "calls.json"
+    if calls.is_file():
+        # **One sequence for the whole engine set.** Per-engine lists cannot express the guarantee
+        # the dual-write cases are about - a row reaches the source before anything is attempted
+        # against the copy - and reversing those two lines passed every vector while one of them
+        # claimed in writing that the ordering was what it pinned.
+        journal = next(iter(engines.values())).recorded
+        assert journal.as_list() == _read_json(calls), (
+            f"{_ident(case)}: the calls this library made to the engines differ from the vector. "
+            "The counts can be right and the calls wrong - that is a library that works on a "
+            "fixture and not on a table."
+        )
+
+
+def test_there_are_migration_vectors() -> None:
+    assert _cases("migration"), "no migration vectors found, but this library claims Tier 2"
+
+
+def test_the_no_account_mode_touches_no_engine() -> None:
+    """The one case whose expectation is an **empty** call list, asserted here as well.
+
+    Section 12.6 promises that in the no-account mode this library does nothing at all - no table,
+    no query, no cost. That is a claim about calls that were *not* made, and a vector holding an
+    empty list is easy to satisfy by accident: a runner that never built the engines would pass it.
+    So the same document is read from the other side, and the assertion is that some other case in
+    this family does make calls.
+    """
+    empty: list[str] = []
+    busy: list[str] = []
+    for case in _cases("migration"):
+        document = case / "calls.json"
+        if not document.is_file():
+            continue
+        made = len(_read_json(document))
+        (empty if made == 0 else busy).append(case.name)
+    assert empty, "no migration vector pins an engine this library must not touch"
+    assert busy, "every migration vector expects zero calls, so the runner may not be running"
+
+
 def test_every_shape_kind_is_exercised_by_a_vector() -> None:
     """Totality over the operation kinds, and it is here because a mutation survived.
 
@@ -448,6 +665,8 @@ _ERRORS: dict[str, type[Exception]] = {
     # "which error".
     "EngineError": EngineError,
     "MapError": MapError,
+    "MapRolledBack": MapRolledBack,
+    "MigrationRefused": MigrationRefused,
 }
 
 

@@ -1,0 +1,29 @@
+{
+  "group": "Reading",
+  "options": {
+    "chunk_rows": 3
+  },
+  "report": {
+    "at": "<any>",
+    "chunks_compared": 5,
+    "chunks_mismatched": 1,
+    "tail_rows_read": 0,
+    "tail_rows_missing_in_target": 0,
+    "rows_source": 11,
+    "rows_target": 11
+  },
+  "matched": false,
+  "differences": [
+    {
+      "entity": "Reading",
+      "table": "reading",
+      "key": {
+        "id": 4
+      },
+      "columns": [
+        "celsius"
+      ]
+    }
+  ],
+  "why": "Compared value by value rather than by digest, and the reason is diagnostics: both copies are read by one process on one machine, so a checksum would compress a comparison that costs nothing to do exactly - and an exact comparison can say *which column* differs, which is the difference between an operator who can fix a migration and one who can only stop it. The differing row is in the chunk that is counted as mismatched, and the `differences` list is **not** part of the record that crosses the boundary: it holds the client's own key values."
+}

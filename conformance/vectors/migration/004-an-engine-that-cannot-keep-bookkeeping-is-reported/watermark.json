@@ -1,0 +1,17 @@
+{
+  "expect": {
+    "protection": "unavailable",
+    "map_version": 2,
+    "highest_seen": null,
+    "participating": [],
+    "unable": [
+      "pg-main"
+    ]
+  },
+  "why_match": [
+    "can keep bookkeeping",
+    "nowhere to put it",
+    "does not exist for it"
+  ],
+  "why": "An engine whose schema is fixed in its own source has nowhere to put this, so a client whose only engine is that one has no rollback protection and cannot have any. The honest maximum is to say so: `unavailable` is a third value, not a `false`, and it is readable from the session - a protection whose state cannot be read is a protection taken on trust."
+}

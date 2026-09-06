@@ -41,9 +41,25 @@ import {
   SHAPE_KINDS,
   shapeId,
   shapeIr,
+  windowCopies,
   windowFeatures,
   windowRecord,
 } from '../src/index.js'
+import {
+  backfill,
+  backfillRecord,
+  compareCodePoints,
+  copyFreshnessRecord,
+  enforceForwardOnly,
+  MapRolledBack,
+  MigrationRefused,
+  Session,
+  verify,
+  verifyRecord,
+  watermarkRecord,
+} from '../src/index.js'
+import type { MemoryEngine } from '../src/testing/memory.js'
+import { enginesFrom } from '../src/testing/memory.js'
 import type { LogicalModel, Materialization, PlacementMap } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
@@ -169,6 +185,8 @@ const ERRORS: Record<string, new (...args: never[]) => Error> = {
   DeclarationError,
   EngineError,
   MapError,
+  MapRolledBack,
+  MigrationRefused,
 }
 
 interface ErrorExpectation {
@@ -628,6 +646,287 @@ function recorded(model: LogicalModel, operations: readonly Operation[], dir: st
   expect(window, 'the case recorded nothing, so it pins nothing').toBeDefined()
   return window!
 }
+
+/**
+ * Tier 2, second half: taking part in a migration.
+ *
+ * Two things are pinned and the second is the unusual one. **The record** is what a gate on our side
+ * reads - a backfill's progress, a verify's seven counts. **The calls** are how that record was
+ * obtained: a library that reached the same counts by scanning the whole table and filtering in
+ * memory would satisfy every number and be unusable on a real one.
+ *
+ * The fixture is the library's own in-memory engine rather than one written here, because a runner
+ * that writes its own is a runner whose *fixture* can be the thing that differs - and then a red
+ * vector says "one of two tables disagreed" instead of "one of two libraries disagreed".
+ */
+
+interface MigrationLoad {
+  readonly require_signature?: boolean
+  readonly public_key?: string
+}
+
+async function refusesAsync(fn: () => Promise<unknown>, name: string, match: string): Promise<void> {
+  let thrown: unknown
+  try {
+    await fn()
+  } catch (error) {
+    thrown = error
+  }
+  const expected = ERRORS[name]
+  expect(thrown, `expected a ${name} containing ${match}`).toBeInstanceOf(expected)
+  expect((thrown as Error).message).toContain(match)
+}
+
+/**
+ * How a case asks its transaction to roll back.
+ *
+ * An error thrown by the runner rather than a flag on the session, because a rollback is what an
+ * application's own failure looks like: the guarantee under test is that a transaction which does
+ * not complete leaves nothing in the copy, and the only honest way to reach it is to fail.
+ */
+class Rollback extends Error {}
+
+interface SessionStep {
+  readonly op: string
+  readonly entity?: string
+  readonly values?: Record<string, unknown>
+  readonly entities?: readonly string[]
+  readonly body?: readonly SessionStep[]
+  readonly rollback?: boolean
+}
+
+/**
+ * Run a case's session operations and compare what each engine ended up holding.
+ *
+ * The heart of Tier 2 and the part no document transformation can reach: a fan-out is a second
+ * write in the client's own process, and every rule about it is about *when* it happens.
+ */
+async function driveSession(
+  dir: string,
+  model: LogicalModel,
+  map: PlacementMap,
+  engines: Record<string, MemoryEngine>,
+): Promise<void> {
+  const recorder = new Recorder(model.version)
+  const session = await Session.open(model, map, engines, { recorder })
+
+  const run = async (steps: readonly SessionStep[]): Promise<void> => {
+    for (const step of steps) {
+      if (step.op === 'save') {
+        await session.save(step.entity as string, step.values as Record<string, unknown>)
+      } else if (step.op === 'transaction') {
+        try {
+          await session.transaction(step.entities ?? [], async () => {
+            await run(step.body ?? [])
+            if (step.rollback === true) throw new Rollback()
+          })
+        } catch (error) {
+          if (!(error instanceof Rollback)) throw error
+        }
+      } else {
+        throw new Error(`unknown operation ${step.op}`)
+      }
+    }
+  }
+  await run(readJson<SessionStep[]>(join(dir, 'operations.json')))
+
+  const gotTables: Record<string, unknown> = {}
+  for (const name of Object.keys(engines).sort()) {
+    const engine = engines[name] as MemoryEngine
+    const tables: Record<string, unknown> = {}
+    for (const table of Object.keys(engine.tables).sort()) {
+      tables[table] = [...(engine.tables[table] as Record<string, unknown>[])].sort((a, b) =>
+        JSON.stringify(sortedKeys(a)) < JSON.stringify(sortedKeys(b)) ? -1 : 1,
+      )
+    }
+    gotTables[name] = tables
+  }
+  expect(
+    gotTables,
+    'the engines do not hold what the vector says. A fan-out written at the wrong moment loses ' +
+      'exactly the rows a migration exists not to lose, and nothing raises.',
+  ).toEqual(readJson(join(dir, 'tables.json')))
+
+  const window = recorder.roll()
+  const group = Object.keys(map.groups).sort()[0] as string
+  const copies = window === undefined ? [] : windowCopies(window, group)
+  const wanted = readJson<Record<string, unknown>[]>(join(dir, 'copies.json'))
+  expect(copies).toHaveLength(wanted.length)
+  copies.forEach((copy, index) => {
+    const record = copyFreshnessRecord(copy)
+    const want = wanted[index] as Record<string, unknown>
+    for (const measured of ['lag_p50_ms', 'lag_p99_ms']) {
+      // Elapsed time, so the vector carries a placeholder. What is a property of the library rather
+      // than of the clock is that the field is there and is a number or null.
+      expect(want[measured]).toBe('<any>')
+      const value = record[measured]
+      expect(value === null || typeof value === 'number').toBe(true)
+      record[measured] = '<any>'
+    }
+    expect(record).toEqual(want)
+  })
+}
+
+/** A row with its keys in order, so two rows compare the same way in both languages. */
+function sortedKeys(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(row).sort(compareCodePoints)) out[key] = row[key]
+  return out
+}
+
+
+describe('migration vectors', () => {
+  for (const name of cases('migration')) {
+    it(name, async () => {
+      const dir = join(VECTORS, 'migration', name)
+      const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      const load: MigrationLoad = existsSync(join(dir, 'load.json'))
+        ? readJson(join(dir, 'load.json'))
+        : {}
+      const keys: Record<string, string> = existsSync(join(dir, 'keys.json'))
+        ? readJson(join(dir, 'keys.json'))
+        : {}
+      const named = load.public_key
+      const map = loadMap(readJson(join(dir, 'map.json')), {
+        model,
+        ...(named === undefined
+          ? {}
+          : { publicKey: Buffer.from(keys[named] as string, 'base64') }),
+        requireSignature: load.require_signature === true,
+      })
+      const engines = enginesFrom(readJson(join(dir, 'engines.json')))
+
+      const watermarkFile = join(dir, 'watermark.json')
+      if (existsSync(watermarkFile)) {
+        const want = readJson<{
+          error?: string
+          match?: string
+          expect?: unknown
+          why_match?: string[]
+        }>(watermarkFile)
+        if (want.error !== undefined) {
+          await refusesAsync(
+            () => enforceForwardOnly(map, engines),
+            want.error,
+            want.match as string,
+          )
+        } else {
+          const got = await enforceForwardOnly(map, engines)
+          const { why, ...record } = watermarkRecord(got)
+          expect(
+            record,
+            'the forward-only check disagrees with the vector. This decides whether a client can ' +
+              'be silently reverted to a previous placement.',
+          ).toEqual(want.expect)
+          // `why` is prose, so it is pinned by substring like every other diagnostic here.
+          for (const fragment of want.why_match ?? []) {
+            expect(String(why)).toContain(fragment)
+          }
+        }
+      }
+
+      let session: Session | undefined
+      const backfillFile = join(dir, 'backfill.json')
+      if (existsSync(backfillFile)) {
+        const want = readJson<{
+          group: string
+          options?: { chunk_rows?: number; stop_after?: number }
+          error?: string
+          match?: string
+          progress?: unknown
+        }>(backfillFile)
+        session = await Session.open(model, map, engines)
+        const options = {
+          ...(want.options?.chunk_rows === undefined ? {} : { chunkRows: want.options.chunk_rows }),
+          ...(want.options?.stop_after === undefined ? {} : { stopAfter: want.options.stop_after }),
+        }
+        if (want.error !== undefined) {
+          await refusesAsync(
+            () => backfill(session as Session, want.group, options),
+            want.error,
+            want.match as string,
+          )
+        } else {
+          const progress = await backfill(session, want.group, options)
+          expect(backfillRecord(progress)).toEqual(want.progress)
+        }
+      }
+
+      const verifyFile = join(dir, 'verify.json')
+      if (existsSync(verifyFile)) {
+        const want = readJson<{
+          group: string
+          options?: { chunk_rows?: number }
+          report: Record<string, unknown>
+          matched: boolean
+          differences: unknown[]
+        }>(verifyFile)
+        session ??= await Session.open(model, map, engines)
+        const report = await verify(session, want.group, {
+          ...(want.options?.chunk_rows === undefined ? {} : { chunkRows: want.options.chunk_rows }),
+        })
+        // `at` is a clock reading, so the vector carries a placeholder rather than an instant: a
+        // vector with a timestamp in it is a vector that expires.
+        expect({ ...verifyRecord(report), at: '<any>' }).toEqual(want.report)
+        expect(report.matched).toBe(want.matched)
+        expect(
+          report.differences.map((difference) => ({
+            entity: difference.entity,
+            table: difference.table,
+            key: difference.key,
+            columns: [...difference.columns],
+          })),
+          'the differences differ. These hold the client\'s own key values and are deliberately ' +
+            'absent from the record that crosses the boundary.',
+        ).toEqual(want.differences)
+      }
+
+      const operationsFile = join(dir, 'operations.json')
+      if (existsSync(operationsFile)) {
+        await driveSession(dir, model, map, engines)
+      }
+
+      const callsFile = join(dir, 'calls.json')
+      if (existsSync(callsFile)) {
+        // **One sequence for the whole engine set.** Per-engine lists cannot express the guarantee
+        // the dual-write cases are about - a row reaches the source before anything is attempted
+        // against the copy - and reversing those two lines passed every vector while one of them
+        // claimed in writing that the ordering was what it pinned.
+        const first = Object.values(engines)[0] as MemoryEngine
+        expect(
+          first.recorded.calls,
+          'the calls this library made to the engines differ from the vector. The counts can be ' +
+            'right and the calls wrong - that is a library that works on a fixture and not on a ' +
+            'table.',
+        ).toEqual(readJson(callsFile))
+      }
+    })
+  }
+
+  it('found migration vectors at all', () => {
+    expect(cases('migration').length).toBeGreaterThan(0)
+  })
+
+  it('pins an engine the no-account mode must not touch', () => {
+    // Section 12.6 promises that in the no-account mode this library does nothing at all - no
+    // table, no query, no cost. That is a claim about calls that were *not* made, and a vector
+    // holding an empty list is easy to satisfy by accident: a runner that never built the engines
+    // would pass it. So the same document is read from the other side.
+    const empty: string[] = []
+    const busy: string[] = []
+    for (const name of cases('migration')) {
+      const document = join(VECTORS, 'migration', name, 'calls.json')
+      if (!existsSync(document)) continue
+      const made = readJson<unknown[]>(document).length
+      ;(made === 0 ? empty : busy).push(name)
+    }
+    expect(empty.length, 'no migration vector pins an engine this library must not touch')
+      .toBeGreaterThan(0)
+    expect(busy.length, 'every migration vector expects zero calls, so the runner may not run')
+      .toBeGreaterThan(0)
+  })
+})
+
 
 describe('telemetry vectors', () => {
   for (const name of cases('telemetry')) {

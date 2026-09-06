@@ -1,0 +1,18 @@
+{
+  "pg-copy": {
+    "reading": [
+      {
+        "id": 1,
+        "celsius": 20
+      }
+    ]
+  },
+  "pg-main": {
+    "reading": [
+      {
+        "id": 1,
+        "celsius": 20
+      }
+    ]
+  }
+}
