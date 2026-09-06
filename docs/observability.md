@@ -21,7 +21,15 @@ Both are checked mechanically, in this repository, by tests you can run:
 | The no-account mode emits no event the account mode does not | `python/tests/test_no_account_live.py` |
 | The library has no channel louder than one INFO event | `python/tests/test_no_account.py` |
 | The TypeScript library has no output channel at all | `typescript/tests/silence.test.ts` |
+| Importing the TypeScript library resolves no driver and reaches no socket module | `typescript/tests/boundary.test.ts` — over the import closure of `src/index.ts`, because ES modules offer no registry to read at runtime |
 | Nothing in the library knows when a map was issued | `python/tests/test_no_expiry.py` |
+
+The TypeScript row above is the weaker of the two mechanisms and says so. Python runs a subprocess
+and reads `sys.modules`, which is a fact about what was loaded; ES modules have no equivalent, so
+what is checked there is the **import closure of the entry point**, computed from the source. It
+answers "can this reach a socket" rather than "did it", and the two engine adapters are behind their
+own subpath exports precisely so that the answer is no. They do reach one, deliberately, and the
+same test asserts that - a check that passes by finding nothing has to be shown a case it finds.
 
 The audit-hook test is worth one note, because it is the one that could be written to look
 convincing and prove nothing. An audit hook sees the Python socket layer and nothing below it:

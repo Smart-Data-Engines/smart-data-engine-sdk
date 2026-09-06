@@ -23,12 +23,14 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 | Library | Language | Tier | Hashing (§2a) | IR contract | Map contract | Engines |
 |---|---|---|---|---|---|---|
 | `smart-data-engine` | Python 3.11–3.13 | 2 | yes | 1 | 1–2 | `clickhouse`, `orderbook`, `postgres` |
-| `@smart-data-engines/sde` | TypeScript / Node 18–22 | 1 | yes | 1 | 1–2 | none |
+| `@smart-data-engines/sde` | TypeScript / Node 18–22 | 2 | yes | 1 | 1–2 | `clickhouse`, `postgres` |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
-`postgres` is PostgreSQL and `orderbook` is our own L2 orderbook engine, whose schema is fixed in its
-own source — a group either is that shape or it cannot be placed there, and rendering DDL for it
+Requirement 17.5 is where the real cost of this table lives: four languages times two engines is
+eight driver integrations, and each of them needs its own transaction-semantics tests. Two of the
+eight exist per row above. `postgres` is PostgreSQL and `orderbook` is our own L2 orderbook engine,
+whose schema is fixed in its own source — a group either is that shape or it cannot be placed there, and rendering DDL for it
 yields no statements rather than no tables.
 
 **Python is the reference implementation.** Where it disagrees with the contract, the contract is
@@ -37,14 +39,32 @@ right and the library is wrong — with one exception, stated in the contract it
 so if the reference disagrees with *it*, the reference is wrong until somebody argues otherwise in
 writing.
 
-**TypeScript reached Tier 1 on 6 September 2026, and the vectors for that tier were written first.**
-Section 10 of the contract says the vectors for a tier are written before a second library claims it,
-not after — so `telemetry/` and `schema/` exist because of this claim rather than alongside it. It
-now measures traffic, aggregates windows, buffers them locally and produces the same window document
-the reference does; it renders DDL as a value; and it still opens no connections, because engine
-adapters are Tier 2. Its second purpose remains structural: the contract's neutrality is checked by a
-second implementation, not by a fourth, and several rules in it exist because these two disagreed —
-including two found while writing those vector families.
+**TypeScript reached Tier 2 on 6 September 2026, and the vectors for those tiers were written
+first.** Section 10 of the contract says the vectors for a tier are written before a second library
+claims it, not after — so `telemetry/`, `schema/` and `migration/` exist because of this claim rather
+than alongside it, and closing that gap found five defects in the reference implementation. Its
+second purpose remains structural: the contract's neutrality is checked by a second implementation,
+not by a fourth, and several rules in it exist because these two disagreed.
+
+Three differences from the reference are worth knowing before you depend on it, and all three are
+decisions rather than gaps.
+
+**Its Tier 2 surface is asynchronous, and everything below Tier 2 is not.** Node's I/O is
+asynchronous, so a synchronous wrapper around a driver blocks the event loop — a worse thing to do to
+a client's process than a promise in a signature. The split follows the tiers exactly: nothing up to
+and including telemetry touches a socket. A session is *opened* rather than constructed, because the
+forward-only map check reads a table, so a caller cannot hold one whose check has not run.
+
+**Its ClickHouse adapter has no driver dependency.** The official Node client requires Node 20 and
+this package supports 18 to 22 with all three in CI; dropping 18 would narrow a published claim to
+gain a dependency, and pinning a superseded client version is the conflict the zero-dependency rule
+exists to avoid. ClickHouse's HTTP interface needs no client. One consequence is an improvement: the
+adapter owns both of its timeouts rather than inheriting a driver's defaults, which is how the
+reference implementation came to discover that its own ClickHouse connect timeout never fired.
+
+**It has no `explain`.** Validating an analyst's SQL against a live engine (requirement 19.4) is a
+Python feature today. Nothing about it is language-specific; it is simply not written here, and a
+table that implied otherwise is the kind of claim requirement 17.6 exists to prevent.
 
 The tier in the table above is checked against the library's own `TIER` constant by a test, because a
 list that says one thing while the code says another is the failure requirement 17.6 exists to

@@ -8,6 +8,14 @@ page exists before the first sale rather than after the first incident. Every ro
 measured against a real engine or pinned by a test named in the last column, and
 `python/tests/test_failure_semantics.py` fails if any of them stops being true.
 
+**It applies to both supported libraries.** Every bound and every message below holds in Python and
+in TypeScript, and each has its own tests: `typescript/tests/failure.test.ts` for the bounds, which
+needs no server because every socket it waits on is one it starts itself, and
+`typescript/tests/cut-connection.live.test.ts` for what the second call says after a connection is
+cut. Two of the rows below were **defects** when this page was first written, and one of them was a
+defect again in the second language for a different reason - which is the argument for a page like
+this existing at all rather than a description of one.
+
 ## Three rules, and everything else follows from them
 
 1. **We are not in your data path.** The library connects to your engines directly. Our control
@@ -26,9 +34,9 @@ measured against a real engine or pinned by a test named in the last column, and
 | What failed | What your call does | What is retried | What can be lost | Pinned by |
 |---|---|---|---|---|
 | The engine is not listening | `connect()` raises `EngineError` carrying the driver's own reason. Measured: 0.16 s to fail against a closed port | nothing | nothing: no operation was attempted | `test_failure_semantics.py` |
-| The engine accepts the socket and never answers | `connect()` raises after **10 s** on PostgreSQL and **15 s** on ClickHouse (measured; before these bounds existed the call did not return within 45 seconds). Both are defaults this library supplies and a value in your DSN wins | nothing | nothing | `test_failure_semantics.py` |
+| The engine accepts the socket and never answers | `connect()` raises after **10 s** on PostgreSQL and **15 s** on ClickHouse (measured; before these bounds existed the call did not return within 45 seconds). Both are defaults this library supplies and a value in your DSN wins | nothing | nothing | `test_failure_semantics.py`, `failure.test.ts` |
 | The connection dies under an operation | the failing call raises `EngineError` carrying what the server said. Every call after it raises "the connection is closed", plus the sentence that matters: this library does not reopen a connection it was handed | nothing | the operation either reached the engine or did not, and the error is your signal. Nothing was written twice | `test_failure_semantics.py` |
-| A query is simply slow | not a failure, and not bounded by us. Set `statement_timeout` in your PostgreSQL DSN, or `send_receive_timeout` for ClickHouse past the handshake | nothing | nothing | see "what we do not do" |
+| A query is simply slow | not a failure, and not bounded by us. Set `statement_timeout` in your PostgreSQL DSN, or `max_execution_time` on your ClickHouse server. Measured on the Python side, where a bound does exist past the handshake: with `send_receive_timeout` at 15 s, a 23-second and a 24-second query both returned normally | nothing | nothing | see "what we do not do" |
 | A read asked for freshness | goes to the source, before any routing table is consulted. A derived copy is behind by design, so it cannot answer this | nothing | nothing | `routing/` conformance vectors |
 | A write during a migration | goes to the source, and additionally to every fan-out target the map names. The additional write is **never authoritative**: if the copy refuses it, your call still succeeds and the failure is counted | nothing | nothing you were told was written. The copy's gap is what the migration's verification exists to find, and it refuses to switch reads until the copy matches value by value | `test_dual_write.py`, and the control plane's gate |
 | The map is for a different model version | refused when the map loads, naming both versions. Never reconciled: the difference between two models cannot be guessed from either side | nothing | nothing | `errors/007` |
@@ -51,7 +59,10 @@ measured against a real engine or pinned by a test named in the last column, and
 - **No statement timeout.** An analytical query legitimately takes minutes, and a library that cut
   it off would be deciding something about your workload that it cannot know. The one exchange this
   library does know the shape of is the connection handshake, which is why that is the only thing
-  it bounds.
+  it bounds. The two libraries reach that position differently and it is worth knowing which you
+  have: in Python the driver's read bound applies to every request and a slow query survives it
+  anyway (measured, above); in TypeScript only the handshake request carries a timeout at all, which
+  is one fewer thing to be right about.
 - **No fallback to another engine.** A read that cannot be served where the map sends it fails.
   Answering it from somewhere else would mean answering from a copy you did not ask for.
 - **No retry of a write.** See rule 2.
@@ -78,3 +89,24 @@ SDE_POSTGRES_DSN=... SDE_CLICKHOUSE_DSN=... .venv/bin/python -m pytest tests/tes
 The live half of that file kills a connection under a running session, points the adapter at a
 closed port and at a socket that accepts and stays silent, and asserts what comes back. If it passes
 against your engines, the table above is true for your deployment and not only for ours.
+
+## What the second language cost, and why it is on this page
+
+Requirement 17.5 says a Tier 2 implementation brings its own drivers, and that four languages times
+two engines is eight integrations. Writing two of the eight found two things worth telling you,
+because both are about *your* process rather than ours.
+
+**A `connect_timeout` in a PostgreSQL DSN does nothing in Node.** `pg` derives its own connect bound
+from a code-level option and *overwrites* whatever the connection string said, so the value you
+wrote is parsed and discarded. The first version of the TypeScript adapter did what the Python one
+does - leave your value alone if you set one - and the result was the worst of both: your bound
+ignored by the driver and ours suppressed by yours, so a DSN asking for two seconds got **no bound
+at all**. It translates the parameter now, so your value wins and a bound always exists.
+
+**An unhandled driver error can kill your process.** `pg.Client` is an `EventEmitter` and emits
+`error` when the server terminates a connection between queries - a restart, a failover, an
+administrator. Node's rule for an `error` event with no listener is to throw it, with no call of
+yours on the stack. The adapter listens, records it, and reports it as part of the next call's
+message. Neither of these has an equivalent in Python, which is the general point: the contract is
+identical across languages and the *failure modes of the runtimes are not*, so each library measures
+its own.

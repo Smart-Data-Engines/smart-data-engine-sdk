@@ -186,25 +186,61 @@ def test_the_typescript_row_agrees_with_the_librarys_own_tier() -> None:
     )
 
 
-def test_the_typescript_row_claims_no_engines_and_has_none() -> None:
-    """A ratchet, not a description. The day that library grows an engine adapter this test fails,
-    and the table is the thing that has to change - because at that moment "none" in its engines
-    column stops being true and a client reading it would size their deployment on it.
+def test_the_typescript_row_names_the_adapters_it_actually_has() -> None:
+    """Derived from the files, in both directions, because this cell has already changed once.
 
-    The **tier** used to be asserted here as a literal too, and it moved out when it started
-    changing: it is a fact about the library, so the test for it reads the library's own constant
-    rather than a number typed twice. One fact, one place - two literals agreeing is not a check.
+    It used to read `none` and be asserted as a literal - a ratchet whose whole purpose was to fail
+    on the day that library grew an engine adapter, so that the table would have to change rather
+    than quietly become wrong. It fired on 6 September 2026, which is the only evidence that a
+    ratchet was the right shape for it.
+
+    What replaces it is the same check the Python row gets: the row names dialect identifiers, and
+    the adapters have to be the ones present. An adapter added without the row growing is a
+    capability the list does not claim, which is harmless only until somebody relies on the list; a
+    row naming an adapter that is not there is worse, and it is the direction requirement 17.6 is
+    about.
+
+    The dialects are read out of the source rather than imported, because this suite runs in
+    Python - the TypeScript library's own tests cannot see this document, and this one cannot run
+    its code.
     """
-    row = _row("@smart-data-engines/sde")
-    assert row[6] == "none", row
     source = ROOT / "typescript" / "src"
-    assert not (source / "engines").exists(), "the TypeScript library has an engines directory"
-    drivers = [
-        path.name
+    row = _row("@smart-data-engines/sde")
+    named = tuple(sorted(name.strip().strip("`") for name in row[6].split(",")))
+
+    adapters = sorted(
+        path.stem for path in (source / "engines").glob("*.ts") if not path.stem.startswith("_")
+    )
+    assert named == tuple(adapters), (named, adapters)
+
+    # And each adapter says which dialect it is, in the vocabulary a hand-written layout uses. A
+    # file named `postgres.ts` that reported some other dialect would satisfy the check above and
+    # render the wrong DDL.
+    for adapter in adapters:
+        text = (source / "engines" / f"{adapter}.ts").read_text()
+        assert f"readonly dialect = '{adapter}'" in text, adapter
+        assert adapter in sde.DIALECTS, (
+            f"{adapter} is not a dialect this contract has a type mapping for, so a layout for it "
+            f"could not be rendered by the reference implementation either"
+        )
+
+
+def test_the_typescript_core_reaches_no_driver() -> None:
+    """The claim the whole no-account mode rests on, from this side of the fence.
+
+    The TypeScript suite checks this properly, over the import closure of its entry point. This is
+    the cheaper half in the language the documents are checked in: no file outside `engines/` may
+    name a driver, so a driver import that crept into the core would fail here even if somebody
+    deleted the other test.
+    """
+    source = ROOT / "typescript" / "src"
+    offending = [
+        str(path.relative_to(source))
         for path in source.rglob("*.ts")
-        if re.search(r"from '(pg|clickhouse|mysql|mongodb)", path.read_text())
+        if path.parent.name != "engines"
+        and re.search(r"from '(pg|clickhouse|mysql|mongodb|node:http|node:net)", path.read_text())
     ]
-    assert drivers == [], drivers
+    assert offending == [], offending
 
 
 def test_the_list_says_who_fixes_a_defect_in_each_kind() -> None:

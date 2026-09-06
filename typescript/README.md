@@ -28,19 +28,44 @@ const model = buildModel([User, Order, Event])
 free to go somewhere built for it. That split is the decision most applications get wrong once, at the
 start, and never revisit.
 
-## Status: Tier 0, plus hashed identifiers
+## Status: Tier 2 for PostgreSQL and ClickHouse, plus hashed identifiers
 
 | Tier | What it covers | Here? |
 |---|---|---|
 | 0 | model, canonical IR and version, groups, shapes and ids, map parsing and refusals, routing | **yes** |
-| 1 | telemetry: measurement, window aggregation, local buffering | not yet |
-| 2 | schema creation and migration participation | not yet |
+| 1 | telemetry: measurement, window aggregation, local buffering | **yes** |
+| 2 | schema creation and migration participation | **yes**, for `postgres` and `clickhouse` |
 | 3 | framework integrations, pooling | not yet |
 | — | hashed identifiers (§2a), a mode rather than a tier | **yes** |
 
-Tier 0 means this library can declare a model, agree with every other SDE library about what that
-model *is*, load a placement map and tell you where an operation goes. It cannot yet talk to a
-database. The Python library is further along; see the repository root for what each one reaches.
+The shared vectors for Tier 1 and Tier 2 were written **before** this library claimed those tiers,
+which is what §10 of the format contract says has to happen and is worth knowing about the claim:
+`telemetry/`, `schema/` and `migration/` exist because of it. Closing that gap found five defects in
+the reference implementation, which had been claiming those tiers with nothing shared to check them.
+
+### Where the two libraries differ, and why
+
+Two differences, both deliberate.
+
+**Tier 2 here is asynchronous.** Node's I/O is asynchronous, so a synchronous wrapper around a driver
+means blocking the event loop - a worse thing to do to your process than a `Promise` in a signature.
+The split follows the tiers exactly: everything up to and including telemetry touches no socket and
+stays synchronous, and a `Session` is *opened* rather than constructed, because the forward-only map
+check reads a table and a constructor cannot await. You therefore cannot hold a session whose check
+has not run.
+
+**The ClickHouse adapter has no driver dependency.** There is an official Node client and it requires
+Node 20 or newer; this package supports Node 18 to 22 and its CI runs all three. Dropping Node 18
+would narrow a published claim to gain a dependency, and pinning a superseded version of the client
+is the conflict the zero-dependency rule exists to avoid - so neither. ClickHouse's HTTP interface
+needs no client, and this adapter therefore owns both of its timeouts instead of inheriting a
+driver's defaults, which is how the reference implementation discovered that its ClickHouse connect
+timeout never fired.
+
+`pg` is an **optional peer dependency**: install it if you place a group in PostgreSQL, and keep the
+version you already chose. Importing this library resolves neither driver, and a test over the import
+closure of `src/index.ts` pins that - which is what makes the no-account mode free and
+`docs/observability.md` true.
 
 `hashIdentifiers` is listed separately because hashing is orthogonal to the tiers - a complete Tier 0
 library may omit it. What is not optional is agreement: run two services in two languages against one
@@ -72,6 +97,11 @@ with `.sort()`.
 
 ```bash
 npm install
+npx vitest run
+
+# with both engines, which is what the Tier 2 slices need
+export SDE_POSTGRES_DSN=postgresql://postgres:sde@127.0.0.1:55432/sde
+export SDE_CLICKHOUSE_DSN=clickhouse://default:sde@127.0.0.1:58123/sde
 npx vitest run
 ```
 

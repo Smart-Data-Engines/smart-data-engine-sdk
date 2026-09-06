@@ -1,0 +1,56 @@
+{
+  "entities": [
+    {
+      "name": "Sample",
+      "fields": [
+        {
+          "name": "approx",
+          "type": "float64"
+        },
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "big",
+          "type": "int64"
+        },
+        {
+          "name": "day",
+          "type": "date"
+        },
+        {
+          "name": "flag",
+          "type": "bool"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "money",
+          "type": "decimal(12,2)"
+        },
+        {
+          "name": "naive",
+          "type": "timestamp"
+        },
+        {
+          "name": "narrow",
+          "type": "float32"
+        },
+        {
+          "name": "small",
+          "type": "int32"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}

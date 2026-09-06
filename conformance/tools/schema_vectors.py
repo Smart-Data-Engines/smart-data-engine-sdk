@@ -591,6 +591,84 @@ def _nine() -> None:
     _write("009-columns-out-of-order-in-the-document", model, raw, cases)
 
 
+def _ten() -> None:
+    """One model with every type both engines map, and both layouts in one map.
+
+    Two jobs. As a schema vector it pins the DDL for the whole neutral vocabulary minus the two
+    types ClickHouse deliberately has no column for. And as a fixture it is what the TypeScript
+    library's engine-agreement test round-trips through: the same value written through both
+    adapters has to come back identical in content **and** in JavaScript type, and the layouts it
+    writes against have to be the ones a planner would issue rather than ones a test typed out.
+
+    `bytes` and `json` are absent on purpose. ClickHouse has no column for them in this library, so
+    `default_layout` refuses that dialect for a group containing one - which is the mechanism that
+    stops a planner placing such a group there, and it is checked by its own test rather than here.
+    """
+    sde.clear_registry()
+    model = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Sample",
+                    "fields": [
+                        {"name": "id", "type": "uuid"},
+                        {"name": "label", "type": "string"},
+                        {"name": "small", "type": "int32"},
+                        {"name": "big", "type": "int64"},
+                        {"name": "approx", "type": "float64"},
+                        {"name": "narrow", "type": "float32"},
+                        {"name": "money", "type": "decimal(12,2)"},
+                        {"name": "flag", "type": "bool"},
+                        {"name": "at", "type": "timestamptz"},
+                        {"name": "naive", "type": "timestamp"},
+                        {"name": "day", "type": "date"},
+                    ],
+                    "key": ["id"],
+                }
+            ],
+            "relations": [],
+            "atomic": [],
+        }
+    )
+    group = "Sample"
+    members = next(g for g in sde.colocation_groups(model) if g.name == group)
+    pg = sde.default_layout(model, members)
+    ch = sde.default_layout(model, members, dialect="clickhouse")
+    raw = _map(model, {group: {"id": "Sample@pg", "engine": "pg-main", "layout": _layout_doc(pg)}})
+    raw["groups"][group]["derived"] = [
+        {"id": "Sample@ch", "engine": "ch-1", "layout": _layout_doc(ch), "lag_budget_ms": 30000}
+    ]
+    cases = [
+        {
+            "materialization": "Sample@pg",
+            "dialect": "postgres",
+            "fixed": False,
+            "statements": _statements(pg, model, group, "postgres"),
+            "why": (
+                "Every type this library maps for PostgreSQL, in one statement, so a change to the "
+                "type table is a change to this file. The pair with the ClickHouse case below is "
+                "the useful part: two columns of the same neutral type, spelled by two engines, and "
+                "an adapter has to give a caller the same value back from either."
+            ),
+        },
+        {
+            "materialization": "Sample@ch",
+            "dialect": "clickhouse",
+            "fixed": False,
+            "statements": _statements(ch, model, group, "clickhouse"),
+            "why": (
+                "The same model in the other dialect. `DateTime64(3, 'UTC')` against "
+                "`timestamptz` is the pair that has already cost this project a measured two-hour "
+                "divergence, and `Decimal(12, 2)` against `numeric(12,2)` is the one where a "
+                "float conversion would come back changed with no error anywhere. Both are "
+                "round-tripped through real servers by the engine-agreement tests, which is what "
+                "makes this vector a fixture as well as an expectation."
+            ),
+        },
+    ]
+    _write("010-every-type-both-engines-map", model, raw, cases)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true")
@@ -610,6 +688,7 @@ def main() -> int:
     _seven()
     _eight()
     _nine()
+    _ten()
     return 0
 
 
