@@ -1,0 +1,32 @@
+{
+  "group": "Reading",
+  "options": {
+    "chunk_rows": 3
+  },
+  "progress": {
+    "group": "Reading",
+    "complete": true,
+    "rows_this_run": 11,
+    "entities": [
+      {
+        "entity": "Reading",
+        "engine": "pg-copy",
+        "table": "reading",
+        "rows_copied": 7,
+        "rows_this_run": 7,
+        "chunks": 3,
+        "complete": true
+      },
+      {
+        "entity": "Sample",
+        "engine": "pg-copy",
+        "table": "sample",
+        "rows_copied": 4,
+        "rows_this_run": 4,
+        "chunks": 2,
+        "complete": true
+      }
+    ]
+  },
+  "why": "The order in `calls.json` is the point: for each chunk, `copy_in` then `record_backfill_marker`, never the other way round. A crash between them costs a recopy, which the target's key semantics absorb; the other order costs the chunk, permanently. The last chunk of seven rows at three per chunk comes back **short**, which is what ends the loop - reaching the end of the table once is enough, because dual write precedes backfill and rows above that point are the fan-out's. The composite-key entity shows the whole key tuple travelling in `after`."
+}

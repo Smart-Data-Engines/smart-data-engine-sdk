@@ -25,19 +25,22 @@ reservoir sampling gets the tail wrong in exactly the region the planner looks a
 
 from __future__ import annotations
 
-import math
 import sys
 import threading
 from collections import deque
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from dataclasses import fields as dataclass_fields
 from typing import Any
 
+from .groups import Group, colocation_groups
 from .internal import guard
 from .logging import log
+from .model import LogicalModel
 from .shapes import WRITE_KINDS
 
 __all__ = [
+    "MEASURED_FIELDS",
     "CopyFreshness",
     "FanOutStats",
     "GroupFeatures",
@@ -65,12 +68,33 @@ class Histogram:
         self.total = 0
 
     def record(self, nanoseconds: int) -> None:
+        """Put one duration in its bucket. Integer arithmetic only, and that is the point.
+
+        This used to read ``int(math.log2(nanoseconds / BUCKET_BASE_NS)) + 1``, which is the same
+        function and the wrong way to compute it once a second language has to agree. ``log2`` is
+        not required by IEEE 754 to be correctly rounded, so two libm implementations may differ in
+        the last bit - and one bit at a power-of-two boundary is a different bucket, which is a
+        different p99 for identical traffic. The bit length of the integer quotient is exact
+        everywhere, and it is cheaper on a path that runs per operation.
+
+        Verified rather than asserted: the two forms were compared over every value below 40 000,
+        every power-of-two boundary and its neighbours, and 400 000 random durations up to 10^13 ns.
+        Zero disagreements.
+
+        **And the vectors cannot see the difference, which is the point of saying so here.** An
+        earlier version of this note claimed ``telemetry/002`` pins it. Measured: replacing this
+        with the logarithm form passes every vector, because glibc's ``log2`` and V8's are both
+        exact at a power of two - so the two runtimes we have agree, and the hazard is a *third*
+        libm that does not. A property no output can distinguish on the machines available is not
+        one a vector can hold, so it is held statically instead: see
+        ``test_the_bucket_index_never_reaches_for_a_logarithm``.
+        """
         self.count += 1
         self.total += nanoseconds
         if nanoseconds < BUCKET_BASE_NS:
             self.buckets[0] += 1
             return
-        index: int = min(BUCKET_COUNT - 1, int(math.log2(nanoseconds / BUCKET_BASE_NS)) + 1)
+        index: int = min(BUCKET_COUNT - 1, (nanoseconds // BUCKET_BASE_NS).bit_length())
         self.buckets[index] += 1
 
     def percentile_ms(self, fraction: float) -> float | None:
@@ -239,6 +263,48 @@ class GroupFeatures:
     missing: frozenset[str] = frozenset()
     complete: bool = True
 
+    def as_record(self) -> dict[str, Any]:
+        """The feature vector as the document that crosses the boundary to the control plane.
+
+        **A field with no value is omitted, and ``missing`` is what says so.** Emitting a null
+        would work too - the reader treats absent and null alike - but omitting is the honest
+        spelling of "not measured", and it keeps this method from having an opinion about what a
+        null means.
+
+        The field list is **derived** from this dataclass rather than written out. That is
+        requirement 6.7 from the writing side: a field added to the library joins this document
+        instead of being silently dropped, which is the mirror of the defect the control plane's
+        reader had - a hand-written list, against a dataclass where every field has a default, so
+        the next field would have been recorded as measured.
+
+        No float is formatted here and none is rounded. Every number in this document is either a
+        ratio of two integers or a bucket edge divided by a million, so two languages compute the
+        same IEEE 754 double - see :meth:`Window.as_record` for why that matters and where the
+        limit of the claim is.
+        """
+        body: dict[str, Any] = {}
+        for name in MEASURED_FIELDS:
+            value = getattr(self, name)
+            if value is None:
+                continue
+            body[name] = dict(value) if isinstance(value, Mapping) else value
+        body["missing"] = sorted(self.missing)
+        body["complete"] = self.complete
+        return body
+
+
+MEASURED_FIELDS: tuple[str, ...] = tuple(
+    spec.name
+    for spec in dataclass_fields(GroupFeatures)
+    if spec.name not in ("missing", "complete")
+)
+"""Every field of :class:`GroupFeatures` that carries a measurement.
+
+Derived from the dataclass, and the two names excluded are bookkeeping *about* the measurement
+rather than part of it. Both this module and the control plane's reader work from this same source,
+so a field added to the feature vector cannot be written by one side and ignored by the other.
+"""
+
 
 @dataclass(frozen=True)
 class Window:
@@ -285,8 +351,13 @@ class Window:
         """Fold this window's records for one group into the planner's feature vector."""
         records = [s for s in self.shapes if s.group == group]
         if not records:
-            return GroupFeatures(
-                missing=frozenset({"no_traffic"}), complete=self.complete, distinct_shapes=0
+            # `no_traffic` is the *reason*, and the unknown fields are named too - by the same
+            # derivation as the branch below, because two branches of one function computing
+            # `missing` by two different rules is the defect this set exists to prevent. An empty
+            # window really did not measure a read/write ratio, and saying only "no traffic" leaves
+            # a reader to work out which fields that implies.
+            return _with_missing(
+                GroupFeatures(complete=self.complete, distinct_shapes=0), also={"no_traffic"}
             )
 
         writes = sum(s.calls for s in records if s.kind in WRITE_KINDS)
@@ -308,17 +379,7 @@ class Window:
         pk_calls = sum(s.calls for s in records if s.kind == "point_read")
         errors = sum(s.errors for s in records)
 
-        # Everything the library cannot see from inside the application. Engine-side sizes need a
-        # catalogue read, which is an adapter capability, and growth needs two samples over time.
-        # Named rather than silently zero, because zero bytes and unknown bytes lead the planner to
-        # opposite conclusions.
-        missing = {"total_bytes", "daily_growth_bytes", "index_to_table_ratio", "write_burstiness"}
-        if not read_records:
-            missing |= {"result_cardinality_p50", "result_cardinality_p99"}
-        if not writes:
-            missing.add("read_write_ratio")
-
-        return GroupFeatures(
+        measured = GroupFeatures(
             calls=calls,
             read_write_ratio=(reads / writes) if writes else None,
             shape_mix=mix,
@@ -330,11 +391,108 @@ class Window:
             has_time_dimension=has_time_dimension,
             distinct_shapes=len(records),
             error_share=(errors / calls) if calls else None,
-            missing=frozenset(missing),
             complete=self.complete,
         )
+        return _with_missing(measured)
 
 
+
+
+    def as_record(self, model: LogicalModel) -> dict[str, Any]:
+        """This window as the document the control plane reads. Numbers, never rows.
+
+        **The artefact this library existed without.** Everything above measured traffic and
+        nothing turned a window into the file we are handed - so the walkthrough's step 8, "the
+        library measures traffic and hands us a window", was a literal dictionary typed into the
+        example, and every client in every language would have written their own. Two clients of
+        one model would then produce two documents from identical traffic, and the planner would
+        score whichever one it was given. Same shape of gap as the two before it: both halves
+        worked and nothing joined them.
+
+        The model is required and it is checked. Only one fact is read from it - whether a group
+        carries a time dimension, which is decided by declared *type* and never by a field's name -
+        but a window serialised against the wrong model would attach that fact to the wrong groups
+        and claim `has_time_dimension: false` for a group that has one. False is a claim; a
+        measurement this library cannot make has to be absent, which is what everything else in
+        here is careful about.
+
+        **This document is deliberately not canonical, and that needs saying because §1 of the
+        format contract rejects floating point outright.** Its reason is that a float's textual
+        form differs between languages, and almost every number here is a float. This is not
+        signed, not hashed and never compared for equality, so the rule it breaks does not apply -
+        but the thing that makes the family checkable at all is narrower and worth stating: every
+        number in this document is either **a ratio of two integers** or **a bucket edge divided by
+        a million**, and IEEE 754 requires division to be correctly rounded. So two languages
+        compute the same double from the same traffic even where they would print it differently,
+        and the `telemetry/` vectors compare numbers rather than bytes for exactly that reason.
+        """
+        if model.version != self.model_version:
+            raise ValueError(
+                f"this window measured model version {self.model_version} and it is being "
+                f"serialised against {model.version}. Only one fact is read from the model here - "
+                f"whether a group has a time dimension - and reading it from another model would "
+                f"attach it to the wrong groups. Keep the model the recorder was created for, or "
+                f"drop the window: a window measured against a model that no longer exists cannot "
+                f"be scored against the one that does."
+            )
+        by_name = {group.name: group for group in colocation_groups(model)}
+        named = sorted({stats.group for stats in self.shapes} | {s.group for s in self.fanned})
+        unknown = [name for name in named if name not in by_name]
+        if unknown:
+            raise ValueError(
+                f"this window has records for groups this model does not have: {unknown}. The "
+                f"recorder is given a model version and the groups come from the operations it "
+                f"observed, so this is a session routing a model other than the one measured."
+            )
+
+        groups: dict[str, Any] = {}
+        for name in named:
+            record = self.features(
+                name, has_time_dimension=has_time_dimension(model, by_name[name])
+            ).as_record()
+            copies = [copy.as_record() for copy in self.copies(name)]
+            if copies:
+                # Absent rather than empty when the group has no derived copy, for the reason
+                # `also_write` is absent rather than empty in a map: absent says "not doing this"
+                # and an empty list says "considered and found none", which is a stronger claim.
+                record["copies"] = copies
+            groups[name] = record
+
+        return {
+            "model_version": self.model_version,
+            "complete": self.complete,
+            "dropped_windows": self.dropped_windows,
+            "groups": groups,
+        }
+
+
+def _with_missing(
+    measured: GroupFeatures, *, also: Collection[str] = ()
+) -> GroupFeatures:
+    """The same features with ``missing`` **derived** from which values came out unknown.
+
+    Derived rather than listed alongside them, so the two cannot disagree - and they did.
+    ``time_filtered_share`` is a field this library never measures and it was left null and absent
+    from this set, which breaks the one promise the set makes: that a reader never has to infer
+    absence from a null. Four other fields were named by hand and would have stayed the only ones.
+
+    What is unknown and why, because a derivation hides the reasons. Engine-side sizes
+    (``total_bytes``, ``index_to_table_ratio``) need a catalogue read, which is an adapter
+    capability rather than a measurement. ``daily_growth_bytes`` and ``write_burstiness`` need two
+    samples over time and a window is one. ``time_filtered_share`` would need the *arguments* of a
+    call, and this library records shapes and never values. Zero bytes and unknown bytes lead a
+    planner to opposite conclusions, which is the whole reason for naming them rather than
+    defaulting them.
+
+    ``also`` carries reasons that are not field names - ``no_traffic`` is the only one - because a
+    reader of the window needs to know the difference between "this group was idle" and "this
+    field is not measurable".
+    """
+    return replace(
+        measured,
+        missing=frozenset(also)
+        | frozenset(name for name in MEASURED_FIELDS if getattr(measured, name) is None),
+    )
 
 
 def _at(ordered: list[float], fraction: float) -> float | None:
@@ -347,7 +505,7 @@ def _at(ordered: list[float], fraction: float) -> float | None:
 _TIME_TYPES = frozenset({"date", "timestamp", "timestamptz"})
 
 
-def has_time_dimension(model: Any, group: Any) -> bool:
+def has_time_dimension(model: LogicalModel, group: Group) -> bool:
     """Does any entity in this group carry a time dimension?
 
     Decided by the declared type and never by the field's name. Two reasons, and the second is the

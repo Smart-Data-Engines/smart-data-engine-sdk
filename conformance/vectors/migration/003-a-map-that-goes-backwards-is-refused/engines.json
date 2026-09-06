@@ -1,0 +1,8 @@
+{
+  "pg-main": {
+    "watermark": 5
+  },
+  "pg-copy": {
+    "watermark": 4
+  }
+}

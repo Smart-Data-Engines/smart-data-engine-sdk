@@ -1,0 +1,22 @@
+[
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `order` (`id` UUID, `placed_at` DateTime64(3, 'UTC'), `tenant` UUID, `total` Decimal(12, 2)) ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`)",
+      "CREATE TABLE IF NOT EXISTS `payment` (`amount` Decimal(12, 2), `id` UUID, `order_id` UUID, `order_tenant` UUID, `paid_at` DateTime64(3)) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+    ],
+    "why": "ReplacingMergeTree and ORDER BY, not a primary key: a MergeTree does not enforce uniqueness, so the engine keeps the newest row for a key and collapses the rest at merge time. ORDER BY carries the *declared* order because it decides which prefixes of the key can prune granules - so sorting it would change the physical performance of the table while leaving the map looking identical. The default layout emits no indexes for this dialect, which is why there are none to refuse here."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"order\" (\"id\" UUID, \"placed_at\" DateTime64(3, 'UTC'), \"tenant\" UUID, \"total\" Decimal(12, 2), PRIMARY KEY (\"tenant\", \"id\"))",
+      "CREATE TABLE IF NOT EXISTS \"payment\" (\"amount\" Decimal(12, 2), \"id\" UUID, \"order_id\" UUID, \"order_tenant\" UUID, \"paid_at\" DateTime64(3), PRIMARY KEY (\"id\"))"
+    ],
+    "why": "The same layout through the other renderer, and it produces statements rather than a refusal - because the column *types* in a layout are already this dialect's spelling and a renderer does not read them. Worth pinning precisely because it is the case that looks like it should fail: what would fail is running the result, which is why the dialect is an argument the caller takes from its engine adapter and never guesses."
+  }
+]

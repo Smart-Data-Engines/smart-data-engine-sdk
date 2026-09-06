@@ -1,0 +1,7 @@
+{
+  "group": "Reading",
+  "options": {},
+  "error": "MigrationRefused",
+  "match": "cannot act as the target of a migration",
+  "why": "Refused by name rather than skipped. An engine whose schema is fixed in its own source has nowhere to keep a progress marker and no table to scan in key order, so this is a property of the engine rather than a missing feature - and a migration that quietly copies nothing is the worst thing this module could do. Asked as 'will this object answer these calls' rather than by type, because a client wrapping one of our adapters for metrics or retries must not be refused for a property of their wrapper."
+}

@@ -1,0 +1,8 @@
+{
+  "pg-main": {
+    "tables": {}
+  },
+  "pg-copy": {
+    "tables": {}
+  }
+}

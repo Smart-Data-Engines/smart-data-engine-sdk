@@ -1,0 +1,62 @@
+{
+  "pg-main": {
+    "tables": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 2
+        },
+        {
+          "id": 2,
+          "celsius": 4
+        },
+        {
+          "id": 3,
+          "celsius": 6
+        },
+        {
+          "id": 4,
+          "celsius": 8
+        },
+        {
+          "id": 5,
+          "celsius": 10
+        },
+        {
+          "id": 6,
+          "celsius": 12
+        },
+        {
+          "id": 7,
+          "celsius": 14
+        }
+      ],
+      "sample": [
+        {
+          "station": "alpha",
+          "seq": 1,
+          "note": "alpha-1"
+        },
+        {
+          "station": "alpha",
+          "seq": 2,
+          "note": "alpha-2"
+        },
+        {
+          "station": "beta",
+          "seq": 1,
+          "note": "beta-1"
+        },
+        {
+          "station": "beta",
+          "seq": 2,
+          "note": "beta-2"
+        }
+      ]
+    }
+  },
+  "pg-copy": {
+    "tables": {},
+    "migratable": false
+  }
+}

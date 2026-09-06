@@ -1,0 +1,24 @@
+{
+  "Label": {
+    "calls": 0,
+    "shape_mix": {},
+    "has_time_dimension": false,
+    "distinct_shapes": 0,
+    "missing": [
+      "daily_growth_bytes",
+      "error_share",
+      "index_to_table_ratio",
+      "latency_p50_ms",
+      "latency_p99_ms",
+      "no_traffic",
+      "pk_access_share",
+      "read_write_ratio",
+      "result_cardinality_p50",
+      "result_cardinality_p99",
+      "time_filtered_share",
+      "total_bytes",
+      "write_burstiness"
+    ],
+    "complete": true
+  }
+}

@@ -57,3 +57,28 @@ export class MapError extends SdeError {
 export class EngineError extends SdeError {
   override readonly name = 'EngineError'
 }
+
+/**
+ * A signed map older than one already applied against these engines.
+ *
+ * Its own class rather than a `MapError`, because the document is not wrong - it verifies perfectly,
+ * which is exactly the problem. Cryptographic verification is not replay protection and never was:
+ * a map for version 3 verifies forever, so replacing the client's file with an older signed one
+ * loads cleanly, routes writes to the previous placement, and nothing else here would notice. The
+ * fix is a deliberate act with a stated consequence, which the message spells out.
+ */
+export class MapRolledBack extends SdeError {
+  override readonly name = 'MapRolledBack'
+}
+
+/**
+ * A migration cannot start, or cannot continue, and the reason is structural.
+ *
+ * Separate from `EngineError` because nothing failed: the map says this group is not being migrated,
+ * or an engine cannot take part, or the copy would silently change values. All of them are refusals
+ * before a single row moves - which is the whole design of this module, because the cost of finding
+ * a problem at chunk four thousand is four thousand chunks of the client's I/O.
+ */
+export class MigrationRefused extends SdeError {
+  override readonly name = 'MigrationRefused'
+}

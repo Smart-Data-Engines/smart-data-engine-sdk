@@ -70,6 +70,60 @@ not optional is agreement, because a client running two languages against one mo
 derive the same digests. If you skip it, say so where a user can read it, and make skipping it
 visible in your test output.
 
+Everything above is Tier 0 plus the hashing mode, and it is where most implementations should stop
+until somebody is using them. The three steps below are Tier 1 and Tier 2, in the order the vectors
+make checkable.
+
+**9. Telemetry (Tier 1). Vectors: `telemetry/`.**
+Counts and a histogram, no values, and never a lock on the path that records. The vectors feed
+durations as integers rather than measuring anything, because a vector that timed something would
+pin your machine. Two things in here have been defects in our own libraries and are the reason the
+family exists: the set of shape kinds that count as **writes** — it had four copies once, and two
+copies in one process is how the same operation becomes a write for routing and a read for scoring —
+and the `missing` set, because unknown and zero lead a planner to opposite conclusions.
+
+**10. Schema (Tier 2, first half). Vectors: `schema/`.**
+A layout and a set of keys in, statements out, and no connection anywhere: render DDL as a value in
+a module your engine adapters import, not inside the function that applies it. The vectors compare
+statements **exactly** — they are bytes a server receives — and compare refusals by substring, like
+`errors/`. Sort identifiers by **code point**, not by whatever your platform's default comparator
+does; `schema/003` is the case that tells the two apart, and `schema/009` pins that a view and its
+table list columns in the same order, which is a defect we shipped.
+
+**11. Migration participation (Tier 2, second half). Vectors: `migration/`.**
+Dual write, the resume marker, and the forward-only check. A migration reaches a library as a map
+with `also_write` and nothing else — there is no phase name in the document, and adding one would be
+a second representation of a fact the fan-out and the routing table already carry. The marker is a
+**row count and never a key**: a key needs a codec, and a lossy codec resumes *after* rows nobody
+copied, which is silent data loss that differs per language.
+
+These are the only vectors that need an engine, so they come with one: put an in-memory engine in
+your `testing` package rather than in your test runner, matching `MemoryEngine`'s behaviour. Two
+things about the cases are worth knowing before you start. They pin **the calls you make**, in one
+sequence across the whole engine set — because the guarantee that a row reaches the source before
+anything is attempted against the copy cannot be expressed in per-engine lists, which is a mistake
+this family made first. And `001` expects **no calls at all**: an unsigned map is the client's own
+document, so the no-account mode reads nothing, and gathering the watermarks before checking whether
+the map is signed is the right answer with the promise broken.
+
+### If your language's I/O is asynchronous
+
+Tier 0 and Tier 1 touch no socket, so they can be synchronous in any language. Tier 2 talks to a
+database, and in a runtime whose drivers are asynchronous a synchronous wrapper around them means
+blocking the thread that runs everything else — which is a worse thing to do to a client's process
+than a promise in a signature. So split the surface the way the tiers already do rather than
+choosing one style for the whole library: the TypeScript implementation is synchronous through Tier 1
+and asynchronous from Tier 2, and its session is *opened* rather than constructed, because the
+forward-only check reads a table and a constructor cannot await. That last point is not a
+workaround — it means a caller cannot hold a session that has not been checked, which is the
+guarantee the reference gets from doing it in its constructor.
+
+Two consequences to expect. The overhead budget below still applies to the work **your** library
+adds, which is synchronous and sits between two awaits; measure that, not the round trip you are
+inside. And a naive wrapper — one promise per row, or an await inside a loop that could have batched
+— is the failure mode this note exists for, because it does not show up as a slow function but as a
+saturated event loop under a load nobody tested.
+
 ## Running the vectors
 
 Read `conformance/vectors/**` in your own test runner, in your own CI. That is the whole mechanism by
@@ -117,6 +171,10 @@ it is about the format.
 | An empty collection is not a missing one | Any language where `[]` and `{}` are falsy | An empty set of public keys is a configuration that can verify nothing and is refused; *no* key set is the no-account mode and is accepted. `signature/006`. Python's `or` and TypeScript's `??` differ on exactly this, and it cost two model versions for one declaration |
 | JSON writers escape more than §1 allows | JavaScript-aware writers escape U+2028; many escape non-ASCII and `/` | Any of them changes the hash. `canonical/004` |
 | A typed unmarshal is not a loader | Go, Java, C#, Rust: the obvious way to read `model.json` is into a struct | Then every malformed document fails with the *runtime's* error, and an `errors/` case at the model stage asserts the *contract's* error class. Map your parse failures onto it. Measured: `errors/036` was unpassable in Go until the unmarshal error was wrapped |
+| A driver ignores a bound your caller wrote | Node: `pg` derives its connect timeout from a code-level option and *overwrites* whatever the connection string said | So "apply our default unless the DSN already sets one" - which is right in psycopg, where the parameter reaches libpq - leaves **no bound at all**. Translate the parameter yourself. Found by the test that asserts the caller's value wins, which failed by hanging until its own deadline |
+| An unhandled driver event kills the process | Node: `pg.Client` is an `EventEmitter` and emits `error` when the server terminates a connection between queries | Node throws an `error` event with no listener, with no call of the client's on the stack. A restart of their database becomes an uncatchable crash in their event loop. Listen, record it, and put it in the next call's message |
+| A skipped suite is not a reported skip | Node: vitest fails a file whose every suite was skipped, and calls it "no tests" | So a CI guard looking for the word "skipped" sees nothing and passes, and the file is unrunnable for anybody without servers. One test at the top level whose purpose is its own skip fixes both |
+| A skipped suite still runs its body | Node: `describe.skipIf` evaluates its callback, because it has to register the tests it then skips | An engine constructed at that level parses a DSN that is not there and takes the file down at collection, with a refusal that reads like a real one. Build the connection in the hook |
 
 ## Measuring your overhead
 

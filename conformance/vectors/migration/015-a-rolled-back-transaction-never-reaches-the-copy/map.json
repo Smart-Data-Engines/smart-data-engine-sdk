@@ -1,0 +1,57 @@
+{
+  "contract": 2,
+  "model_version": "fe8473623a7c98b7",
+  "map_version": 1,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading",
+            "Sample": "sample"
+          },
+          "columns": {
+            "Reading": {
+              "id": "bigint",
+              "celsius": "integer"
+            },
+            "Sample": {
+              "station": "text",
+              "seq": "bigint",
+              "note": "text"
+            }
+          }
+        }
+      },
+      "derived": [
+        {
+          "id": "Reading@pg2",
+          "engine": "pg-copy",
+          "layout": {
+            "tables": {
+              "Reading": "reading",
+              "Sample": "sample"
+            },
+            "columns": {
+              "Reading": {
+                "id": "bigint",
+                "celsius": "integer"
+              },
+              "Sample": {
+                "station": "text",
+                "seq": "bigint",
+                "note": "text"
+              }
+            }
+          },
+          "lag_budget_ms": 30000
+        }
+      ],
+      "also_write": [
+        "Reading@pg2"
+      ]
+    }
+  }
+}

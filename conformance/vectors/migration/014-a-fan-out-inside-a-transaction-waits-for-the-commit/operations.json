@@ -1,0 +1,26 @@
+[
+  {
+    "op": "transaction",
+    "entities": [
+      "Reading"
+    ],
+    "body": [
+      {
+        "op": "save",
+        "entity": "Reading",
+        "values": {
+          "id": 1,
+          "celsius": 20
+        }
+      },
+      {
+        "op": "save",
+        "entity": "Reading",
+        "values": {
+          "id": 2,
+          "celsius": 21
+        }
+      }
+    ]
+  }
+]

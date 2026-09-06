@@ -1,0 +1,18 @@
+{
+  "expect": {
+    "protection": "enforced",
+    "map_version": 4,
+    "highest_seen": 4,
+    "participating": [
+      "pg-copy",
+      "pg-main"
+    ],
+    "unable": []
+  },
+  "why_match": [
+    "the highest map version applied against these engines is",
+    "sde_map_state",
+    "A map older than that is refused"
+  ],
+  "why": "Equal is the ordinary case - a process restarting against the same map - so only strictly lower is refused. And nothing is written when the version does not move: recording every start would grow the table by one row per restart and the watermark would say nothing more than it does now. Both engines are read, because the watermark is the maximum over all of them: losing an engine cannot lose the protection."
+}

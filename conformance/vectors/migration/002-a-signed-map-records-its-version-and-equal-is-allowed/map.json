@@ -1,0 +1,35 @@
+{
+  "contract": 1,
+  "model_version": "fe8473623a7c98b7",
+  "map_version": 4,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading",
+            "Sample": "sample"
+          },
+          "columns": {
+            "Reading": {
+              "id": "bigint",
+              "celsius": "integer"
+            },
+            "Sample": {
+              "station": "text",
+              "seq": "bigint",
+              "note": "text"
+            }
+          }
+        }
+      }
+    }
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "issuing",
+    "value": "CkHyQIaARN63DT9Xpejmnx+hkuBtduMGHIWX7Ma3dayS63mHL5qCsMhbQg00TJqr2dkMe63Nnn/3NCyN+gMDAA=="
+  }
+}

@@ -126,6 +126,43 @@ jobs:
       matrix:
         node: ["18", "20", "22"]
 
+    # The same two engines the Python job gets, and for the same reason: this library reached Tier 2
+    # on 6 September 2026, so "it renders DDL and takes part in a migration" is now a claim about
+    # real servers. Running the vectors without them would leave the adapters - two of the eight
+    # integrations requirement 17.5 is about - checked by nothing.
+    #
+    # All three Node versions, deliberately. The ClickHouse adapter exists because the official
+    # client requires Node 20, and a matrix that only exercised the engines on one version would be
+    # unable to notice the day that stops being the reason.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+        ports: ["8123:8123"]
+        # 127.0.0.1 rather than localhost: `wget` in the alpine image resolves `localhost` to the
+        # IPv6 `[::1]` and ClickHouse listens on IPv4 only, so the probe fails against a server that
+        # started perfectly - and GitHub then reports "Failed to initialize container", which points
+        # at the image rather than at the health check that was wrong.
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -143,9 +180,55 @@ jobs:
         working-directory: typescript
         run: npx tsc --noEmit
 
-      - name: the same vectors Python runs
+      - name: the same vectors Python runs, and both engine slices
         working-directory: typescript
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: npx vitest run
+
+      - name: the integration slices actually ran
+        working-directory: typescript
+        # Read out of the **JSON reporter**, not out of the summary line, and that is the second
+        # version of this guard. The first grepped the human output for `Tests +[1-9]` - which
+        # matched locally, where the output was piped and therefore plain, and matched nothing in
+        # CI, where vitest colours it and the escape codes sit between the word and the number. So
+        # the job failed with "ran no tests at all" printed directly beneath sixteen passing tests:
+        # a guard that reports on its own formatting instead of on its subject, which is the same
+        # class of defect as a test whose setup silently does nothing.
+        #
+        # A skipped integration test is indistinguishable from a passing one in a summary line, and
+        # these are the only things here that prove the adapters work against a real engine. The
+        # agreement slice inside `engines.live` is the one that matters most and the easiest to
+        # lose: it needs *both* DSNs, so a single missing variable turns it into a silent skip.
+        #
+        # `failure.test.ts` is deliberately **not** here: nothing in it needs a server, because
+        # every socket it waits on is one it starts itself. So it runs in the step above, on every
+        # machine, which is a stronger place for it - the bound a client depends on is measured
+        # wherever the suite runs rather than only where two databases happen to be. One of its
+        # assertions has already caught a defect this adapter would have shipped: `pg` ignores a
+        # `connect_timeout` in a connection string, so deferring to it left no bound at all.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+        run: |
+          for slice in engines.live cut-connection.live; do
+            npx vitest run "tests/$slice.test.ts" --reporter=json --outputFile=/tmp/$slice.json
+            node -e '
+              const report = require("/tmp/" + process.argv[1] + ".json")
+              const slice = process.argv[1]
+              if (report.numPendingTests > 0) {
+                console.error(slice + ": " + report.numPendingTests +
+                  " test(s) skipped, so the adapters were checked by nothing")
+                process.exit(1)
+              }
+              if (report.numPassedTests < 1) {
+                console.error(slice + ": ran no tests at all")
+                process.exit(1)
+              }
+              console.log(slice + ": " + report.numPassedTests + " passed, none skipped")
+            ' "$slice"
+          done
 
   contract:
     runs-on: ubuntu-latest

@@ -1,0 +1,11 @@
+[
+  {
+    "group": "Reading",
+    "materialization": "Reading@pg2",
+    "writes": 1,
+    "failures": 0,
+    "lag_p50_ms": "<any>",
+    "lag_p99_ms": "<any>",
+    "complete": true
+  }
+]

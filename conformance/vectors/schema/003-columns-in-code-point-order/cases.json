@@ -1,0 +1,11 @@
+[
+  {
+    "materialization": "Astral@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"astral\" (\"a\" text, \"id\" uuid, \"\ue000\" text, \"\ud83d\ude00\" text, PRIMARY KEY (\"id\"))"
+    ],
+    "why": "Expected column order: 'a', 'id', U+E000, U+1F600. A library sorting by UTF-16 code unit - which is what JavaScript's default comparator does - puts U+1F600 before U+E000, because a surrogate pair starts at 0xD800. Nothing in an ASCII layout can see the difference, and the consequence is two CREATE TABLE statements for one signed map. This is the DDL renderer's copy of the defect the canonical/ family was created for; that one was object keys in the IR."
+  }
+]

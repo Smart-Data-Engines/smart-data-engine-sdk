@@ -1,0 +1,3 @@
+{
+  "why": "The order in `calls.json` is the guarantee: the source, then the copy, per row. The copy is additional and never authoritative, so a reader can see from this sequence that a row is in the source before anything is attempted against the copy. The fan-out is also inside the timed region the telemetry records, which is a decision - it makes the client's write slower and the measurement has to say so, or a placement would be scored against a latency the application is not experiencing."
+}

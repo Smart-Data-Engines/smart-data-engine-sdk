@@ -10,20 +10,46 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./engines/postgres": {
+      "types": "./dist/engines/postgres.d.ts",
+      "import": "./dist/engines/postgres.js"
+    },
+    "./engines/clickhouse": {
+      "types": "./dist/engines/clickhouse.d.ts",
+      "import": "./dist/engines/clickhouse.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/memory.d.ts",
+      "import": "./dist/testing/memory.js"
     }
   },
-  "files": ["dist", "README.md"],
-  "engines": { "node": ">=18 <23" },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18 <23"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --max-warnings 0"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "peerDependencies": {
+    "pg": ">=8"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
   }
 }

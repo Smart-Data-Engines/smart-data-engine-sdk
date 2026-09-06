@@ -94,17 +94,20 @@ order to prove the verification notices.
 | Library | Tier | Status |
 |---|---|---|
 | [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, ClickHouse and the orderbook engine, plus hashing | reference implementation |
-| [`typescript/`](typescript/) | 0, plus hashing | passes the same vectors, byte for byte |
+| [`typescript/`](typescript/) | 0, 1 and 2 for PostgreSQL and ClickHouse, plus hashing | passes the same vectors, byte for byte |
 | `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has two implementations, which is what made it safe to invite them |
 
-One honest qualification on that table, because the whole point of the tiers is that "supported" means
-the same thing in every language. Tier 0 is backed by shared vectors that both implementations run.
-**Tier 1 and Tier 2 are not, yet** — the `telemetry/`, `schema/` and `migration/` vector sets named in
-`docs/format-contract.md` §10 do not exist. Python's Tier 1 and Tier 2 are covered by its own tests
-and by a slice against a real PostgreSQL, which is not the same thing: it verifies that the
-implementation works, not that a second implementation would agree with it. Today that costs nothing,
-since no other library claims those tiers. It costs on the day one does, so the vectors come before
-the claim does.
+That qualification used to say something different, and the change is the point of it. Until
+6 September 2026 the `telemetry/`, `schema/` and `migration/` vector sets named in
+`docs/format-contract.md` §10 **did not exist**, so Tier 1 and Tier 2 were backed by the reference
+implementation's own tests and by slices against real servers — which verifies that it works, not
+that a second implementation would agree with it. That cost nothing while one library claimed those
+tiers, and the paragraph said what would happen on the day a second one did: *the vectors come
+before the claim does*. TypeScript reached Tier 2 on that day, so all three sets were written first.
+
+Closing the gap found five defects in the implementation that had claimed those tiers unchecked, and
+that is the honest argument for the whole exercise. Each is described in the contract, with the
+family that found it.
 
 The table above is this repository's layout. The list of what each library *supports*, and who fixes
 it when it breaks, is [`docs/implementations.md`](docs/implementations.md), and that is the one to

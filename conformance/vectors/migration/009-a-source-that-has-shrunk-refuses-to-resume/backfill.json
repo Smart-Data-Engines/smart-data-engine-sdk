@@ -1,0 +1,7 @@
+{
+  "group": "Reading",
+  "options": {},
+  "error": "MigrationRefused",
+  "match": "does not have that many",
+  "why": "Rows left the source outside this library, so the marker describes a table that no longer exists and resuming from it would be guessing. The refusal says nothing has been copied by this call, which matters: an operator reading it needs to know whether to expect a partial chunk."
+}

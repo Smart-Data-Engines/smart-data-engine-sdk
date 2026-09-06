@@ -1,0 +1,20 @@
+[
+  {
+    "materialization": "Sample@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"sample\" (\"approx\" double precision, \"at\" timestamptz, \"big\" bigint, \"day\" date, \"flag\" boolean, \"id\" uuid, \"label\" text, \"money\" numeric(12,2), \"naive\" timestamp, \"narrow\" real, \"small\" integer, PRIMARY KEY (\"id\"))"
+    ],
+    "why": "Every type this library maps for PostgreSQL, in one statement, so a change to the type table is a change to this file. The pair with the ClickHouse case below is the useful part: two columns of the same neutral type, spelled by two engines, and an adapter has to give a caller the same value back from either."
+  },
+  {
+    "materialization": "Sample@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `sample` (`approx` Float64, `at` DateTime64(3, 'UTC'), `big` Int64, `day` Date32, `flag` Bool, `id` UUID, `label` String, `money` Decimal(12, 2), `naive` DateTime64(3), `narrow` Float32, `small` Int32) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+    ],
+    "why": "The same model in the other dialect. `DateTime64(3, 'UTC')` against `timestamptz` is the pair that has already cost this project a measured two-hour divergence, and `Decimal(12, 2)` against `numeric(12,2)` is the one where a float conversion would come back changed with no error anywhere. Both are round-tripped through real servers by the engine-agreement tests, which is what makes this vector a fixture as well as an expectation."
+  }
+]

@@ -1,0 +1,13 @@
+[
+  {
+    "materialization": "Order@pg",
+    "dialect": "mysql",
+    "error": "EngineError",
+    "match": "no DDL for dialect",
+    "why": "Refusing rather than falling back to ANSI. A statement that looks right on the wrong engine creates a table with the wrong storage semantics, and the client finds out from their data rather than from an error. `fixed` is absent from this case on purpose: asking whether an unknown engine imposes its own schema has to refuse too, because answering 'no' would claim that engine takes DDL from us.",
+    "fixed_error": {
+      "error": "EngineError",
+      "match": "unknown dialect"
+    }
+  }
+]

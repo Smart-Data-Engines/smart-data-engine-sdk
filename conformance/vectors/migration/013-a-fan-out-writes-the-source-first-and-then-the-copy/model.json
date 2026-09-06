@@ -1,0 +1,47 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "celsius",
+          "type": "int32"
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Sample",
+      "fields": [
+        {
+          "name": "note",
+          "type": "string"
+        },
+        {
+          "name": "seq",
+          "type": "int64"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "station",
+        "seq"
+      ]
+    }
+  ],
+  "atomic": [
+    [
+      "Reading",
+      "Sample"
+    ]
+  ]
+}

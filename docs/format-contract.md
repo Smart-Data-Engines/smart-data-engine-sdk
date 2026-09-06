@@ -805,13 +805,59 @@ There are five kinds:
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
 
-**Three of the sets named in the tier table above do not exist yet:** `telemetry/`, `schema/` and
-`migration/`. That is worth stating in the contract rather than leaving it to be discovered from an
-empty directory, because §9 says a tier claim is one the vectors can check, and for Tier 1 and Tier 2
-that is currently false. The reference implementation has both, covered by its own tests and by a
-slice against a real PostgreSQL — which verifies that it works, not that a second implementation would
-agree with it. The gap costs nothing while one library claims those tiers and everything on the day two
-do, so the vectors are written before a second claim is accepted, not after.
+**Every set named in the tier table exists.** That sentence replaces one that listed what was
+missing, and the history is worth keeping because §9 makes a tier claim into something the vectors
+can check, and for a while that was false: `telemetry/`, `schema/` and `migration/` were named in
+the tier table and were not written. The paragraph that admitted it also said what would close it —
+*the vectors are written before a second claim is accepted, not after* — and on 6 September 2026 a
+second library reached Tier 2, so all three were written first. Reading them in that order is the
+cheapest way to see what a tier means.
+
+The gap cost nothing while one library claimed those tiers, and closing it found five defects in the
+one that did. Each is described with the family that found it.
+
+`schema/` is worth reading for what writing it found: the DDL renderer and the compatibility-view
+renderer listed one table's columns in two different orders, because the view read the order off the
+layout document on the stated grounds that the document was already sorted — and it is not, since a
+foreign-key column is appended per relation. The test meant to hold that property used a fixture
+with no relations. Both renderings are sorted by name now, `schema/009` feeds a document whose
+columns are deliberately reversed so that removing either sort changes a different string, and every
+statement in the family is executed against a real PostgreSQL and a real ClickHouse **twice** —
+because every statement here claims to be idempotent, and one that is correct once is a deployment
+that works until the first restart.
+
+`telemetry/` was written the same day and for the same reason, and it is the one family whose
+expectations are compared **parsed rather than as bytes**. That is an exception to §1, which rejects
+floating point outright because a float's textual form differs between languages — and a window
+document is almost entirely floats. It is not signed, not hashed and never compared for equality, so
+the rule does not bind it; what makes the family checkable is narrower and is the sentence to
+remember: **every number in a window is either a ratio of two integers or a bucket edge divided by a
+million**, and IEEE 754 requires division to be correctly rounded, so two languages compute the same
+double even where they would print it differently. The document also carries no clock, which is what
+makes it deterministic.
+
+Two findings came out of writing it, and the second is about a mechanism rather than about code.
+The reference had **no serialiser for the window at all** — it measured traffic and the walkthrough
+typed the resulting document in by hand, so every client in every language would have written their
+own and two clients of one model would have produced two documents from identical traffic. And
+`missing`, the set that exists so a reader never has to infer absence from a null, was a
+hand-written list of four names against a feature vector with five unknown fields; it is derived
+from the values now. The set of kinds that count as **writes** is pinned by `telemetry/001`, which
+records one operation of every kind: removing `bulk_write` from it survived its first mutation
+because no vector had ever recorded one.
+
+`migration/` is the last of the three and the only family whose cases pin **the calls a library
+makes** as well as the answer it reaches. That is not thoroughness: a library that arrived at the
+same counts by scanning the whole table and filtering in memory would satisfy every number here and
+be unusable against a real one, so the sequence is the part that says *how*. It also makes the
+shared fixture self-checking — an in-memory engine lives in each library's `testing` package rather
+than in each runner, because a runner that writes its own is a runner whose fixture can be the thing
+that differs, and a red vector would then say "one of two tables disagreed".
+
+The case worth reading first is `001`, whose expected call list is **empty**. The no-account mode
+promises no table, no query and no cost, and the TypeScript port gathered every engine's watermark
+and *then* noticed the map was unsigned — the right answer, with the promise broken, which is the
+one shape of defect a record of the decision cannot show.
 
 **An `errors/` case pins the message, not only the class.** Its `match` field is a substring that
 the refusal's own text must contain, compared literally and case-sensitively. That makes diagnostics

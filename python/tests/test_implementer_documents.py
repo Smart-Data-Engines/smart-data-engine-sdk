@@ -35,15 +35,40 @@ def _families() -> set[str]:
 NOT_A_FAMILY = frozenset({"conformance"})
 
 
+def _flat(text: str) -> str:
+    """One line, single-spaced.
+
+    Every parser in this file reads a Markdown document, and a Markdown document is hard-wrapped at
+    a column nobody promised to keep. A pattern written against the wrapping matches until somebody
+    edits a word earlier in the paragraph - which happened to the failure-semantics checks and cost
+    a confusing red run, so it is collapsed here before anything is matched.
+    """
+    return " ".join(text.split())
+
+
 def _unwritten_families() -> set[str]:
     """The families the contract itself admits do not exist yet.
 
     Parsed out of §10 rather than listed here, so that the day one of them is written the contract
-    sentence changes and this test starts insisting the guide be updated too."""
-    sentence = re.search(
-        r"do not exist yet:\*\* (.+?)\. That is worth stating", CONTRACT.read_text(), re.S
-    )
-    assert sentence, "format-contract §10 no longer says which vector sets are missing"
+    sentence changes and this test starts insisting the guide be updated too.
+
+    Two forms are accepted and one is not: the sentence naming what is missing, or the sentence
+    saying nothing is. Removing both is what this refuses, because a contract that stopped saying
+    either would silently switch this check off - and §9 says a tier claim is one the vectors can
+    check, which is the sentence the missing sets make false.
+    """
+    text = _flat(CONTRACT.read_text())
+    # `does?` because the sentence is grammatical in both numbers and the count shrinks as the
+    # families get written. A parser that forced "do not" would have the document read badly to
+    # keep a test happy, which is the wrong way round.
+    sentence = re.search(r"does? not exist yet:\*\* (.+?)\. That is worth stating", text)
+    if sentence is None:
+        assert "**Every set named in the tier table exists.**" in text, (
+            "format-contract §10 says neither which vector sets are missing nor that none are. One "
+            "of the two has to be there: §9 promises a tier claim the vectors can check, and this "
+            "is the only place that promise is audited."
+        )
+        return set()
     return set(re.findall(r"`([a-z]+)/`", sentence.group(1)))
 
 
@@ -143,21 +168,79 @@ def test_the_python_row_agrees_with_the_library() -> None:
     assert len(present) == len(named), (present, named)
 
 
-def test_the_typescript_row_claims_no_engines_and_has_none() -> None:
-    """A ratchet, not a description. The day that library grows an engine adapter this test fails,
-    and the table is the thing that has to change - because at that moment the word "Tier 0" in it
-    stops being true and a client reading it would size their deployment on it."""
+def test_the_typescript_row_agrees_with_the_librarys_own_tier() -> None:
+    """The row and the constant, which is a claim in two places.
+
+    Requirement 17.6 is about "supported" meaning one thing, and a table saying Tier 0 while the
+    library declares Tier 1 is the same defect one level down. Read out of the source rather than
+    imported, because this suite runs in Python: the TypeScript library's own tests cannot see this
+    document and this one cannot run its code.
+    """
+    source = (ROOT / "typescript" / "src" / "index.ts").read_text()
+    declared = re.search(r"export const TIER = (\d+)", source)
+    assert declared, "the TypeScript library no longer declares a TIER"
     row = _row("@smart-data-engines/sde")
-    assert row[2] == "0", row
-    assert row[6] == "none", row
+    assert row[2].strip() == declared.group(1), (
+        f"docs/implementations.md says Tier {row[2].strip()} and the library says Tier "
+        f"{declared.group(1)}"
+    )
+
+
+def test_the_typescript_row_names_the_adapters_it_actually_has() -> None:
+    """Derived from the files, in both directions, because this cell has already changed once.
+
+    It used to read `none` and be asserted as a literal - a ratchet whose whole purpose was to fail
+    on the day that library grew an engine adapter, so that the table would have to change rather
+    than quietly become wrong. It fired on 6 September 2026, which is the only evidence that a
+    ratchet was the right shape for it.
+
+    What replaces it is the same check the Python row gets: the row names dialect identifiers, and
+    the adapters have to be the ones present. An adapter added without the row growing is a
+    capability the list does not claim, which is harmless only until somebody relies on the list; a
+    row naming an adapter that is not there is worse, and it is the direction requirement 17.6 is
+    about.
+
+    The dialects are read out of the source rather than imported, because this suite runs in
+    Python - the TypeScript library's own tests cannot see this document, and this one cannot run
+    its code.
+    """
     source = ROOT / "typescript" / "src"
-    assert not (source / "engines").exists(), "the TypeScript library has an engines directory"
-    drivers = [
-        path.name
+    row = _row("@smart-data-engines/sde")
+    named = tuple(sorted(name.strip().strip("`") for name in row[6].split(",")))
+
+    adapters = sorted(
+        path.stem for path in (source / "engines").glob("*.ts") if not path.stem.startswith("_")
+    )
+    assert named == tuple(adapters), (named, adapters)
+
+    # And each adapter says which dialect it is, in the vocabulary a hand-written layout uses. A
+    # file named `postgres.ts` that reported some other dialect would satisfy the check above and
+    # render the wrong DDL.
+    for adapter in adapters:
+        text = (source / "engines" / f"{adapter}.ts").read_text()
+        assert f"readonly dialect = '{adapter}'" in text, adapter
+        assert adapter in sde.DIALECTS, (
+            f"{adapter} is not a dialect this contract has a type mapping for, so a layout for it "
+            f"could not be rendered by the reference implementation either"
+        )
+
+
+def test_the_typescript_core_reaches_no_driver() -> None:
+    """The claim the whole no-account mode rests on, from this side of the fence.
+
+    The TypeScript suite checks this properly, over the import closure of its entry point. This is
+    the cheaper half in the language the documents are checked in: no file outside `engines/` may
+    name a driver, so a driver import that crept into the core would fail here even if somebody
+    deleted the other test.
+    """
+    source = ROOT / "typescript" / "src"
+    offending = [
+        str(path.relative_to(source))
         for path in source.rglob("*.ts")
-        if re.search(r"from '(pg|clickhouse|mysql|mongodb)", path.read_text())
+        if path.parent.name != "engines"
+        and re.search(r"from '(pg|clickhouse|mysql|mongodb|node:http|node:net)", path.read_text())
     ]
-    assert drivers == [], drivers
+    assert offending == [], offending
 
 
 def test_the_list_says_who_fixes_a_defect_in_each_kind() -> None:

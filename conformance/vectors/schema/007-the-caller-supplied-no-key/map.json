@@ -1,0 +1,44 @@
+{
+  "contract": 1,
+  "model_version": "6edc73383b34b502",
+  "map_version": 1,
+  "groups": {
+    "Order": {
+      "source": {
+        "id": "Order@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Order": "order",
+            "Payment": "payment"
+          },
+          "columns": {
+            "Order": {
+              "id": "uuid",
+              "placed_at": "timestamptz",
+              "tenant": "uuid",
+              "total": "numeric(12,2)"
+            },
+            "Payment": {
+              "amount": "numeric(12,2)",
+              "id": "uuid",
+              "paid_at": "timestamp",
+              "order_tenant": "uuid",
+              "order_id": "uuid"
+            }
+          },
+          "indexes": [
+            {
+              "entity": "Payment",
+              "name": "payment_order_idx",
+              "columns": [
+                "order_tenant",
+                "order_id"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

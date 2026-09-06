@@ -1,0 +1,34 @@
+{
+  "contract": 1,
+  "model_version": "6edc73383b34b502",
+  "map_version": 1,
+  "groups": {
+    "Order": {
+      "source": {
+        "id": "Order@ch",
+        "engine": "ch-1",
+        "layout": {
+          "tables": {
+            "Order": "order",
+            "Payment": "payment"
+          },
+          "columns": {
+            "Order": {
+              "id": "UUID",
+              "placed_at": "DateTime64(3, 'UTC')",
+              "tenant": "UUID",
+              "total": "Decimal(12, 2)"
+            },
+            "Payment": {
+              "amount": "Decimal(12, 2)",
+              "id": "UUID",
+              "paid_at": "DateTime64(3)",
+              "order_tenant": "UUID",
+              "order_id": "UUID"
+            }
+          }
+        }
+      }
+    }
+  }
+}

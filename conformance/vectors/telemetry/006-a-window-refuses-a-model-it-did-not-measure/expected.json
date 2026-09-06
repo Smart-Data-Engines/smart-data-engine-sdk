@@ -1,0 +1,4 @@
+{
+  "match": "is being serialised against",
+  "why": "Serialising a window needs exactly one fact from a model - whether a group carries a time dimension - and reading it from a different model would attach it to the wrong groups and claim `has_time_dimension: false` for a group that has one. False is a claim. Refused rather than defaulted, because this document is what a placement decision is adjudicated against years later. The error class is not pinned: this is a caller mistake rather than a document this library was handed, so each language raises whatever it raises for a bad argument - the *message* is what a reader needs."
+}

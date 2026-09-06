@@ -33,7 +33,78 @@ vectors/
     bytes.json                the exact bytes it must produce
     expected.json             for cases that must be refused instead
     why.txt                   what would break if this vector were not here
+  schema/<nnn>-<name>/
+    model.json
+    map.json                  a placement map, so the layout reaches the renderer through the
+                              same loader production uses rather than a second parser
+    cases.json                (materialisation, dialect) -> the exact DDL, or the refusal
+  migration/<nnn>-<name>/
+    model.json
+    map.json                  signed for the forward-only cases, because only a signed map is
+                              checked - an unsigned one is the client's own document
+    keys.json, load.json      the public key the caller holds, and how to load with it
+    engines.json              the engine set: tables, markers, watermarks, and which capabilities
+                              each adapter has
+    watermark.json            the forward-only decision, or the refusal
+    backfill.json             the progress record, or the refusal
+    verify.json               the seven counts, and the differences that stay on the client's side
+    calls.json                every call each engine received, in order
+    why.json
+  telemetry/<nnn>-<name>/
+    model.json
+    operations.json           operations to record, each naming a shape by identifier
+    fan_out.json              writes to a derived copy - optional
+    window.json               the exact window document the library must produce
+    features_for.json         features for a group with no traffic, which is not in the document
+    buckets.json              (nanoseconds, bucket index) fed straight to the histogram
+    percentiles.json          the upper edge each bucket reports
+    expected.json             for the case that must be refused instead
+    why.json                  what would break if this vector were not here
 ```
+
+`schema/` is Tier 2 and compares statements **exactly**, because a statement is bytes a server
+receives. Two conventions of its own: a case pins `fixed`, which is the answer to "does this engine
+take DDL from us at all" and is what distinguishes no statements from no tables; and `views`, whose
+`create` and `drop` are exact while its `not_possible` reasons are pinned as a **list** of
+substrings, because the useful reasons carry two claims - which name moved, and what a query has to
+become - and one substring cannot straddle both.
+
+The statements in this family are also executed against a real PostgreSQL and a real ClickHouse, in
+`python/tests/test_schema_vectors_live.py`, twice each. That is not belt and braces: a vector holding
+DDL no server accepts would be a frozen mistake every future implementation is *required* to
+reproduce, and the suite's authority is exactly what makes it dangerous when wrong.
+
+`telemetry/` is Tier 1 and it is the **one family compared parsed rather than as bytes**. Section 1
+of the contract rejects floating point outright, because a float's textual form differs between
+languages - and a window document is almost entirely floats. It is not signed, not hashed and never
+compared for equality, so that rule does not bind it; what makes the family checkable is narrower:
+every number in a window is either a ratio of two integers or a bucket edge divided by a million,
+and IEEE 754 requires division to be correctly rounded, so two languages compute the same double
+even where they print it differently.
+
+Two things it deliberately leaves out. **A clock**: the document carries none, which is what makes
+it deterministic, and the two features that would need a duration are declared unmeasurable anyway.
+And **buffer eviction**: `dropped_windows` is in the document and zero in every case, because a full
+buffer dropping its oldest window is behaviour with no artefact - each library asserts it directly,
+and the two assertions are the only thing holding those two implementations together.
+
+`migration/` is Tier 2's second half and the only family that pins **the calls a library makes** as
+well as the answer it reaches. A library that arrived at the same counts by scanning the whole table
+and filtering in memory would satisfy every number and be unusable against a real one, so the
+sequence is the part that says *how*. The fixture is each library's own in-memory engine, in its
+`testing` package rather than in its runner: a runner that writes its own is a runner whose fixture
+can be the thing that differs, and a red vector would then say "one of two tables disagreed".
+
+Read `001` first. Its expected call list is **empty**, because the no-account mode promises no
+table, no query and no cost - and the TypeScript port gathered every engine's watermark and *then*
+noticed the map was unsigned. The right answer with the promise broken, which is the one shape of
+defect a record of the decision cannot show.
+
+One case here is worth reading before adding to any family: `002` pins bucket boundaries, and the
+alternative implementation - a logarithm - **passes all of them**, because glibc's `log2` and V8's
+are both exact at a power of two. A property no output can distinguish on the machines available is
+not one a vector can hold, and pretending otherwise is worse than admitting it: both libraries check
+that one statically instead, over their own source.
 
 `canonical/` is the newest kind and the most instructive. It exists because a mutation that should
 have failed did not: every object key in the model IR is fixed ASCII, so no model vector reaches the

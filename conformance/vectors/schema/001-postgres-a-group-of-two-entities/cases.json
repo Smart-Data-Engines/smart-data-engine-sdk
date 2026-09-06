@@ -1,0 +1,21 @@
+[
+  {
+    "materialization": "Order@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"order\" (\"id\" uuid, \"placed_at\" timestamptz, \"tenant\" uuid, \"total\" numeric(12,2), PRIMARY KEY (\"tenant\", \"id\"))",
+      "CREATE TABLE IF NOT EXISTS \"payment\" (\"amount\" numeric(12,2), \"id\" uuid, \"order_id\" uuid, \"order_tenant\" uuid, \"paid_at\" timestamp, PRIMARY KEY (\"id\"))",
+      "CREATE INDEX IF NOT EXISTS \"payment_order_idx\" ON \"payment\" (\"order_tenant\", \"order_id\")"
+    ],
+    "why": "Columns are sorted by name and the key is not: 'tenant' comes before 'id' in the PRIMARY KEY because that is the order the model declared, and a sorted key would silently reorder a composite index. The tables come out in code point order of the entity name, which is why 'Order' precedes 'Payment' here and why a library iterating the document's own order would drift the day a planner emitted them differently."
+  },
+  {
+    "materialization": "Order@pg",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "no B-tree to put them in",
+    "why": "The fifth issuing rule, from the library's side. A layout carrying an index is valid, signs correctly and loads correctly, and rendering it for an engine with no B-tree is where it stops being applicable - a map that verifies and cannot be applied. The control plane asks this library rather than reimplementing the answer, so this refusal is what stops such a map being issued at all."
+  }
+]

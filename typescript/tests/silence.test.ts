@@ -84,3 +84,45 @@ describe('the library says nothing at all', () => {
     expect(offenders('const bad = "console.log"')).toEqual([])
   })
 })
+
+describe('the source carries no raw control characters', () => {
+  /**
+   * Not tidiness. A NUL byte inside a string literal survives review, because it renders as
+   * nothing; it breaks a diff, so the next reader sees a line that appears unchanged; and it goes
+   * into the published package, where it silently changes what a separator is. This library uses
+   * U+0000 deliberately in two places - the hashed-name message and the shape lookup key - and both
+   * write it as `'\u0000'`, six ASCII characters, for exactly that reason.
+   *
+   * It is here because it happened, twice, in one file, while `session.ts` was being written: a
+   * literal space became a NUL and an empty string became U+0001, and the first symptom was a
+   * `Map` lookup that missed for no visible reason.
+   */
+  const ALLOWED = new Set(['\n'.codePointAt(0), '\t'.codePointAt(0)])
+
+  function control(source: string): number[] {
+    const found = new Set<number>()
+    for (const character of source) {
+      const point = character.codePointAt(0)
+      if (point !== undefined && point < 32 && !ALLOWED.has(point)) found.add(point)
+    }
+    return [...found].sort((a, b) => a - b)
+  }
+
+  it('anywhere in src', () => {
+    const offending: string[] = []
+    for (const file of sourceFiles(SRC)) {
+      const points = control(readFileSync(file, 'utf8'))
+      if (points.length > 0) {
+        offending.push(`${file.slice(SRC.length + 1)}: ${points.map((p) => p.toString(16))}`)
+      }
+    }
+    expect(offending).toEqual([])
+  })
+
+  it('would notice one', () => {
+    // The planted case, written as an escape here so that this file does not contain the thing it
+    // forbids - which is the whole use-and-mention problem, in its most literal form.
+    expect(control(`const sep = '${String.fromCodePoint(0)}'`)).toEqual([0])
+    expect(control('const sep = "\\u0000"')).toEqual([])
+  })
+})

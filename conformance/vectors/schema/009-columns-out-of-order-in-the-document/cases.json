@@ -1,0 +1,29 @@
+[
+  {
+    "materialization": "Order@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"order\" (\"id\" uuid, \"placed_at\" timestamptz, \"tenant\" uuid, \"total\" numeric(12,2), PRIMARY KEY (\"tenant\", \"id\"))",
+      "CREATE TABLE IF NOT EXISTS \"payment\" (\"amount\" numeric(12,2), \"id\" uuid, \"order_id\" uuid, \"order_tenant\" uuid, \"paid_at\" timestamp, PRIMARY KEY (\"id\"))",
+      "CREATE INDEX IF NOT EXISTS \"payment_order_idx\" ON \"payment\" (\"order_tenant\", \"order_id\")"
+    ],
+    "views": {
+      "was": {
+        "Order": "orders_v1",
+        "Payment": "payments_v1"
+      },
+      "create": [
+        "CREATE OR REPLACE VIEW \"orders_v1\" AS SELECT \"id\", \"placed_at\", \"tenant\", \"total\" FROM \"order\"",
+        "CREATE OR REPLACE VIEW \"payments_v1\" AS SELECT \"amount\", \"id\", \"order_id\", \"order_tenant\", \"paid_at\" FROM \"payment\""
+      ],
+      "drop": [
+        "DROP VIEW IF EXISTS \"orders_v1\"",
+        "DROP VIEW IF EXISTS \"payments_v1\""
+      ],
+      "not_possible": [],
+      "complete": true
+    },
+    "why": "Every column list here comes out sorted by name even though the document lists them reversed, and the two lists that matter are the CREATE TABLE and the view's SELECT - separate statements, so removing either sort changes a different string and neither can hide behind the other. Column *types* stay attached to their columns, which is the part a naive 'sort the values too' would get wrong."
+  }
+]

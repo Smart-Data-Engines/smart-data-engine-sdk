@@ -1,0 +1,3 @@
+{
+  "why": "Both inserts into the source come before either insert into the copy, which is what 'deferred to commit' means in a call sequence. Inline would be wrong: the target is a different engine, so it is outside the source's transaction, and a rolled-back row would exist in the copy - after the switch, a row the client explicitly undid, readable. Skipping would be wrong more quietly: those rows are above the backfill marker, so nothing else copies them, and verify's tail check would then refuse the migration of every group that uses a transaction."
+}

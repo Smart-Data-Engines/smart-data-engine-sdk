@@ -1,0 +1,10 @@
+[
+  {
+    "engine": "pg-copy",
+    "call": "map_watermark"
+  },
+  {
+    "engine": "pg-main",
+    "call": "map_watermark"
+  }
+]

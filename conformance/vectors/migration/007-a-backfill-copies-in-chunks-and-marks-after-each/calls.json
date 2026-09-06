@@ -1,0 +1,126 @@
+[
+  {
+    "engine": "pg-copy",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": null,
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading",
+    "rows": 3
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      3
+    ],
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading",
+    "rows": 6
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      6
+    ],
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "reading",
+    "rows": 1
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading",
+    "rows": 7
+  },
+  {
+    "engine": "pg-copy",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Sample"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": null,
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "sample",
+    "rows": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Sample",
+    "rows": 3
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": [
+      "beta",
+      1
+    ],
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "copy_in",
+    "table": "sample",
+    "rows": 1
+  },
+  {
+    "engine": "pg-copy",
+    "call": "record_backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Sample",
+    "rows": 4
+  }
+]
