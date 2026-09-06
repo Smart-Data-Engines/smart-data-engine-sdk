@@ -104,13 +104,17 @@ jobs:
         working-directory: python
         # A skipped integration test is indistinguishable from a passing one in a summary line, and
         # these are the only things here that prove the library works against a real engine. The
-        # agreement slice is the most important of the three and the easiest to lose: it needs *both*
+        # agreement slice is the most important of the four and the easiest to lose: it needs *both*
         # DSNs, so a single missing variable turns it into a silent skip.
+        #
+        # `test_failure_semantics` is here because every row of docs/failure-semantics.md that a
+        # client reads before buying is either measured by it or paired with a mechanism by it. A
+        # document whose evidence skipped is a document with no evidence.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          for slice in test_postgres_slice test_clickhouse_slice test_engine_agreement; do
+          for slice in test_postgres_slice test_clickhouse_slice test_engine_agreement test_failure_semantics; do
             pytest "tests/$slice.py" -q | tee /tmp/slice.txt
             grep -qv "skipped" /tmp/slice.txt || { echo "$slice was skipped"; exit 1; }
           done
