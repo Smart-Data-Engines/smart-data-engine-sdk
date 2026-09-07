@@ -21,10 +21,12 @@ from time import perf_counter_ns
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from .errors import EngineError, ModelPlanningError
+from .errors import EngineError, MigrationRefused, ModelPlanningError
 from .groups import Group, colocation_groups
 from .hashing import NameMap
+from .layout import group_columns
 from .logging import log
+from .migration import precision_refusal
 from .model import LogicalModel
 from .placement import Materialization, PlacementMap
 from .routing import Router
@@ -116,6 +118,37 @@ class Session:
                 "cannot route an operation to an engine it has no adapter for, and guessing at a "
                 "connection is not something a library should do."
             )
+
+        # A copy that silently holds different values from its source is refused before the first
+        # write rather than discovered by `verify` at the end of one. The rule is `backfill`'s and
+        # it lives in one function, because this is the second door asking it and for a long time
+        # only the first one did: measured against live servers, a `timestamptz` written through a
+        # fan-out map came back `09:30:15.123456` from PostgreSQL and `09:30:15.123` from
+        # ClickHouse, with no error anywhere and `backfill` refusing the very same copy a phase
+        # later. Here rather than at `load_map`, and that is forced: a map names engines by name
+        # and carries no dialect, deliberately, so the earliest moment this is answerable is the
+        # one where the adapters are in hand.
+        for group in self._groups:
+            spot = placement.groups.get(group.name)
+            if spot is None or not spot.also_write:
+                continue
+            columns = group_columns(model, group)
+            source_dialect = self._engines[spot.source.engine].dialect
+            for copy in spot.also_write:
+                for entity in sorted(columns):
+                    refusal = precision_refusal(
+                        group=group.name,
+                        entity=entity,
+                        columns=columns[entity],
+                        source_dialect=source_dialect,
+                        target_dialect=self._engines[copy.engine].dialect,
+                    )
+                    if refusal is not None:
+                        raise MigrationRefused(
+                            f"{refusal} This map fans writes out to {copy.engine}, so it would "
+                            f"happen on every write rather than once during a copy, and nothing "
+                            f"would report it."
+                        )
 
         # Here rather than in a method somebody has to remember to call, and here rather than in
         # `ensure_schema`, which a deployment past its first release skips. A rolled-back map file

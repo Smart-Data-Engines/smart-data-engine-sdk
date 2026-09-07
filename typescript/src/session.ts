@@ -24,10 +24,12 @@
  */
 
 import { compareCodePoints } from './canonical.js'
-import { EngineError, ModelPlanningError } from './errors.js'
+import { EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
 import type { Group } from './groups.js'
 import { colocationGroups, groupOf } from './groups.js'
 import type { NameMap } from './hashing.js'
+import { groupColumns } from './layout.js'
+import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
 import type { Materialization, PhysicalLayout, PlacementMap } from './placement.js'
 import { placementOf } from './placement.js'
@@ -181,6 +183,38 @@ export class Session {
           `a connection is not something a library should do.`,
       )
     }
+    // A copy that silently holds different values from its source is refused before the first
+    // write rather than discovered by verify at the end of one. The rule is backfill's and it
+    // lives in one function, because this is the second door asking it and for a long time only
+    // the first one did: measured against live servers, a `timestamptz` written through a fan-out
+    // map came back `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse, with no
+    // error anywhere and backfill refusing the very same copy a phase later. Here rather than at
+    // loadMap, and that is forced: a map names engines by name and carries no dialect, so the
+    // earliest moment this is answerable is the one where the adapters are in hand.
+    for (const group of colocationGroups(model)) {
+      const body = placement.groups[group.name] === undefined ? null : placementOf(placement, group.name)
+      if (body === null || body.alsoWrite.length === 0) continue
+      const columns = groupColumns(model, group)
+      const sourceDialect = (engines[body.source.engine] as Engine).dialect
+      for (const copy of body.alsoWrite) {
+        for (const entity of Object.keys(columns).sort(compareCodePoints)) {
+          const refusal = precisionRefusal(
+            group.name,
+            entity,
+            columns[entity] ?? {},
+            sourceDialect,
+            (engines[copy.engine] as Engine).dialect,
+          )
+          if (refusal !== null) {
+            throw new MigrationRefused(
+              `${refusal} This map fans writes out to ${copy.engine}, so it would happen on every ` +
+                `write rather than once during a copy, and nothing would report it.`,
+            )
+          }
+        }
+      }
+    }
+
     // It costs one statement per participating engine, once per process, and nothing at all for an
     // unsigned map - which is checked inside rather than here, because gathering the watermarks
     // first and then noticing the map was unsigned is the right answer with the promise broken.

@@ -487,13 +487,43 @@ def _timestamp_session(*, target_dialect: str) -> tuple[sde.Session, str]:
     return session, group
 
 
-def test_a_microsecond_column_moving_to_a_millisecond_engine_is_refused_before_the_copy() -> None:
-    """PostgreSQL keeps six sub-second digits and ClickHouse three. `datetime.now()` has
-    microseconds, so the truncation is silent and hits essentially every row - and `verify` would
-    otherwise report every row mismatched at the end of a copy that took hours."""
-    session, group = _timestamp_session(target_dialect="clickhouse")
+def test_a_microsecond_column_fanning_out_to_a_millisecond_engine_is_refused_at_the_session() -> (
+    None
+):
+    """PostgreSQL keeps six sub-second digits and ClickHouse three, and the loss is silent.
+
+    **This assertion used to be about `backfill` and it was in the wrong place**, which a
+    walkthrough found by running the phases in order against live servers. The refusal fired before
+    a copy, and the phase *before* the copy - `DUAL_WRITE` - was already truncating every write:
+    measured, `09:30:15.123456` came back from PostgreSQL unchanged and from ClickHouse as
+    `09:30:15.123`, with nothing raised on either side. The gate stopped the migration completing
+    and did not stop the loss.
+
+    So the refusal moved to the earliest door that can answer the question. It cannot be `load_map`:
+    a map names engines by name and carries no dialect, deliberately, so the dialects are not known
+    until the adapters are in hand - which is exactly when a session is built.
+    """
     with pytest.raises(sde.MigrationRefused, match="6 sub-second digits and clickhouse to 3"):
-        sde.backfill(session, group)
+        _timestamp_session(target_dialect="clickhouse")
+
+
+def test_the_copy_path_does_not_ask_again_because_it_cannot_be_reached_with_a_bad_map() -> None:
+    """The other half of moving the check: there is now exactly one door, and this says so.
+
+    `backfill` and `verify` take a session, and a session with a lossy fan-out cannot be
+    constructed - so a second check inside `_plan` would be a branch no mutation could reach on its
+    own. Asserted rather than assumed, because "unreachable" is a claim about the constructor and
+    the constructor is one edit away from not being that.
+    """
+    import inspect
+
+    source = inspect.getsource(sde.migration._plan)
+    assert "precision_refusal" not in source, (
+        "the copy path checks precision again. It cannot fire - Session refuses that map - so it "
+        "is a guarantee that reads as coverage and cannot be mutated on its own."
+    )
+    with pytest.raises(sde.MigrationRefused):
+        _timestamp_session(target_dialect="clickhouse")
 
 
 def test_the_same_column_moving_the_other_way_is_fine() -> None:
@@ -503,12 +533,17 @@ def test_the_same_column_moving_the_other_way_is_fine() -> None:
 
 
 def test_a_neutral_type_nobody_classified_refuses_rather_than_being_guessed_at() -> None:
-    session, group = _timestamp_session(target_dialect="postgres")
+    """The table is emptied *before* the session is built, because that is where the check is now.
+
+    Emptying it afterwards used to reach this branch through `backfill`; with one door, the branch
+    is reached the way a real unclassified type would reach it - at the moment the map and the
+    engines first meet.
+    """
     saved = dict(sde.migration.DIALECT_PRECISION)
     try:
         sde.migration.DIALECT_PRECISION.clear()  # type: ignore[attr-defined]
         with pytest.raises(sde.MigrationRefused, match="does not know whether"):
-            sde.backfill(session, group)
+            _timestamp_session(target_dialect="postgres")
     finally:
         sde.migration.DIALECT_PRECISION.update(saved)  # type: ignore[attr-defined]
 
