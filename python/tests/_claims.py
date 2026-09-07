@@ -48,3 +48,15 @@ def sentences(text: str) -> list[str]:
 def absence_claims(text: str) -> list[str]:
     """Every sentence that says, in the present tense, that something is not built yet."""
     return [sentence for sentence in sentences(text) if ABSENCE.search(sentence)]
+
+
+#: Our prose spells small numbers out, so a check that reads a count has to read them the same way.
+#:
+#: Here rather than in the one test that needed it first, for the reason the regex above is here:
+#: three documents now state a count in words, and a second copy of this list is the shape in which
+#: one of them quietly learns a different vocabulary.
+WORDS = [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+    "nineteen", "twenty",
+]

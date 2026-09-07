@@ -106,6 +106,17 @@ this family made first. And `001` expects **no calls at all**: an unsigned map i
 document, so the no-account mode reads nothing, and gathering the watermarks before checking whether
 the map is signed is the right answer with the promise broken.
 
+The third stage of `errors/` belongs to this step too — `stage: session`, and it is the only stage
+that cannot be reached by reading a document. §7's fifth `also_write` refusal is about what two
+**dialects** do to a value, and a map names engines by name and carries no dialect, so there is
+nothing to answer at load time; the earliest door that can answer is the one holding the adapters.
+`errors/038` is a fan-out from PostgreSQL into ClickHouse with a `timestamptz` column, refused with
+an **empty** `calls.json` — the refusal is half the claim and "it cost nothing" is the other half.
+`migration/020` and `021` are the two shapes that must still open, and they are what stop you
+passing `038` by refusing every map with a timestamp in it, or every map whose two engines differ.
+Get the direction right: losing digits is refused, gaining them is not.
+
+
 ### If your language's I/O is asynchronous
 
 Tier 0 and Tier 1 touch no socket, so they can be synchronous in any language. Tier 2 talks to a

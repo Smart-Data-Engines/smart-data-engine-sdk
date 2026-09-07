@@ -1,0 +1,8 @@
+{
+  "ch-1": {
+    "dialect": "clickhouse"
+  },
+  "pg-main": {
+    "dialect": "postgres"
+  }
+}

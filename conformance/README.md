@@ -22,7 +22,11 @@ vectors/
     cases.json                (shape, in a write transaction?, needs freshness?) -> materialisation
   errors/<nnn>-<name>/
     model.json
-    map.json                  for the `map` stage cases
+    map.json                  for the `map` and `session` stage cases
+    engines.json              the engine set to build, for `session` cases - the same document
+                              the migration family uses, and `dialect` is the field that matters
+    calls.json                for `session` cases: what the library was allowed to do to those
+                              engines on its way to refusing, which so far is nothing
     keys.json                 the public keys the caller holds - only where a case needs one
     expected.json             which error, at what point it must be raised, and optionally a
                               `load` block of arguments the runner must pass to the loader
@@ -157,6 +161,13 @@ vectors exist to catch, and it is invisible after parsing.
    The `model` stage is the loader **and** the model builder: a refusal about the shape of the
    declaration comes out of the loader, so calling it outside the assertion makes those cases
    unpassable. A `map` case is the other way round - its model must build, outside the assertion.
+   A `session` case builds both **and** loads the map outside the assertion, and only the session
+   construction is expected to fail: the document is valid, and what is refused is what it asks two
+   adapters to do. Tier 2 only. If your runner does not know a stage, **fail rather than skip** -
+   a stage nobody runs is a rule nobody checks, and skipping reads as coverage in the summary.
+   Where a `session` case carries `calls.json`, compare it: the refusal is only half the claim, and
+   the other half is that nothing was created, read or written before it.
+
 7. For signature vectors, load `map.json` with the keys in `keys.json` and assert which one
    verified it. A single entry under the **empty** name means the caller passed one bare key and
    the library reports no name back; that is a different call from a one-entry mapping, and the
@@ -205,8 +216,35 @@ refusal does not depend on which order a parser hands them over in. `019` alone 
 languages because both iterate an object in insertion order, and failed in Go - whose maps are
 iterated in a randomised order - in 5 of 20 runs.
 
+## Where these came from, part three
+
+`errors/038` and `migration/020`-`021` were added on 7 September 2026, the day after a defect in
+**shipped code** was found by running the migration phases through an operator's command line rather
+than by a test. The write fan-out was truncating a `timestamptz` on every write - measured on live
+servers as `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse for one row written
+once - one phase *before* the gate that refuses the same copy. So the gate stopped the migration
+finishing and did not stop the loss.
+
+It was fixed in both languages the same day and held by a test in each, and that is the state these
+three vectors exist to end. A rule enforced in one runtime and not the other is one map with two
+meanings, and per-language tests are exactly what that looks like from the inside: green, twice.
+
+The stage is new because neither of the other two can reach the rule. A map names engines **by
+name** and carries no dialect, so at load time the question has no answer; the earliest door that
+can answer holds the adapters. Hence `stage: session`, Tier 2 only, and a runner that meets a stage
+it does not know must fail rather than skip.
+
+Two things about `038` are worth copying if you write a case like it. Its `calls.json` is **empty**,
+because a map that can never work must not create a table or issue a query on the way to being
+rejected - and its map is **signed** for that exact reason: against an unsigned map the forward-only
+check does nothing at all, so an unsigned case would satisfy an empty call list whichever way round
+the two checks ran, and the assertion would be decoration. And the two `migration/` cases are what
+stop `038` being passed by a library that refuses every map with a timestamp in it, or every map
+whose two engines differ; the rule is about *losing* digits, and ClickHouse to PostgreSQL must open.
+
 ## Adding a vector
 
 Add the case that a bug taught you, not the case that was easy to write. Every vector here should be
 traceable to a way two implementations could plausibly disagree: number formatting, string
 normalisation, key ordering, sort stability, the boundary between a type and a value.
+

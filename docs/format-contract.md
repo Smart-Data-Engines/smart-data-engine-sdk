@@ -840,6 +840,41 @@ runtime implements the parsing and the four refusals and nothing else. `routing/
 pins the parse in both, and its cases assert the thing most likely to go wrong quietly: a **write
 shape still resolves to the source**.
 
+#### A fifth refusal, and it cannot be made at load
+
+A Tier 2 runtime refuses one more shape, and where it refuses is forced by this format rather than
+chosen: **a fan-out into a dialect that stores fewer sub-second digits than the source.**
+
+`timestamp` and `timestamptz` are kept to six sub-second digits by PostgreSQL and three by
+ClickHouse (§3.1). A copy in that direction changes essentially every row, because an ordinary
+"now" carries microseconds, and it changes them **silently** — the insert succeeds and the value
+comes back different. Measured on live servers before this rule had a second caller:
+`09:30:15.123456` written once came back unchanged from PostgreSQL and as `09:30:15.123` from
+ClickHouse, with no error on either side.
+
+The refusal cannot be made while reading the document. **A map names engines by name and carries no
+dialect** — deliberately, because a name is the client's and reasoning from it is refused
+everywhere here — so at load time the question has no answer. The earliest door that can answer it
+is the one holding the adapters, which is where a session is built. So a Tier 2 runtime raises
+`MigrationRefused` there, and `errors/` gains a third stage for it: `session`.
+
+Three things about it are pinned, and the two positives are what make the refusal mean anything:
+
+| Shape | Answer | Vector |
+|---|---|---|
+| PostgreSQL source, ClickHouse copy, a `timestamptz` column | refused, and **before any engine is touched** | `errors/038` |
+| both engines of one dialect, same column | opens, and the row reaches both | `migration/020` |
+| ClickHouse source, PostgreSQL copy | opens: the rule is about losing digits, not about the dialects differing | `migration/021` |
+
+`errors/038` carries an empty `calls.json` and that is the load-bearing half. A map that can never
+work must not create a table or issue a query on the way to being rejected; a runtime that gathered
+the watermarks first and refused afterwards would give the same answer with the price already paid,
+which is the defect `migration/001` was written for in the other direction.
+
+This is a **tightening** — a map that was silently losing data is now refused — so the contract
+number does not move. Accepting it again would be a loosening and would.
+
+
 ## 7a. The DDL a layout renders
 
 A Tier 2 library turns a layout into statements. They are **bytes a server receives**, so two
@@ -1034,9 +1069,32 @@ depends on how the caller's JSON parser preserves keys.
 4. group coverage, both directions (§7);
 5. `routing`, entries **in shape-id order**.
 
+**The session stage** — Tier 2 only, and it exists because §7's fifth `also_write` refusal needs the
+adapters:
+
+1. every engine the map names has an adapter (`EngineError`);
+2. the fan-out precision rule: groups **in name order**, within a group the `also_write` copies in
+   document order, within a copy the entities **in name order** (`MigrationRefused`);
+3. the forward-only check (§7, *Forward only*).
+
+Two of those three orderings are not new rules and are written down here only so nobody has to
+re-derive them: groups are already sorted by name by §5, and a group's members with them, so the
+first two levels follow from the model rather than from this list. Both reference implementations
+sort the entities again at this point, and **that second sort cannot be tested** — measured, by
+removing it in each language and watching every vector stay green, because no input the loader can
+produce is unsorted. It is kept as a local statement of a rule whose source is one module away, and
+it is recorded here as unmutatable rather than left to look like coverage.
+
+What *is* a choice is **2 before 3**: a map that can never work must not create a bookkeeping table
+or issue a query before it is rejected. `errors/038` pins that with an empty call list, and it is a
+signed map for that reason — against an unsigned one the forward-only check does nothing at all, so
+an unsigned case would stay green whichever way round the two were run.
+
+
 Both libraries already sorted the routing entries and neither sorted the groups, which is how a rule
 gets half-applied: the reason for sorting was understood in one loop and read as a detail in the
 other.
+
 
 ## 9. Capability tiers
 
@@ -1062,15 +1120,24 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are five kinds:
+There are nine kinds:
 
 | Kind | What it pins |
 |---|---|
 | `model/` | a neutral declaration, and the exact IR bytes, version, groups and shapes it must produce |
 | `routing/` | a map plus cases: `(shape, in a write transaction?, needs freshness?)` to materialisation |
-| `errors/` | which error, and at what stage it must be raised — `model` or `map` |
+| `errors/` | which error, and at what stage it must be raised — `model`, `map` or `session` |
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
+| `signature/` | which of the caller's keys verified a signed map, or which refusal it must raise |
+| `schema/` | the DDL a layout renders, per dialect, and the compatibility view beside it |
+| `telemetry/` | a window document, compared parsed rather than as bytes — see below |
+| `migration/` | taking part in a migration: the record a gate reads **and** the calls that produced it |
+
+This table said "five" and listed five for as long as there were nine, with the other four argued
+in the prose below it. Nothing counted them, which is the failure mode of a number about our own
+artefacts; `test_implementer_documents.py` derives both the count and the rows from the tree now.
+
 
 **Every set named in the tier table exists.** That sentence replaces one that listed what was
 missing, and the history is worth keeping because §9 makes a tier claim into something the vectors
