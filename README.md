@@ -51,9 +51,11 @@ start, and never revisit, because moving a live table is a project rather than a
 
 ## Status
 
-**Early.** What works today is the first slice, end to end: declaration, canonical model and version,
+**Early.** What works today is the whole path, end to end: declaration, canonical model and version,
 colocation groups, operation shapes, placement maps with signature verification, routing, hashed
-identifiers, telemetry, and **three engine adapters** — PostgreSQL, ClickHouse and the
+identifiers, telemetry aggregated into a window document, schema rendered as a value, participation
+in a migration that runs while the application serves traffic, query plans read back from a live
+server, and **three engine adapters** — PostgreSQL, ClickHouse and the
 [orderbook engine](https://github.com/Smart-Data-Engines/low-cost-and-low-latency-orderbook-dbengine).
 The first two create their own schema and read and write through it.
 
@@ -87,9 +89,16 @@ engine and naive from the other, so the same field read from the two could not e
 are fixed; the test is `python/tests/test_engine_agreement.py`, it needs both servers, and CI fails if
 it skipped.
 
-What does not exist yet: **no migration engine**. Migration is last on purpose; one lost row ends a
-product like this, so it comes after three checkpoints and a test that deliberately drops writes in
-order to prove the verification notices.
+Migration works, and it was built last on purpose: one lost row ends a product like this, so it came
+after three checkpoints and with a test that deliberately drops writes in order to prove the
+verification notices. The work on the data is in these libraries rather than in the control plane,
+because copying and comparing rows means reading them — `sde.backfill` and `sde.verify` — and what
+crosses the boundary is counters, never rows. Verification is a gate rather than a report: reads are
+not switched to a copy that does not match.
+
+What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
+neither directory is here. The day one of them appears, the test over this page fails until the row
+below has been rewritten.
 
 | Library | Tier | Status |
 |---|---|---|
@@ -174,9 +183,9 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds vectors that every library runs in its own test runner, so a
-divergence is a red test for whoever caused it rather than an operation written to the wrong engine in
-production.
+And [`conformance/`](conformance/) holds the vectors — **101 of them, in nine families** — that every
+library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
+an operation written to the wrong engine in production.
 
 `conformance/vectors/model/001-single-entity` was written by hand from the document rather than
 generated, which makes it the one vector that proves the document says enough to implement from. So
@@ -207,11 +216,47 @@ worst of them a placement map whose groups were validated in the document's own 
 document refused differently depending on how a JSON parser handed the keys over — and the vector
 that was supposed to cover it failed in Go, whose maps iterate in a randomised order, in 5 of 20 runs.
 
-Ten vectors came out of it. The Go code did not: it was a measurement, not a library, and a fourth
+Eleven vectors came out of it. The Go code did not: it was a measurement, not a library, and a fourth
 implementation nobody keeps working is worse for a client than none.
 [`docs/implementing.md`](docs/implementing.md) has the findings, the order to build a library in, and
 a table of what each language does to you. [`docs/implementations.md`](docs/implementations.md) is the
 list of which libraries exist, what each one really does, and who fixes it when it breaks.
+
+### What the fourth implementation found
+
+The same experiment one day later and one tier further up: **Rust**, Tier 0 *and* Tier 1 *and*
+Tier 2, from the contract and the vectors alone. The day before, those two upper tiers had gained
+vectors for the first time, and a claim is worth auditing on its first day rather than its
+hundredth. Two hundred and thirty-four assertions, one red — and the red one was a misreading of a
+refusal rather than a defect in it.
+
+Rust was not chosen only for having no library here. Its traits are dispatched **statically**, so a
+capability cannot be a missing method, and the reference answers "can this engine keep the
+bookkeeping" by looking for members. That question does not exist in this language, which is what
+makes it the one that finds the assumption. Java, C# and Go with non-optional interfaces have the
+same shape, and the capability has to be data on the value — which §7 of the contract already
+required.
+
+**Ten findings, and the worst of them was an escaper.** ClickHouse reads a backslash inside a
+backtick-quoted identifier as an escape introducer; this library escaped the backtick and left the
+backslash alone. A field named `` `a\nb` `` therefore reached the server as a column called `a`, a
+newline and `b` — a different name, accepted in silence — while `` `back\slash` `` survives
+untouched, which is what makes the defect look absent. It was measured by reading the name back out
+of `system.columns`, because the statement is accepted either way. No vector in `schema/` carried a
+delimiter inside an identifier, so the escaping could be removed in its entirety and the family
+stayed green. PostgreSQL is the reverse — it doubles the quote, leaves the backslash literal, and
+backslash-escaping the quote there is a *syntax error* — so there is no escaper for the two dialects
+to share.
+
+Two of the ten were defects in a live test rather than in a library, and both were about reach: one
+statement of the `schema/` family had **never executed**, because an earlier vector had created a
+table of that name and `CREATE TABLE IF NOT EXISTS` never parsed the body, and the test stopped at
+"the server accepted it", which a wrong escaper passes. The rest are in
+[`docs/implementing.md`](docs/implementing.md), including two percentile conventions in one document,
+zero-row results from *failed* reads averaged into cardinality, and `partition_by` — in the format
+from the beginning, emitted by the control plane, rendered by nobody, and now refused on both sides.
+
+The Rust code is not in this repository either, for the same reason the Go code is not.
 
 ## What happens when something fails
 
