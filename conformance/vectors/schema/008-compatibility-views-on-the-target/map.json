@@ -51,14 +51,14 @@
             "columns": {
               "Order": {
                 "id": "UUID",
-                "placed_at": "DateTime64(3, 'UTC')",
+                "placed_at": "DateTime64(6, 'UTC')",
                 "tenant": "UUID",
                 "total": "Decimal(12, 2)"
               },
               "Payment": {
                 "amount": "Decimal(12, 2)",
                 "id": "UUID",
-                "paid_at": "DateTime64(3)",
+                "paid_at": "DateTime64(6)",
                 "order_tenant": "UUID",
                 "order_id": "UUID"
               }

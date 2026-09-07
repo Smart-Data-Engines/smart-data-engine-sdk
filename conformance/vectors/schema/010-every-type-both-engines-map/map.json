@@ -39,14 +39,14 @@
             "columns": {
               "Sample": {
                 "approx": "Float64",
-                "at": "DateTime64(3, 'UTC')",
+                "at": "DateTime64(6, 'UTC')",
                 "big": "Int64",
                 "day": "Date32",
                 "flag": "Bool",
                 "id": "UUID",
                 "label": "String",
                 "money": "Decimal(12, 2)",
-                "naive": "DateTime64(3)",
+                "naive": "DateTime64(6)",
                 "narrow": "Float32",
                 "small": "Int32"
               }

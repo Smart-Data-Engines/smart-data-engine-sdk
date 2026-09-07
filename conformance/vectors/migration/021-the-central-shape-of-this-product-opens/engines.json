@@ -1,8 +1,8 @@
 {
-  "ch-1": {
+  "ch-copy": {
     "dialect": "clickhouse"
   },
-  "pg-main": {
+  "pg-src": {
     "dialect": "postgres"
   }
 }

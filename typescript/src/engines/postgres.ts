@@ -302,27 +302,37 @@ export class PostgresEngine {
    * allowed - a client may have added one outside SDE, the map does not name it, writes are
    * unaffected, and refusing would make this library an obstacle to work it has no opinion about.
    *
-   * Names only. Comparing declared types to `information_schema.data_type` means matching
-   * `numeric(8,2)` against `numeric`, and a check that has to normalise dialect spellings would
-   * report differences that are not differences.
+   * **Types as well as names, since 7 September 2026.** The earlier version checked names only,
+   * on the true observation that `information_schema.data_type` reports `numeric` for a
+   * `numeric(8,2)` column - a correct statement about the wrong catalogue.
+   * `pg_catalog.format_type(atttypid, atttypmod)` reports the canonical type *with* its modifier,
+   * and measured against every type this library renders, eleven of thirteen come back as the
+   * exact string we wrote. What that cost while it was names-only, measured: a table whose `at`
+   * column is **`text`** where the map says `timestamptz` passed and was called a good schema.
    */
   private async verifySchema(layout: PhysicalLayout): Promise<void> {
-    const expected = new Map<string, Set<string>>()
+    const expected = new Map<string, Record<string, string>>()
     for (const [entity, table] of Object.entries(layout.tables)) {
-      expected.set(table, new Set(Object.keys(layout.columns[entity] ?? {})))
+      expected.set(table, layout.columns[entity] ?? {})
     }
     if (expected.size === 0) return
 
+    // `pg_attribute` rather than `information_schema`, for `format_type`: the canonical spelling
+    // *including* the modifier, which is the whole reason this can compare types at all.
     const result = await this.run(
-      'SELECT table_name, column_name FROM information_schema.columns ' +
-        'WHERE table_schema = current_schema() AND table_name = ANY($1)',
+      'SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) AS coltype ' +
+        'FROM pg_attribute a ' +
+        'JOIN pg_class c ON c.oid = a.attrelid ' +
+        'JOIN pg_namespace n ON n.oid = c.relnamespace ' +
+        'WHERE n.nspname = current_schema() AND c.relname = ANY($1) ' +
+        'AND a.attnum > 0 AND NOT a.attisdropped',
       [[...expected.keys()].sort()],
     )
-    const found = new Map<string, Set<string>>()
+    const found = new Map<string, Map<string, string>>()
     for (const row of result.rows) {
-      const table = String(row['table_name'])
-      const columns = found.get(table) ?? new Set<string>()
-      columns.add(String(row['column_name']))
+      const table = String(row['relname'])
+      const columns = found.get(table) ?? new Map<string, string>()
+      columns.set(String(row['attname']), String(row['coltype']))
       found.set(table, columns)
     }
 
@@ -334,19 +344,59 @@ export class PostgresEngine {
             `so this is a permissions or search_path problem rather than a bad map.`,
         )
       }
-      const missing = [...columns].filter((column) => !actual.has(column)).sort()
+      const missing = Object.keys(columns)
+        .filter((column) => !actual.has(column))
+        .sort()
       if (missing.length > 0) {
         throw new EngineError(
           `'${table}' already existed with a different shape: the map needs ` +
-            `[${missing.join(', ')}] and the table has [${[...actual].sort().join(', ')}]. ` +
+            `[${missing.join(', ')}] and the table has [${[...actual.keys()].sort().join(', ')}]. ` +
             `CREATE TABLE IF NOT EXISTS keeps whatever is there, so this table came from ` +
             `somewhere else - an older map, another application, a migration run by hand. ` +
             `Refusing here rather than at the first insert, which would fail in your request path ` +
             `with an error naming a column and not the cause.`,
         )
       }
+      for (const column of Object.keys(columns).sort()) {
+        const declared = columns[column] as string
+        const reported = actual.get(column) as string
+        if (await this.sameType(declared, reported)) continue
+        throw new EngineError(
+          `${table}.${column} is '${reported}' and this map declares it '${declared}'. ` +
+            `CREATE TABLE IF NOT EXISTS keeps a table of that name whatever shape it is in, and ` +
+            `this library never alters a column's type - so the table came from somewhere else, ` +
+            `or from a map that rendered this column differently. Refusing rather than writing ` +
+            `into it: a type that differs is either a write that fails in your request path or, ` +
+            `worse, one that succeeds and hands the value back as something else.`,
+        )
+      }
     }
   }
+
+  /**
+   * Whether two PostgreSQL type spellings denote the same type. Asked of the server.
+   *
+   * Literal first, which is the answer for every type this library renders except the two
+   * timestamps. When that fails the server is asked: `to_regtype` resolves an alias to the type it
+   * names, so `timestamptz` and `timestamp with time zone` come back equal without this file
+   * holding an alias table that could fall behind the renderer.
+   *
+   * **A modifier makes a literal mismatch a real one.** `to_regtype` discards modifiers, so
+   * `numeric(12,2)` and `numeric(8,2)` would both resolve to `numeric` and a precision change
+   * would read as agreement - which is the one difference this check exists to catch.
+   */
+  private async sameType(declared: string, reported: string): Promise<boolean> {
+    if (declared === reported) return true
+    if (declared.includes('(') || reported.includes('(')) return false
+    const result = await this.run('SELECT to_regtype($1)::text AS a, to_regtype($2)::text AS b', [
+      declared,
+      reported,
+    ])
+    const row = result.rows[0]
+    if (row === undefined || row['a'] === null) return false
+    return row['a'] === row['b']
+  }
+
 
   // --- data --------------------------------------------------------------------------------
 

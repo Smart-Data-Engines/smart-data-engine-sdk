@@ -1,21 +1,21 @@
 {
-  "contract": 2,
+  "contract": 3,
   "model_version": "b4234d0ad92a4341",
   "map_version": 1,
   "groups": {
     "Reading": {
       "source": {
         "id": "Reading@src",
-        "engine": "ch-src",
+        "engine": "pg-src",
         "layout": {
           "tables": {
             "Reading": "reading"
           },
           "columns": {
             "Reading": {
-              "at": "DateTime64(3)",
-              "celsius": "Int32",
-              "id": "Int64"
+              "at": "timestamptz",
+              "celsius": "integer",
+              "id": "bigint"
             }
           }
         }
@@ -23,16 +23,16 @@
       "derived": [
         {
           "id": "Reading@copy",
-          "engine": "pg-copy",
+          "engine": "ch-copy",
           "layout": {
             "tables": {
               "Reading": "reading"
             },
             "columns": {
               "Reading": {
-                "at": "timestamptz",
-                "celsius": "integer",
-                "id": "bigint"
+                "at": "DateTime64(3)",
+                "celsius": "Int32",
+                "id": "Int64"
               }
             }
           },

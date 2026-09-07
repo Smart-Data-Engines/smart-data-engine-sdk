@@ -200,7 +200,17 @@ Two live examples, and the point of naming them here is that both look like they
   original text. The field would change type in the host language when its group moved, which is the
   one thing a placement change must never do.
 
-Both are unmapped today, and that costs real capability — an event payload in a column store is a
+- **`timestamp` in ClickHouse, until 7 September 2026.** The other two are limits of a driver; this
+  one was ours. `DateTime64(3)` round-trips a millisecond faithfully and PostgreSQL keeps six digits,
+  so the type was *mapped* and the two engines still disagreed — which this rule does not catch,
+  because it asks whether one engine round-trips a value and not whether two agree about it. The
+  consequence surfaced as a copy that changed every row silently. Both render `DateTime64(6)` now.
+  **The rule above has a companion, and this is it: where the product copies between two engines,
+  a type has to round-trip *and* the two spellings have to hold the same thing.** The reason the
+  first version said three is worth keeping: it was chosen against ClickHouse's plain `DateTime`,
+  which is second-resolution, rather than against the engine standing beside it.
+
+Both `bytes` and `json` are unmapped today, and that costs real capability — an event payload in a column store is a
 natural thing to want. It costs less than a client discovering after a migration that a checksum no
 longer matches, or that a field is now a string. The way out of either is a decision about what the
 neutral type promises on the way *back*, made once and implemented in every adapter together.
@@ -843,14 +853,26 @@ shape still resolves to the source**.
 #### A fifth refusal, and it cannot be made at load
 
 A Tier 2 runtime refuses one more shape, and where it refuses is forced by this format rather than
-chosen: **a fan-out into a dialect that stores fewer sub-second digits than the source.**
+chosen: **a fan-out into a dialect that stores fewer sub-second digits than the source, or into one
+this library holds no precision facts about.**
 
-`timestamp` and `timestamptz` are kept to six sub-second digits by PostgreSQL and three by
-ClickHouse (§3.1). A copy in that direction changes essentially every row, because an ordinary
-"now" carries microseconds, and it changes them **silently** — the insert succeeds and the value
-comes back different. Measured on live servers before this rule had a second caller:
-`09:30:15.123456` written once came back unchanged from PostgreSQL and as `09:30:15.123` from
-ClickHouse, with no error on either side.
+The second half of that sentence is the reachable one, and the history matters more than the rule.
+Until 7 September 2026 PostgreSQL kept six sub-second digits for `timestamp` and `timestamptz` and
+ClickHouse kept three, so a copy between them changed essentially every row — an ordinary "now"
+carries microseconds — and changed them **silently**, because the insert succeeds and the value
+comes back different. Measured on live servers: `09:30:15.123456` written once came back unchanged
+from PostgreSQL and as `09:30:15.123` from ClickHouse, with no error on either side.
+
+**Then the pair was removed rather than kept refused.** The three digits were a choice this project
+made, and it had been made against a comparison with ClickHouse's plain `DateTime`, which is
+second-resolution — true, and the wrong comparison, because the engine standing beside it in the
+same product keeps six. Keeping the refusal instead would have meant that no group with a time
+column could have a ClickHouse copy at all, which is the shape this product is sold on. Both
+dialects render six now (§3.1, §7a), and **no pair of the three dialects shipped here truncates**.
+
+What is left is a ratchet, and it will fire on the day somebody writes a fourth adapter: a neutral
+type with no precision recorded for one of the two dialects refuses rather than being guessed at. A
+type nobody classified is a type nobody checked.
 
 The refusal cannot be made while reading the document. **A map names engines by name and carries no
 dialect** — deliberately, because a name is the client's and reasoning from it is refused
@@ -862,17 +884,21 @@ Three things about it are pinned, and the two positives are what make the refusa
 
 | Shape | Answer | Vector |
 |---|---|---|
-| PostgreSQL source, ClickHouse copy, a `timestamptz` column | refused, and **before any engine is touched** | `errors/038` |
-| both engines of one dialect, same column | opens, and the row reaches both | `migration/020` |
-| ClickHouse source, PostgreSQL copy | opens: the rule is about losing digits, not about the dialects differing | `migration/021` |
+| a copy into a dialect with no precision facts recorded | refused, and **before any engine is touched** | `errors/038` |
+| both engines of one dialect, a `timestamptz` column | opens, and the row reaches both | `migration/020` |
+| PostgreSQL source, ClickHouse copy — the central shape | opens, since both keep six digits | `migration/021` |
 
 `errors/038` carries an empty `calls.json` and that is the load-bearing half. A map that can never
 work must not create a table or issue a query on the way to being rejected; a runtime that gathered
 the watermarks first and refused afterwards would give the same answer with the price already paid,
 which is the defect `migration/001` was written for in the other direction.
 
-This is a **tightening** — a map that was silently losing data is now refused — so the contract
-number does not move. Accepting it again would be a loosening and would.
+**The table is not what protects an existing table, and this is worth knowing before writing an
+adapter.** The rule above reads what a *dialect* keeps. What a client's table actually holds is a
+different fact, and it is checked where it can be read: since the same day, both adapters compare
+the column types the server reports against the ones the layout declares, after applying the schema
+(§7a). That is what makes a change to a rendered type safe — a table left at three digits by an
+older map is refused by name rather than written into.
 
 
 ## 7a. The DDL a layout renders
@@ -889,7 +915,7 @@ cases. That worked, and it also found that the escaping rule was not pinned by a
 **The layout is the authority on type spelling and this renderer never translates one.** A
 layout's `columns` already carry dialect types — the planner put them there — so rendering supplies
 syntax and nothing else. `schema/002` is the case that says so out loud: it renders a ClickHouse
-layout with the `postgres` dialect and expects `DateTime64(3, 'UTC')` to come out unchanged. A
+layout with the `postgres` dialect and expects `DateTime64(6, 'UTC')` to come out unchanged. A
 renderer that mapped neutral types to dialect types would pass every other case in the family and
 fail that one, and it would be a second copy of the type mapping to keep in step with the planner's.
 
@@ -925,6 +951,38 @@ accepted in silence. A backslash before a letter the lexer does not know (`back\
 untouched, which is exactly what makes the defect look absent. `schema/011` pins both dialects, and
 nothing in the family carried a delimiter at all before it: the escaping could be deleted outright
 and every schema vector stayed green.
+
+### What the server holds afterwards
+
+**A Tier 2 runtime verifies the columns it just applied, by name *and by type*.** `CREATE TABLE IF
+NOT EXISTS` accepts a table of that name whatever shape it is in, so a leftover from an older map,
+another application or a hand-run migration is kept in silence — and the first write then fails in
+the client's request path with an error naming a column rather than the cause.
+
+Types were left out of this check until 7 September 2026, on a stated reason that was a true
+observation about the wrong catalogue: PostgreSQL's `information_schema.data_type` reports `numeric`
+for a `numeric(8,2)` column, so comparing against it would flag differences that are not
+differences. `pg_catalog.format_type(atttypid, atttypmod)` reports the canonical type *with* its
+modifier. Measured against every type this document defines, eleven of thirteen come back as the
+exact string the renderer wrote and the two that do not are the timestamp aliases, which the server
+resolves itself through `to_regtype`. ClickHouse needs no resolution at all: `system.columns.type`
+returns the rendered string exactly, down to the space in `Decimal(12, 2)`.
+
+What the omission cost, measured: a table whose `at` column was **`text`** where the map said
+`timestamptz` passed the check and was reported as a good schema.
+
+Two rules for an implementer:
+
+- compare **literally first**. That is the answer for every type here except an alias, and it is the
+  only comparison that catches a modifier changing — `numeric(12,2)` against `numeric(8,2)`, which
+  an alias resolver collapses to `numeric` on both sides and calls equal;
+- resolve an alias by **asking the server**, not from a table in your library. A table of alias
+  spellings is a second copy of the renderer, and the day the renderer learns a type it will be a
+  copy that disagrees.
+
+A missing column is refused. An **extra** column is not: a client may have added one outside SDE,
+the map does not name it, and refusing would make the library an obstacle to work it has no opinion
+about.
 
 ### Statements
 
@@ -1249,10 +1307,28 @@ Each library reads `conformance/vectors/**` in its own test runner. Four things 
 
 ## 11. Changing this document
 
-A vector is frozen once committed. Changing one is changing the contract: bump
-`conformance/contract-version.txt`, and every library declares which version it implements. There is
-no quiet fix — a vector that was wrong was a contract that was wrong, and somebody may have a stored
-placement map that depends on it.
+A vector is frozen once committed. Changing one is changing the contract, and every library declares
+which version it implements. There is no quiet fix — a vector that was wrong was a contract that was
+wrong, and somebody may have a stored placement map that depends on it.
+
+**Which number moves depends on which document the vector pins, and this paragraph is a correction.**
+The rule here used to say "bump `conformance/contract-version.txt`" for any vector change, which was
+right when every vector embedded the IR and stopped being right when `schema/` was added on
+6 September 2026. That number is the **IR's**, and the IR carries it *inside itself* — so bumping it
+recomputes every `model_version` and invalidates every map in the field. Doing that for a change to
+rendered DDL, which appears in neither document, would be the most expensive possible way to record
+the smallest kind of change.
+
+So: a vector that changes what the **IR** encodes moves `contract-version.txt`. A vector that changes
+what a **placement map** means moves the map's own number. A vector that changes only the **DDL a
+layout renders** moves neither — no stored artefact contains it, it is derived from a map plus a
+dialect at apply time, and what protects a client whose table was created by the older rendering is
+not a version number but the type check in §7a, which names the table and both types.
+
+The one that is easy to get wrong: a change to what a library *does* with a map moves the map's
+number even when no key changes. Equalising the ClickHouse timestamp precision changed which
+`also_write` maps a library accepts — a contract-2 library refuses a fan-out a contract-3 one
+performs, on the same document — so the map contract went to 3 with no new key anywhere.
 
 **There are two numbers, and they move independently.** `conformance/contract-version.txt` is the
 **IR's**, which is what the vectors embed and what `model_version` is a digest of. The placement map

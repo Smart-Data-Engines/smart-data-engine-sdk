@@ -148,13 +148,19 @@ class PlacementMap:
             ) from None
 
 
-MAP_CONTRACT = 2
+MAP_CONTRACT = 3
 """The placement map's format version, which is not the IR's - see :data:`sde.model.CONTRACT`.
 
-Two because the map gained ``also_write``, which a contract-1 library would ignore while a
-contract-2 one honours it: the same document, two different sets of engines written to, and the
-difference decided by which version happens to be installed. That is a loosening, and section 11 of
-the contract says a loosening bumps the number.
+Two was for ``also_write``, which a contract-1 library would ignore while a contract-2 one honours
+it: the same document, two different sets of engines written to, and the difference decided by
+which version happens to be installed. That is a loosening, and section 11 of the contract says a
+loosening bumps the number.
+
+Three since 7 September 2026, and the reason is not a new key. The rendered ClickHouse timestamp
+moved from `DateTime64(3)` to `DateTime64(6)` so that it matches PostgreSQL, which changed what
+this library believes the two dialects keep - and therefore whether it accepts a `also_write` map
+between them. A contract-2 library refuses a fan-out that a contract-3 one performs, on the same
+document, which is the loosening section 11 says bumps the number.
 """
 
 ALSO_WRITE_SINCE = 2

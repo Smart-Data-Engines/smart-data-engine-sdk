@@ -165,26 +165,40 @@ class PostgresEngine:
         writes are unaffected, and refusing would make this library an obstacle to work it has no
         opinion about.
 
-        Names only. Comparing declared types to `information_schema.data_type` means matching
-        `numeric(8,2)` against `numeric`, and a check that has to normalise dialect spellings
-        would report differences that are not differences.
+        **Types as well as names, since 7 September 2026, and the reason the earlier version
+        checked names only was a true statement about the wrong catalogue.** It read
+        `information_schema.data_type`, which reports `numeric` for a `numeric(8,2)` column, and
+        concluded that comparing types would report differences that are not differences.
+        `pg_catalog.format_type(atttypid, atttypmod)` reports the canonical type *with* its
+        modifier - measured against every type this library renders, eleven of thirteen come back
+        as the exact string we wrote, and the two that do not are the timestamp aliases, which the
+        server itself will resolve for us.
+
+        What that cost while it was names-only, measured: a table whose `at` column is **`text`**
+        where the map says `timestamptz` passed this check and was reported as a good schema.
         """
         expected = {
-            table: set(layout.columns.get(entity, {}))
+            table: dict(layout.columns.get(entity, {}))
             for entity, table in sorted(layout.tables.items())
         }
         if not expected:
             return
 
         with self._cx.cursor() as cur:
+            # `pg_attribute` rather than `information_schema`, for `format_type`: the canonical
+            # spelling *including* the modifier, which is the whole reason this can compare types.
             cur.execute(
-                "SELECT table_name, column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = ANY(%s)",
+                "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) "
+                "FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = ANY(%s) "
+                "AND a.attnum > 0 AND NOT a.attisdropped",
                 [sorted(expected)],
             )
-            found: dict[str, set[str]] = {}
-            for table_name, column_name in cur.fetchall():
-                found.setdefault(str(table_name), set()).add(str(column_name))
+            found: dict[str, dict[str, str]] = {}
+            for table_name, column_name, column_type in cur.fetchall():
+                found.setdefault(str(table_name), {})[str(column_name)] = str(column_type)
 
         for table, columns in sorted(expected.items()):
             actual = found.get(table)
@@ -194,7 +208,7 @@ class PostgresEngine:
                     f"success, so this is a permissions or search_path problem rather than a bad "
                     f"map."
                 )
-            missing = sorted(columns - actual)
+            missing = sorted(set(columns) - set(actual))
             if missing:
                 raise EngineError(
                     f"{table!r} already existed with a different shape: the map needs {missing} "
@@ -204,9 +218,45 @@ class PostgresEngine:
                     f"the first insert, which would fail in your request path with an error naming "
                     f"a column and not the cause."
                 )
-            extra = sorted(actual - columns)
+            for column, declared in sorted(columns.items()):
+                reported = actual[column]
+                if self._same_type(declared, reported):
+                    continue
+                raise EngineError(
+                    f"{table}.{column} is {reported!r} and this map declares it {declared!r}. "
+                    f"`CREATE TABLE IF NOT EXISTS` keeps a table of that name whatever shape it "
+                    f"is in, and this library never alters a column's type - so the table came "
+                    f"from somewhere else, or from a map that rendered this column differently. "
+                    f"Refusing rather than writing into it: a type that differs is either a write "
+                    f"that fails in your request path or, worse, one that succeeds and hands the "
+                    f"value back as something else."
+                )
+            extra = sorted(set(actual) - set(columns))
             if extra:
                 log("sde.schema.extra_columns", table=table, columns=extra)
+
+    def _same_type(self, declared: str, reported: str) -> bool:
+        """Whether two PostgreSQL type spellings denote the same type. Asked of the server.
+
+        Literal first, because that is the answer for every type this library renders except the
+        two timestamps. When it fails, the server is asked - `to_regtype` resolves an alias to the
+        type it names, so `timestamptz` and `timestamp with time zone` come back equal without this
+        module holding a table of aliases that could fall behind the renderer.
+
+        **A modifier makes a literal mismatch a real one.** `to_regtype` discards modifiers, so
+        `numeric(12,2)` and `numeric(8,2)` would both resolve to `numeric` and a precision change
+        would read as agreement. That is the one difference this check exists to catch, so a
+        parenthesis on either side ends the question here.
+        """
+        if declared == reported:
+            return True
+        if "(" in declared or "(" in reported:
+            return False
+        with self._cx.cursor() as cur:
+            cur.execute("SELECT to_regtype(%s)::text, to_regtype(%s)::text", [declared, reported])
+            row = cur.fetchone()
+        return bool(row is not None and row[0] is not None and row[0] == row[1])
+
 
     # --- data ------------------------------------------------------------------------------
 

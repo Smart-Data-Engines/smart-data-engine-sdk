@@ -1,0 +1,10 @@
+{
+  "error": "MigrationRefused",
+  "stage": "session",
+  "match": "does not know whether postgres and mysql store it to the same",
+  "load": {
+    "require_signature": true,
+    "public_key": "7ePgrWMM3QboEd9CGqbDGTdWiTwj5KfxFIKs8XKTeiE="
+  },
+  "why": "**No two dialects this library ships truncate each other any more**, and that is why this case reads the way it does. Until 7 September 2026 it was PostgreSQL to ClickHouse with a `timestamptz`: measured on live servers, one row written once came back `09:30:15.123456` from the first and `09:30:15.123` from the second, silently, on every write a fan-out made. The fix was not to go on refusing it. It was to stop rendering a ClickHouse timestamp to three digits - a choice originally made against a comparison with plain `DateTime`, which is seconds, rather than with the engine standing beside it in the same product. Both keep six now, the refusal has no reachable pair among shipped dialects, and a case built on it would have become one that cannot fail. What is left is the branch that will actually fire in the field: a dialect this library holds no precision facts about, which is what the fourth engine adapter anybody writes will be on its first day. A type nobody classified is a type nobody checked, and guessing returns a value changed with no error anywhere. The stage is `session` and it is forced there: a map names engines by name and carries no dialect, so neither `model` nor `map` can answer this, and the earliest door that can is the one holding the adapters. `calls.json` is empty and is the load-bearing half: a library that gathered the watermarks first and refused afterwards would give this same answer with the map's cost already paid, which is how the no-account promise broke in `migration/001`. The map is **signed** for exactly that reason - the forward-only check does nothing at all against an unsigned one, so an unsigned case would satisfy the empty list however the two were ordered."
+}

@@ -326,11 +326,17 @@ export class ClickHouseEngine {
    *
    * A missing column is refused; an extra one is allowed, because a client may have added one
    * outside SDE and the map has no opinion about it.
+   *
+   * **Types too, and here they need no normalising at all.** Measured against every type this
+   * library renders: `system.columns.type` returns the exact string we wrote, down to the space in
+   * `Decimal(12, 2)` and the quotes in `DateTime64(6, 'UTC')`. So the comparison is literal, and
+   * it is literal on purpose - a renderer that started emitting a different spelling of the same
+   * type would fail this, which is the right way round for a document we sign.
    */
   private async verifySchema(layout: PhysicalLayout): Promise<void> {
-    const expected = new Map<string, Set<string>>()
+    const expected = new Map<string, Record<string, string>>()
     for (const [entity, table] of Object.entries(layout.tables)) {
-      expected.set(table, new Set(Object.keys(layout.columns[entity] ?? {})))
+      expected.set(table, layout.columns[entity] ?? {})
     }
     if (expected.size === 0) return
     const names = [...expected.keys()].sort(compareCodePoints)
@@ -342,14 +348,14 @@ export class ClickHouseEngine {
     // about quoting identifiers in one place, arriving one level down.
     const list = names.map(literal).join(', ')
     const rows = await this.query(
-      `SELECT table, name FROM system.columns WHERE database = currentDatabase() ` +
+      `SELECT table, name, type FROM system.columns WHERE database = currentDatabase() ` +
         `AND table IN (${list})`,
     )
-    const found = new Map<string, Set<string>>()
+    const found = new Map<string, Map<string, string>>()
     for (const row of rows) {
       const table = String(row['table'])
-      const columns = found.get(table) ?? new Set<string>()
-      columns.add(String(row['name']))
+      const columns = found.get(table) ?? new Map<string, string>()
+      columns.set(String(row['name']), String(row['type']))
       found.set(table, columns)
     }
     for (const table of names) {
@@ -360,19 +366,35 @@ export class ClickHouseEngine {
             `so this is a permissions or database problem rather than a bad map.`,
         )
       }
-      const missing = [...(expected.get(table) as Set<string>)]
+      const columns = expected.get(table) as Record<string, string>
+      const missing = Object.keys(columns)
         .filter((column) => !actual.has(column))
         .sort()
       if (missing.length > 0) {
         throw new EngineError(
           `'${table}' already existed with a different shape: the map needs ` +
-            `[${missing.join(', ')}] and the table has [${[...actual].sort().join(', ')}]. ` +
+            `[${missing.join(', ')}] and the table has ` +
+            `[${[...actual.keys()].sort().join(', ')}]. ` +
             `CREATE TABLE IF NOT EXISTS keeps whatever is there, so this table came from ` +
             `somewhere else. Refusing here rather than at the first insert.`,
         )
       }
+      for (const column of Object.keys(columns).sort()) {
+        const declared = columns[column] as string
+        const reported = actual.get(column) as string
+        if (reported === declared) continue
+        throw new EngineError(
+          `${table}.${column} is '${reported}' and this map declares it '${declared}'. ` +
+            `CREATE TABLE IF NOT EXISTS keeps a table of that name whatever shape it is in, and ` +
+            `this library never alters a column's type - so the table came from somewhere else, ` +
+            `or from a map that rendered this column differently. Refusing rather than writing ` +
+            `into it: with a timestamp the difference is usually precision, and a write that ` +
+            `succeeds and comes back rounded is worse than one that fails.`,
+        )
+      }
     }
   }
+
 
   // --- data --------------------------------------------------------------------------------
 

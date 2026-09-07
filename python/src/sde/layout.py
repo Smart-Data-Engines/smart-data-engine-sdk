@@ -97,11 +97,26 @@ CLICKHOUSE_TYPES: Final[Mapping[str, str]] = {
     # Date32 rather than Date: Date covers 1970-2149, which is a range a business date can leave.
     # Silently clamping a date is worse than storing four bytes more.
     "date": "Date32",
-    # Millisecond precision, stated. ClickHouse's plain DateTime is second-resolution, so a client
-    # who wrote 12:00:00.500 would read back 12:00:00 - a lossy round trip that no test with
-    # whole-second fixtures would notice.
-    "timestamp": "DateTime64(3)",
-    "timestamptz": "DateTime64(3, 'UTC')",
+    # **Six digits, to match PostgreSQL exactly.** This said three until 7 September 2026, and the
+    # comment justifying three compared it against plain `DateTime`, which is second-resolution:
+    # true, and the wrong comparison. The engine standing beside it in this product keeps six, so a
+    # copy between them changed essentially every row - `datetime.now()` has microseconds - and it
+    # changed them silently, because the insert succeeds and the value comes back rounded. The
+    # refusal that catches that (`sde.precision_refusal`) then made the product's central shape
+    # unexpressible: a transactional group in PostgreSQL with an analytical copy in ClickHouse
+    # cannot have a time column, and an order without one is not an order.
+    #
+    # Measured on ClickHouse 24.8 before the change: `DateTime64(6)` returns
+    # `2026-11-09 09:30:15.123456` unchanged where `(3)` returns `.123`, and six digits still cover
+    # 1900 to 2261. `DateTime64` is an Int64 tick count whatever the precision, so this is not a
+    # storage trade - that part is the type's documented shape rather than something measured here.
+    #
+    # The bookkeeping tables this library creates for itself keep three, deliberately: they record
+    # when we last saw something, they are never copied between engines and never compared against
+    # a layout, and changing them would invalidate the ones already on disk for no benefit.
+    "timestamp": "DateTime64(6)",
+    "timestamptz": "DateTime64(6, 'UTC')",
+
 }
 
 

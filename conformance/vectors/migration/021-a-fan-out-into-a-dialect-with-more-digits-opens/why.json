@@ -1,3 +1,0 @@
-{
-  "why": "The rule is about losing digits, not about the dialects differing. ClickHouse keeps three sub-second digits and PostgreSQL six, so this direction widens and every value survives - and a library that refused any mismatch would pass `errors/038` and `migration/020` and still be wrong here, in the direction that costs a client a migration they could have run. Widening is not checked for what it might round on the way back: the copy holds what the source holds."
-}

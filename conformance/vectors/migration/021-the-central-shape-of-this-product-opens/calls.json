@@ -1,11 +1,11 @@
 [
   {
-    "engine": "ch-src",
+    "engine": "pg-src",
     "call": "insert",
     "table": "reading"
   },
   {
-    "engine": "pg-copy",
+    "engine": "ch-copy",
     "call": "insert",
     "table": "reading"
   }

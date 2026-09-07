@@ -22,8 +22,8 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 
 | Library | Language | Tier | Hashing (§2a) | IR contract | Map contract | Engines |
 |---|---|---|---|---|---|---|
-| `smart-data-engine` | Python 3.11–3.13 | 2 | yes | 1 | 1–2 | `clickhouse`, `orderbook`, `postgres` |
-| `@smart-data-engines/sde` | TypeScript / Node 18–22 | 2 | yes | 1 | 1–2 | `clickhouse`, `postgres` |
+| `smart-data-engine` | Python 3.11–3.13 | 2 | yes | 1 | 1–3 | `clickhouse`, `orderbook`, `postgres` |
+| `@smart-data-engines/sde` | TypeScript / Node 18–22 | 2 | yes | 1 | 1–3 | `clickhouse`, `postgres` |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
