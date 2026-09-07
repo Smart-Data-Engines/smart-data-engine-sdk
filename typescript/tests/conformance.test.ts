@@ -198,7 +198,7 @@ interface ErrorExpectation {
 
 describe('error vectors', () => {
   for (const name of cases('errors')) {
-    it(name, () => {
+    it(name, async () => {
       const dir = join(VECTORS, 'errors', name)
       const expected = readJson<ErrorExpectation>(join(dir, 'expected.json'))
       const ctor = ERRORS[expected.error]
@@ -208,7 +208,7 @@ describe('error vectors', () => {
       // runs, rather than when the model is built, has a different bug that a type-only assertion
       // cannot see.
       expect(
-        ['model', 'map'],
+        ['model', 'map', 'session'],
         `${name} expects the error at stage '${expected.stage}', which this runner does not know ` +
           'how to exercise yet. Failing rather than skipping: a stage nobody runs is a rule ' +
           'nobody checks.',
@@ -236,23 +236,50 @@ describe('error vectors', () => {
         requireSignature: load.require_signature === true,
       }
       if (load.public_key) options.publicKey = Buffer.from(load.public_key, 'base64')
-      expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match))
+
+      if (expected.stage !== 'session') {
+        expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match))
+        return
+      }
+
+      // The session stage: a rule neither of the others can reach. A placement map names engines
+      // by name and deliberately carries no dialect, so a rule about what two dialects do to a
+      // value is unanswerable while reading the document - the earliest door that can answer it is
+      // the one holding the adapters. The map here is valid and is loaded outside the assertion,
+      // for the same reason the model is.
+      const map = loadMap(raw, options)
+      const engines = enginesFrom(readJson(join(dir, 'engines.json')))
+      await expect(Session.open(model, map, engines)).rejects.toThrow(new RegExp(expected.match))
+      // **A map that can never work must not have cost anything first.** A library that gathered
+      // the watermarks and refused afterwards would give this same answer with the price already
+      // paid - which is not hypothetical: it is how the no-account promise broke in
+      // `migration/001`, in this language, and an empty call list was the only thing that showed
+      // it.
+      const first = Object.values(engines)[0] as MemoryEngine
+      expect(
+        first.recorded.calls,
+        'the refusal is right and it was not free. Nothing may be created, read or written on ' +
+          'the strength of a map this library is about to reject.',
+      ).toEqual(readJson(join(dir, 'calls.json')))
     })
   }
 })
 
-it('covers both error stages with actual vectors', () => {
+it('covers all three error stages with actual vectors', () => {
   // A stage the runner supports and no vector uses is a rule that reads as covered. Before the map
   // stage existed, every refusal in section 7 of the contract was checked in Python's own tests and
   // in nothing shared - which is how one message came to render a literal '{CONTRACT}' in Python
-  // and the number here.
+  // and the number here. The session stage arrived the same way one turn later: a rule fixed in
+  // both languages on one day and held by a per-language test in each, which is exactly what one
+  // map with two meanings looks like from the inside - green, twice.
   const stages = new Set(
     cases('errors').map(
       (name) => readJson<ErrorExpectation>(join(VECTORS, 'errors', name, 'expected.json')).stage,
     ),
   )
-  expect([...stages].sort()).toEqual(['map', 'model'])
+  expect([...stages].sort()).toEqual(['map', 'model', 'session'])
 })
+
 
 
 // --- signature vectors ------------------------------------------------------------------------

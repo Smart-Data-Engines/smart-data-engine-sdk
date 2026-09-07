@@ -1,0 +1,52 @@
+{
+  "contract": 2,
+  "model_version": "b4234d0ad92a4341",
+  "map_version": 1,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@src",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading"
+          },
+          "columns": {
+            "Reading": {
+              "at": "timestamptz",
+              "celsius": "integer",
+              "id": "bigint"
+            }
+          }
+        }
+      },
+      "derived": [
+        {
+          "id": "Reading@copy",
+          "engine": "ch-1",
+          "layout": {
+            "tables": {
+              "Reading": "reading"
+            },
+            "columns": {
+              "Reading": {
+                "at": "DateTime64(3)",
+                "celsius": "Int32",
+                "id": "Int64"
+              }
+            }
+          },
+          "lag_budget_ms": 30000
+        }
+      ],
+      "also_write": [
+        "Reading@copy"
+      ]
+    }
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "issuing",
+    "value": "Bynq67Wu1Vx9tqIFL4AC5EijnynlUCkhMh1ENYSet8uMT1o0040WsjekoujEUTiRqd2pvX3b0804U8A2YfxBBA=="
+  }
+}

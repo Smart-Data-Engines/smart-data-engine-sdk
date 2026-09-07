@@ -1,0 +1,12 @@
+[
+  {
+    "engine": "pg-src",
+    "call": "insert",
+    "table": "reading"
+  },
+  {
+    "engine": "pg-copy",
+    "call": "insert",
+    "table": "reading"
+  }
+]

@@ -22,7 +22,11 @@ vectors/
     cases.json                (shape, in a write transaction?, needs freshness?) -> materialisation
   errors/<nnn>-<name>/
     model.json
-    map.json                  for the `map` stage cases
+    map.json                  for the `map` and `session` stage cases
+    engines.json              the engine set to build, for `session` cases - the same document
+                              the migration family uses, and `dialect` is the field that matters
+    calls.json                for `session` cases: what the library was allowed to do to those
+                              engines on its way to refusing, which so far is nothing
     keys.json                 the public keys the caller holds - only where a case needs one
     expected.json             which error, at what point it must be raised, and optionally a
                               `load` block of arguments the runner must pass to the loader
@@ -157,6 +161,13 @@ vectors exist to catch, and it is invisible after parsing.
    The `model` stage is the loader **and** the model builder: a refusal about the shape of the
    declaration comes out of the loader, so calling it outside the assertion makes those cases
    unpassable. A `map` case is the other way round - its model must build, outside the assertion.
+   A `session` case builds both **and** loads the map outside the assertion, and only the session
+   construction is expected to fail: the document is valid, and what is refused is what it asks two
+   adapters to do. Tier 2 only. If your runner does not know a stage, **fail rather than skip** -
+   a stage nobody runs is a rule nobody checks, and skipping reads as coverage in the summary.
+   Where a `session` case carries `calls.json`, compare it: the refusal is only half the claim, and
+   the other half is that nothing was created, read or written before it.
+
 7. For signature vectors, load `map.json` with the keys in `keys.json` and assert which one
    verified it. A single entry under the **empty** name means the caller passed one bare key and
    the library reports no name back; that is a different call from a one-entry mapping, and the

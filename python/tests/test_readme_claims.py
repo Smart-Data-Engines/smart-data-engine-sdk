@@ -39,7 +39,7 @@ import re
 from pathlib import Path
 
 import pytest
-from _claims import MEASUREMENTS, absence_claims, sentences
+from _claims import MEASUREMENTS, WORDS, absence_claims, sentences
 
 import sde
 
@@ -148,12 +148,6 @@ PAGES = [
     ROOT / "docs" / "format-contract.md",
 ]
 
-# Our prose spells small numbers out, so the check has to read them the same way.
-_WORDS = [
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
-    "nineteen", "twenty",
-]
 
 _CITED_VECTOR = re.compile(r"`([a-z]+)/(\d{3})[^`]*`")
 _RANGE = re.compile(r"`(\d{3})` through `(\d{3})`")
@@ -183,7 +177,7 @@ def test_the_front_page_states_the_size_of_the_suite_and_the_tree_agrees() -> No
         f"the front page does not say the suite is {total} vectors. It is, counted in "
         "conformance/vectors."
     )
-    assert f"in {_WORDS[len(families)]} families**" in page, (
+    assert f"in {WORDS[len(families)]} families**" in page, (
         f"the front page does not say there are {len(families)} vector families: "
         f"{sorted(families)}"
     )
@@ -216,11 +210,11 @@ def test_every_vector_a_page_cites_exists(page: Path) -> None:
     for sentence in sentences(text):
         for low, high in _RANGE.findall(sentence):
             span = int(high) - int(low) + 1
-            spelled = [w for w in _WORDS if re.search(rf"\b{w}\b", sentence, re.IGNORECASE)]
+            spelled = [w for w in WORDS if re.search(rf"\b{w}\b", sentence, re.IGNORECASE)]
             if len(spelled) == 1:
                 # One number word in the sentence can be attributed to the range; two cannot, and
                 # guessing which is worse than not checking.
-                assert _WORDS.index(spelled[0]) == span, (
+                assert WORDS.index(spelled[0]) == span, (
                     f"{page.name} says {spelled[0]} and names a range of {span}: "
                     f"`{low}` through `{high}`"
                 )

@@ -13,11 +13,12 @@ migration. Neither requirement can be met by a document nobody checks.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
-from _claims import ABSENCE, MEASUREMENTS, sentences
+from _claims import ABSENCE, MEASUREMENTS, WORDS, sentences
 
 import sde
 
@@ -328,3 +329,62 @@ def test_every_document_this_page_links_to_exists(document: Path) -> None:
     """A guide whose links are dead is a guide that sends an implementer to ask us."""
     for target in re.findall(r"\]\((?!https?:)([^)#]+)", document.read_text()):
         assert (document.parent / target).exists(), f"{document.name} links to missing {target}"
+
+
+# --- §10's own table, which is the reader's index into everything above it ----------------------
+
+
+def _section_ten() -> str:
+    text = CONTRACT.read_text(encoding="utf-8")
+    start = text.index("## 10. Running the vectors")
+    end = text.find("\n## ", start + 1)
+    return text[start:] if end == -1 else text[start:end]
+
+
+def test_section_ten_lists_every_family_and_counts_them_correctly() -> None:
+    """The contract's index of the vector sets, derived from the sets.
+
+    It said "There are five kinds" and listed five while there were nine, with the other four
+    argued in the prose underneath. Nobody was careless: the table was written when five was right
+    and every later change was about the family being added rather than about the index to it,
+    which is the same one-directional rot as a status section. The other checks in this file audit
+    the *guide* against the tree and never looked at the contract's own list.
+
+    Both halves are derived. The count catches a family added without a row; the rows catch a name
+    that drifted, which is worse, because a reader looking for `signature/` and not finding it
+    concludes there is nothing to implement.
+    """
+    section = _section_ten()
+    families = sorted(_families())
+    assert f"There are {WORDS[len(families)]} kinds" in section, (
+        f"format-contract §10 does not say there are {WORDS[len(families)]} kinds of vector, and "
+        f"there are: {families}."
+    )
+    for family in families:
+        assert f"| `{family}/` |" in section, (
+            f"§10's table has no row for `{family}/`. A family with vectors and no row is one an "
+            f"implementer never learns to run."
+        )
+
+
+def test_section_ten_names_every_stage_an_error_vector_actually_uses() -> None:
+    """A stage a vector expects and the contract never names is a rule an outsider cannot pass.
+
+    The runners are written to **fail rather than skip** on a stage they do not know, so a fourth
+    stage added in silence would stop a third-party suite dead with no document to read. It has
+    already been three: `session` arrived on 7 September 2026 for a rule that cannot be answered
+    while reading a document at all, because a map names engines by name and carries no dialect.
+    """
+    section = _section_ten()
+    stages = {
+        json.loads((case / "expected.json").read_text(encoding="utf-8"))["stage"]
+        for case in sorted((VECTORS / "errors").iterdir())
+        if case.is_dir()
+    }
+    row = next(line for line in section.splitlines() if line.startswith("| `errors/` |"))
+    for stage in sorted(stages):
+        assert f"`{stage}`" in row, (
+            f"§10's `errors/` row does not name the {stage!r} stage, and a vector expects it. A "
+            f"runner that meets an unknown stage is required to fail, so an unnamed one is a "
+            f"suite an outsider cannot get green and cannot look up."
+        )

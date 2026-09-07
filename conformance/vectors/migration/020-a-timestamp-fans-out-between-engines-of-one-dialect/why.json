@@ -1,0 +1,3 @@
+{
+  "why": "The half that makes `errors/038` a proof rather than a mood. Same model, same map shape, same `timestamptz` - and both engines keep six sub-second digits, so nothing is lost and the session opens. A library that refused every map carrying a timestamp would satisfy the refusal case and fail this one, and a client whose two PostgreSQL instances are mid-migration is the ordinary use of `also_write`."
+}

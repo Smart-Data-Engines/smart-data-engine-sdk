@@ -1,0 +1,10 @@
+{
+  "error": "MigrationRefused",
+  "stage": "session",
+  "match": "stores to 6 sub-second digits and clickhouse to 3",
+  "load": {
+    "require_signature": true,
+    "public_key": "yF29nZbasJJVeOpF3W3p7jD2LNmrJAK1PEnXIlWl56o="
+  },
+  "why": "The rule had one caller for five days. `backfill` refused a copy that would truncate; the write fan-out did the same truncation a phase earlier, once per write, and nothing reported it - measured on live servers as `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse for one row written once. So the gate stopped the migration finishing and did not stop the loss. The stage is `session` and it is forced there: a map names engines by name and carries no dialect, so neither `model` nor `map` can answer this, and the earliest door that can is the one holding the adapters. `calls.json` is empty and is the load-bearing half: a library that gathered the watermarks first and refused afterwards would give this same answer with the map's cost already paid, which is how the no-account promise broke in `migration/001`. The map is **signed** for exactly that reason - the forward-only check does nothing at all against an unsigned one, so an unsigned case would satisfy the empty list however the two were ordered."
+}

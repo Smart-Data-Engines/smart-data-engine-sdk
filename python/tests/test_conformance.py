@@ -670,7 +670,7 @@ _ERRORS: dict[str, type[Exception]] = {
 }
 
 
-def _load_map_from_vector(case: Path, load: Mapping[str, Any]) -> None:
+def _load_map_from_vector(case: Path, load: Mapping[str, Any]) -> sde.PlacementMap:
     """Build the model, then load the map. The order is the point.
 
     A map-stage vector has a *valid* model, and building it has to happen outside the block that
@@ -681,11 +681,38 @@ def _load_map_from_vector(case: Path, load: Mapping[str, Any]) -> None:
     """
     model = model_from_neutral(_read_json(case / "model.json"))
     encoded = load.get("public_key")
-    sde.load_map(
+    return sde.load_map(
         _read_json(case / "map.json"),
         model=model,
         public_key=b64decode(encoded) if isinstance(encoded, str) else None,
         require_signature=bool(load.get("require_signature", False)),
+    )
+
+
+def _refuse_at_session(case: Path, exc_type: type[Exception], expected: Mapping[str, Any]) -> None:
+    """A stage neither of the other two can reach, and the reason is in the map format.
+
+    A placement map names engines **by name** and deliberately carries no dialect (§7), so a rule
+    about what two dialects do to a value is unanswerable while reading the document. The earliest
+    door that can answer is the one holding the adapters, which is where the session is built.
+
+    Model and map are both valid here and are built outside the assertion, for the reason the map
+    stage builds its model outside one: a vector broken by accident would fail earlier and satisfy
+    a check that reads only the class and the message.
+    """
+    model = model_from_neutral(_read_json(case / "model.json"))
+    placement = _load_map_from_vector(case, expected.get("load", {}))
+    engines = engines_from(_read_json(case / "engines.json"))
+    with pytest.raises(exc_type, match=expected["match"]):
+        sde.Session(model, placement, engines)
+    # **A map that can never work must not have cost anything first.** A library that gathered the
+    # watermarks and refused afterwards would produce this same refusal with the price already
+    # paid, and that is not hypothetical: it is how the no-account promise broke in
+    # `migration/001`, in the other language, and the empty list was the only thing that showed it.
+    journal = next(iter(engines.values())).recorded
+    assert journal.as_list() == _read_json(case / "calls.json"), (
+        f"{_ident(case)}: the refusal is right and it was not free. Nothing may be created, read "
+        "or written on the strength of a map this library is about to reject."
     )
 
 
@@ -698,11 +725,15 @@ def test_error_vector(case: Path) -> None:
     # The stage matters as much as the error. A library that raises the right exception when the
     # query runs, rather than when the model is built, has a different bug that happens to look the
     # same in a test that only checks the type.
-    assert stage in ("model", "map"), (
+    assert stage in ("model", "map", "session"), (
         f"{_ident(case)} expects the error at stage {stage!r}, which this runner does not know how "
         "to exercise yet. Failing rather than skipping: a stage nobody runs is a rule nobody "
         "checks."
     )
+
+    if stage == "session":
+        _refuse_at_session(case, exc_type, expected)
+        return
 
     with pytest.raises(exc_type, match=expected["match"]):
         if stage == "model":
@@ -711,7 +742,7 @@ def test_error_vector(case: Path) -> None:
             _load_map_from_vector(case, expected.get("load", {}))
 
 
-def test_both_stages_are_actually_covered_by_vectors() -> None:
+def test_all_three_stages_are_actually_covered_by_vectors() -> None:
     """A stage the runner supports and no vector uses is a rule that reads as covered.
 
     Before the map stage existed, every rule in section 7 of the contract - eleven refusals, each
@@ -719,9 +750,15 @@ def test_both_stages_are_actually_covered_by_vectors() -> None:
     shared. TypeScript enforced the same rules and no shared case reached any of them, which is how
     the contract-mismatch message came to render a literal ``{CONTRACT}`` in one language and the
     number in the other.
+
+    The session stage arrived the same way and one turn later: the fan-out precision rule was fixed
+    in both languages on the same day and held by a per-language test in each, which is the state
+    this suite exists to refuse. Two green suites is exactly how one map with two meanings looks
+    from the inside.
     """
     stages = {_read_json(case / "expected.json")["stage"] for case in _cases("errors")}
-    assert stages == {"model", "map"}, f"error vectors cover only {sorted(stages)}"
+    assert stages == {"map", "model", "session"}, f"error vectors cover only {sorted(stages)}"
+
 
 
 # --- canonical vectors -----------------------------------------------------------------------
