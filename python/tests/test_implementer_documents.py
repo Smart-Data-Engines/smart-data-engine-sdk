@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 import pytest
+from _claims import ABSENCE, MEASUREMENTS, sentences
 
 import sde
 
@@ -87,9 +88,6 @@ def test_the_guide_names_every_vector_family_and_no_others() -> None:
     )
 
 
-# Present tense only. The guide is allowed - and now required - to say that three sets *did* not
-# exist, because that history is the argument for the order the work was done in.
-_ABSENCE = re.compile(r"\b(?:do|does) not exist yet")
 _FAMILY = re.compile(r"`([a-z]+)/`")
 
 
@@ -99,10 +97,16 @@ def _claimed_absent(text: str) -> set[str]:
     Read per sentence rather than by pairing a name with the phrase: the claim that mattered listed
     three families after a colon, and a pattern that pairs them one at a time captures whichever
     one it reaches first and reports the other two as fine.
+
+    The idiom itself is :data:`_claims.ABSENCE`, shared with the check over ``README.md``, because
+    the same sentence shape carries the same kind of false claim to a different reader and two
+    copies of the pattern is how the wording drifts apart. Present tense only: the guide is allowed
+    - and now required - to say that three sets *did* not exist, because that history is the
+    argument for the order the work was done in.
     """
     out: set[str] = set()
-    for sentence in re.split(r"(?<=\.)\s", _flat(text)):
-        if _ABSENCE.search(sentence):
+    for sentence in sentences(text):
+        if ABSENCE.search(sentence):
             out |= set(_FAMILY.findall(sentence))
     return out
 
@@ -303,9 +307,7 @@ def test_the_list_says_who_fixes_a_defect_in_each_kind() -> None:
     assert "belongs to its author" in text[theirs:]
 
 
-@pytest.mark.parametrize(
-    ("language", "suffix"), [("**Go**", ".go"), ("**Rust**", ".rs")]
-)
+@pytest.mark.parametrize(("language", "suffix"), MEASUREMENTS)
 def test_a_measurement_is_named_as_one_and_is_not_here(language: str, suffix: str) -> None:
     """Between them they found sixteen defects and neither is a library.
 
@@ -315,7 +317,7 @@ def test_a_measurement_is_named_as_one_and_is_not_here(language: str, suffix: st
     knew about Go would have said nothing about a Rust tree appearing next to it.
     """
     text = LIST.read_text()
-    assert language in text, f"{language} is not named on the list of implementations"
+    assert f"**{language}**" in text, f"{language} is not named on the list of implementations"
     assert "not in this repository" in text
     found = [p for p in ROOT.glob(f"**/*{suffix}") if ".venv" not in p.parts]
     assert found == [], f"there is {language} source in this repository: {found[:3]}"

@@ -191,11 +191,11 @@ may have stored a placement map against it.
 
 ## Where these came from, part two
 
-Ten of the `errors/` vectors - `026` through `035` - were added on 6 September 2026 after a Tier 0
+Eleven of the `errors/` vectors - `026` through `036` - were added on 6 September 2026 after a Tier 0
 implementation was written in Go from `docs/format-contract.md` and this directory alone, to find out
 whether that document is sufficient to implement from without asking us. It is, for the encoding: all
-49 vectors passed on the first run. It was not for anything the vectors did not reach, and the ten
-new ones are the rules that came out of that - six of which were defects in the two libraries above,
+49 vectors passed on the first run. It was not for anything the vectors did not reach, and the
+eleven new ones are the rules that came out of that - six of which were defects in the two libraries above,
 including a map whose groups were validated in the document's own key order, so one document refused
 differently depending on the JSON parser. `docs/implementing.md` has the whole list.
 

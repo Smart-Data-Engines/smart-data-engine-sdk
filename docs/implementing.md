@@ -319,7 +319,7 @@ about which files to open changes what somebody already knows. That is why the f
 is not "all the vectors passed" — it is the list above, every item of which is a place where two
 implementations had already made different choices, or would have. The honest version of the claim in
 §16.7 of the requirements is therefore: **this document has now been implemented from twice, and the
-second time cost six defects and ten vectors.** Whoever does it third should expect to find more, and
+second time cost six defects and eleven vectors.** Whoever does it third should expect to find more, and
 that is the bug report we want most.
 
 The experiment is repeatable and cheap — a day, one language, one file of vectors — and it is worth
@@ -380,7 +380,7 @@ were each demonstrated by a mutation that **survived**:
     table-order claim in `schema/001`'s own note was not exercised, because every layout in the
     family already writes its tables sorted (`schema/012`).
 
-Eight vectors were added, one existing case gained a `runs: false` flag, and all of them were
+Nine vectors were added, one existing case gained a `runs: false` flag, and all of them were
 mutation-tested in **both** runners: twenty mutations, every one fatal, and each killing only the
 vector written for it.
 
