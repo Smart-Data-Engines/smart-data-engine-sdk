@@ -89,7 +89,7 @@ def test_the_schema_is_created_and_creating_it_again_changes_nothing(
     assert types == {
         "id": "UUID",
         "name": "String",
-        "at": "DateTime64(3, 'UTC')",
+        "at": "DateTime64(6, 'UTC')",
         "amount": "Decimal(12, 2)",
     }
 
@@ -144,7 +144,7 @@ def test_a_naive_datetime_is_utc_and_an_aware_one_is_respected(
 def test_a_timestamptz_column_gives_back_an_aware_datetime(engine: ClickHouseEngine) -> None:
     """Symmetry with psycopg, which matters more than it sounds.
 
-    The driver returns a *naive* datetime for a `DateTime64(3, 'UTC')` column while psycopg returns
+    The driver returns a *naive* datetime for a `DateTime64(6, 'UTC')` column while psycopg returns
     an aware one for a `timestamptz`. Left alone, the same entity read from the two engines
     produces two datetimes Python refuses to compare - `can't compare offset-naive and offset-aware
     datetimes` - a TypeError in a client's code that appears on the day a group moves and not

@@ -86,7 +86,7 @@ export interface LoadOptions {
   readonly requireSignature?: boolean
 }
 
-export const MAP_CONTRACT = 2
+export const MAP_CONTRACT = 3
 /**
  * The placement map's format version, which is not the IR's - see `CONTRACT`.
  *

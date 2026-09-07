@@ -58,8 +58,8 @@ export const CHUNK_ROWS = 1000
 export const DIALECT_PRECISION: Readonly<Record<string, number>> = {
   'timestamp|postgres': 6,
   'timestamptz|postgres': 6,
-  'timestamp|clickhouse': 3,
-  'timestamptz|clickhouse': 3,
+  'timestamp|clickhouse': 6,
+  'timestamptz|clickhouse': 6,
 }
 
 /**

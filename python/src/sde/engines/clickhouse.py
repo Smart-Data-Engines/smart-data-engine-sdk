@@ -206,22 +206,28 @@ class ClickHouseEngine:
         older map is accepted in silence and the first insert fails naming a column rather than
         the cause. Missing columns are refused, extra ones are logged: a client may have added one
         outside SDE and the map has no opinion about it.
+
+        **Types too, and here they need no normalising at all.** Measured against every type this
+        library renders: `system.columns.type` returns the exact string we wrote, down to the space
+        in `Decimal(12, 2)` and the quotes in `DateTime64(6, 'UTC')`. So the comparison is literal,
+        and it is literal on purpose - a renderer that started emitting a different spelling of the
+        same type would fail this check, which is the right way round for a document we sign.
         """
         expected = {
-            table: set(layout.columns.get(entity, {}))
+            table: dict(layout.columns.get(entity, {}))
             for entity, table in sorted(layout.tables.items())
         }
         if not expected:
             return
 
         result = self._cx.query(
-            "SELECT table, name FROM system.columns "
+            "SELECT table, name, type FROM system.columns "
             "WHERE database = currentDatabase() AND table IN %(tables)s",
             parameters={"tables": sorted(expected)},
         )
-        found: dict[str, set[str]] = {}
-        for table_name, column_name in result.result_rows:
-            found.setdefault(str(table_name), set()).add(str(column_name))
+        found: dict[str, dict[str, str]] = {}
+        for table_name, column_name, column_type in result.result_rows:
+            found.setdefault(str(table_name), {})[str(column_name)] = str(column_type)
 
         for table, columns in sorted(expected.items()):
             actual = found.get(table)
@@ -231,7 +237,7 @@ class ClickHouseEngine:
                     f"success, so this is a permissions or database-selection problem rather "
                     f"than a bad map."
                 )
-            missing = sorted(columns - actual)
+            missing = sorted(set(columns) - set(actual))
             if missing:
                 raise EngineError(
                     f"{table!r} already existed with a different shape: the map needs "
@@ -241,9 +247,23 @@ class ClickHouseEngine:
                     f"at the first insert, which would fail in your request path with an error "
                     f"naming a column and not the cause."
                 )
-            extra = sorted(actual - columns)
+            for column, declared in sorted(columns.items()):
+                reported = actual[column]
+                if reported == declared:
+                    continue
+                raise EngineError(
+                    f"{table}.{column} is {reported!r} and this map declares it {declared!r}. "
+                    f"`CREATE TABLE IF NOT EXISTS` keeps a table of that name whatever shape it "
+                    f"is in, and this library never alters a column's type - so the table came "
+                    f"from somewhere else, or from a map that rendered this column differently. "
+                    f"Refusing rather than writing into it: with a timestamp the difference is "
+                    f"usually precision, and a write that succeeds and comes back rounded is "
+                    f"worse than one that fails."
+                )
+            extra = sorted(set(actual) - set(columns))
             if extra:
                 log("sde.schema.extra_columns", table=table, columns=extra)
+
 
     # --- data ------------------------------------------------------------------------------
 

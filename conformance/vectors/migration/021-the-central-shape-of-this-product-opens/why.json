@@ -1,0 +1,3 @@
+{
+  "why": "A transactional group in PostgreSQL with an analytical copy in ClickHouse, fanned to on every write, with a timestamp in it. That is the shape this product is sold on, and until 7 September 2026 it was **not expressible**: we rendered the ClickHouse timestamp to three sub-second digits against PostgreSQL's six, so the copy held different values from the source and the library correctly refused to open the session. An order without a time column is not an order, so the refusal was not the thing to keep - the rendering was the thing to fix. This case exists so that nobody can quietly render three again: it opens, and both engines receive the row."
+}

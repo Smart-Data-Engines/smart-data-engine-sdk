@@ -1,5 +1,5 @@
 {
-  "contract": 2,
+  "contract": 3,
   "model_version": "b4234d0ad92a4341",
   "map_version": 1,
   "groups": {
@@ -23,7 +23,7 @@
       "derived": [
         {
           "id": "Reading@copy",
-          "engine": "ch-1",
+          "engine": "other-1",
           "layout": {
             "tables": {
               "Reading": "reading"
@@ -47,6 +47,6 @@
   "signature": {
     "alg": "ed25519",
     "key_id": "issuing",
-    "value": "Bynq67Wu1Vx9tqIFL4AC5EijnynlUCkhMh1ENYSet8uMT1o0040WsjekoujEUTiRqd2pvX3b0804U8A2YfxBBA=="
+    "value": "3k04n4fpAzEvBPbrYvY/H5fL0n/z8c9Vlj9J9dqs4mkYYWvWpW7bj7GM8XxsGHp9tQR9umbrJCKtczFXNqH6Ag=="
   }
 }

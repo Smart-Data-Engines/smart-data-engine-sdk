@@ -114,8 +114,8 @@ but how much work a crash discards, which is one chunk.
 DIALECT_PRECISION: Mapping[tuple[str, str], int] = {
     ("timestamp", "postgres"): 6,
     ("timestamptz", "postgres"): 6,
-    ("timestamp", "clickhouse"): 3,
-    ("timestamptz", "clickhouse"): 3,
+    ("timestamp", "clickhouse"): 6,
+    ("timestamptz", "clickhouse"): 6,
 }
 """Sub-second digits each dialect keeps, for the neutral types where dialects differ.
 

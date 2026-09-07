@@ -276,11 +276,25 @@ def _two() -> None:
                 "dialect's spelling and a renderer does not read them. Worth pinning precisely "
                 "because it is the case that looks like it should fail: what would fail is running "
                 "the result, which is why the dialect is an argument the caller takes from its "
-                "engine adapter and never guesses."
+                "engine adapter and never guesses. Marked `runs: false` because these statements "
+                "are deliberately not executable: they carry ClickHouse type spellings into "
+                "PostgreSQL DDL, which is the whole point of the case and is a syntax error on a "
+                "real server. The live test used to run them and pass, because an earlier vector "
+                "had already created a table of the same name and `CREATE TABLE IF NOT EXISTS` "
+                "never parsed the body - so the file claimed to execute every statement in the "
+                "family and one of them had never run. The flag says which, instead of the "
+                "coverage depending on which vector was read first."
             ),
+            # **Emitted here rather than hand-written into the vector.** It was hand-written, on
+            # 6 September, and the first regeneration after that - 7 September, for the timestamp
+            # precision - silently dropped it along with the paragraph above. Nothing but the live
+            # test noticed, and that test exists because of this same flag. A generator that
+            # cannot reproduce a field destroys it the next time the contract moves.
+            "runs": False,
         },
     ]
     _write("002-clickhouse-replacing-merge-tree", model, raw, cases)
+
 
 
 def _three() -> None:

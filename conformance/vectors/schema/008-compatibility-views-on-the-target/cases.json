@@ -31,8 +31,8 @@
     "dialect": "clickhouse",
     "fixed": false,
     "statements": [
-      "CREATE TABLE IF NOT EXISTS `order` (`id` UUID, `placed_at` DateTime64(3, 'UTC'), `tenant` UUID, `total` Decimal(12, 2)) ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`)",
-      "CREATE TABLE IF NOT EXISTS `payment` (`amount` Decimal(12, 2), `id` UUID, `order_id` UUID, `order_tenant` UUID, `paid_at` DateTime64(3)) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+      "CREATE TABLE IF NOT EXISTS `order` (`id` UUID, `placed_at` DateTime64(6, 'UTC'), `tenant` UUID, `total` Decimal(12, 2)) ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`)",
+      "CREATE TABLE IF NOT EXISTS `payment` (`amount` Decimal(12, 2), `id` UUID, `order_id` UUID, `order_tenant` UUID, `paid_at` DateTime64(6)) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
     ],
     "views": {
       "was": {

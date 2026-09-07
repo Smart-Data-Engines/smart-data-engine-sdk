@@ -487,24 +487,42 @@ def _timestamp_session(*, target_dialect: str) -> tuple[sde.Session, str]:
     return session, group
 
 
-def test_a_microsecond_column_fanning_out_to_a_millisecond_engine_is_refused_at_the_session() -> (
-    None
-):
-    """PostgreSQL keeps six sub-second digits and ClickHouse three, and the loss is silent.
+def test_a_fan_out_into_a_dialect_we_have_no_precision_facts_for_is_refused() -> None:
+    """The reachable half of this rule, and since 7 September 2026 it is the only half.
 
-    **This assertion used to be about `backfill` and it was in the wrong place**, which a
-    walkthrough found by running the phases in order against live servers. The refusal fired before
-    a copy, and the phase *before* the copy - `DUAL_WRITE` - was already truncating every write:
-    measured, `09:30:15.123456` came back from PostgreSQL unchanged and from ClickHouse as
-    `09:30:15.123`, with nothing raised on either side. The gate stopped the migration completing
-    and did not stop the loss.
+    **The history is the point.** This assertion used to be about `backfill` and it was in the
+    wrong place, which a walkthrough found by running the phases in order against live servers:
+    the refusal fired before a copy, and the phase *before* the copy - `DUAL_WRITE` - was already
+    truncating every write. Measured, `09:30:15.123456` came back from PostgreSQL unchanged and
+    from ClickHouse as `09:30:15.123`, with nothing raised on either side. So the refusal moved to
+    the earliest door that can answer: not `load_map`, because a map names engines by name and
+    carries no dialect, but the session, where the adapters are in hand.
 
-    So the refusal moved to the earliest door that can answer the question. It cannot be `load_map`:
-    a map names engines by name and carries no dialect, deliberately, so the dialects are not known
-    until the adapters are in hand - which is exactly when a session is built.
+    Then the pair it was written for stopped existing. Rendering a ClickHouse timestamp to three
+    digits had been chosen against a comparison with plain `DateTime`, not with the PostgreSQL
+    beside it; both keep six now, and no two dialects this library ships truncate each other. The
+    truncating branch has no reachable pair, and a test that went on asserting it would have been
+    a test that cannot fail.
+
+    What is left is the branch a fourth adapter meets on its first day: a dialect with no precision
+    facts recorded. A type nobody classified is a type nobody checked.
     """
-    with pytest.raises(sde.MigrationRefused, match="6 sub-second digits and clickhouse to 3"):
-        _timestamp_session(target_dialect="clickhouse")
+    with pytest.raises(
+        sde.MigrationRefused, match="does not know whether postgres and mysql store it"
+    ):
+        _timestamp_session(target_dialect="mysql")
+
+
+def test_the_pair_that_used_to_truncate_now_opens() -> None:
+    """PostgreSQL to ClickHouse with a timestamp: the shape this product is sold on.
+
+    It was refused until the rendering was equalised, and the refusal was correct while it lasted -
+    the copy really did hold different values. This is here so nobody can quietly render three
+    digits again: the session opens, which it could not do yesterday.
+    """
+    session, group = _timestamp_session(target_dialect="clickhouse")
+    assert session.placement.placement_of(group).also_write
+
 
 
 def test_the_copy_path_does_not_ask_again_because_it_cannot_be_reached_with_a_bad_map() -> None:
@@ -523,11 +541,17 @@ def test_the_copy_path_does_not_ask_again_because_it_cannot_be_reached_with_a_ba
         "is a guarantee that reads as coverage and cannot be mutated on its own."
     )
     with pytest.raises(sde.MigrationRefused):
-        _timestamp_session(target_dialect="clickhouse")
+        _timestamp_session(target_dialect="mysql")
 
 
-def test_the_same_column_moving_the_other_way_is_fine() -> None:
-    """Widening is not narrowing. A refusal in both directions would be a refusal of migrations."""
+def test_a_copy_between_two_engines_of_one_dialect_is_fine() -> None:
+    """A refusal that fired on every fan-out would be a refusal of migrations.
+
+    This used to read "widening is not narrowing" and moved a timestamp from ClickHouse to
+    PostgreSQL. There is no widening left between the dialects this library ships - both keep six
+    sub-second digits since the rendering was equalised - so the pair that makes the refusal a
+    proof rather than a mood is now simply one the rule has facts about.
+    """
     session, group = _timestamp_session(target_dialect="postgres")
     assert sde.backfill(session, group).complete
 

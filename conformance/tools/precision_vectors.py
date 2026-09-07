@@ -141,7 +141,7 @@ def _refusal_case() -> None:
     unsigned = _map(
         source_engine="pg-main",
         source_layout=PG_LAYOUT,
-        copy_engine="ch-1",
+        copy_engine="other-1",
         copy_layout=CH_LAYOUT,
     )
     # **Signed, and that is what makes the empty call list a constraint rather than a decoration.**
@@ -152,7 +152,7 @@ def _refusal_case() -> None:
     # says something: refuse before you spend them.
     with tempfile.TemporaryDirectory() as home:
         document, public_key = sign(unsigned, Path(home))
-    spec = {"ch-1": {"dialect": "clickhouse"}, "pg-main": {"dialect": "postgres"}}
+    spec = {"other-1": {"dialect": "mysql"}, "pg-main": {"dialect": "postgres"}}
     placement = sde.load_map(
         document, model=model, public_key=base64.b64decode(public_key),
         require_signature=True,
@@ -171,7 +171,7 @@ def _refusal_case() -> None:
 
     _write(
         "errors",
-        "038-a-fan-out-into-a-dialect-with-fewer-digits-is-refused",
+        "038-a-fan-out-into-a-dialect-we-have-no-precision-facts-for",
         {
             "model.json": sde.neutral_declaration(model),
             "map.json": document,
@@ -180,23 +180,34 @@ def _refusal_case() -> None:
             "expected.json": {
                 "error": "MigrationRefused",
                 "stage": "session",
-                "match": "stores to 6 sub-second digits and clickhouse to 3",
+                "match": "does not know whether postgres and mysql store it to the same",
                 "load": {"require_signature": True, "public_key": public_key},
                 "why": (
-                    "The rule had one caller for five days. `backfill` refused a copy that would "
-                    "truncate; the write fan-out did the same truncation a phase earlier, once per "
-                    "write, and nothing reported it - measured on live servers as "
-                    "`09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse for one "
-                    "row written once. So the gate stopped the migration finishing and did not "
-                    "stop the loss. The stage is `session` and it is forced there: a map names "
-                    "engines by name and carries no dialect, so neither `model` nor `map` can "
-                    "answer this, and the earliest door that can is the one holding the adapters. "
-                    "`calls.json` is empty and is the load-bearing half: a library that gathered "
-                    "the watermarks first and refused afterwards would give this same answer with "
-                    "the map's cost already paid, which is how the no-account promise broke in "
-                    "`migration/001`. The map is **signed** for exactly that reason - the "
-                    "forward-only check does nothing at all against an unsigned one, so an "
-                    "unsigned case would satisfy the empty list however the two were ordered."
+                    "**No two dialects this library ships truncate each other any more**, and "
+                    "that is why this case reads the way it does. Until 7 September 2026 it was "
+                    "PostgreSQL to ClickHouse with a `timestamptz`: measured on live servers, one "
+                    "row written once came back `09:30:15.123456` from the first and "
+                    "`09:30:15.123` from the second, silently, on every write a fan-out made. The "
+                    "fix was not to go on refusing it. It was to stop rendering a ClickHouse "
+                    "timestamp to three digits - a choice originally made against a comparison "
+                    "with plain `DateTime`, which is seconds, rather than with the engine "
+                    "standing beside it in the same product. Both keep six now, the refusal has "
+                    "no reachable pair among shipped dialects, and a case built on it would have "
+                    "become one that cannot fail. "
+                    "What is left is the branch that will actually fire in the field: a dialect "
+                    "this library holds no precision facts about, which is what the fourth engine "
+                    "adapter anybody writes will be on its first day. A type nobody classified is "
+                    "a type nobody checked, and guessing returns a value changed with no error "
+                    "anywhere. "
+                    "The stage is `session` and it is forced there: a map names engines by name "
+                    "and carries no dialect, so neither `model` nor `map` can answer this, and "
+                    "the earliest door that can is the one holding the adapters. `calls.json` is "
+                    "empty and is the load-bearing half: a library that gathered the watermarks "
+                    "first and refused afterwards would give this same answer with the map's cost "
+                    "already paid, which is how the no-account promise broke in `migration/001`. "
+                    "The map is **signed** for exactly that reason - the forward-only check does "
+                    "nothing at all against an unsigned one, so an unsigned case would satisfy "
+                    "the empty list however the two were ordered."
                 ),
             },
 
@@ -285,18 +296,21 @@ def main() -> int:
         ),
     )
     _accepting_case(
-        "021-a-fan-out-into-a-dialect-with-more-digits-opens",
-        source="ch",
-        copy="pg",
+        "021-the-central-shape-of-this-product-opens",
+        source="pg",
+        copy="ch",
         why=(
-            "The rule is about losing digits, not about the dialects differing. ClickHouse keeps "
-            "three sub-second digits and PostgreSQL six, so this direction widens and every value "
-            "survives - and a library that refused any mismatch would pass `errors/038` and "
-            "`migration/020` and still be wrong here, in the direction that costs a client a "
-            "migration they could have run. Widening is not checked for what it might round on "
-            "the way back: the copy holds what the source holds."
+            "A transactional group in PostgreSQL with an analytical copy in ClickHouse, fanned to "
+            "on every write, with a timestamp in it. That is the shape this product is sold on, "
+            "and until 7 September 2026 it was **not expressible**: we rendered the ClickHouse "
+            "timestamp to three sub-second digits against PostgreSQL's six, so the copy held "
+            "different values from the source and the library correctly refused to open the "
+            "session. An order without a time column is not an order, so the refusal was not the "
+            "thing to keep - the rendering was the thing to fix. This case exists so that nobody "
+            "can quietly render three again: it opens, and both engines receive the row."
         ),
     )
+
     return 0
 
 

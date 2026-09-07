@@ -106,6 +106,13 @@ describe.skipIf(!PG_DSN)('the PostgreSQL adapter', () => {
   beforeAll(async () => {
     engine = new PostgresEngine(PG_DSN as string)
     await engine.connect()
+  // **Dropped before created, which the Python side has always done and this file never did.**
+  // These suites share one database with the Python live tests, and `CREATE TABLE IF NOT EXISTS`
+  // keeps whatever is already there - so whichever language ran first decided the shape and the
+  // other one's create path was never exercised. Invisible until the adapters started verifying
+  // column *types* on 7 September 2026, at which point a `DateTime64(3, 'UTC')` left by an older
+  // run was refused here. The refusal was right; the fixture was wrong.
+    await dropPostgres(Object.values(layout!.tables))
     await engine.ensureSchema(layout!, { keys: KEYS })
   })
   afterAll(async () => {
@@ -228,6 +235,32 @@ describe.skipIf(!PG_DSN)('the PostgreSQL adapter', () => {
  * reports, so the control has to come from somewhere else. Without it, "FINAL collapses the key"
  * would be asserted against a reader that also collapses it.
  */
+/**
+ * Drop the tables a fixture is about to create, in each engine.
+ *
+ * Not a nicety. These suites share a database with the Python live tests and with each other, and
+ * `CREATE TABLE IF NOT EXISTS` keeps a table of that name whatever shape it is in - so without
+ * this, the first language to run decides the schema and the second one's create path never runs.
+ */
+async function dropClickHouse(tables: readonly string[]): Promise<void> {
+  for (const table of tables) {
+    await raw(`DROP TABLE IF EXISTS \`${table.replace(/`/g, '``')}\``)
+  }
+}
+
+async function dropPostgres(tables: readonly string[]): Promise<void> {
+  const { Client } = await import('pg')
+  const client = new Client({ connectionString: PG_DSN as string })
+  await client.connect()
+  try {
+    for (const table of tables) {
+      await client.query(`DROP TABLE IF EXISTS "${table.replace(/"/g, '""')}" CASCADE`)
+    }
+  } finally {
+    await client.end()
+  }
+}
+
 async function raw(sql: string): Promise<string> {
   const url = new URL(CH_DSN as string)
   const { request } = await import('node:http')
@@ -272,6 +305,13 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
   beforeAll(async () => {
     engine = new ClickHouseEngine(CH_DSN as string)
     await engine.connect()
+  // **Dropped before created, which the Python side has always done and this file never did.**
+  // These suites share one database with the Python live tests, and `CREATE TABLE IF NOT EXISTS`
+  // keeps whatever is already there - so whichever language ran first decided the shape and the
+  // other one's create path was never exercised. Invisible until the adapters started verifying
+  // column *types* on 7 September 2026, at which point a `DateTime64(3, 'UTC')` left by an older
+  // run was refused here. The refusal was right; the fixture was wrong.
+    await dropClickHouse(Object.values(layout!.tables))
     await engine.ensureSchema(layout!, { keys: KEYS })
   })
   afterAll(async () => {
@@ -397,6 +437,18 @@ describe.skipIf(!PG_DSN || !CH_DSN)('the two engines agree', () => {
     clickhouse = new ClickHouseEngine(CH_DSN as string)
     await postgres.connect()
     await clickhouse.connect()
+    const pgLayout = map.groups['Sample']?.source.layout as never as { tables: Record<string, string> }
+    const chLayout = map.groups['Sample']?.derived[0]?.layout as never as {
+      tables: Record<string, string>
+    }
+  // **Dropped before created, which the Python side has always done and this file never did.**
+  // These suites share one database with the Python live tests, and `CREATE TABLE IF NOT EXISTS`
+  // keeps whatever is already there - so whichever language ran first decided the shape and the
+  // other one's create path was never exercised. Invisible until the adapters started verifying
+  // column *types* on 7 September 2026, at which point a `DateTime64(3, 'UTC')` left by an older
+  // run was refused here. The refusal was right; the fixture was wrong.
+    await dropPostgres(Object.values(pgLayout.tables))
+    await dropClickHouse(Object.values(chLayout.tables))
     await postgres.ensureSchema(map.groups['Sample']?.source.layout as never, { keys: KEYS })
     await clickhouse.ensureSchema(map.groups['Sample']?.derived[0]?.layout as never, { keys: KEYS })
   })
@@ -432,24 +484,24 @@ describe.skipIf(!PG_DSN || !CH_DSN)('the two engines agree', () => {
     }
   })
 
-  it('refuses the direction that would truncate, before a session exists', async () => {
-    // PostgreSQL stores `timestamptz` to six sub-second digits and ClickHouse to three, so this
-    // direction changes every value that has more precision than that - silently, because the
-    // insert succeeds.
+  it('opens the direction that used to truncate, because it no longer does', async () => {
+    // PostgreSQL stored `timestamptz` to six sub-second digits and ClickHouse to three, so this
+    // direction changed every value with more precision than that - silently, because the insert
+    // succeeds. A walkthrough running the migration phases in order found `DUAL_WRITE` doing it on
+    // every write, one phase *before* the gate that refuses the copy: measured, `09:30:15.123456`
+    // came back from PostgreSQL unchanged and from ClickHouse as `09:30:15.123`.
     //
-    // This used to assert on `backfill` and it was one door too late. A walkthrough running the
-    // migration phases in order found that `DUAL_WRITE` - the phase *before* any copy - was
-    // already truncating every write through the fan-out: measured, `09:30:15.123456` came back
-    // from PostgreSQL unchanged and from ClickHouse as `09:30:15.123`. The gate stopped the
-    // migration from completing and did not stop the loss. It is now refused when the map and the
-    // adapters first meet, which is the earliest point a dialect is known at all.
+    // The refusal moved to the session, which was right, and then the pair stopped existing. The
+    // three digits had been chosen against a comparison with plain `DateTime` rather than with the
+    // engine beside it; both render six now. This assertion is the reverse of what it was, and it
+    // is the one worth keeping: a transactional group in PostgreSQL with an analytical copy in
+    // ClickHouse is the shape this product is sold on, and it must open.
     const run = randomUUID().replace(/-/g, '')
-    await expect(
-      Session.open(model, loadMap(fanOutMap('pg', run), { model }), {
-        'pg-main': postgres,
-        'ch-1': clickhouse,
-      }),
-    ).rejects.toThrow('sub-second digits')
+    const session = await Session.open(model, loadMap(fanOutMap('pg', run), { model }), {
+      'pg-main': postgres,
+      'ch-1': clickhouse,
+    })
+    expect(session.placement.groups['Sample']?.alsoWrite.length).toBeGreaterThan(0)
   })
 
   it('moves a group in the direction that does not, and verify says it landed', async () => {
