@@ -110,11 +110,15 @@ The third stage of `errors/` belongs to this step too — `stage: session`, and 
 that cannot be reached by reading a document. §7's fifth `also_write` refusal is about what two
 **dialects** do to a value, and a map names engines by name and carries no dialect, so there is
 nothing to answer at load time; the earliest door that can answer is the one holding the adapters.
-`errors/038` is a fan-out from PostgreSQL into ClickHouse with a `timestamptz` column, refused with
-an **empty** `calls.json` — the refusal is half the claim and "it cost nothing" is the other half.
-`migration/020` and `021` are the two shapes that must still open, and they are what stop you
-passing `038` by refusing every map with a timestamp in it, or every map whose two engines differ.
-Get the direction right: losing digits is refused, gaining them is not.
+`errors/038` is a fan-out into a dialect the library holds **no precision facts about**, refused
+with an **empty** `calls.json` — the refusal is half the claim and "it cost nothing" is the other
+half. That is the case you will meet first: your dialect is new, so nothing in `DIALECT_PRECISION`
+describes it, and the honest answer is a refusal rather than a guess. `migration/020` and `021` are
+the two shapes that must still open, and they stop you passing `038` by refusing every map with a
+timestamp in it, or every map whose two engines differ.
+The two dialects shipped here both keep six sub-second digits, so **no pair of them truncates** and
+the "would lose digits" branch has no reachable case today. It is still the rule; record what your
+dialect stores and the branch becomes reachable for you.
 
 
 ### If your language's I/O is asynchronous
