@@ -76,6 +76,7 @@ from .migration import (
     Migratable,
     VerifyReport,
     backfill,
+    precision_refusal,
     verify,
 )
 from .model import CONTRACT, LogicalModel, build_model, neutral_declaration
@@ -212,6 +213,7 @@ __all__ = [
     "members_of",
     "neutral_declaration",
     "precision",
+    "precision_refusal",
     "registry",
     "reset_internal_failures",
     "resolve",

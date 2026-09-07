@@ -329,41 +329,52 @@ function migratable(session: Session, name: string, role: string, group: string)
   return engine as unknown as Migratable
 }
 
-/** Refuse a copy whose target column cannot hold what the source column can, before anything moves. */
-function checkPrecision(
+/**
+ * Why a copy of these columns between these two dialects would change values, or `null`.
+ *
+ * A string rather than a throw, and dialect names rather than engines, because two doors ask this
+ * question and only one of them used to. `backfill` refuses a copy that would truncate; the write
+ * fan-out in `Session` was doing the same truncation one row at a time, for as long as an
+ * `also_write` map was in force. Measured on live servers before it was fixed: a `timestamptz`
+ * written as `09:30:15.123456` came back from PostgreSQL unchanged and from ClickHouse as
+ * `09:30:15.123`, with no error on either side.
+ */
+export function precisionRefusal(
   group: string,
   entity: string,
   columns: Readonly<Record<string, string>>,
-  source: Migratable,
-  target: Migratable,
-): void {
+  sourceDialect: string,
+  targetDialect: string,
+): string | null {
   for (const column of Object.keys(columns).sort(compareCodePoints)) {
     const neutral = columns[column] as string
     if (neutral.startsWith('decimal(') || PRECISION_INDEPENDENT.has(neutral)) continue
-    const here = DIALECT_PRECISION[`${neutral}|${source.dialect}`]
-    const there = DIALECT_PRECISION[`${neutral}|${target.dialect}`]
+    const here = DIALECT_PRECISION[`${neutral}|${sourceDialect}`]
+    const there = DIALECT_PRECISION[`${neutral}|${targetDialect}`]
     if (here === undefined || there === undefined) {
-      throw new MigrationRefused(
+      return (
         `${group}.${entity}.${column} has neutral type '${neutral}', and this library does not ` +
-          `know whether ${source.dialect} and ${target.dialect} store it to the same precision. ` +
-          `Refused rather than attempted: a type nobody classified is a type nobody checked, and ` +
-          `the failure mode of guessing here is a value that comes back changed with no error ` +
-          `anywhere.`,
+        `know whether ${sourceDialect} and ${targetDialect} store it to the same precision. ` +
+        `Refused rather than attempted: a type nobody classified is a type nobody checked, and ` +
+        `the failure mode of guessing here is a value that comes back changed with no error ` +
+        `anywhere.`
       )
     }
     if (there < here) {
-      throw new MigrationRefused(
-        `${group}.${entity}.${column} is '${neutral}', which ${source.dialect} stores to ${here} ` +
-          `sub-second digits and ${target.dialect} to ${there}. Copying it would truncate every ` +
-          `value with more precision than that - silently, because the insert succeeds and the ` +
-          `value comes back changed - and verify would then find every such row mismatched at the ` +
-          `end of the copy rather than before it. Your rows may all happen to be aligned to ` +
-          `${there} digits, in which case this refusal costs you a migration that would have ` +
-          `worked; we cannot tell without reading your data, and a copy that is faithful only for ` +
-          `the values that happen to be present is not something to build a gate on.`,
+      return (
+        `${group}.${entity}.${column} is '${neutral}', which ${sourceDialect} stores to ${here} ` +
+        `sub-second digits and ${targetDialect} to ${there}. Copying it would truncate every ` +
+        `value with more precision than that - silently, because the insert succeeds and the ` +
+        `value comes back changed - and verify would then find every such row mismatched at ` +
+        `the end of the copy rather than before it. Your rows may all happen to be aligned to ` +
+        `${there} digits, in which case this refusal costs you a migration that would have ` +
+        `worked; we cannot tell without reading your data, and a copy that is faithful only ` +
+        `for ` +
+        `the values that happen to be present is not something to build a gate on.`
       )
     }
   }
+  return null
 }
 
 /**
@@ -451,7 +462,9 @@ function plan(session: Session, group: string): readonly Copy[] {
         )
       }
       shapesAgree(group, entity, body.source, copy)
-      checkPrecision(group, entity, columns[entity] ?? {}, source, target)
+      // No precision check here. `Session.open` refuses a map whose fan-out would truncate,
+      // over every group, and this needs a session - so a copy reaching this line has already
+      // been through that door. Asking twice leaves a branch no mutation can reach alone.
       copies.push({
         entity,
         key,

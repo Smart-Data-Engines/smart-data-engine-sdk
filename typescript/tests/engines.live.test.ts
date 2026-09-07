@@ -432,21 +432,24 @@ describe.skipIf(!PG_DSN || !CH_DSN)('the two engines agree', () => {
     }
   })
 
-  it('refuses the direction that would truncate, before copying anything', async () => {
+  it('refuses the direction that would truncate, before a session exists', async () => {
     // PostgreSQL stores `timestamptz` to six sub-second digits and ClickHouse to three, so this
     // direction changes every value that has more precision than that - silently, because the
-    // insert succeeds. Refused before the work rather than found by `verify` at the end of a copy
-    // that took hours, and the message says the refusal may cost a migration that would have
-    // worked: we cannot tell without reading the client's data, which we do not do.
-    const { backfill } = await import('../src/migration.js')
+    // insert succeeds.
+    //
+    // This used to assert on `backfill` and it was one door too late. A walkthrough running the
+    // migration phases in order found that `DUAL_WRITE` - the phase *before* any copy - was
+    // already truncating every write through the fan-out: measured, `09:30:15.123456` came back
+    // from PostgreSQL unchanged and from ClickHouse as `09:30:15.123`. The gate stopped the
+    // migration from completing and did not stop the loss. It is now refused when the map and the
+    // adapters first meet, which is the earliest point a dialect is known at all.
     const run = randomUUID().replace(/-/g, '')
-    const forwards = await Session.open(model, loadMap(fanOutMap('pg', run), { model }), {
-      'pg-main': postgres,
-      'ch-1': clickhouse,
-    })
-    await expect(backfill(forwards, 'Sample', { chunkRows: 3 })).rejects.toThrow(
-      'sub-second digits',
-    )
+    await expect(
+      Session.open(model, loadMap(fanOutMap('pg', run), { model }), {
+        'pg-main': postgres,
+        'ch-1': clickhouse,
+      }),
+    ).rejects.toThrow('sub-second digits')
   })
 
   it('moves a group in the direction that does not, and verify says it landed', async () => {

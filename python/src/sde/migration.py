@@ -82,7 +82,6 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from .capabilities import satisfies
 from .errors import EngineError, MigrationRefused
 from .groups import Group, colocation_groups
-from .layout import group_columns
 from .logging import log
 from .placement import BACKFILL_TABLE, Materialization
 
@@ -100,6 +99,7 @@ __all__ = [
     "Migratable",
     "VerifyReport",
     "backfill",
+    "precision_refusal",
     "verify",
 ]
 
@@ -438,36 +438,44 @@ def _migratable(session: Session, engine_name: str, role: str, group: str) -> Mi
     return cast("Migratable", engine)
 
 
-def _check_precision(
+def precision_refusal(
     *,
     group: str,
     entity: str,
     columns: Mapping[str, str],
-    source: Migratable,
-    target: Migratable,
-) -> None:
-    """Refuse a copy whose target column cannot hold what the source column can.
+    source_dialect: str,
+    target_dialect: str,
+) -> str | None:
+    """Why a copy of these columns between these two dialects would change values, or ``None``.
 
-    Before anything is copied, which is the whole point. The alternative is finding out from
-    :func:`verify` at the end of a copy that took hours, and the answer would be the same.
+    A string rather than an exception, and dialect names rather than engines, because **two doors
+    ask this question and only one of them used to.** :func:`backfill` refuses a copy that would
+    truncate; the write fan-out in :class:`sde.Session` was doing the same truncation, one row at a
+    time, for as long as a `also_write` map was in force. Measured on live servers before it was
+    fixed: a `timestamptz` written as ``09:30:15.123456`` came back from PostgreSQL unchanged and
+    from ClickHouse as ``09:30:15.123``, with no error on either side.
+
+    That is worse than the case this rule was written for. A migration that truncates is caught by
+    `backfill` before it copies anything; a fan-out that truncates is a difference between two live
+    copies of one row, and the product's whole claim about a copy is that it is the same data.
     """
     for column, neutral in sorted(columns.items()):
         if neutral.startswith("decimal(") or neutral in PRECISION_INDEPENDENT:
             continue
-        here = DIALECT_PRECISION.get((neutral, source.dialect))
-        there = DIALECT_PRECISION.get((neutral, target.dialect))
+        here = DIALECT_PRECISION.get((neutral, source_dialect))
+        there = DIALECT_PRECISION.get((neutral, target_dialect))
         if here is None or there is None:
-            raise MigrationRefused(
+            return (
                 f"{group}.{entity}.{column} has neutral type {neutral!r}, and this library does "
-                f"not know whether {source.dialect} and {target.dialect} store it to the same "
+                f"not know whether {source_dialect} and {target_dialect} store it to the same "
                 f"precision. Refused rather than attempted: a type nobody classified is a type "
                 f"nobody checked, and the failure mode of guessing here is a value that comes back "
                 f"changed with no error anywhere."
             )
         if there < here:
-            raise MigrationRefused(
-                f"{group}.{entity}.{column} is {neutral!r}, which {source.dialect} stores to "
-                f"{here} sub-second digits and {target.dialect} to {there}. Copying it would "
+            return (
+                f"{group}.{entity}.{column} is {neutral!r}, which {source_dialect} stores to "
+                f"{here} sub-second digits and {target_dialect} to {there}. Copying it would "
                 f"truncate every value with more precision than that - silently, because the "
                 f"insert succeeds and the value comes back changed - and `verify` would then find "
                 f"every such row mismatched at the end of the copy rather than before it. Your "
@@ -476,6 +484,7 @@ def _check_precision(
                 f"your data, and a copy that is faithful only for the values that happen to be "
                 f"present is not something to build a gate on."
             )
+    return None
 
 
 def _plan(session: Session, group: str) -> tuple[_Copy, ...]:
@@ -496,7 +505,6 @@ def _plan(session: Session, group: str) -> tuple[_Copy, ...]:
             f"that says this group is not being migrated."
         )
     source_engine = _migratable(session, placement.source.engine, "source", group)
-    columns = group_columns(session.model, members)
 
     copies: list[_Copy] = []
     for copy in placement.also_write:
@@ -509,13 +517,11 @@ def _plan(session: Session, group: str) -> tuple[_Copy, ...]:
                     f"and a chunk boundary would not mean anything."
                 )
             _shapes_agree(group, entity, placement.source, copy)
-            _check_precision(
-                group=group,
-                entity=entity,
-                columns=columns[entity],
-                source=source_engine,
-                target=target_engine,
-            )
+            # No precision check here, and its absence is deliberate. `Session.__init__` refuses a
+            # map whose fan-out would truncate, over every group, and `_plan` needs a session - so
+            # a copy that reaches this line has already been through that door. Asking twice would
+            # leave a branch no mutation can reach on its own, which is the shape this repository
+            # treats as worse than a missing guard: it reads as coverage.
             copies.append(
                 _Copy(
                     entity=entity,
