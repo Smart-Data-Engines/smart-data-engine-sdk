@@ -218,12 +218,12 @@ iterated in a randomised order - in 5 of 20 runs.
 
 ## Where these came from, part three
 
-`errors/038` and `migration/020`-`021` were added on 7 September 2026, the day after a defect in
-**shipped code** was found by running the migration phases through an operator's command line rather
-than by a test. The write fan-out was truncating a `timestamptz` on every write - measured on live
-servers as `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse for one row written
-once - one phase *before* the gate that refuses the same copy. So the gate stopped the migration
-finishing and did not stop the loss.
+`errors/038` and `migration/020`-`021` were added on 7 September 2026, the day a defect in **shipped
+code** was found by running the migration phases through an operator's command line rather than by a
+test. The write fan-out was truncating a `timestamptz` on every write - measured on live servers as
+`09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse for one row written once - one
+phase *before* the gate that refuses the same copy. So the gate stopped the migration finishing and
+did not stop the loss.
 
 It was fixed in both languages the same day and held by a test in each, and that is the state these
 three vectors exist to end. A rule enforced in one runtime and not the other is one map with two
@@ -234,13 +234,30 @@ name** and carries no dialect, so at load time the question has no answer; the e
 can answer holds the adapters. Hence `stage: session`, Tier 2 only, and a runner that meets a stage
 it does not know must fail rather than skip.
 
+**Then, later the same day, the pair the rule was written for stopped existing** - and what these
+three cases now pin is the result of that rather than the original defect. The three digits were a
+choice this project had made, against a comparison with ClickHouse's plain `DateTime` (which is
+second-resolution) rather than with the PostgreSQL beside it. Keeping the refusal would have meant
+that no group with a time column could have a ClickHouse copy, which is the shape the product is
+sold on. Both dialects render `DateTime64(6)` now, no pair of the three shipped here truncates, and
+the truncating branch has no reachable case.
+
+So `errors/038` pins the branch that is left and the one a fourth adapter meets on its first day: a
+dialect with **no precision facts recorded**, refused rather than guessed at. `migration/020` is a
+fan-out between two engines of one dialect; `migration/021` is PostgreSQL to ClickHouse - the
+central shape - and it exists so that nobody can quietly render three digits again.
+
 Two things about `038` are worth copying if you write a case like it. Its `calls.json` is **empty**,
 because a map that can never work must not create a table or issue a query on the way to being
 rejected - and its map is **signed** for that exact reason: against an unsigned map the forward-only
 check does nothing at all, so an unsigned case would satisfy an empty call list whichever way round
-the two checks ran, and the assertion would be decoration. And the two `migration/` cases are what
-stop `038` being passed by a library that refuses every map with a timestamp in it, or every map
-whose two engines differ; the rule is about *losing* digits, and ClickHouse to PostgreSQL must open.
+the two checks ran, and the assertion would be decoration.
+
+And the rewrite itself is the third thing. When a fix removes the reason a refusal existed, the
+cases that pinned it start passing for the wrong reason - they become cases that cannot fail. Point
+them at the branch that survived, say in the document which branch is now unreachable, and do not
+delete the rule: it is the ratchet for the day somebody adds a dialect.
+
 
 ## Adding a vector
 
