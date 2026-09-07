@@ -1079,9 +1079,17 @@ adapters:
 
 Two of those three orderings are not new rules and are written down here only so nobody has to
 re-derive them: groups are already sorted by name by §5, and a group's members with them, so the
-first two levels follow from the model rather than from this list. What is a choice is **2 before
-3**: a map that can never work must not create a bookkeeping table or issue a query before it is
-rejected. `errors/038` pins that with an empty call list.
+first two levels follow from the model rather than from this list. Both reference implementations
+sort the entities again at this point, and **that second sort cannot be tested** — measured, by
+removing it in each language and watching every vector stay green, because no input the loader can
+produce is unsorted. It is kept as a local statement of a rule whose source is one module away, and
+it is recorded here as unmutatable rather than left to look like coverage.
+
+What *is* a choice is **2 before 3**: a map that can never work must not create a bookkeeping table
+or issue a query before it is rejected. `errors/038` pins that with an empty call list, and it is a
+signed map for that reason — against an unsigned one the forward-only check does nothing at all, so
+an unsigned case would stay green whichever way round the two were run.
+
 
 Both libraries already sorted the routing entries and neither sorted the groups, which is how a rule
 gets half-applied: the reason for sorting was understood in one loop and read as a detail in the
