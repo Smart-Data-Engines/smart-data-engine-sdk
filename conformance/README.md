@@ -216,8 +216,35 @@ refusal does not depend on which order a parser hands them over in. `019` alone 
 languages because both iterate an object in insertion order, and failed in Go - whose maps are
 iterated in a randomised order - in 5 of 20 runs.
 
+## Where these came from, part three
+
+`errors/038` and `migration/020`-`021` were added on 7 September 2026, the day after a defect in
+**shipped code** was found by running the migration phases through an operator's command line rather
+than by a test. The write fan-out was truncating a `timestamptz` on every write - measured on live
+servers as `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse for one row written
+once - one phase *before* the gate that refuses the same copy. So the gate stopped the migration
+finishing and did not stop the loss.
+
+It was fixed in both languages the same day and held by a test in each, and that is the state these
+three vectors exist to end. A rule enforced in one runtime and not the other is one map with two
+meanings, and per-language tests are exactly what that looks like from the inside: green, twice.
+
+The stage is new because neither of the other two can reach the rule. A map names engines **by
+name** and carries no dialect, so at load time the question has no answer; the earliest door that
+can answer holds the adapters. Hence `stage: session`, Tier 2 only, and a runner that meets a stage
+it does not know must fail rather than skip.
+
+Two things about `038` are worth copying if you write a case like it. Its `calls.json` is **empty**,
+because a map that can never work must not create a table or issue a query on the way to being
+rejected - and its map is **signed** for that exact reason: against an unsigned map the forward-only
+check does nothing at all, so an unsigned case would satisfy an empty call list whichever way round
+the two checks ran, and the assertion would be decoration. And the two `migration/` cases are what
+stop `038` being passed by a library that refuses every map with a timestamp in it, or every map
+whose two engines differ; the rule is about *losing* digits, and ClickHouse to PostgreSQL must open.
+
 ## Adding a vector
 
 Add the case that a bug taught you, not the case that was easy to write. Every vector here should be
 traceable to a way two implementations could plausibly disagree: number formatting, string
 normalisation, key ordering, sort stability, the boundary between a type and a value.
+
