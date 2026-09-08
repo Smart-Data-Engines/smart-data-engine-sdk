@@ -39,6 +39,31 @@ _BREAK = re.compile(r"(?<=[.!?])\s+|\n{2,}|\n(?=[|#])")
 #: paragraph about it fails until it has one.
 MEASUREMENTS = (("Go", ".go"), ("Rust", ".rs"))
 
+#: Each distribution name, its registry, and whether we have actually registered it.
+#:
+#: Hand-maintained, for the reason :data:`MEASUREMENTS` is: the fact lives in someone else's
+#: database. A test that asked the network would be a required check that goes red when npm has a
+#: bad afternoon, and a registry outage is indistinguishable from a real finding until somebody
+#: reads the log - a cost this organisation has already paid twice, once to CodeQL and once to a
+#: dropped download of etcd.
+#:
+#: What single-sourcing buys is the day the flag flips. Registering a name is one person clicking
+#: through a registry, and at that moment three documents in this repository quietly become false:
+#: they tell a reader the name is unclaimed, which is advice about whose code to install. That is
+#: the absence-claim failure of :data:`ABSENCE` in its other direction - a claim that something has
+#: *not* happened, which nothing tries to use and so nothing disproves. Flip one boolean here and
+#: every page still saying the old thing fails until it is rewritten.
+REGISTRIES = (
+    ("PyPI", "smart-data-engine", False),
+    ("npm", "@smart-data-engines/sde", False),
+)
+
+#: The word our documents use for a name nobody owns. One word, not a list of phrasings: the pages
+#: were read before this was written and they all say this, and a loose pattern here would match
+#: `test_platforms.py`'s unrelated "tested and unclaimed" and teach the next person that the check
+#: is noisy.
+UNCLAIMED = re.compile(r"\bunclaimed\b", re.IGNORECASE)
+
 
 def sentences(text: str) -> list[str]:
     """The text as claims, one per sentence."""
