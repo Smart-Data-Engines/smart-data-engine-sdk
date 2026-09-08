@@ -259,12 +259,26 @@ def test_the_pages_agree_with_whether_the_name_is_ours(
             f"{name} is registered on {registry}. Still calling it unclaimed: "
             + "; ".join(f"{document}: {sentence!r}" for document, sentence in found)
         )
-    else:
-        assert found, (
-            f"{name} is not registered on {registry} and no document admits it. Our own README "
-            f"tells a reader to install that name; if it resolves to somebody else's package, "
-            f"nothing here warns them."
-        )
+        return
+
+    assert found, (
+        f"{name} is not registered on {registry} and no document admits it. Our own README tells a "
+        f"reader to install that name; if it resolves to somebody else's package, nothing here "
+        f"warns them."
+    )
+    # And specifically next to the command, not merely somewhere in the repository. A first pass
+    # asked only for "somewhere", and a mutation deleting the caveat from one page survived it -
+    # correctly, since two other pages still carried one. Neither of those two is the page a person
+    # is reading when they copy the command, which is the only moment the warning does any work.
+    admitting = {document for document, _ in found}
+    command = f"pip install {name}" if registry == "PyPI" else f"npm install {name}"
+    for page in _documents():
+        relative = page.relative_to(ROOT).as_posix()
+        if command in page.read_text(encoding="utf-8") and relative not in admitting:
+            raise AssertionError(
+                f"{relative} tells a reader to run `{command}` and does not say the name is "
+                f"unclaimed. The caveat belongs beside the command."
+            )
 
 
 def _documents() -> list[Path]:
