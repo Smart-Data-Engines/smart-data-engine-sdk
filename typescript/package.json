@@ -3,6 +3,25 @@
   "version": "0.1.0-dev.0",
   "description": "Smart Data Engine client library: declare a data model, we place it and move it",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/Smart-Data-Engines/smart-data-engine-sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Smart-Data-Engines/smart-data-engine-sdk.git",
+    "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/issues"
+  },
+  "keywords": [
+    "database",
+    "placement",
+    "polystore",
+    "postgresql",
+    "clickhouse"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,12 +45,15 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=18 <23"
   },
   "scripts": {
+    "prepack": "npm run build",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

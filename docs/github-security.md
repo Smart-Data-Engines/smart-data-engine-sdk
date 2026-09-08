@@ -259,8 +259,17 @@ not merely tidiness:
   from inside the code they trusted.
 
 Today the name resolves to nothing, so the command simply fails. The window is open only until someone
-registers it, and closing it costs one upload. Register both names with 2FA on both accounts, before
-the first release and preferably today. A placeholder version is enough.
+registers it. **[`publishing.md`](publishing.md) is the runbook** — the steps, the commands and the
+parts that cannot be undone.
+
+Two things learned while writing it are worth having here, because both change what "register the
+name" costs. **npm reserves a scope with the organisation**, so `@smart-data-engines` can be held
+permanently without publishing anything, which makes that half free and immediate. **PyPI has no
+reservation at all**, and the feature that looks like one is not: a pending trusted publisher "does
+not create a project or reserve a project's name until it is actually used to publish", and it is
+invalidated if somebody else takes the name first. So the PyPI half costs a real upload, and since
+"PyPI does not allow for a filename to be reused, even once a project has been deleted and recreated",
+it costs a version number permanently.
 
 An earlier revision of this document said the *root* README carried that instruction. It does not — it
 installs from the working tree with `pip install -e`. Corrected rather than quietly reworded, because a
@@ -426,7 +435,7 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ Actions: read-only default token, cannot approve PRs
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
-⚙️ register smart-data-engine on PyPI and @smart-data-engines on npm  ← most urgent
+⚙️ register smart-data-engine on PyPI and @smart-data-engines on npm  ← most urgent, see publishing.md
 ✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
 ⚙️ org-wide 2FA on Smart-Data-Engines — UI only, the API reports success and changes nothing
 ⚙️ registry accounts with 2FA, before the first publish

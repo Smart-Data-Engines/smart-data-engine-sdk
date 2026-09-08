@@ -1,0 +1,13 @@
+Smart Data Engine client libraries
+Copyright 2026 Smart Data Engines
+
+This product includes software developed at Smart Data Engines
+(https://smartdataengines.com).
+
+The libraries in this repository are the client side of Smart Data Engine: they
+declare a data model, cache a placement map, route operations and manage schema.
+They connect to database engines directly and they work without an account.
+
+The control plane - the placement planner, the scoring model and the migration
+orchestrator - is a separate, private program and is not covered by this notice
+or by this licence.

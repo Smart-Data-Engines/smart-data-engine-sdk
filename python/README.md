@@ -90,6 +90,13 @@ would be one you inherit and a version conflict you might have to resolve.
 The distribution is `smart-data-engine` and the import is `sde`, because `sde` was already taken on
 PyPI. Mildly annoying, and better than a cute misspelling.
 
+**`smart-data-engine` is unclaimed on PyPI, so those three commands install nothing today.** That is
+the honest state and not a typo: the library is not published yet. Read it as a warning rather than
+a footnote, because three error messages inside this library point at the same commands - if someone
+else registers the name before we do, a person who is already debugging gets told, by code they had
+decided to trust, to install a stranger's package. [`../docs/publishing.md`](../docs/publishing.md)
+is what closes this.
+
 ## Conformance
 
 Everything in `canonical.py`, `model.py`, `shapes.py` and `routing.py` implements a cross-language

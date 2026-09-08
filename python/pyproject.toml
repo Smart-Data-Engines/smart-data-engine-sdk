@@ -1,5 +1,8 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned low, not floating: the licence declaration below is the PEP 639 form, which hatchling
+# learned in 1.27. An older one accepts `license = "Apache-2.0"` as a *file path* and produces an
+# artefact whose licence metadata is a filename - wrong in a way that builds cleanly.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -11,15 +14,48 @@ dynamic = ["version"]
 description = "Smart Data Engine client library: declare a data model, we place it and move it"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+# Apache-2.0 section 4 asks that the licence travel with the work, and section 4(d) says the same
+# about a NOTICE file where one exists. Both were missing from the wheel and the sdist until this
+# line: `license = { text = "Apache-2.0" }` puts the *name* of the licence in the metadata and ships
+# no licence at all. Measured by unzipping the wheel, because the two are easy to confuse.
+#
+# The files are copies of the ones in the repository root rather than references to them, since a
+# build backend cannot reach outside its own project directory. `test_packaging.py` asserts the
+# copies are byte-identical, which is the whole objection to duplicating them answered.
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Smart Data Engines" }]
 keywords = ["database", "placement", "polystore", "postgresql", "clickhouse"]
+# No `License ::` classifier: PEP 639 makes it an error next to a licence expression, and PyPI
+# rejects the upload. The licence is `license` above, in one place.
+classifiers = [
+    # Alpha, and it stays alpha until somebody outside this repository runs it. The suite is large
+    # and two engines are live, neither of which is the same claim as "in production somewhere".
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    # The wheel carries `py.typed`, so this row is a fact the artefact can be checked against.
+    "Typing :: Typed",
+]
 
 # No runtime dependencies on purpose. This library goes into someone else's application, so every
 # dependency is a dependency they inherit and a version conflict they may have to resolve. Signature
 # verification and engine drivers are extras, because not every deployment needs them: an unsigned,
 # hand-written map with no engine driver is a valid way to use this.
 dependencies = []
+
+# A page for a library whose argument is "read the code and verify the invariant yourself" has to
+# link to the code. Without this block PyPI renders no sidebar links at all, and the reader has the
+# long README and nowhere to go.
+[project.urls]
+Homepage = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk"
+Repository = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk"
+Issues = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/issues"
+"Format contract" = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/format-contract.md"
+"Failure semantics" = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/failure-semantics.md"
 
 [project.optional-dependencies]
 signed = ["cryptography>=42"]
