@@ -170,6 +170,11 @@ Then create an **API token** at <https://test.pypi.org/manage/account/token/>, s
 # password: the pypi-... token, pasted whole, including the prefix
 ```
 
+`--repository testpypi` needs no `~/.pypirc`, which is worth stating because the obvious failure mode
+is a `Missing 'testpypi' section` error that sends you writing a config file you do not need. twine
+seeds defaults for both names when that file is absent — verified on this machine with no `~/.pypirc`
+at all: it resolves to `https://test.pypi.org/legacy/`, and `pypi` to `https://upload.pypi.org/legacy/`.
+
 Open the page it prints. Check that the README renders, that the sidebar has the repository links, and
 that the classifiers look right. Then **delete that TestPyPI token** — it is account-wide.
 
@@ -202,7 +207,7 @@ or has no password in it. It is not needed again: from here on, publishing goes 
 **Never put either token in a GitHub secret.** A long-lived registry token in a repository is a
 credential that publishes to every Python installation in the world, sitting somewhere read access
 eventually reaches. §4.2 of [`github-security.md`](github-security.md) is the standing decision, and
-the next section is how we honour it.
+**section 5** is how we honour it.
 
 ## 3. When you are done, one line changes here
 
