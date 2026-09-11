@@ -39,6 +39,7 @@ tries to use, so nothing ever disproves it.
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 from types import ModuleType
@@ -304,3 +305,66 @@ def _claims_about(name: str) -> list[tuple[str, str]]:
             if name in sentence and UNCLAIMED.search(sentence):
                 hits.append((document.relative_to(ROOT).as_posix(), sentence))
     return hits
+
+
+#: The document that decides which libraries are planned, and therefore which registries this
+#: repository owes a reader an answer about.
+IMPLEMENTATIONS = ROOT / "docs" / "implementations.md"
+PUBLISHING = ROOT / "docs" / "publishing.md"
+
+
+def _planned_languages() -> list[str]:
+    """The languages `implementations.md` says are planned, read from its own prose.
+
+    Derived rather than listed for the reason every count on these pages is derived: a hand-written
+    copy of this list in the runbook would be correct on the day it was written and silently wrong
+    the day somebody adds an eighth language - which is the one-directional rot that has caught this
+    repository six times, and the only kind of staleness nothing ever trips over.
+
+    The `/` in "C# / .NET" is cut to its first half deliberately. The runbook is allowed to spell a
+    language more or less fully than this page does; what it is not allowed to do is omit one.
+
+    Sentence splitting is :func:`_claims.sentences` rather than `split(".")`, and that is not
+    fastidiousness - the first version of this function did split on the full stop and parsed
+    **three** languages out of seven, because ".NET" begins with one. The guard in the caller
+    caught it on the first run. A language name here starts with a capital and the trailing clause
+    ("in roughly that order of demand") does not, which is what separates the list from the rest
+    of its own sentence.
+    """
+    text = IMPLEMENTATIONS.read_text(encoding="utf-8")
+    section = text.split("## Not started", 1)
+    assert len(section) == 2, (
+        "docs/implementations.md has no 'Not started' section, so the set of planned languages "
+        "cannot be derived. If that section was renamed, this test has to learn the new name - the "
+        "alternative is a check that quietly stops looking."
+    )
+    sentence = sentences(section[1])[0]
+    names = [part.strip() for part in sentence.replace(" and ", ", ").split(",")]
+    return [
+        name.split("/")[0].strip() for name in names if name[:1].isupper()
+    ]
+
+
+def test_the_runbook_answers_for_every_language_the_plan_names() -> None:
+    """Each planned library's registry question has a row in the publishing runbook.
+
+    The question is not decoration. The nine registries genuinely disagree: a namespace on Maven
+    Central is holdable with nothing published, a crate name is not and a placeholder would breach
+    crates.io's own policy, and Go has no registry at all because a module path is a repository URL.
+    Somebody reading the runbook to find out what to register cannot tell which of those applies to
+    a language the page does not mention - and the shape of that failure is silence, not an error.
+    """
+    planned = _planned_languages()
+    # Never vacuous: a parse that found nothing would make every assertion below trivially true,
+    # which is the way a check like this stops working without going red.
+    assert len(planned) >= 5, f"parsed only {planned} as planned languages; the parse is wrong"
+
+    runbook = PUBLISHING.read_text(encoding="utf-8")
+    rows = [line for line in runbook.splitlines() if line.lstrip().startswith("|")]
+    for language in planned:
+        pattern = re.compile(rf"(?<![\w#.]){re.escape(language)}(?![\w#])")
+        assert any(pattern.search(row) for row in rows), (
+            f"docs/implementations.md plans a {language} library and docs/publishing.md has no "
+            f"table row for it. A reader cannot tell whether its name needs registering, whether "
+            f"it can be held before the library exists, or whether there is a registry at all."
+        )

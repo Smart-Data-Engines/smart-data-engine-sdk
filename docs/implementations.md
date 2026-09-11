@@ -92,7 +92,10 @@ SDE one.
 ## Not started
 
 Java, Rust, C# / .NET, Go, Kotlin, PHP and Ruby, in roughly that order of demand. None of them is
-claimed and none is in progress. The cost of the *n*-th library is the cost of one implementation of
+claimed and none is in progress. That sentence is read by a test: each language in it needs a row in
+[`publishing.md`](publishing.md) saying how a name is claimed in its registry, because the nine
+registries disagree about whether a name can be held before there is code, and an eighth language
+added here without that row is a question nobody can answer from our documents. The cost of the *n*-th library is the cost of one implementation of
 this contract rather than another version of the product, which is the whole argument for the
 contract being a byte-level document — but it is still a cost, and a library nobody keeps working is
 worse for a client than no library in that language.
