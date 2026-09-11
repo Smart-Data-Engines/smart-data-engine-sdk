@@ -357,14 +357,29 @@ def test_the_runbook_answers_for_every_language_the_plan_names() -> None:
     planned = _planned_languages()
     # Never vacuous: a parse that found nothing would make every assertion below trivially true,
     # which is the way a check like this stops working without going red.
+    #
+    # Measured, because a guard that only fires on a broken parse survives being deleted on its own
+    # and therefore reads as decoration. Removing it with the parse intact: green, as expected.
+    # Removing it *and* reverting the parse to `split(".")`: **also green** - so this line is the
+    # only thing between a parse that finds three of seven languages and a test that reports
+    # coverage of all of them. It is load-bearing, and the pair of runs is what says so.
     assert len(planned) >= 5, f"parsed only {planned} as planned languages; the parse is wrong"
 
     runbook = PUBLISHING.read_text(encoding="utf-8")
-    rows = [line for line in runbook.splitlines() if line.lstrip().startswith("|")]
+    # The language has to be what a row is *about*, which is its first cell - not merely a word
+    # somewhere in the table. Measured: the first version asked only that the name appear in some
+    # row, and deleting the Java row survived it, because the Kotlin row says "same namespace as
+    # Java". A check that a cross-reference can satisfy is a check the next person will trust
+    # wrongly.
+    subjects = [
+        row.split("|")[1].strip()
+        for row in runbook.splitlines()
+        if row.lstrip().startswith("|") and row.count("|") >= 2
+    ]
     for language in planned:
         pattern = re.compile(rf"(?<![\w#.]){re.escape(language)}(?![\w#])")
-        assert any(pattern.search(row) for row in rows), (
+        assert any(pattern.search(subject) for subject in subjects), (
             f"docs/implementations.md plans a {language} library and docs/publishing.md has no "
-            f"table row for it. A reader cannot tell whether its name needs registering, whether "
+            f"table row about it. A reader cannot tell whether its name needs registering, whether "
             f"it can be held before the library exists, or whether there is a registry at all."
         )
