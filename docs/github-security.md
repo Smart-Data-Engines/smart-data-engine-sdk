@@ -245,7 +245,8 @@ Checked while writing this document:
 | Name | Registry | State |
 |---|---|---|
 | `smart-data-engine-sdk` | PyPI | **ours** — published 12 September 2026 |
-| `smart_data_engine` | PyPI | unclaimed (normalises to the same name) |
+| `smart_data_engine_sdk` | PyPI | **ours** — normalises to the same name, so the publish claimed both spellings |
+| `smart-data-engine` | PyPI | **refused** — too similar to `smartdata-engine`, a project somebody else registered with zero releases |
 | `@smart-data-engines/sde` | npm | **ours** — scope held by the `smart-data-engines` organisation since 12 September 2026; nothing published under it yet |
 | `sde` | PyPI | taken by someone else — which is why the import is `sde` and the distribution is not |
 
