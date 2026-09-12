@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _write_fence import MemoryFences
 
 import sde
 import sde.telemetry
@@ -424,6 +425,9 @@ def test_migration_vector(case: Path) -> None:
     that writes its own is a runner whose *fixture* can be the thing that differs - and then a red
     vector says "one of two tables disagreed" instead of "one of two libraries disagreed".
     """
+    if (case / "fencing.json").is_file():
+        _drive_write_fence_vector(case)
+        return
     model = model_from_neutral(_read_json(case / "model.json"))
     placement = _placement_of(case, model)
     engines = engines_from(_read_json(case / "engines.json"))
@@ -868,3 +872,31 @@ def test_there_are_hashing_vectors() -> None:
     # not offer it removes this test along with the feature - and says so in its README, because
     # "supported" has to mean one thing across languages.
     assert _cases("hashing"), "no hashing vectors found, but this library implements section 2a"
+
+
+def _drive_write_fence_vector(case: Path) -> None:
+    want = _read_json(case / "fencing.json")
+    backend = MemoryFences()
+    backend.identity = want["metadata"]["identity"]
+    backend.column = want["metadata"]["column"]
+    backend.constraints = dict(want["metadata"]["constraints"])
+    fence = sde.WriteFence(backend, want["table"], project_id=want["project_id"])
+    for step in want["steps"]:
+        def invoke(step: dict[str, Any] = step) -> sde.FenceState:
+            if step["op"] == "state":
+                return fence.state()
+            if step["op"] == "prepare":
+                return fence.prepare(step["epoch"])
+            if step["op"] == "advance":
+                return fence.advance(step["epoch"])
+            if step["op"] == "freeze":
+                return fence.freeze(step["request_id"])
+            if step["op"] == "release":
+                return fence.release(step["request_id"])
+            raise AssertionError("unknown fencing fixture operation")
+        if "error" in step:
+            with pytest.raises(_ERRORS[step["error"]], match=re.escape(step["match"])):
+                invoke()
+        else:
+            assert invoke().as_record() == step["state"]
+    assert [list(call) for call in backend.calls] == _read_json(case / "calls.json")

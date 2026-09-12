@@ -1,0 +1,21 @@
+{
+  "table": "events",
+  "project_id": "33333333333333333333333333333333",
+  "metadata": {
+    "identity": "table-identity",
+    "column": "valid",
+    "constraints": {
+      "__sde_f_owner_11111111111111111111111111111111": "1",
+      "__sde_f_min_1": "__sde_write_epoch >= 1",
+      "__sde_f_max_1": "__sde_write_epoch <= 1"
+    }
+  },
+  "steps": [
+    {
+      "op": "prepare",
+      "epoch": 1,
+      "error": "MigrationRefused",
+      "match": "another project"
+    }
+  ]
+}

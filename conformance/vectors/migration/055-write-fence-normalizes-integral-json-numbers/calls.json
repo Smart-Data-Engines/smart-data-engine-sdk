@@ -1,0 +1,41 @@
+[
+  [
+    "add",
+    "events",
+    "__sde_f_owner_11111111111111111111111111111111",
+    "1"
+  ],
+  [
+    "add",
+    "events",
+    "__sde_f_setup",
+    "0"
+  ],
+  [
+    "column",
+    "events"
+  ],
+  [
+    "add",
+    "events",
+    "__sde_f_min_1",
+    "__sde_write_epoch >= 1"
+  ],
+  [
+    "add",
+    "events",
+    "__sde_f_max_1",
+    "__sde_write_epoch <= 1"
+  ],
+  [
+    "drain",
+    "events",
+    "11111111111111111111111111111111",
+    "setup"
+  ],
+  [
+    "drop",
+    "events",
+    "__sde_f_setup"
+  ]
+]

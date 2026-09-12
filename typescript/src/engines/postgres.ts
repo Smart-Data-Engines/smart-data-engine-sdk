@@ -36,6 +36,8 @@ import { QUOTE, schemaStatements } from '../schema.js'
 import type { Row } from '../session.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import { Timestamp } from '../timestamp.js'
+import { WriteFence } from '../write-fence.js'
+import { PostgresFences, fenceIO } from './_write-fences.js'
 
 // Bound from the one definition in schema.ts, so that DDL and DML cannot disagree about how an
 // identifier is escaped.
@@ -160,6 +162,7 @@ export interface PostgresOptions {
 export class PostgresEngine {
   readonly dialect = 'postgres'
   private client: ClientLike | null = null
+  private transactions = 0
   /**
    * The asynchronous failure the driver reported, if any, kept for the next call to explain.
    *
@@ -270,6 +273,15 @@ export class PostgresEngine {
       }
       return out
     })
+  }
+
+  /** DDL capability; use a dedicated connection separate from application traffic. */
+  writeFence(table: string, options: { projectId: string }): WriteFence {
+    return new WriteFence(new PostgresFences({
+      query: (sql, values) => fenceIO(async () => (await this.run(sql, values)).rows),
+      transaction: (body) => fenceIO(async () => { await this.transaction(body) }),
+      busy: () => this.transactions > 0,
+    }), table, options)
   }
 
   // --- schema ------------------------------------------------------------------------------
@@ -684,8 +696,9 @@ export class PostgresEngine {
    * lines rather than a subsystem.
    */
   async transaction<T>(body: () => Promise<T>): Promise<T> {
-    await this.run('BEGIN')
+    this.transactions += 1
     try {
+      await this.run('BEGIN')
       const result = await body()
       await this.run('COMMIT')
       return result
@@ -697,6 +710,8 @@ export class PostgresEngine {
         // Reporting this one instead would replace the reason with a symptom.
       }
       throw error
+    } finally {
+      this.transactions -= 1
     }
   }
 }

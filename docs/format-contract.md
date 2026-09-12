@@ -1122,6 +1122,15 @@ assertion and call verification with its group, `at` and `chunk_rows`. Compare `
 and the full `calls.json` sequence, or require the stated error and message. A refused binding
 performs no comparison calls; signed-session startup calls remain distinct from comparison calls.
 
+## 7c. Native write-fence protocol
+
+The provisioning primitive is specified in [write-fences.md](write-fences.md#stored-protocol).
+Constraint names, epoch limits, predicate meaning, barrier retirement, state records and DDL call
+ordering are shared across SDKs. `migration/046`–`061` pin that protocol using `fencing.json` and a
+recording backend; unlike row-migration cases, these fixtures need no `model.json` or `map.json`.
+The primitive does not itself authorize a placement change. Session integration and the complete
+cutover gate must supply the remaining guarantees described in that document.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read
