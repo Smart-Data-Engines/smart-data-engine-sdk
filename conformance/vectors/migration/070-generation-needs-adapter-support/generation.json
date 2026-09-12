@@ -1,0 +1,17 @@
+{
+  "engine_generations": {},
+  "actions": [],
+  "tables": {
+    "pg-main": {
+      "reading": [],
+      "sample": []
+    },
+    "pg-copy": {
+      "reading": [],
+      "sample": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111",
+  "error": "MigrationRefused",
+  "match": "does not implement write generations"
+}

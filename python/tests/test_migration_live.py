@@ -19,6 +19,8 @@ engine is a real operation - a group moving to a different layout - and it is al
 mistake in the SQL is easiest to see.
 """
 
+# These fixtures pin the legacy fan-out protocol; generation-bearing maps have dedicated tests.
+
 from __future__ import annotations
 
 import os
@@ -144,7 +146,7 @@ def _session(
         }
     }
     raw: dict[str, Any] = {
-        "contract": sde.MAP_CONTRACT,
+        "contract": 3,
         "model_version": model.version,
         "map_version": 1,
         "groups": {

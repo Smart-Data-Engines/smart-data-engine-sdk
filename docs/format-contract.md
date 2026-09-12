@@ -575,7 +575,7 @@ key in a different document would give every client a new model version, invalid
 and re-bless every model vector. The evidence that the split is right is `model/001-single-entity`,
 the hand-written vector whose digest CI pins: adding `also_write` does not move it.
 
-A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 2.
+A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 4.
 Backwards compatible, forwards strict, and the asymmetry is knowledge rather than kindness: every
 contract-1 document is a valid contract-2 one with a key absent, which reads as "no dual write" -
 a complete meaning. What came *after* a library cannot be known, so a higher number is refused
@@ -1130,6 +1130,15 @@ ordering are shared across SDKs. `migration/046`–`061` pin that protocol using
 recording backend; unlike row-migration cases, these fixtures need no `model.json` or `map.json`.
 The primitive does not itself authorize a placement change. Session integration and the complete
 cutover gate must supply the remaining guarantees described in that document.
+
+## 7d. Generation-bearing placement maps
+
+Map contract 4 requires root `project_id` and a positive safe `write_epoch` in every group. Their
+wire meaning, JSON-number normalization before signing/fingerprinting, reserved names, native
+validation and Session/copy behavior are specified in [generation-maps.md](generation-maps.md).
+Earlier map contracts remain readable in their legacy mode. A document's declared version must
+match the fields it carries; a reader's newest supported version is not a producer's implicit
+schema choice. The generation primitive is not the final cutover authorization gate.
 
 ## 8. Routing
 

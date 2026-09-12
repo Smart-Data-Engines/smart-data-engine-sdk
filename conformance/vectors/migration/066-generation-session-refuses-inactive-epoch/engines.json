@@ -1,0 +1,14 @@
+{
+  "pg-main": {
+    "tables": {
+      "reading": [],
+      "sample": []
+    }
+  },
+  "pg-copy": {
+    "tables": {
+      "reading": [],
+      "sample": []
+    }
+  }
+}

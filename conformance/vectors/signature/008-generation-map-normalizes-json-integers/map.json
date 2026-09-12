@@ -1,0 +1,64 @@
+{
+  "contract": 4.0,
+  "model_version": "fe8473623a7c98b7",
+  "map_version": 2.0,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading",
+            "Sample": "sample"
+          },
+          "columns": {
+            "Reading": {
+              "id": "bigint",
+              "celsius": "integer"
+            },
+            "Sample": {
+              "station": "text",
+              "seq": "bigint",
+              "note": "text"
+            }
+          }
+        }
+      },
+      "derived": [
+        {
+          "id": "Reading@pg2",
+          "engine": "pg-copy",
+          "layout": {
+            "tables": {
+              "Reading": "reading",
+              "Sample": "sample"
+            },
+            "columns": {
+              "Reading": {
+                "id": "bigint",
+                "celsius": "integer"
+              },
+              "Sample": {
+                "station": "text",
+                "seq": "bigint",
+                "note": "text"
+              }
+            }
+          },
+          "lag_budget_ms": 30000
+        }
+      ],
+      "also_write": [
+        "Reading@pg2"
+      ],
+      "write_epoch": 2.0
+    }
+  },
+  "project_id": "11111111111111111111111111111111",
+  "signature": {
+    "alg": "ed25519",
+    "value": "nC8TTsimyBD6QJbP3JhPX4bSzJM7tvLEqtVzcICfGS0R53bQrcTfNqnUo+fnNmw32JMQ+6u/LLhBRgRBZGmoDQ==",
+    "key_id": "generation"
+  }
+}

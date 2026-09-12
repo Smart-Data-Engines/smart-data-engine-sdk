@@ -1,9 +1,9 @@
 /** Native write generations and named barriers. These primitives do not authorize a cutover. */
 import { MigrationRefused } from './errors.js'
+import { DRAIN_TABLE, EPOCH_COLUMN, checkEpoch } from './generation.js'
+export { DRAIN_TABLE, EPOCH_COLUMN, checkEpoch } from './generation.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from './placement.js'
 
-export const DRAIN_TABLE = '__sde_fence_drains'
-export const EPOCH_COLUMN = '__sde_write_epoch'
 export const FENCE_PREFIX = '__sde_f_'
 const SETUP = FENCE_PREFIX + 'setup'
 export type ColumnState = 'absent' | 'valid' | 'conflict'
@@ -22,13 +22,6 @@ export interface FenceBackend {
   dropConstraint(table: string, name: string): Promise<void>
   drain(table: string, options: { projectId: string; hold: string }): Promise<void>
   restore(table: string, options: { projectId: string; hold: string }): Promise<void>
-}
-
-export function checkEpoch(epoch: number): number {
-  if (!Number.isSafeInteger(epoch) || epoch < 1) {
-    throw new MigrationRefused('write epoch must be a positive safe integer')
-  }
-  return epoch
 }
 
 function identity(value: string, label: string): void {

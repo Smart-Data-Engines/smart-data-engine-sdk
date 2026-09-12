@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _generation import bind_generation_metadata
 from _write_fence import MemoryFences
 
 import sde
@@ -431,6 +432,9 @@ def test_migration_vector(case: Path) -> None:
     model = model_from_neutral(_read_json(case / "model.json"))
     placement = _placement_of(case, model)
     engines = engines_from(_read_json(case / "engines.json"))
+    if (case / "generation.json").is_file():
+        _drive_generation_vector(case, model, placement, engines)
+        return
 
     watermark = case / "watermark.json"
     if watermark.is_file():
@@ -664,6 +668,12 @@ def test_signature_vector(case: Path) -> None:
         f"the map verified with {placement.verified_with!r}, the vector expects "
         f"{expected['verified_with']!r}"
     )
+    if "map_fingerprint" in expected:
+        assert placement.fingerprint == expected["map_fingerprint"]
+        assert placement.project_id == expected["project_id"]
+        epochs = {name: group.write_epoch for name, group in placement.groups.items()}
+        assert epochs == expected["write_epochs"]
+
 
 
 def test_the_signature_family_covers_both_outcomes() -> None:
@@ -900,3 +910,40 @@ def _drive_write_fence_vector(case: Path) -> None:
         else:
             assert invoke().as_record() == step["state"]
     assert [list(call) for call in backend.calls] == _read_json(case / "calls.json")
+
+
+def _drive_generation_vector(
+    case: Path, model: sde.LogicalModel, placement: sde.PlacementMap, engines: Any
+) -> None:
+    want = _read_json(case / "generation.json")
+    bind_generation_metadata(engines, want["engine_generations"])
+    if "error" in want:
+        with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+            sde.Session(model, placement, engines, project_id=want.get("project_id"))
+    else:
+        session = sde.Session(model, placement, engines, project_id=want.get("project_id"))
+        for action in want["actions"]:
+            def invoke(action: dict[str, Any] = action) -> None:
+                if action["op"] == "save":
+                    session.save(action["entity"], action["values"])
+                elif action["op"] == "get":
+                    assert session.get(action["entity"], action["key"]) == action["result"]
+                elif action["op"] == "transaction":
+                    with session.transaction(*action["entities"]):
+                        for item in action["writes"]:
+                            session.save(item["entity"], item["values"])
+                elif action["op"] == "backfill":
+                    sde.backfill(session, action["group"], chunk_rows=3)
+                elif action["op"] == "verify":
+                    report = sde.verify(session, action["group"], chunk_rows=3, at=action["at"])
+                    assert report.matched is action["matched"]
+                    assert report.as_record() == action["report"]
+                else:
+                    raise AssertionError("unknown generation fixture operation")
+            if "error" in action:
+                with pytest.raises(_ERRORS[action["error"]], match=re.escape(action["match"])):
+                    invoke()
+            else:
+                invoke()
+    assert {name: engine.tables for name, engine in engines.items()} == want["tables"]
+    assert next(iter(engines.values())).recorded.as_list() == _read_json(case / "calls.json")

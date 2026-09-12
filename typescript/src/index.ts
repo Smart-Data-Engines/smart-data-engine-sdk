@@ -165,3 +165,5 @@ export const TIER = 2
 export { VerificationRequest, verificationRequest } from './verification.js'
 
 export { EPOCH_COLUMN as WRITE_EPOCH_COLUMN, FenceState, WriteFence } from './write-fence.js'
+
+export { prepareSchema } from './provisioning.js'

@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from .errors import EngineError, MigrationRefused, ModelPlanningError
+from .generation import logical_row, stamp_values, validate_generations
 from .groups import Group, colocation_groups
 from .hashing import NameMap
 from .layout import group_columns
@@ -160,6 +161,7 @@ class Session:
         # constructor already refuses a map it cannot route, which is the same kind of refusal in
         # the same place. It costs one statement per participating engine, once per process, and
         # nothing at all for an unsigned map.
+        validate_generations(model, placement, self._engines, project_id)
         self._forward_only = enforce_forward_only(placement, self._engines)
 
     # --- what a session is -----------------------------------------------------------------
@@ -283,6 +285,9 @@ class Session:
 
     def ensure_schema(self) -> None:
         """Create what each engine is missing for the groups placed in it."""
+        if self._placement.contract >= 4:
+            validate_generations(self._model, self._placement, self._engines, self._project_id)
+            return
         for group in self._groups:
             placement = self._placement.placement_of(group.name)
             keys = {name: self._model.entity(name).key for name in group.members}
@@ -302,7 +307,7 @@ class Session:
         started = perf_counter_ns() if self._recorder else 0
         failed = False
         try:
-            engine.insert(table, values)
+            engine.insert(table, stamp_values(self._placement, shape.group, values))
             self._fan_out(target, shape.group, values)
         except BaseException:
             failed = True
@@ -372,7 +377,7 @@ class Session:
         """
         failed = False
         try:
-            self._engines[engine_name].insert(table, values)
+            self._engines[engine_name].insert(table, stamp_values(self._placement, group, values))
         except Exception as exc:
             # Deliberately swallowed, and the only place in this library that swallows a write
             # failure. The narrow `Exception` rather than `BaseException` matters: a
@@ -429,7 +434,7 @@ class Session:
             raise
         finally:
             self._observe(shape, started, rows=0 if row is None else 1, failed=failed)
-        return self._fields_out(entity, row)
+        return self._fields_out(entity, logical_row(self._placement, row))
 
     def _observe(self, shape: OperationShape, started: int, *, rows: int, failed: bool) -> None:
         """Hand one observation to the recorder, if there is one.

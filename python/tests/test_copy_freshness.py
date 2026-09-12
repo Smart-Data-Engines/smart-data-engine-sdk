@@ -17,6 +17,8 @@ same group without one. The set of shape kinds that count as writes already had 
 this is the same failure arriving from the other side.
 """
 
+# These fixtures pin the legacy fan-out protocol; generation-bearing maps have dedicated tests.
+
 from __future__ import annotations
 
 import time
@@ -96,7 +98,7 @@ def _map(model: sde.LogicalModel, *, fan_out: bool = True) -> sde.PlacementMap:
         body["also_write"] = [COPY]
     return sde.load_map(
         {
-            "contract": sde.MAP_CONTRACT,
+            "contract": 3,
             "model_version": model.version,
             "map_version": 7,
             "groups": {GROUP: body},

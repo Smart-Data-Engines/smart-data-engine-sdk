@@ -14,13 +14,14 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from .errors import MigrationRefused
+from .generation import DRAIN_TABLE as DRAIN_TABLE
+from .generation import EPOCH_COLUMN as EPOCH_COLUMN
+from .generation import MAX_EPOCH as MAX_EPOCH
+from .generation import check_epoch as check_epoch
 from .placement import BACKFILL_TABLE, WATERMARK_TABLE
 
-DRAIN_TABLE = "__sde_fence_drains"
-EPOCH_COLUMN = "__sde_write_epoch"
 FENCE_PREFIX = "__sde_f_"
 SETUP = FENCE_PREFIX + "setup"
-MAX_EPOCH = 9_007_199_254_740_991
 ColumnState = Literal["absent", "valid", "conflict"]
 
 
@@ -40,12 +41,6 @@ class FenceBackend(Protocol):
     def drop_constraint(self, table: str, name: str) -> None: ...
     def drain(self, table: str, *, project_id: str, hold: str) -> None: ...
     def restore(self, table: str, *, project_id: str, hold: str) -> None: ...
-
-
-def check_epoch(epoch: int) -> int:
-    if type(epoch) not in (int, float) or not 1 <= epoch <= MAX_EPOCH or int(epoch) != epoch:
-        raise MigrationRefused("write epoch must be a positive safe integer")
-    return int(epoch)
 
 
 def _identity(value: str, label: str) -> None:

@@ -157,6 +157,10 @@ class PostgresEngine:
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
         self._verify_schema(layout)
 
+    def validate_schema(self, layout: PhysicalLayout) -> None:
+        """Check the existing physical columns without issuing DDL."""
+        self._verify_schema(layout)
+
     def _verify_schema(self, layout: PhysicalLayout) -> None:
         """Check that what exists is what the map describes, because IF NOT EXISTS does not.
 

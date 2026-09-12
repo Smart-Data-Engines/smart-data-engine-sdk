@@ -1,0 +1,6 @@
+{
+  "stage": "map",
+  "error": "MapError",
+  "match": "canonically encodable",
+  "why": "Generation-bearing placement must refuse missing or ambiguous safety metadata before any engine operation."
+}

@@ -14,6 +14,8 @@ the switch, a row the client explicitly undid, readable. Skipping is wrong for a
 those rows are above the backfill marker, so nothing else copies them, and VERIFY's tail check
 would refuse the migration of every group that uses a transaction. """
 
+# These fixtures pin the legacy fan-out protocol; generation-bearing maps have dedicated tests.
+
 from __future__ import annotations
 
 import logging
@@ -87,7 +89,7 @@ def _map(model: sde.LogicalModel, *, fan_out: bool) -> sde.PlacementMap:
     if fan_out:
         body["also_write"] = ["copy@ch"]
     raw = {
-        "contract": sde.MAP_CONTRACT,
+        "contract": 3,
         "model_version": model.version,
         "map_version": 7,
         "groups": {group: body},

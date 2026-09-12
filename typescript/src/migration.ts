@@ -1,3 +1,4 @@
+import { EPOCH_COLUMN } from './generation.js'
 /**
  * Copying a group's rows into the copy a map fans writes out to, and comparing the two.
  *
@@ -160,6 +161,7 @@ interface Copy {
   readonly targetEngine: string
   readonly targetId: string
   readonly targetTable: string
+  readonly writeEpoch?: number | undefined
 }
 
 /** How far one entity's copy into one target has got. */
@@ -477,6 +479,7 @@ function plan(session: Session, group: string): readonly Copy[] {
         targetEngine: copy.engine,
         targetId: copy.id,
         targetTable: tableFor(copy.layout, entity),
+        writeEpoch: body.writeEpoch,
       })
     }
   }
@@ -545,7 +548,9 @@ async function backfillOne(
     }
     // The chunk first, then the marker. A crash between them costs a recopy, which the target's key
     // semantics absorb; the other order costs the chunk, permanently.
-    await copy.target.copyIn(copy.targetTable, rows)
+    const payload = copy.writeEpoch === undefined ? rows : rows.map((row) =>
+      ({ ...logicalCopyRow(copy, row), [EPOCH_COLUMN]: copy.writeEpoch }))
+    await copy.target.copyIn(copy.targetTable, payload)
     marker += rows.length
     await copy.target.recordBackfillMarker({
       materialization: copy.targetId,
@@ -718,9 +723,10 @@ async function missingInTarget(
     low === null ? { upto: high } : { after: low, upto: high },
   )
   const index = new Map<string, Row>()
-  for (const row of mirror) index.set(keyOf(copy.key, row), row)
+  for (const row of mirror) index.set(keyOf(copy.key, row), logicalCopyRow(copy, row))
   const out: Difference[] = []
-  for (const row of rows) {
+  for (const physicalRow of rows) {
+    const row = logicalCopyRow(copy, physicalRow)
     const there = index.get(keyOf(copy.key, row))
     if (there !== undefined && differingColumns(row, there).length === 0) continue
     // Not there, or there and different. Look once more, directly, before calling it a loss.
@@ -728,7 +734,7 @@ async function missingInTarget(
     for (const column of copy.key) named[column] = row[column]
     const again = await copy.target.get(copy.targetTable, named)
     if (again !== null) {
-      const differs = differingColumns(row, again)
+      const differs = differingColumns(row, logicalCopyRow(copy, again))
       if (differs.length === 0) continue
       out.push({ entity: copy.entity, table: copy.targetTable, key: named, columns: differs })
       continue
@@ -797,4 +803,10 @@ function sameValue(left: unknown, right: unknown): boolean {
     return String(left) === String(right)
   }
   return Object.is(left, right)
+}
+
+
+function logicalCopyRow(copy: Copy, row: Row): Row {
+  return copy.writeEpoch === undefined ? row :
+    Object.fromEntries(Object.entries(row).filter(([name]) => name !== EPOCH_COLUMN))
 }

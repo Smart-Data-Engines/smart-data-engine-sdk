@@ -280,3 +280,10 @@ Native write-fence cases `migration/046`–`061` use the metadata-only shape des
 [write-fences.md](../docs/write-fences.md#shared-fixtures). A completed barrier id cannot be reused;
 an interrupted epoch change remains closed; retrying a hold repeats the drain. The fixtures are
 explicit state/call expectations, not recordings of either SDK implementation.
+
+Contract-4 session cases `migration/062`–`070` carry `generation.json`: local project configuration,
+independent engine epoch metadata, actions and the final tables. The existing memory engine still
+owns data behavior and call recording; the fixture adds only native generation metadata. The map
+refusals are `errors/039`–`049`. `signature/008` independently signs a map containing integral JSON
+number spellings and pins its fingerprint, project and group epochs. The generator requires
+`--i-am-changing-the-contract --scratch <session-scratchpad>`; private test keys never enter the repo.

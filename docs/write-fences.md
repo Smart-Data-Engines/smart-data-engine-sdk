@@ -3,10 +3,9 @@
 `WriteFence` is a client-side provisioning primitive for coordinating migration cutover. It can
 close a table to new INSERTs, wait for started writers, and admit a new write generation. A
 successful barrier is a prerequisite for a stable final comparison; it does not itself compare
-rows, activate a placement map, or authorize removing a source. The current `Session.save` API
-has not yet been connected to this primitive. Use the generation-bearing map and cutover workflow
-when those integrations are available; provisioning a fence under an existing session will make
-its unstamped writes fail.
+rows, activate a placement map, or authorize removing a source. [Contract-4 sessions](generation-maps.md) now supply the generation on each write. Legacy sessions
+remain unstamped; provisioning a fence under one will make its writes fail. Complete cutover
+activation and final verification remain separate from these primitives.
 
 Python: `engine.write_fence(table, project_id=...)`. TypeScript:
 `engine.writeFence(table, { projectId })`. These factory methods return the synchronous/asynchronous
@@ -100,9 +99,8 @@ before recovery can leave a detached table that requires explicit operator recov
 
 The initial scope is ordinary PostgreSQL tables without inheritance, and local MergeTree or
 ReplacingMergeTree tables in a ClickHouse Atomic database. Distributed and replicated tables, foreign
-tables, external writers and uncoordinated DDL changes require separate qualification. Application
-Session integration, a bounded cutover executor, final verification under the barriers, map handoff,
-and the full migration fault/load gate remain separate work. The engine primitive alone does not
+tables, external writers and uncoordinated DDL changes require separate qualification. A bounded cutover executor, final verification under the barriers, map handoff, stale-reader
+revocation and the full migration fault/load gate remain separate work. The engine primitive alone does not
 make an online migration safe.
 
 ## Shared fixtures

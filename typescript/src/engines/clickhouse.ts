@@ -343,6 +343,11 @@ export class ClickHouseEngine {
    * it is literal on purpose - a renderer that started emitting a different spelling of the same
    * type would fail this, which is the right way round for a document we sign.
    */
+  /** Check existing physical columns without issuing DDL. */
+  async validateSchema(layout: PhysicalLayout): Promise<void> {
+    await this.verifySchema(layout)
+  }
+
   private async verifySchema(layout: PhysicalLayout): Promise<void> {
     const expected = new Map<string, Record<string, string>>()
     for (const [entity, table] of Object.entries(layout.tables)) {

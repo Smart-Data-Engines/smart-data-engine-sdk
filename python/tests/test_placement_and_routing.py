@@ -201,7 +201,12 @@ def test_an_older_map_contract_is_accepted_and_a_newer_one_is_not() -> None:
     model = _model()
     assert sde.MAP_CONTRACT_FLOOR < sde.MAP_CONTRACT, "there is nothing to be compatible with"
     for readable in range(sde.MAP_CONTRACT_FLOOR, sde.MAP_CONTRACT + 1):
-        loaded = sde.load_map(_map(model, contract=readable), model=model)
+        document = _map(model, contract=readable)
+        if readable >= 4:
+            document["project_id"] = "1" * 32
+            for group in document["groups"].values():
+                group["write_epoch"] = 1
+        loaded = sde.load_map(document, model=model)
         assert loaded.contract == readable
     with pytest.raises(MapError, match="Upgrade the library"):
         sde.load_map(_map(model, contract=sde.MAP_CONTRACT + 1), model=model)
