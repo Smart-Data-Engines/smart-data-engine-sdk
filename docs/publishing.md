@@ -350,14 +350,49 @@ anyway.** The same visit that sets up forwarding for `contact@smartdataengines.c
 record, and a DNS change plus a verification round-trip is the only item on this whole page that
 cannot be compressed into one sitting. Everything else here is instant or nearly so.
 
-1. Sign in at <https://central.sonatype.com/> with the GitHub organisation account.
-2. Add namespace `com.smartdataengines`. The Portal shows a verification key.
-3. At the registrar for `smartdataengines.com`, add a TXT record whose value is that key. Their own
-   warning is worth repeating: "Do not proceed with verification unless you have added and verified
-   your DNS TXT record" — pressing the button before DNS has propagated fails the attempt rather than
-   waiting for it.
-4. Confirm in the Portal once `dig +short TXT smartdataengines.com` shows the key.
-5. Stop. Publish nothing. Held permanently, and it covers Java and Kotlin both.
+**One verification covers every future Java and Kotlin artefact, not just the first.** Quoted, because
+the alternative reading would mean registering a namespace per library: "if you are the owner or
+maintainer of a domain name, you can use any groupId starting with the reverse domain name **and as
+many subsections as you desire**". So `com.smartdataengines` admits `com.smartdataengines.sde`,
+`com.smartdataengines.whatever`, all of it, registered once. And the groupId "should reverse the
+domain name exactly, even if the domain name contains hyphens" — ours has none, so it is plainly
+`com.smartdataengines`.
+
+1. Sign in at <https://central.sonatype.com/>. Social login with Google or GitHub works, or a
+   username and password; the address has to be one you can read, since support correspondence goes
+   there.
+2. Username menu (top right) → **View Namespaces** → **Add Namespace** → `com.smartdataengines`.
+3. Press **Verify Namespace**. The Portal shows a **Verification Key**.
+4. Add a TXT record at the registrar. Three details, and the second one is the one that can do
+   damage:
+   - **The apex domain only.** Central does "exact domain checking": for `com.smartdataengines` it
+     looks at `smartdataengines.com` and at nothing else — not `www`, not a subdomain.
+   - **Add a record, do not edit the one that is there.** Measured on 12 September 2026:
+     `smartdataengines.com` has exactly **one** TXT record at the apex and it is
+     `v=spf1 include:_spf.google.com ~all`, the SPF for company mail (`MX 1 smtp.google.com`). A
+     registrar UI that presents TXT as one editable value invites replacing it, and replacing it
+     breaks mail — quietly, in the direction of other people's spam folders. Multiple TXT records on
+     one name are normal and correct.
+   - The zone is on Google Cloud DNS (`ns-cloud-b*.googledomains.com`), where a TXT record *set* on
+     the apex holds several values in one multi-line field. Add a line.
+5. Wait, then confirm in the Portal. "If you have set up your DNS TXT record correctly, it should
+   only take a few minutes for us to verify your namespace" and the check is automated, but their own
+   warning still applies: "Do not proceed with verification unless you have added and verified your
+   DNS TXT record" — pressing the button before the record resolves fails the attempt rather than
+   waiting for it. Check from outside first, and check that mail survived:
+
+   ```bash
+   dig +short TXT smartdataengines.com      # the key AND the v=spf1 line, both
+   dig +short MX  smartdataengines.com      # still 1 smtp.google.com.
+   ```
+
+6. Stop. Publish nothing — nothing exists to publish, and the namespace is held permanently.
+
+**What publishing there will later need, so that it is clear the namespace is the only thing missing
+today** and the rest is our work rather than yours: a POM carrying name, description, url, at least
+one licence, developer details and SCM connections; **every file GPG-signed** with a `.asc` beside
+it; `-sources.jar` and `-javadoc.jar` next to each main jar; and MD5 plus SHA1 checksums. That is a
+release pipeline, which is why it waits for a library to exist.
 
 ### 4.2 Go — nothing to register, and that is not an oversight
 
