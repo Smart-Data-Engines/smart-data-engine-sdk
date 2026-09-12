@@ -1,0 +1,211 @@
+name: release
+
+# Publishing by hand is the right way to claim a name and the wrong way to ship a release. Both names
+# were claimed by hand on 12 September 2026; from here on a release is a tag, and nothing else.
+#
+# The filename matters. Both registries pin the trusted publisher to a *workflow filename*, so
+# renaming this file revokes publishing on PyPI and on npm at the same time, and the symptom is a
+# failed release rather than a warning. `python/tests/test_release.py` asserts the name for that
+# reason.
+#
+# There is deliberately no `workflow_dispatch`. A manual trigger is a publish with no tag behind it,
+# which is exactly the gate below being skipped by the person it exists to protect.
+#
+# Third-party actions are pinned to full commit SHAs with the version in a trailing comment, as in
+# `ci.yml`. Note `pypa/gh-action-pypi-publish` v1.14.2 is an *annotated* tag: the commit is
+# dc37677b and the tag object is a892a5a6. Resolve with `git ls-remote '...^{}'` - taking the tag
+# object pins nothing that Dependabot can bump, and the symptom is Dependabot offering v1.14.2 as an
+# upgrade from v1.14.2.
+
+on:
+  push:
+    tags:
+      # Per-language, because the two distributions version independently. `v*` is here only so that
+      # the gate can refuse it by name: a tag that triggers nothing is a release that looks done.
+      - 'v*'
+      - 'python-v*'
+      - 'typescript-v*'
+
+permissions:
+  contents: read
+
+# Never cancel a publish in flight. `cancel-in-progress: true` here would mean a second tag pushed a
+# minute later could interrupt an upload half-way, and neither registry hands a version number back.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.tag.outputs.package }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The ancestry check below needs history, and a shallow clone answers it wrongly rather
+          # than refusing to answer.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: The tag names a package, and the manifest agrees
+        id: tag
+        run: python3 tools/release_tag.py "${{ github.ref }}" >> "$GITHUB_OUTPUT"
+
+      - name: The tagged commit is on main, so it passed the required checks
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::commit $GITHUB_SHA is not an ancestor of main, so it never passed the"
+            echo "::error::eleven required checks. The ruleset protects main; it does not stop a tag"
+            echo "::error::from being pointed at any commit in the repository, including one on a"
+            echo "::error::branch that was never reviewed. Merge first, then tag the merge."
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main"
+
+  build-python:
+    name: build python
+    needs: gate
+    if: needs.gate.outputs.package == 'python'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Build
+        working-directory: python
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build twine
+          python -m build
+
+      - name: Open the artefact, because the suite runs the source tree
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          for wheel in python/dist/*.whl; do
+            python3 tools/check_artefact.py wheel "$wheel" "$VERSION"
+          done
+          for sdist in python/dist/*.tar.gz; do
+            python3 tools/check_artefact.py sdist "$sdist"
+          done
+          python -m twine check --strict python/dist/*
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: python-dist
+          path: python/dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: [gate, build-python]
+    runs-on: ubuntu-latest
+    # A person, not a merge. The environment carries the required reviewer; PyPI's trusted publisher
+    # names this environment too, so a token minted by any other job is refused at the registry.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/smart-data-engine-sdk/${{ needs.gate.outputs.version }}/
+    permissions:
+      # The whole credential. No token exists in this repository or its secrets.
+      id-token: write
+    steps:
+      # Deliberately no checkout and no dependency install. This job holds the publishing identity,
+      # so nothing from the repository or from a dependency's lifecycle script runs inside it - it
+      # receives a built artefact and hands it to the registry.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: python-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+
+  build-npm:
+    name: build npm
+    needs: gate
+    if: needs.gate.outputs.package == 'typescript'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          # Inside the `engines` range this package declares (>=18 <23). Publishing from outside it
+          # makes npm complain about our own constraint.
+          node-version: '22'
+
+      - name: Build and pack
+        working-directory: typescript
+        run: |
+          set -euo pipefail
+          npm ci
+          # `prepack` runs the build, which is the mechanism that stopped this from packing two files.
+          npm pack
+
+      - name: Open the tarball
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          for tarball in typescript/*.tgz; do
+            python3 tools/check_artefact.py npm "$tarball" "$VERSION"
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: npm-tarball
+          path: typescript/*.tgz
+          if-no-files-found: error
+
+  publish-npm:
+    name: publish to npm
+    needs: [gate, build-npm]
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@smart-data-engines/sde/v/${{ needs.gate.outputs.version }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: npm new enough to exchange an OIDC token
+        # Node 22 ships npm 10, which has no OIDC support and would fall back to asking for a token
+        # that does not exist. Pinned rather than `@latest`: this is the one job holding the
+        # publishing identity, and a floating tool version in it is a dependency nobody reviewed.
+        run: |
+          set -euo pipefail
+          npm install -g npm@11.15.0
+          npm --version
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: npm-tarball
+          path: .
+
+      - name: Publish
+        # No NODE_AUTH_TOKEN and no .npmrc. Trusted publishing generates the provenance attestation
+        # by itself, so `--provenance` is not passed: npm does it and it cannot be forgotten.
+        run: |
+          set -euo pipefail
+          tarball=$(ls ./*.tgz)
+          npm publish "$tarball" --access public
+
+      - name: It is actually there
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          published=$(npm view "@smart-data-engines/sde@$VERSION" version)
+          test "$published" = "$VERSION"
+          echo "@smart-data-engines/sde@$published is on the registry"

@@ -2,8 +2,8 @@
 """Is a distribution name actually usable on PyPI? Two questions, because one is not enough.
 
 This exists because of a measurement that cost an evening. `smart-data-engine` was recorded as
-available on four separate days, on the strength of `GET /pypi/<name>/json` answering 404 - and PyPI
-refused the upload with 400, "the name is too similar to an existing project".
+available on four separate days, on the strength of `GET /pypi/<name>/json` answering 404 - and
+PyPI refused the upload with 400, "the name is too similar to an existing project".
 
 **Three endpoints, and two of them cannot answer the question.** Measured on 12 September 2026
 against a name that is taken, a name that is free, and a name nobody would ever register:
@@ -15,15 +15,15 @@ against a name that is taken, a name that is free, and a name nobody would ever 
 | `GET /simple/<name>/`   | 404  | **200**                   | 404      | answers          |
 
 The JSON API 404s when a project has no *release*, so a name somebody has registered and never used
-reads exactly like a free one - and that is the common case for a squatted name. `/project/` returns
-200 for anything at all, including a name invented on the spot.
+reads exactly like a free one - and that is the common case for a squatted name. `/project/`
+returns 200 for anything at all, including a name invented on the spot.
 
-**And `/simple/` alone is still not the answer**, because a name can be free and still refused. PyPI
-compares `ultranormalize_name(candidate)` against every existing project, exact equality, and that
-function - defined in warehouse migration `d18d443f89f0` - strips `.`, `_` and `-`, folds `l|L|i|I`
-to `1` and `o|O` to `0`, and lowercases. So `smart-data-engine` and `smartdata-engine` both reduce to
-`smartdataeng1ne` and only one of them can exist. That check needs the whole index, which is why
-this script downloads it rather than asking about one name.
+**And `/simple/` alone is still not the answer**, because a name can be free and still refused.
+PyPI compares `ultranormalize_name(candidate)` against every existing project, exact equality, and
+that function - defined in warehouse migration `d18d443f89f0` - strips `.`, `_` and `-`, folds
+`l|L|i|I` to `1` and `o|O` to `0`, and lowercases. So `smart-data-engine` and `smartdata-engine`
+both reduce to `smartdataeng1ne` and only one of them can exist. That check needs the whole index,
+which is why this script downloads it rather than asking about one name.
 
 Usage:
 
@@ -80,7 +80,7 @@ def all_project_names() -> list[str]:
                 "User-Agent": "smart-data-engine-sdk name check (contact@smartdataengines.com)",
             },
         )
-        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=120) as response:
             payload = json.loads(response.read().decode("utf-8"))
         CACHE.write_text(json.dumps(payload), encoding="utf-8")
     return [project["name"] for project in payload["projects"]]
@@ -93,7 +93,7 @@ def exact_name_exists(name: str) -> bool:
         headers={"Accept": "application/vnd.pypi.simple.v1+json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=30) as response:
             return bool(200 <= response.status < 300)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:

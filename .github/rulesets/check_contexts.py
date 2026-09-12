@@ -16,6 +16,18 @@ in both directions, and fails on any difference. What it cannot see is the live 
 that needs a token this job does not have, and should not. It checks the half that drifts when someone
 edits a workflow, which is the half that drifts.
 
+Since 12 September 2026 it checks the release workflow against `tags.json` the same way, plus three
+properties of publishing that are otherwise held by a comment:
+
+- **A tag pattern that drives a publish must be protected.** `refs/tags/v*` is immutable; a
+  `rust-v*` trigger added here and forgotten there would publish from a tag that can still be
+  deleted and repointed afterwards, which is the one thing a released version must not be.
+- **Every action is pinned to a commit SHA.** A tag is a mutable pointer: `@v4` can be moved to
+  different code by whoever owns that repository, with no diff here.
+- **A job holding `id-token: write` holds the entire publishing credential**, so it must sit behind
+  an environment with a reviewer, and it must not check out this repository - the point of splitting
+  build from publish is that nothing which has run repository or dependency code holds the identity.
+
 Run from the repository root:
 
     python3 .github/rulesets/check_contexts.py
@@ -45,6 +57,17 @@ NOT_FROM_A_WORKFLOW = {
 }
 
 _MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}")
+
+TAGS_RULESET = Path(".github/rulesets/tags.json")
+
+#: The filename both registries' trusted publishers are pinned to. Renaming this file revokes
+#: publishing on PyPI and on npm simultaneously.
+RELEASE = "release.yml"
+
+#: `owner/repo@<40 hex>`. Local actions (`./.github/...`) are exempt: they are in this tree and a
+#: diff here is exactly what reviewing them means.
+_PINNED = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
+
 
 
 def triggers_on_pull_request(workflow: dict[str, Any]) -> bool:
@@ -140,6 +163,137 @@ def required() -> set[str]:
     )
 
 
+
+def parsed_workflows() -> dict[str, dict[str, Any]]:
+    """Every workflow file, by filename. Unlike `produced()` this does not skip anything.
+
+    `produced()` looks only at workflows that run on pull requests, because only those can gate one.
+    The release checks below are about a workflow that deliberately does *not* run on pull requests,
+    so they need the unfiltered set - and a checker that reused the filtered one would find no
+    release workflow and report success.
+    """
+    files = sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml"))
+    return {path.name: yaml.safe_load(path.read_text()) for path in files}
+
+
+def triggers(workflow: dict[str, Any]) -> dict[str, Any]:
+    """The `on:` block. `on` parses as the YAML 1.1 boolean `True`, so both spellings are read."""
+    for key in ("on", True):
+        if key in workflow:
+            block = workflow[key]
+            if isinstance(block, dict):
+                return block
+            if isinstance(block, str):
+                return {block: None}
+            if isinstance(block, list):
+                return dict.fromkeys(block)
+    raise SystemExit(f"a workflow has no `on:` trigger at all: {workflow.get('name')!r}")
+
+
+def tag_patterns(workflow: dict[str, Any]) -> list[str]:
+    """The tag globs this workflow runs on, normalised to `refs/tags/...` as the ruleset writes them."""
+    push = triggers(workflow).get("push") or {}
+    if not isinstance(push, dict):
+        return []
+    return [f"refs/tags/{pattern}" for pattern in (push.get("tags") or [])]
+
+
+def protected_tag_patterns() -> list[str]:
+    ruleset = json.loads(TAGS_RULESET.read_text())
+    if ruleset.get("target") != "tag":
+        raise SystemExit(f"{TAGS_RULESET} does not target tags, so it protects no release.")
+    return list(ruleset["conditions"]["ref_name"]["include"])
+
+
+def release_problems() -> list[str]:
+    """Everything wrong with how this repository publishes, as far as these files can tell."""
+    problems: list[str] = []
+    files = parsed_workflows()
+
+    # Which workflows publish from a tag. There should be exactly one, and it should be the file the
+    # trusted publishers name.
+    publishing = {name: tag_patterns(wf) for name, wf in files.items() if tag_patterns(wf)}
+    if not publishing:
+        problems.append(
+            f"  no workflow triggers on a tag, so nothing publishes\n"
+            f"    Either {RELEASE} was deleted or its trigger was changed. Both registries are "
+            f"configured to accept an OIDC token only from that file, so this is not a state the "
+            f"repository can release from."
+        )
+    for name in sorted(set(publishing) - {RELEASE}):
+        problems.append(
+            f"  {name} publishes from a tag, and the trusted publishers do not name it\n"
+            f"    PyPI and npm each pin the publisher to a workflow *filename*. A tag-triggered "
+            f"publish from any other file cannot mint a token, so it fails at the registry after "
+            f"the reviewer has already approved it."
+        )
+
+    # The two directions, exactly as for contexts.
+    protected = protected_tag_patterns()
+    triggered = sorted({pattern for patterns in publishing.values() for pattern in patterns})
+
+    for pattern in triggered:
+        if pattern not in protected:
+            problems.append(
+                f"  publishes from {pattern!r}, which {TAGS_RULESET} does not protect\n"
+                f"    That tag can be deleted and repointed after the release, so the commit a "
+                f"published version claims to come from would stop being fixed. Add it to the "
+                f"ruleset and re-apply."
+            )
+    for pattern in protected:
+        if pattern not in triggered:
+            problems.append(
+                f"  {TAGS_RULESET} protects {pattern!r}, which no workflow publishes from\n"
+                f"    Harmless on its own, and worth failing on anyway: it is how the pair drifts. "
+                f"Either the trigger was dropped - in which case tagging silently does nothing - or "
+                f"the pattern is dead configuration."
+            )
+
+    # Properties that were previously held only by a comment.
+    for name, workflow in sorted(files.items()):
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            permissions = job.get("permissions") or {}
+            holds_identity = (
+                isinstance(permissions, dict) and permissions.get("id-token") == "write"
+            )
+            steps = job.get("steps") or []
+
+            for step in steps:
+                uses = step.get("uses")
+                if uses and not uses.startswith("./") and not _PINNED.match(str(uses)):
+                    problems.append(
+                        f"  {name}: job {job_id!r} uses {uses!r}, which is not pinned to a SHA\n"
+                        f"    A tag is a mutable pointer; the code it names can be replaced without "
+                        f"a diff in this repository. Resolve with "
+                        f"`git ls-remote <url> 'refs/tags/<tag>^{{}}'` - without the `^{{}}` an "
+                        f"annotated tag gives you the tag object rather than the commit, and the "
+                        f"symptom is Dependabot offering a version as an upgrade from itself."
+                    )
+
+            if not holds_identity:
+                continue
+
+            if not job.get("environment"):
+                problems.append(
+                    f"  {name}: job {job_id!r} may mint an OIDC token and is behind no environment\n"
+                    f"    `id-token: write` is the whole publishing credential here - there is no "
+                    f"token anywhere to also need. Without an environment carrying a required "
+                    f"reviewer, a merge becomes a publish with nobody in the loop."
+                )
+            for step in steps:
+                uses = str(step.get("uses") or "")
+                if uses.startswith("actions/checkout@"):
+                    problems.append(
+                        f"  {name}: job {job_id!r} holds the publishing identity and checks out "
+                        f"this repository\n"
+                        f"    The reason build and publish are separate jobs is that nothing which "
+                        f"has run repository or dependency code holds the credential. Checking out "
+                        f"here puts it back."
+                    )
+
+    return problems
+
+
 def main() -> int:
     from_workflows = produced()
     from_ruleset = required()
@@ -168,14 +322,20 @@ def main() -> int:
                 f"context back in {RULESET}."
             )
 
-    if problems:
-        print("the ruleset and the workflows disagree:\n")
-        print("\n".join(problems))
+    release = release_problems()
+
+    if problems or release:
+        print("the rulesets and the workflows disagree:\n")
+        print("\n".join(problems + release))
         return 1
 
     print(
         f"{len(from_workflows)} contexts produced, all required; "
         f"{len(NOT_FROM_A_WORKFLOW)} allowlisted as not coming from a workflow"
+    )
+    print(
+        f"{len(protected_tag_patterns())} tag patterns protected, all of them published from; "
+        f"every action pinned to a SHA"
     )
     return 0
 

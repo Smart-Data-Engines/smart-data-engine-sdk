@@ -25,11 +25,16 @@ check: python-check ts-check
 
 python-check: python-lint python-types python-test
 
+# `../tools` is in both, and the reason is a lesson this repository already paid for once: when
+# `examples/` sat outside ruff, a script we tell people to read was held to a weaker standard than the
+# code it demonstrates. `tools/release_tag.py` decides what gets published under an immutable tag, so
+# it is the last place that should be unchecked. `--config` is explicit so that a pyproject.toml
+# appearing at the repository root could not quietly change the rules for files outside `python/`.
 python-lint:
-	cd python && .venv/bin/ruff check src tests
+	cd python && .venv/bin/ruff check --config pyproject.toml src tests ../tools
 
 python-types:
-	cd python && .venv/bin/mypy src
+	cd python && .venv/bin/mypy src ../tools
 
 python-test:
 	cd python && .venv/bin/python -m pytest
