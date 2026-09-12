@@ -446,10 +446,9 @@ def _verify_signature(
     except ImportError as exc:  # pragma: no cover - depends on the install extra
         raise MapError(
             "this map is signed, but signature verification needs the 'signed' extra: "
-            "pip install 'smart-data-engine[signed]'. The base install stays dependency-free on "
-            "purpose, because "
-            "a library that goes into someone's application should not drag in cryptography unless "
-            "it is actually verifying something."
+            "pip install 'smart-data-engine-sdk[signed]'. The base install stays dependency-free "
+            "on purpose, because a library that goes into someone's application should not drag in "
+            "cryptography unless it is actually verifying something."
         ) from exc
 
     signature = raw["signature"]

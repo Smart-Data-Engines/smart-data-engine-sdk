@@ -11,7 +11,8 @@ what decides which ones are worth a visit today and which are worth nothing unti
 | Name | Registry | State | How it gets claimed |
 |---|---|---|---|
 | `@smart-data-engines/sde` | npm | **ours since 12 September 2026** | creating the organisation granted the scope; nothing published |
-| `smart-data-engine` | PyPI | unclaimed | an upload, and nothing else |
+| `smart-data-engine-sdk` | PyPI | unclaimed | an upload, and nothing else |
+| `smart-data-engine-sdk` | PyPI | **refused** | too similar to `smartdata-engine`; see §2.0 |
 | `sde` | PyPI | taken by someone else | — which is why the distribution and the import differ |
 
 Section 4 does the same for the other seven languages. The short version, if you read nothing else:
@@ -21,30 +22,34 @@ rest are worth nothing until the library exists, and one of them would breach a 
 Checked against the live registries on 11 September 2026, each with a control that must answer
 differently so a silent instrument cannot read as good news:
 
-| Checked | Ours | Control |
-|---|---|---|
-| PyPI `smart-data-engine`, `smart_data_engine` | 404 | `sde` → 200 |
-| TestPyPI `smart-data-engine` | 404 | — |
-| npm `@smart-data-engines/sde` | 404 | `is-callable` → 200 |
-| crates.io `smart-data-engine` | 404 | `serde` → 200 |
-| RubyGems `smart-data-engine`, `smart_data_engine` | 404 | `rails` → 200 |
-| NuGet `smartdataengines`, `smartdataengine`, `smartdataengines.sde` | 404 | `newtonsoft.json` → 200 |
-| Packagist `smart-data-engines/sde` | 404 | `monolog/monolog` → 200 |
-| Maven Central `com.smartdataengines` | 0 artefacts | `org.apache.commons` → 150 |
+| Checked | Ours | Control | Instrument |
+|---|---|---|---|
+| PyPI `smart-data-engine-sdk` | usable | `pip` → taken | `tools/pypi_name_available.py` |
+| TestPyPI `smart-data-engine-sdk` | 404 | — | JSON API |
+| npm `@smart-data-engines/sde` | 404 | `is-callable` → 200 | registry API |
+| crates.io `smart-data-engine-sdk` | 404 | `serde` → 200 | registry API |
+| RubyGems `smart-data-engine-sdk`, `smart_data_engine` | 404 | `rails` → 200 | registry API |
+| NuGet `smartdataengines`, `smartdataengine`, `smartdataengines.sde` | 404 | `newtonsoft.json` → 200 | registry API |
+| Packagist `smart-data-engines/sde` | 404 | `monolog/monolog` → 200 | registry API |
+| Maven Central `com.smartdataengines` | 0 artefacts | `org.apache.commons` → 150 | artefact search |
 
-**Two of those rows say less than they look like they say, and the difference matters.** The Maven
-row and the NuGet row are searches for *published artefacts*, and both registries let a namespace or
-an ID prefix be held with nothing published under it — which is precisely the feature we want to use.
-So "no artefacts" does not mean "nobody holds it", and only a logged-in Portal account can tell you.
-The npm **organisation** name cannot be checked at all without an account: npmjs.com answers 403 to a
-script, and it answers 403 for a name that certainly exists and for one that certainly does not, so
-the instrument says nothing either way. You find out at signup — which is why that is step 1.
+**Three of those rows say less than they look like they say, and one of them already cost an
+evening.** The Maven and NuGet rows search for *published artefacts*, and both registries let a
+namespace or an ID prefix be held with nothing published under it — the very feature we use — so "no
+artefacts" is not "nobody holds it", and only a logged-in account can tell you. The npm
+**organisation** name cannot be checked without an account at all: npmjs.com answers 403 to a script,
+and it answers 403 for a name that certainly exists and for one that certainly does not.
+
+**The PyPI row is the one that was wrong, and the correction is §2.0.** Earlier revisions of this page
+recorded `smart-data-engine-sdk` as available on four separate days, on the strength of
+`GET /pypi/<name>/json` answering 404. PyPI then refused the upload. The row now names the instrument
+it was measured with, because that column is what would have caught it.
 
 ## Why this is worth doing before the first release
 
-`smart-data-engine` is not only in a README. It is in three **runtime error messages** — in
+`smart-data-engine-sdk` is not only in a README. It is in three **runtime error messages** — in
 `placement.py`, `engines/postgres.py` and `engines/clickhouse.py` — where the library tells a user, at
-the moment something has already failed, to run `pip install 'smart-data-engine[signed]'`. That is the
+the moment something has already failed, to run `pip install 'smart-data-engine-sdk[signed]'`. That is the
 worst possible moment to point somebody at a name a stranger controls: they are debugging, they will
 copy the command, and the instruction came from inside code they had already decided to trust.
 
@@ -169,6 +174,44 @@ that exists for ten minutes and is then deleted is a small, bounded exposure, an
 gets configured on the existing project afterwards, which is the ordinary path. The workflow is on my
 list either way (section 5) — it is just not worth standing between you and an unclaimed name.
 
+### 2.0 The name is `smart-data-engine-sdk`, and the suffix was forced ⚠️
+
+Measured on 12 September 2026, with a production token and everything ready: PyPI answered
+**400 — "The name 'smart-data-engine' is too similar to an existing project."** Nothing was uploaded;
+the request was refused before a byte of the wheel was accepted, so no version number was spent.
+
+**The project it collides with is `smartdata-engine`, registered by somebody else with zero
+releases.** PyPI compares `ultranormalize_name` for exact equality, and that function — warehouse
+migration `d18d443f89f0` — strips `.`, `_` and `-`, folds `l|L|i|I` to `1` and `o|O` to `0`, and
+lowercases. Both names reduce to `smartdataeng1ne`, so only one of them can exist. `-sdk` changes the
+reduction to `smartdataeng1nesdk`, and it matches the repository name, which is the consistency worth
+having anyway.
+
+**Three lessons, and the first is about this page rather than about PyPI.**
+
+*The check that said "available" could not have said anything else.* `GET /pypi/<name>/json` answers
+404 both for a free name and for one somebody registered and never released — and the second is
+exactly where a squatted name lives. `GET /project/<name>/` is worse: it answers 200 for a name
+invented on the spot. Only `GET /simple/<name>/` distinguishes them, and even that is not sufficient,
+because a free name can still be refused for similarity. **The question needs the whole index**, which
+is why there is now a tool rather than a paragraph:
+
+```bash
+python tools/pypi_name_available.py <candidate> [more ...]
+```
+
+It downloads the simple index, applies PyPI's own comparison, and carries a control in the same run:
+if `pip` does not appear in the population, it reports a broken instrument rather than a free name.
+
+*The TestPyPI rehearsal passed.* TestPyPI accepted `smart-data-engine-sdk` and produced a perfectly good
+project page. So the rehearsal returned green against a name production would refuse — worth knowing
+about what a rehearsal is for. It exercises **the flow**: token, twine invocation, rendered page. It
+does not exercise the production index's rules, and treating a green rehearsal as clearance for the
+real upload is the mistake this paragraph exists to prevent.
+
+*A 400 is not a 403.* The first attempt reported only `400 Bad Request` with no reason, and the reason
+was one `--verbose` away. Read the server's words before forming a theory about the token.
+
 ### 2.1 Account and 2FA
 
 1. Register at <https://pypi.org/account/register/>, and at <https://test.pypi.org/account/register/>
@@ -223,7 +266,7 @@ The name is ours from the moment this returns.
 
 `0.1.0.dev0` is a developmental release and that is deliberate: it is the version in the tree, it says
 "dev" out loud, and it does not pretend to be a stable 0.1.0 we have not decided to cut. Measured
-locally, pip does install it when it is the only candidate, so `pip install smart-data-engine` starts
+locally, pip does install it when it is the only candidate, so `pip install smart-data-engine-sdk` starts
 working — which retires the one instruction in our public README that has been untrue on purpose.
 
 ### 2.4 Delete the token, immediately
@@ -244,7 +287,7 @@ eventually reaches. §4.2 of [`github-security.md`](github-security.md) is the s
 
 ```python
 REGISTRIES = (
-    ("PyPI", "smart-data-engine", False),
+    ("PyPI", "smart-data-engine-sdk", False),
     ("npm", "@smart-data-engines/sde", False),
 )
 ```
@@ -330,7 +373,7 @@ current owner".
 
 **It is the failure requirement 17.6 exists to prevent.** `implementations.md` opens by saying that
 writing "we support Java" when it means something weaker than it does for Python is misleading in the
-direction that costs a client a migration. A package on crates.io called `smart-data-engine` is that
+direction that costs a client a migration. A package on crates.io called `smart-data-engine-sdk` is that
 claim, made to everyone who searches, with no library behind it.
 
 **And it spends something permanently to buy nothing.** Every one of these registries refuses to reuse
@@ -339,7 +382,7 @@ first entry was an empty package.
 
 What to do instead: nothing today. On the day one of those libraries is real, the first publish claims
 the name, and that publish is minutes of work. The risk we are accepting by waiting is that somebody
-takes `smart-data-engine` on crates.io in the meantime — accepted deliberately, because the cost if it
+takes `smart-data-engine-sdk` on crates.io in the meantime — accepted deliberately, because the cost if it
 happens is a different crate name in one language, and the cost of the alternative is a policy breach
 plus a false claim in seven.
 

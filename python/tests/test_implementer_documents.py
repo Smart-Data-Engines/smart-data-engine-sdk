@@ -189,7 +189,7 @@ def _row(library: str) -> list[str]:
 
 
 def test_the_python_row_agrees_with_the_library() -> None:
-    row = _row("smart-data-engine")
+    row = _row("smart-data-engine-sdk")
     _, language, tier, hashing, ir_contract, map_contract, engines = row
     assert tier == "2"
     assert hashing == "yes" and hasattr(sde, "hash_identifiers")

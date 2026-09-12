@@ -6,10 +6,21 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-# The distribution is "smart-data-engine"; the import is "sde". Not a style choice: "sde" is already
-# taken on PyPI, and squatting-adjacent renames of an import path are worse for a client than a
-# distribution name that differs from it. `pip install smart-data-engine` then `import sde`.
-name = "smart-data-engine"
+# The distribution is "smart-data-engine-sdk"; the import is "sde". Neither half is a style choice
+# and both were forced, which is worth knowing before somebody "tidies" them into agreement.
+#
+# "sde" is already taken on PyPI by someone else, and renaming the import path to something
+# squatting-adjacent is worse for a client than a distribution name that differs from it.
+#
+# The obvious distribution name, "smart-data-engine", is **refused by PyPI** - measured on
+# 12 September 2026, a 400 saying "the name is too similar to an existing project". The project it
+# collides with is `smartdata-engine`, registered by somebody else with zero releases. PyPI compares
+# `ultranormalize_name`, which strips `._-` and maps `l|L|i|I` to 1 and `o|O` to 0, so both names
+# reduce to `smartdataeng1ne`. Adding the suffix changes the reduction to `smartdataeng1nesdk`, and
+# it matches the repository name, which is the consistency worth having anyway.
+#
+# `pip install smart-data-engine-sdk` then `import sde`.
+name = "smart-data-engine-sdk"
 dynamic = ["version"]
 description = "Smart Data Engine client library: declare a data model, we place it and move it"
 readme = "README.md"

@@ -60,7 +60,7 @@ class PostgresEngine:
         except ImportError as exc:  # pragma: no cover - depends on the install extra
             raise EngineError(
                 "the PostgreSQL adapter needs the 'postgres' extra: "
-                "pip install 'smart-data-engine[postgres]'. "
+                "pip install 'smart-data-engine-sdk[postgres]'. "
                 "The core library has no dependencies, because it goes into your application and "
                 "every dependency here would be one you inherit."
             ) from exc
