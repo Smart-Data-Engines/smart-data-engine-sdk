@@ -1,3 +1,4 @@
+import { bindGenerationMetadata } from './_generation.js'
 import { WriteFence as NativeWriteFence, type ColumnState, type FenceState } from '../src/write-fence.js'
 import { MemoryFences } from './_write-fence.js'
 import { VerificationRequest } from '../src/verification.js'
@@ -295,6 +296,9 @@ it('covers all three error stages with actual vectors', () => {
 
 interface SignatureExpectation {
   readonly verified_with?: string | null
+  readonly map_fingerprint?: string
+  readonly project_id?: string
+  readonly write_epochs?: Record<string, number>
   readonly error?: string
   readonly match?: string
 }
@@ -328,6 +332,11 @@ describe('signature vectors', () => {
       const placement = loadMap(raw, options)
       expect(placement.signed).toBe(true)
       expect(placement.verifiedWith).toEqual(expected.verified_with ?? null)
+      if (expected.map_fingerprint !== undefined) {
+        expect(placement.fingerprint).toBe(expected.map_fingerprint)
+        expect(placement.projectId).toBe(expected.project_id)
+        expect(Object.fromEntries(Object.entries(placement.groups).map(([name, group]) => [name, group.writeEpoch]))).toEqual(expected.write_epochs)
+      }
     })
   }
 })
@@ -829,6 +838,10 @@ describe('migration vectors', () => {
         requireSignature: load.require_signature === true,
       })
       const engines = enginesFrom(readJson(join(dir, 'engines.json')))
+      if (existsSync(join(dir, 'generation.json'))) {
+        await driveGenerationVector(dir, model, map, engines)
+        return
+      }
 
       const watermarkFile = join(dir, 'watermark.json')
       if (existsSync(watermarkFile)) {
@@ -1132,4 +1145,42 @@ async function driveWriteFenceVector(directory: string): Promise<void> {
     else expect((await invoke()).asRecord()).toEqual(step.state)
   }
   expect(backend.calls).toEqual(readJson(join(directory, 'calls.json')))
+}
+
+
+async function driveGenerationVector(directory: string, model: LogicalModel, map: PlacementMap,
+  engines: Record<string, MemoryEngine>): Promise<void> {
+  type Action = { op: string; entity?: string; values?: Record<string, unknown>; key?: Record<string, unknown>;
+    result?: unknown; entities?: string[]; writes?: {entity: string; values: Record<string, unknown>}[];
+    group?: string; at?: string; matched?: boolean; report?: unknown; error?: string; match?: string }
+  const want = readJson<{ project_id?: string; error?: string; match?: string; actions: Action[]; tables: unknown;
+    engine_generations: Record<string, Record<string, {project_id: string; epoch: number}>>;
+  }>(join(directory, 'generation.json'))
+  bindGenerationMetadata(engines, want.engine_generations)
+  const open = () => Session.open(model, map, engines, want.project_id === undefined ? {} : {projectId: want.project_id})
+  if (want.error !== undefined) await refusesAsync(open, want.error, want.match as string)
+  else {
+    const session = await open()
+    for (const action of want.actions) {
+      const invoke = async (): Promise<void> => {
+        switch (action.op) {
+          case 'save': await session.save(action.entity as string, action.values as Record<string, unknown>); break
+          case 'get': expect(await session.get(action.entity as string, action.key as Record<string, unknown>)).toEqual(action.result); break
+          case 'transaction': await session.transaction(action.entities as string[], async (tx) => {
+            for (const write of action.writes ?? []) await tx.save(write.entity, write.values)
+          }); break
+          case 'backfill': await backfill(session, action.group as string, {chunkRows: 3}); break
+          case 'verify': {
+            const report = await verify(session, action.group as string, {chunkRows: 3, at: action.at as string})
+            expect(report.matched).toBe(action.matched); expect(verifyRecord(report)).toEqual(action.report); break
+          }
+          default: throw new Error('unknown generation fixture operation')
+        }
+      }
+      if (action.error !== undefined) await refusesAsync(invoke, action.error, action.match as string)
+      else await invoke()
+    }
+  }
+  expect(Object.fromEntries(Object.entries(engines).map(([name, engine]) => [name, engine.tables]))).toEqual(want.tables)
+  expect(Object.values(engines)[0]!.recorded.calls).toEqual(readJson(join(directory, 'calls.json')))
 }

@@ -1,0 +1,37 @@
+{
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "actions": [],
+  "tables": {
+    "pg-main": {
+      "reading": [],
+      "sample": []
+    },
+    "pg-copy": {
+      "reading": [],
+      "sample": []
+    }
+  },
+  "error": "MigrationRefused",
+  "match": "locally configured"
+}

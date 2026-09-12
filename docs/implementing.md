@@ -92,6 +92,9 @@ table list columns in the same order, which is a defect we shipped.
 
 **11. Migration participation (Tier 2, second half). Vectors: `migration/`.**
 
+Contract-4 `generation.json` cases additionally configure independently observed native epochs,
+open a session, and compare every stored row and call. See [generation-bearing maps](generation-maps.md).
+
 Cases with `fencing.json` implement the [native write-fence protocol](write-fences.md). Initialize
 the supplied metadata and run its steps against a recording DDL backend; compare states, refusals
 and every call. These cases replace the model/map/row inputs with a metadata snapshot.

@@ -19,6 +19,8 @@ thing that goes stale.
 document rather than only for a requirement.
 """
 
+# These fixtures pin the legacy fan-out protocol; generation-bearing maps have dedicated tests.
+
 from __future__ import annotations
 
 import ast
@@ -97,7 +99,7 @@ def _map(model: sde.LogicalModel, *, also_write: bool = False) -> sde.PlacementM
         ]
         placement["also_write"] = ["r@ch"]
     raw = {
-        "contract": sde.MAP_CONTRACT if also_write else sde.CONTRACT,
+        "contract": 3 if also_write else sde.CONTRACT,
         "model_version": model.version,
         "map_version": 1,
         "groups": {group: placement},

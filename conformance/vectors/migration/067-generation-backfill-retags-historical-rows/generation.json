@@ -1,0 +1,53 @@
+{
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "actions": [
+    {
+      "op": "backfill",
+      "group": "Reading"
+    }
+  ],
+  "tables": {
+    "pg-main": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 1
+        }
+      ],
+      "sample": []
+    },
+    "pg-copy": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 2
+        }
+      ],
+      "sample": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111"
+}

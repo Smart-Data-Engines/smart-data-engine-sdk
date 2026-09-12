@@ -1,0 +1,64 @@
+{
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "actions": [
+    {
+      "op": "verify",
+      "group": "Reading",
+      "at": "2026-09-12T12:00:00Z",
+      "matched": true,
+      "report": {
+        "at": "2026-09-12T12:00:00Z",
+        "chunks_compared": 1,
+        "chunks_mismatched": 0,
+        "tail_rows_read": 0,
+        "tail_rows_missing_in_target": 0,
+        "rows_source": 1,
+        "rows_target": 1
+      }
+    }
+  ],
+  "tables": {
+    "pg-main": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 1
+        }
+      ],
+      "sample": []
+    },
+    "pg-copy": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 2
+        }
+      ],
+      "sample": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111"
+}

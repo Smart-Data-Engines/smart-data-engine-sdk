@@ -1,0 +1,20 @@
+{
+  "pg-main": {
+    "tables": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 1
+        }
+      ],
+      "sample": []
+    }
+  },
+  "pg-copy": {
+    "tables": {
+      "reading": [],
+      "sample": []
+    }
+  }
+}

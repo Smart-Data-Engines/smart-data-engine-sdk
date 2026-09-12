@@ -81,6 +81,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from .capabilities import satisfies
 from .errors import EngineError, MigrationRefused
+from .generation import EPOCH_COLUMN
 from .groups import Group, colocation_groups
 from .logging import log
 from .placement import BACKFILL_TABLE, Materialization
@@ -238,6 +239,7 @@ class _Copy:
     target_engine: str
     target_id: str
     target_table: str
+    write_epoch: int | None = None
 
 
 @dataclass(frozen=True)
@@ -538,6 +540,7 @@ def _plan(session: Session, group: str) -> tuple[_Copy, ...]:
                     target_engine=copy.engine,
                     target_id=copy.id,
                     target_table=copy.layout.table_for(entity),
+                    write_epoch=placement.write_epoch,
                 )
             )
     return tuple(copies)
@@ -625,7 +628,10 @@ def _backfill_one(
         # key semantics absorb; the other order costs the chunk, permanently. See the module
         # docstring - this ordering is why the copy has to be idempotent, and the idempotence is
         # why this ordering is free.
-        copy.target.copy_in(copy.target_table, rows)
+        payload = rows if copy.write_epoch is None else [
+            {**_logical_copy_row(copy, row), EPOCH_COLUMN: copy.write_epoch} for row in rows
+        ]
+        copy.target.copy_in(copy.target_table, payload)
         marker += len(rows)
         copy.target.record_backfill_marker(
             materialization=copy.target_id, entity=copy.entity, rows=marker
@@ -783,9 +789,12 @@ def _missing_in_target(
     been read, so the write has had that long to land.
     """
     mirror = copy.target.key_range(copy.target_table, copy.key, after=low, upto=high)
-    index = {tuple(row[column] for column in copy.key): row for row in mirror}
+    index = {
+        tuple(row[column] for column in copy.key): _logical_copy_row(copy, row) for row in mirror
+    }
     out: list[Difference] = []
-    for row in rows:
+    for physical_row in rows:
+        row = _logical_copy_row(copy, physical_row)
         key = tuple(row[column] for column in copy.key)
         there = index.get(key)
         if there is not None and not _differing_columns(row, there):
@@ -794,7 +803,7 @@ def _missing_in_target(
         named = {column: row[column] for column in copy.key}
         again = copy.target.get(copy.target_table, named)
         if again is not None:
-            differs = _differing_columns(row, again)
+            differs = _differing_columns(row, _logical_copy_row(copy, again))
             if not differs:
                 continue
             out.append(
@@ -835,3 +844,9 @@ def _differing_columns(
             if source[column] != target.get(column, _ABSENT)
         )
     )
+
+
+def _logical_copy_row(copy: _Copy, row: Mapping[str, Any]) -> Mapping[str, Any]:
+    if copy.write_epoch is None:
+        return row
+    return {key: value for key, value in row.items() if key != EPOCH_COLUMN}

@@ -205,6 +205,10 @@ class ClickHouseEngine:
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
         self._verify_schema(layout)
 
+    def validate_schema(self, layout: PhysicalLayout) -> None:
+        """Check the existing physical columns without issuing DDL."""
+        self._verify_schema(layout)
+
     def _verify_schema(self, layout: PhysicalLayout) -> None:
         """The same check as the PostgreSQL adapter, for the same reason.
 

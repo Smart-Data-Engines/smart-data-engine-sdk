@@ -328,6 +328,11 @@ export class PostgresEngine {
    * exact string we wrote. What that cost while it was names-only, measured: a table whose `at`
    * column is **`text`** where the map says `timestamptz` passed and was called a good schema.
    */
+  /** Check existing physical columns without issuing DDL. */
+  async validateSchema(layout: PhysicalLayout): Promise<void> {
+    await this.verifySchema(layout)
+  }
+
   private async verifySchema(layout: PhysicalLayout): Promise<void> {
     const expected = new Map<string, Record<string, string>>()
     for (const [entity, table] of Object.entries(layout.tables)) {

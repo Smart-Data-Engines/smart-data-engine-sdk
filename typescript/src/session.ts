@@ -40,6 +40,7 @@ import { enumerateShapes, shapeId } from './shapes.js'
 import type { Recorder } from './telemetry.js'
 import type { WatermarkCheck } from './watermark.js'
 import { checkProjectId } from './verification.js'
+import { logicalRow, stampValues, validateGenerations } from './generation.js'
 import { enforceForwardOnly } from './watermark.js'
 
 export type Row = Record<string, unknown>
@@ -222,6 +223,7 @@ export class Session {
     // It costs one statement per participating engine, once per process, and nothing at all for an
     // unsigned map - which is checked inside rather than here, because gathering the watermarks
     // first and then noticing the map was unsigned is the right answer with the promise broken.
+    await validateGenerations(model, placement, engines, options.projectId)
     const protection = await enforceForwardOnly(placement, engines)
     return new Session(
       model,
@@ -327,6 +329,10 @@ export class Session {
 
   /** Create what each engine is missing for the groups placed in it. */
   async ensureSchema(): Promise<void> {
+    if (this.placement.contract >= 4) {
+      await validateGenerations(this.model, this.placement, this.engines, this.projectId)
+      return
+    }
     for (const group of this.groups) {
       const body = placementOf(this.placement, group.name)
       const keys: Record<string, readonly string[]> = {}
@@ -359,7 +365,7 @@ export class Session {
     const started = this.recorder === undefined ? 0 : now()
     let failed = false
     try {
-      await engine.insert(table, body)
+      await engine.insert(table, stampValues(this.placement, shape.group, body))
       await this.fanOut(target, shape.group, body)
     } catch (error) {
       failed = true
@@ -399,7 +405,7 @@ export class Session {
     let row: Row | null = null
     try {
       row = await engine.get(table, given)
-      return this.fieldsOut(entity, row)
+      return this.fieldsOut(entity, logicalRow(this.placement, row))
     } catch (error) {
       failed = true
       throw error
@@ -459,7 +465,7 @@ export class Session {
     const engine = this.engines[entry.engine]
     try {
       if (engine === undefined) throw new EngineError(`no adapter for engine '${entry.engine}'`)
-      await engine.insert(entry.table, entry.values)
+      await engine.insert(entry.table, stampValues(this.placement, entry.group, entry.values))
     } catch {
       // Deliberately swallowed, and the only place in this library that swallows a write failure.
       // There is no logging channel here to record it in, which the reference has - so the

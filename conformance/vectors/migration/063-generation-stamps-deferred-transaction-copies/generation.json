@@ -1,0 +1,81 @@
+{
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "actions": [
+    {
+      "op": "transaction",
+      "entities": [
+        "Reading"
+      ],
+      "writes": [
+        {
+          "entity": "Reading",
+          "values": {
+            "id": 1,
+            "celsius": 3
+          }
+        },
+        {
+          "entity": "Reading",
+          "values": {
+            "id": 2,
+            "celsius": 6
+          }
+        }
+      ]
+    }
+  ],
+  "tables": {
+    "pg-main": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 2
+        },
+        {
+          "id": 2,
+          "celsius": 6,
+          "__sde_write_epoch": 2
+        }
+      ],
+      "sample": []
+    },
+    "pg-copy": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 2
+        },
+        {
+          "id": 2,
+          "celsius": 6,
+          "__sde_write_epoch": 2
+        }
+      ],
+      "sample": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111"
+}

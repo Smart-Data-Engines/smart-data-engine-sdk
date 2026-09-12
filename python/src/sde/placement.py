@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -32,6 +33,7 @@ from typing import Any, NoReturn, TypeVar
 
 from .canonical import CanonicalError, canonical_bytes
 from .errors import MapError
+from .generation import DRAIN_TABLE, EPOCH_COLUMN, MAX_EPOCH, json_numbers
 from .logging import log
 from .model import LogicalModel
 
@@ -104,6 +106,8 @@ class GroupPlacement:
     and chose none", which is a stronger claim and a false one.
     """
 
+    write_epoch: int | None = None
+
     def all(self) -> tuple[Materialization, ...]:
         return (self.source, *self.derived)
 
@@ -139,6 +143,7 @@ class PlacementMap:
     seeing which key the maps they are actually receiving were signed with.
     """
 
+    project_id: str | None = None
     fingerprint: str | None = field(default=None, init=False)
 
     def placement_of(self, group: str) -> GroupPlacement:
@@ -152,7 +157,7 @@ class PlacementMap:
             ) from None
 
 
-MAP_CONTRACT = 3
+MAP_CONTRACT = 4
 """The placement map's format version, which is not the IR's - see :data:`sde.model.CONTRACT`.
 
 Two was for ``also_write``, which a contract-1 library would ignore while a contract-2 one honours
@@ -553,6 +558,9 @@ def _parse_map(
         raise MapError("a placement map is an object")
 
     raw = deepcopy(dict(raw))
+    candidate = raw.get("contract")
+    if isinstance(candidate, (int, float)) and candidate >= 4:
+        raw = json_numbers(raw)
     contract = raw.get("contract")
     if not isinstance(contract, int) or isinstance(contract, bool):
         raise MapError(
@@ -572,6 +580,14 @@ def _parse_map(
             f"this map declares format contract {contract} and the oldest this library still "
             f"reads is {MAP_CONTRACT_FLOOR}."
         )
+
+    project_id = raw.get("project_id") if contract >= 4 else None
+    if contract >= 4 and (
+        not isinstance(project_id, str) or re.fullmatch("[0-9a-f]{32}", project_id) is None
+    ):
+        raise MapError("contract 4 requires a 32-digit lowercase hexadecimal project_id")
+    if contract < 4 and "project_id" in raw:
+        raise MapError("project_id requires placement map contract 4")
 
     model_version = raw.get("model_version")
     if not isinstance(model_version, str) or not model_version:
@@ -622,6 +638,11 @@ def _parse_map(
         where = f"group {name!r}"
         if not isinstance(body, dict) or "source" not in body:
             raise MapError(f"{where}: needs a 'source' materialisation")
+        epoch = body.get("write_epoch") if contract >= 4 else None
+        if contract >= 4 and (type(epoch) is not int or not 1 <= epoch <= MAX_EPOCH):
+            raise MapError(f"{where}: contract 4 requires a positive safe write_epoch")
+        if contract < 4 and "write_epoch" in body:
+            raise MapError(f"{where}: write_epoch requires placement map contract 4")
         source = _materialization(body["source"], f"{where}.source", source=True)
         derived = tuple(
             _materialization(d, f"{where}.derived[{i}]", source=False)
@@ -632,6 +653,7 @@ def _parse_map(
             raise MapError(f"{where}: two materialisations share an id")
 
         groups[name] = GroupPlacement(
+            write_epoch=epoch,
             group=name,
             source=source,
             derived=derived,
@@ -681,17 +703,30 @@ def _parse_map(
     else:
         _check_routing_targets(routing, groups, None)
 
+    if contract >= 4:
+        for spot in groups.values():
+            for materialization in spot.all():
+                if any(
+                    EPOCH_COLUMN in fields for fields in materialization.layout.columns.values()
+                ):
+                    raise MapError("the write-epoch column is reserved for the SDK")
+                if DRAIN_TABLE in materialization.layout.tables.values():
+                    raise MapError("the write-fence drain log is reserved for the SDK")
+
     try:
         fingerprint = hashlib.sha256(
             canonical_bytes({key: value for key, value in raw.items() if key != "signature"})
         ).hexdigest()
-    except CanonicalError:
+    except CanonicalError as exc:
+        if contract >= 4:
+            raise MapError("contract 4 requires a canonically encodable placement map") from exc
         # An unsigned legacy map may carry noncanonical annotations. Preserve its old behavior;
         # the optional bound-verification protocol refuses a map it cannot fingerprint.
         fingerprint = None
 
     frozen_groups = _FrozenDict({name: _freeze_group(spot) for name, spot in groups.items()})
     result = PlacementMap(
+        project_id=project_id,
         contract=contract,
         model_version=model_version,
         map_version=map_version,

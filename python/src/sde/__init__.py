@@ -91,6 +91,7 @@ from .placement import (
     PlacementMap,
     load_map,
 )
+from .provisioning import prepare_schema
 from .routing import Router, resolve
 from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
 from .session import Engine, Session
@@ -220,6 +221,7 @@ __all__ = [
     "neutral_declaration",
     "precision",
     "precision_refusal",
+    "prepare_schema",
     "registry",
     "reset_internal_failures",
     "resolve",

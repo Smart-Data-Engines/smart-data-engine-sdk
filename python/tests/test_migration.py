@@ -14,6 +14,8 @@ before the marker moves, and the copy is idempotent - so each of the three has a
 it is removed.
 """
 
+# These fixtures pin the legacy fan-out protocol; generation-bearing maps have dedicated tests.
+
 from __future__ import annotations
 
 import json
@@ -231,7 +233,7 @@ def _map(
         body["also_write"] = ["copy@ch"]
     return sde.load_map(
         {
-            "contract": sde.MAP_CONTRACT,
+            "contract": 3,
             "model_version": model.version,
             "map_version": 4,
             "groups": {group: body},
@@ -296,7 +298,7 @@ def _keyed_by_a_string() -> tuple[sde.Session, Store, str]:
         model,
         sde.load_map(
             {
-                "contract": sde.MAP_CONTRACT,
+                "contract": 3,
                 "model_version": model.version,
                 "map_version": 1,
                 "groups": {
@@ -451,7 +453,7 @@ def _timestamp_session(*, target_dialect: str) -> tuple[sde.Session, str]:
     columns = {"Event": {"id": "integer", "at": "timestamptz"}}
     group = sde.colocation_groups(model)[0].name
     raw = {
-        "contract": sde.MAP_CONTRACT,
+        "contract": 3,
         "model_version": model.version,
         "map_version": 1,
         "groups": {
@@ -733,7 +735,7 @@ def test_a_composite_key_paginates_as_one_ordering_and_not_as_two() -> None:
         model,
         sde.load_map(
             {
-                "contract": sde.MAP_CONTRACT,
+                "contract": 3,
                 "model_version": model.version,
                 "map_version": 1,
                 "groups": {

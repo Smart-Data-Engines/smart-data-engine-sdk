@@ -14,6 +14,7 @@ import { createHash, createPublicKey, verify as verifySignature } from 'node:cry
 
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError } from './errors.js'
+import { DRAIN_TABLE, EPOCH_COLUMN } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
 import { CONTRACT, entityOf } from './model.js'
@@ -50,6 +51,7 @@ export interface GroupPlacement {
    * in two languages is a row written to one copy and not the other.
    */
   readonly alsoWrite: readonly Materialization[]
+  readonly writeEpoch?: number | undefined
 }
 
 export interface PlacementMap {
@@ -69,6 +71,7 @@ export interface PlacementMap {
    * the irreversible half, and a client cannot know when the old key is safe to drop without
    * seeing which key the maps they are actually receiving were signed with.
    */
+  readonly projectId?: string | undefined
   readonly fingerprint?: string | undefined
   readonly verifiedWith: string | null
 }
@@ -87,7 +90,7 @@ export interface LoadOptions {
   readonly requireSignature?: boolean
 }
 
-export const MAP_CONTRACT = 3
+export const MAP_CONTRACT = 4
 /**
  * The placement map's format version, which is not the IR's - see `CONTRACT`.
  *
@@ -524,6 +527,12 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     )
   }
 
+  const projectId = contract >= 4 ? body['project_id'] : undefined
+  if (contract >= 4 && (typeof projectId !== 'string' || !/^[0-9a-f]{32}$/.test(projectId))) {
+    throw new MapError('contract 4 requires a 32-digit lowercase hexadecimal project_id')
+  }
+  if (contract < 4 && 'project_id' in body) throw new MapError('project_id requires placement map contract 4')
+
   const modelVersion = body['model_version']
   if (typeof modelVersion !== 'string' || modelVersion.length === 0) {
     throw new MapError('the map does not say which model version it is for')
@@ -598,6 +607,13 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
       return defaultLayout(options.model!, members)
     }
 
+    const writeEpoch = contract >= 4 ? placement['write_epoch'] : undefined
+    if (contract >= 4 && (typeof writeEpoch !== 'number' || !Number.isSafeInteger(writeEpoch) || writeEpoch < 1)) {
+      throw new MapError(`${where}: contract 4 requires a positive safe write_epoch`)
+    }
+    if (contract < 4 && 'write_epoch' in placement) {
+      throw new MapError(`${where}: write_epoch requires placement map contract 4`)
+    }
     const sourceRead = readMaterialization(placement['source'], `${where}.source`, true)
     const source: Materialization = {
       ...sourceRead.mat,
@@ -634,6 +650,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     }
 
     groups[name] = {
+      ...(writeEpoch === undefined ? {} : { writeEpoch: writeEpoch as number }),
       group: name,
       source,
       derived,
@@ -672,6 +689,19 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
 
   checkRoutingTargets(routingRaw as Record<string, unknown>, groups, options.model)
 
+  if (contract >= 4) {
+    for (const spot of Object.values(groups)) {
+      for (const materialization of [spot.source, ...spot.derived]) {
+        if (Object.values(materialization.layout.columns).some((fields) => EPOCH_COLUMN in fields)) {
+          throw new MapError('the write-epoch column is reserved for the SDK')
+        }
+        if (Object.values(materialization.layout.tables).includes(DRAIN_TABLE)) {
+          throw new MapError('the write-fence drain log is reserved for the SDK')
+        }
+      }
+    }
+  }
+
   let fingerprint: string | undefined
   try {
     const payload = { ...body }
@@ -679,6 +709,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     fingerprint = createHash('sha256').update(canonicalBytes(payload)).digest('hex')
   } catch (error) {
     if (!(error instanceof CanonicalError)) throw error
+    if (contract >= 4) throw new MapError('contract 4 requires a canonically encodable placement map')
   }
 
   const result: PlacementMap = {
@@ -688,6 +719,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     contract,
     modelVersion,
     mapVersion,
+    ...(projectId === undefined ? {} : { projectId: projectId as string }),
     groups,
     routing: routingRaw as Record<string, string>,
     signed: signaturePresent,
