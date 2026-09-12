@@ -122,3 +122,12 @@ and `timestamptz`. `Date` is still accepted on writes. Use `Timestamp.from(isoTe
 inputs, `.toISOString()` for text and `.epochMicroseconds` for exact comparison; `.toDate()` refuses
 if converting would lose digits. See [exact timestamps](../docs/timestamps.md) for examples and
 migration from the previous `Date` return type.
+
+## Bound migration verification
+
+Configure `Session.open(..., { projectId })` from your local enrollment manifest. Load the
+controller's request with `VerificationRequest.fromRecord` and call `verify(session, group,
+{ request })`; send `verifyRecord(report)` back. The complete request is checked before comparison,
+and row-level differences remain local. See [the request protocol](../docs/format-contract.md#7b-verification-requests-and-bound-reports).
+Loaded placement maps are immutable snapshots. Load a new document rather than modifying a layout
+or copying an object with its old fingerprint.

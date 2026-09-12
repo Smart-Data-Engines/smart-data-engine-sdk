@@ -91,6 +91,12 @@ does; `schema/003` is the case that tells the two apart, and `schema/009` pins t
 table list columns in the same order, which is a defect we shipped.
 
 **11. Migration participation (Tier 2, second half). Vectors: `migration/`.**
+
+Also execute each `verification.json` case as specified in [§7b](format-contract.md#7b-verification-requests-and-bound-reports):
+project identity comes from local session configuration, and the complete request is checked before
+comparison. Preserve it in the outgoing report. A stored fingerprint cannot describe a mutable
+parsed map; retain an immutable input snapshot and reject copied objects that have not been loaded.
+
 Dual write, the resume marker, and the forward-only check. A migration reaches a library as a map
 with `also_write` and nothing else — there is no phase name in the document, and adding one would be
 a second representation of a fact the fan-out and the routing table already carry. The marker is a
@@ -407,3 +413,13 @@ rule the language forces differently, and a mutation the suite does not notice. 
 one of those three. Neither implementation is in this repository, and the reason is 17.6: publishing
 either would be a claim of support nobody is maintaining, plus a fourth and fifth implementation to
 keep in step with every change to this document.
+
+
+### Verification-request protocol check
+
+On 12 September 2026 a standalone Go checker implemented section 7b from its description and
+vectors, without importing SDE source. Its binding and refusal decisions matched all 24 new
+verification-request cases, including integral JSON numbers and a map signature checked with Go's
+Ed25519 implementation. This was a protocol-only measurement on the ASCII map fixtures, not a new
+SDK, a Tier claim or a proof that arbitrary Unicode canonicalization had been implemented. The same
+engineer performed it; the separation concerns the implementation and source imports, not the person.

@@ -113,3 +113,12 @@ its own. If it is not, that is a bug in the document.
 ## Licence
 
 Apache-2.0.
+
+## Bound migration verification
+
+Managed cutover uses a `VerificationRequest` from the controller. Configure `Session(...,
+project_id=...)` from your local enrollment manifest, load the request with
+`VerificationRequest.from_record`, and pass it to `verify(..., request=request)`. The returned
+`as_record()` includes the request and counts, while row-level differences remain local.
+See [the request protocol](../docs/format-contract.md#7b-verification-requests-and-bound-reports).
+Loaded placement maps are immutable; load a new document when their layout or routing changes.

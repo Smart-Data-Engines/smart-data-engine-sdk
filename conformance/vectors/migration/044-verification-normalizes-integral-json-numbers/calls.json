@@ -1,0 +1,161 @@
+[
+  {
+    "engine": "pg-copy",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Reading"
+  },
+  {
+    "engine": "pg-main",
+    "call": "count",
+    "table": "reading"
+  },
+  {
+    "engine": "pg-copy",
+    "call": "count",
+    "table": "reading"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": null,
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "key_range",
+    "table": "reading",
+    "after": null,
+    "upto": [
+      3
+    ],
+    "limit": null
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      3
+    ],
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      3
+    ],
+    "upto": [
+      6
+    ],
+    "limit": null
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      6
+    ],
+    "upto": null,
+    "limit": 1
+  },
+  {
+    "engine": "pg-copy",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      6
+    ],
+    "upto": [
+      7
+    ],
+    "limit": null
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "reading",
+    "after": [
+      7
+    ],
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "backfill_marker",
+    "materialization": "Reading@pg2",
+    "entity": "Sample"
+  },
+  {
+    "engine": "pg-main",
+    "call": "count",
+    "table": "sample"
+  },
+  {
+    "engine": "pg-copy",
+    "call": "count",
+    "table": "sample"
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": null,
+    "upto": null,
+    "limit": 3
+  },
+  {
+    "engine": "pg-copy",
+    "call": "key_range",
+    "table": "sample",
+    "after": null,
+    "upto": [
+      "beta",
+      1
+    ],
+    "limit": null
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": [
+      "beta",
+      1
+    ],
+    "upto": null,
+    "limit": 1
+  },
+  {
+    "engine": "pg-copy",
+    "call": "key_range",
+    "table": "sample",
+    "after": [
+      "beta",
+      1
+    ],
+    "upto": [
+      "beta",
+      2
+    ],
+    "limit": null
+  },
+  {
+    "engine": "pg-main",
+    "call": "key_range",
+    "table": "sample",
+    "after": [
+      "beta",
+      2
+    ],
+    "upto": null,
+    "limit": 3
+  }
+]

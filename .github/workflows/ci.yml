@@ -85,13 +85,13 @@ jobs:
 
       - name: lint
         working-directory: python
-        run: ruff check --config pyproject.toml src tests ../tools
+        run: ruff check --config pyproject.toml src tests ../tools ../conformance/tools/verification_vectors.py
 
       - name: types
         working-directory: python
         # Not decoration: several guarantees in this design are enforced by types rather than by
         # runtime checks, so a weakened annotation is a deleted guarantee.
-        run: mypy src ../tools
+        run: mypy src ../tools ../conformance/tools/verification_vectors.py
 
       - name: tests, including both engine slices
         working-directory: python

@@ -161,3 +161,5 @@ export const CONTRACT_VERSION = 1
 
 /** The capability tier this library reaches. See docs/format-contract.md, section 9. */
 export const TIER = 2
+
+export { VerificationRequest, verificationRequest } from './verification.js'

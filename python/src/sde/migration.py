@@ -84,6 +84,7 @@ from .errors import EngineError, MigrationRefused
 from .groups import Group, colocation_groups
 from .logging import log
 from .placement import BACKFILL_TABLE, Materialization
+from .verification import VerificationRequest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .session import Session
@@ -358,6 +359,7 @@ class VerifyReport:
     rows_target: int
     differences: tuple[Difference, ...] = ()
     differences_suppressed: int = 0
+    request: VerificationRequest | None = None
 
     @property
     def matched(self) -> bool:
@@ -371,7 +373,7 @@ class VerifyReport:
 
     def as_record(self) -> dict[str, Any]:
         """The seven counts the gate reads. **Numbers, never rows** - see the class docstring."""
-        return {
+        record = {
             "at": self.at,
             "chunks_compared": self.chunks_compared,
             "chunks_mismatched": self.chunks_mismatched,
@@ -380,6 +382,9 @@ class VerifyReport:
             "rows_source": self.rows_source,
             "rows_target": self.rows_target,
         }
+        if self.request is not None:
+            record["request"] = self.request.as_record()
+        return record
 
     def for_a_human(self) -> str:
         lines = [
@@ -682,7 +687,9 @@ def _resume_point(copy: _Copy, marker: int) -> tuple[Any, ...] | None:
 
 
 def verify(
-    session: Session, group: str, *, chunk_rows: int = CHUNK_ROWS
+    session: Session, group: str, *, chunk_rows: int = CHUNK_ROWS,
+    request: VerificationRequest | None = None,
+    at: str | None = None,
 ) -> VerifyReport:
     """Compare both copies of a group and report counts. The gate reads the counts, not the rows.
 
@@ -693,6 +700,12 @@ def verify(
     an empty set. Reversing the two reads would make this flaky in the direction that stops a
     healthy migration.
     """
+    if request is not None:
+        request.check_session(session.placement, project_id=session.project_id, group=group)
+        if session.model.version != request.model_version:
+            raise MigrationRefused("verification request names another session model")
+        if at is not None:
+            request.check_time(at)
     if chunk_rows < 1:
         raise MigrationRefused(f"a chunk of {chunk_rows} rows is not a chunk")
     chunks_compared = 0
@@ -737,8 +750,12 @@ def verify(
             after = high
             seen += len(rows)
 
+    at = at if at is not None else datetime.now(UTC).isoformat()
+    if request is not None:
+        request.check_time(at)
     return VerifyReport(
-        at=datetime.now(UTC).isoformat(),
+        at=at,
+        request=request,
         group=group,
         chunks_compared=chunks_compared,
         chunks_mismatched=chunks_mismatched,

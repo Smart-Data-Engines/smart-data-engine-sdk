@@ -32,6 +32,7 @@ from .placement import Materialization, PlacementMap
 from .routing import Router
 from .shapes import OperationShape, enumerate_shapes
 from .telemetry import Recorder
+from .verification import check_project_id
 from .watermark import WatermarkCheck, enforce_forward_only
 
 __all__ = ["Engine", "Session"]
@@ -70,10 +71,13 @@ class Session:
         *,
         recorder: Recorder | None = None,
         names: NameMap | None = None,
+        project_id: str | None = None,
     ) -> None:
         # Telemetry is optional and off by default. A library that starts measuring the moment it is
         # imported is a library people are right to be suspicious of; measurement begins when a
         # recorder is handed in, which is a visible line in the client's code.
+        check_project_id(project_id)
+        self._project_id = project_id
         self._recorder = recorder
 
         # The one place where the client's names and the hashed ones meet. When a model has been
@@ -165,6 +169,11 @@ class Session:
     # a table for an hour has no business sitting in autocomplete next to `save()`. Reaching into
     # private attributes from a sibling module would have worked and would have made this class a
     # friend of that one, which is a worse arrangement than admitting what a session holds.
+
+    @property
+    def project_id(self) -> str | None:
+        """The project from local enrollment configuration, never learned from a request."""
+        return self._project_id
 
     @property
     def model(self) -> LogicalModel:
