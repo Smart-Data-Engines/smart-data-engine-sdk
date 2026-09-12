@@ -423,3 +423,11 @@ verification-request cases, including integral JSON numbers and a map signature 
 Ed25519 implementation. This was a protocol-only measurement on the ASCII map fixtures, not a new
 SDK, a Tier claim or a proof that arbitrary Unicode canonicalization had been implemented. The same
 engineer performed it; the separation concerns the implementation and source imports, not the person.
+
+The same change was probed with 26 deliberate source mutations across the two reference SDKs.
+All were detected, with a named failing assertion for every new verification vector. The probes
+removed session/project binding, time and shape checks, altered signature hashing and matching
+results, and allowed mutation or copying of a loaded map's provenance. Baselines passed before and
+after exact source restoration. Local wheel and npm tarball installations also exercised the new
+root exports, map binding and wrong-project refusal outside the source checkout; this was a local
+artifact check, not a registry publication or a run of the release workflow.
