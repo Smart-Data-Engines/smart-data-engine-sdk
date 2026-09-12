@@ -66,6 +66,12 @@ reference implementation came to discover that its own ClickHouse connect timeou
 Python feature today. Nothing about it is language-specific; it is simply not written here, and a
 table that implied otherwise is the kind of claim requirement 17.6 exists to prevent.
 
+**Its timestamp values retain microseconds.** Both adapters return immutable `Timestamp` values
+rather than JavaScript `Date`; a `Date` remains accepted on writes. This matters when a Python
+service writes the data and TypeScript reads or migrates it: the previous conversion lost three
+digits and could report a corrupt copy as matching. [Exact timestamps](timestamps.md) documents the
+API change and the live tests with an independent Python writer and reader.
+
 The tier in the table above is checked against the library's own `TIER` constant by a test, because a
 list that says one thing while the code says another is the failure requirement 17.6 exists to
 prevent, and prose does not fail.

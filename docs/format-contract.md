@@ -210,6 +210,12 @@ Two live examples, and the point of naming them here is that both look like they
   first version said three is worth keeping: it was chosen against ClickHouse's plain `DateTime`,
   which is second-resolution, rather than against the engine standing beside it.
 
+The host representation must preserve the same precision as the SQL type. TypeScript previously
+read both six-digit timestamp types into millisecond-resolution `Date` values: a backfill lost
+microseconds and verification still passed because both readers discarded them. Its adapters now
+use an exact `Timestamp` value; [the API and cross-language live tests](timestamps.md) describe the
+repair. Agreement between two reads is insufficient unless the reader preserves the stored value.
+
 Both `bytes` and `json` are unmapped today, and that costs real capability — an event payload in a column store is a
 natural thing to want. It costs less than a client discovering after a migration that a checksum no
 longer matches, or that a field is now a string. The way out of either is a decision about what the

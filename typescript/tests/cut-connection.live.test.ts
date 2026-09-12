@@ -8,11 +8,9 @@
  * that this library holds the connection it was handed and does not reopen it, and that nothing was
  * retried, so no write reached the engine twice.
  *
- * **Its own file because of what it has to do.** Cutting a connection from the server's side means
- * terminating sessions, and there is no way to terminate only one of them without first asking the
- * server which one it is - so this terminates every other session on the database, which is exactly
- * what a restart does and exactly what a test cannot do beside its neighbours. Vitest runs files in
- * separate workers, so a file is the isolation this needs.
+ * The victim has a unique application_name. Separate Vitest workers still share the database;
+ * terminating every other backend killed unrelated tests when the interop slice was added.
+ * The test also holds a bystander connection and proves it survives the targeted termination.
  *
  * It also found a defect worse than the one it was written for. `pg.Client` is an `EventEmitter`
  * and emits `'error'` when the server terminates the connection between queries; Node's rule for an
@@ -61,7 +59,7 @@ function sample(id: string): Row {
 }
 
 /**
- * Terminate every other session on this database, which is what a restart or a failover does.
+ * Terminate only the named test session, using an independent connection.
  *
  * Through `pg` directly rather than through the adapter, and that is the same choice the reference
  * implementation made for the same test: the subject is what the *adapter* reports after its
@@ -69,15 +67,17 @@ function sample(id: string): Row {
  * adapter's private query method would have worked and would have made the executioner share the
  * connection it is executing.
  */
-async function terminateOthers(): Promise<void> {
+async function terminateVictim(name: string): Promise<void> {
   const { Client } = await import('pg')
   const client = new Client({ connectionString: PG_DSN })
   await client.connect()
   try {
-    await client.query(
+    const killed = await client.query(
       'SELECT pg_terminate_backend(pid) FROM pg_stat_activity ' +
-        'WHERE datname = current_database() AND pid <> pg_backend_pid()',
+        'WHERE datname = current_database() AND application_name = $1 AND pid <> pg_backend_pid()',
+      [name],
     )
+    expect(killed.rows).toHaveLength(1)
   } finally {
     await client.end()
   }
@@ -97,23 +97,37 @@ describe.skipIf(!PG_DSN)('after the connection is cut', () => {
     // only that the connection is closed, which is true and useless. What a reader needs at that
     // point is to be told this library holds the connection it was handed and does not reopen it,
     // and that nothing was retried, so no write reached the engine twice.
-    const own = new PostgresEngine(PG_DSN as string)
+    const name = `sde_cut_${randomUUID().replaceAll('-', '')}`
+    const dsn = new URL(PG_DSN as string)
+    dsn.searchParams.set('application_name', name)
+    const own = new PostgresEngine(dsn.toString())
+    const { Client } = await import('pg')
+    const bystander = new Client({ connectionString: PG_DSN })
+    await bystander.connect()
     await own.connect()
-    await own.insert('sample', sample(randomUUID()))
+    try {
+      const model = modelFromNeutral(JSON.parse(readFileSync(join(VECTOR, 'model.json'), 'utf8')))
+      const map = loadMap(JSON.parse(readFileSync(join(VECTOR, 'map.json'), 'utf8')), { model })
+      const layout = { ...map.groups['Sample']!.source.layout, tables: { Sample: name } }
+      await own.ensureSchema(layout, { keys: { Sample: ['id'] } })
+      await own.insert(name, sample(randomUUID()))
 
-    // Cut from the server's side, which is what a restart, a failover or an administrator does.
-    await terminateOthers()
+      await terminateVictim(name)
+      const first = await own.insert(name, sample(randomUUID())).catch((error: Error) => error)
+      expect(first).toBeInstanceOf(EngineError)
+      const second = await own.insert(name, sample(randomUUID())).catch((error: Error) => error)
+      expect((second as Error).message).toContain('does not reopen one it was handed')
+      expect((second as Error).message).toContain('Nothing was retried')
+      expect((await bystander.query('SELECT 1 AS alive')).rows[0].alive).toBe(1)
 
-    const first = await own.insert('sample', sample(randomUUID())).catch((error: Error) => error)
-    expect(first).toBeInstanceOf(EngineError)
-    const second = await own.insert('sample', sample(randomUUID())).catch((error: Error) => error)
-    expect((second as Error).message).toContain('does not reopen one it was handed')
-    expect((second as Error).message).toContain('Nothing was retried')
-
-    // And the way out is the two calls the message names, which is checked rather than described.
-    await own.close()
-    await own.connect()
-    await own.insert('sample', sample(randomUUID()))
-    await own.close()
+      // The documented recovery, on the same adapter, without retrying a failed write.
+      await own.close()
+      await own.connect()
+      await own.insert(name, sample(randomUUID()))
+    } finally {
+      await own.close()
+      await bystander.query(`DROP TABLE IF EXISTS "${name}"`)
+      await bystander.end()
+    }
   })
 })
