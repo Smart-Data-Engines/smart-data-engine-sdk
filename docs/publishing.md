@@ -598,6 +598,14 @@ package, which is the shape of good news worth distrusting.
    **Do not put a token in an Actions secret to avoid this.** It would buy one attestation and leave
    behind a credential that publishes under our scope for as long as nobody remembers it is there.
 
+   **And then add the npm link to the landing page.** The product page links the PyPI package and the
+   repository from its "Read the Code" section and deliberately does *not* link npm, because a 404 is
+   worse than an absence. The file is
+   `smart-data-engine-landing-page/frontend/smart-data-engine/index.html`, the block is
+   `<p class="engine-links">`, and it needs a key in **both** languages in `frontend/js/i18n.js` or
+   the i18n completeness test fails. The instruction lives here rather than in a list over there
+   because this is the step that makes the link true.
+
 3. **The two environments** ✅ — already created, with you as the required reviewer and each one
    locked to its own tag pattern. Worth reading back rather than trusting, since this API answers
    `200` to writes that change nothing:
