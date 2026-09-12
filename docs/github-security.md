@@ -19,12 +19,16 @@ they differ, the difference is called out rather than left to be noticed.
 - **This library gets published to PyPI and npm.** The engine ships source; this ships an artefact
   that runs inside other people's applications and holds their database credentials. A compromised
   release here is a far worse event than a compromised release there, which is what §4 is about.
-- **Both distribution names are ours** ✅ — `smart-data-engine-sdk` published to PyPI and the
-  `@smart-data-engines` scope held on npm, both on 12 September 2026. Until that day
-  `python/README.md` and three of the library's own runtime error messages named a distribution
-  nobody owned, which is why this was the most urgent item on this page for two weeks.
-  See §4.1; this is the single most urgent item in this document.
-- **Two languages, so two analyses and ten required checks**, not four (§1).
+- **Every name this library needs is ours** ✅ — `smart-data-engine-sdk` on PyPI, the
+  `@smart-data-engines` scope on npm and the `com.smartdataengines` namespace on Maven Central, all
+  three on 12 September 2026. Until that day `python/README.md` and three of the library's own
+  runtime error messages named a distribution nobody owned, which is why this was the most urgent
+  item on this page for two weeks. See §4.1.
+- **Releasing is a tag and holds no credential** ✅ — both registries authenticate the workflow over
+  OIDC, so there is no publishing token in this repository, in its Actions secrets or on a laptop.
+  See §4.2, which was a list of intentions until 12 September.
+- **Two languages, so two analyses and eleven required checks**, not four (§1). The count is derived from
+  `main.json` by a test, because it was wrong here by one until 12 September and nothing counted it.
 - **The default branch is `main`, not `master`.** The rulesets differ in that one string, and a
   ruleset targeting the wrong ref is silently inert.
 - **No runtime dependencies at all** in either package (§7), which removes most of the engine's §7
@@ -233,14 +237,23 @@ it by digest and accept the manual bumps.
 
 ## 4. Publishing, which is the part the engine does not have
 
-Nothing is published yet, and no secret exists in this repository or its Actions settings. That is the
-right moment to decide how publishing will work, because the wrong version of this is very hard to
-walk back: a long-lived PyPI token in a repository secret is a credential that publishes to every
-Python installation in the world, sitting in a place read access is enough to eventually reach.
+One package is published and **no secret exists in this repository or its Actions settings** — not
+because none has been added yet, but because the release workflow authenticates over OIDC and there is
+nothing for a secret to hold. That was decided before the first upload, which was the point: the wrong
+version of this is very hard to walk back, since a long-lived PyPI token in a repository secret is a
+credential that publishes to every Python installation in the world, sitting in a place read access is
+enough to eventually reach.
 
-### 4.1 Register the names before someone else does ⚙️ — most urgent item here
+The token that claimed the name did exist, on a laptop, in `~/.pypirc` — and the file was mode `664`
+when it was found, with the production token in it. It is mode `600` now and the tokens were kept
+deliberately rather than revoked. A credential lives as long as its file, not as long as the
+intention, so that is a standing item rather than a closed one.
 
-Checked while writing this document:
+### 4.1 The names are registered ✅ (12 September 2026)
+
+Measured, not remembered — the instrument for each row is named in `publishing.md`, because an earlier
+revision of this table recorded a name as available on four separate days using an endpoint that
+cannot answer the question:
 
 | Name | Registry | State |
 |---|---|---|
@@ -248,6 +261,7 @@ Checked while writing this document:
 | `smart_data_engine_sdk` | PyPI | **ours** — normalises to the same name, so the publish claimed both spellings |
 | `smart-data-engine` | PyPI | **refused** — too similar to `smartdata-engine`, a project somebody else registered with zero releases |
 | `@smart-data-engines/sde` | npm | **ours** — scope held by the `smart-data-engines` organisation since 12 September 2026; nothing published under it yet |
+| `com.smartdataengines` | Maven Central | **ours** — namespace verified 12 September 2026 by DNS TXT, covering Java and Kotlin, with nothing published |
 | `sde` | PyPI | taken by someone else — which is why the import is `sde` and the distribution is not |
 
 Three places in this repository already name the distribution, and the last one is the reason this is
@@ -261,9 +275,9 @@ not merely tidiness:
   somebody else controls: the person is debugging, they will copy the command, and the instruction came
   from inside the code they trusted.
 
-Today the name resolves to nothing, so the command simply fails. The window is open only until someone
-registers it. **[`publishing.md`](publishing.md) is the runbook** — the steps, the commands and the
-parts that cannot be undone.
+All three commands now resolve to our own code, which is what closed this item.
+**[`publishing.md`](publishing.md) is the runbook** — the steps, the commands, the parts that cannot
+be undone, and what each measurement was taken with.
 
 Two things learned while writing it are worth having here, because both change what "register the
 name" costs. **npm reserves a scope with the organisation**, so `@smart-data-engines` can be held
@@ -279,18 +293,36 @@ installs from the working tree with `pip install -e`. Corrected rather than quie
 security document that misstates a checkable fact spends the authority it needs for the claims that
 cannot be checked as easily.
 
-### 4.2 When a publish workflow is written ⚙️
+### 4.2 The publish workflow ✅ (12 September 2026)
 
-- **OIDC trusted publishing**, not a token. PyPI and npm both support it: the workflow proves its
-  identity to the registry with a short-lived token GitHub mints per run, and there is no long-lived
-  credential to leak, rotate or find in a log.
-- **npm provenance** (`npm publish --provenance`) and PyPI attestations, so a consumer can verify
-  which workflow run and which commit produced the artefact they installed.
-- **A GitHub Environment with required reviewers**, not a plain repository secret. An environment
-  scopes the credential to one job and interposes a human between a merge and a publish.
-- **Publish from a tag, and only from a tag** — protected by the tag ruleset in §1.
-- **Never `npm publish` from a job that ran a fork's code.** Build and publish are separate jobs with
-  separate permissions.
+This was a list of intentions until the names were claimed. It is now
+`.github/workflows/release.yml`, and every line below is a property of that file rather than a plan
+for it:
+
+- **OIDC trusted publishing**, not a token ✅. The workflow proves its identity to each registry with
+  a short-lived token GitHub mints per run, so there is no long-lived credential to leak, rotate or
+  find in a log. The PyPI publisher is additionally scoped to the `pypi` environment, which means a
+  token minted by any *other* job in this repository is refused at the registry.
+- **Provenance** ✅, and not via a flag. Trusted publishing makes npm generate the attestation itself,
+  so `--provenance` is deliberately *not* passed — a flag is something a future edit can drop in
+  silence. PyPI attestations come the same way. The one gap is named in `publishing.md` §5.4: the
+  first npm publish has to happen by hand, because npm requires a package to exist before a trusted
+  publisher can be configured for it, so `0.1.0-dev.0` will carry no attestation and every version a
+  client would pin will.
+- **Two GitHub Environments with a required reviewer** ✅, not a repository secret — and each one is
+  locked to its own tag pattern, so nothing but a `python-v*` tag can ask to use the PyPI one. A merge
+  cannot become a publish without a person.
+- **Publish from a tag, and only from a tag** ✅, under the tag ruleset in §1, which now covers
+  `python-v*` and `typescript-v*` as well as `v*`. `check_contexts.py` fails if a pattern the workflow
+  publishes from is not one the ruleset protects — an unprotected tag can be deleted and repointed
+  after the release, which is the one thing a released version must not be.
+- **No job that ran repository or dependency code holds the publishing identity** ✅. Build and
+  publish are separate jobs; the publish jobs do not even check out this repository, and
+  `check_contexts.py` fails if one of them ever does.
+- **Every action pinned to a commit SHA** ✅, checked mechanically rather than by convention. A tag is
+  a mutable pointer, and `pypa/gh-action-pypi-publish` is an annotated tag, so resolving it without
+  `^{}` pins the tag object instead of the commit and Dependabot then offers a version as an upgrade
+  from itself.
 - **Watch the lockfile in a bump.** `npm ci` installs exactly what `package-lock.json` says, which is
   the protection; it is also why a lockfile change in a Dependabot PR deserves a look at the diff
   rather than a glance at the green tick.

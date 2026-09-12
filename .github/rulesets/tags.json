@@ -3,11 +3,22 @@
   "target": "tag",
   "enforcement": "active",
   "conditions": {
-    "ref_name": { "include": ["refs/tags/v*"], "exclude": [] }
+    "ref_name": {
+      "include": [
+        "refs/tags/v*",
+        "refs/tags/python-v*",
+        "refs/tags/typescript-v*"
+      ],
+      "exclude": []
+    }
   },
   "bypass_actors": [],
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" }
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    }
   ]
 }
