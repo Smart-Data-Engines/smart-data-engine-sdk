@@ -55,7 +55,7 @@ MEASUREMENTS = (("Go", ".go"), ("Rust", ".rs"))
 #: every page still saying the old thing fails until it is rewritten.
 REGISTRIES = (
     ("PyPI", "smart-data-engine", False),
-    ("npm", "@smart-data-engines/sde", False),
+    ("npm", "@smart-data-engines/sde", True),
 )
 
 #: The word our documents use for a name nobody owns. One word, not a list of phrasings: the pages

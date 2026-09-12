@@ -10,7 +10,7 @@ what decides which ones are worth a visit today and which are worth nothing unti
 
 | Name | Registry | State | How it gets claimed |
 |---|---|---|---|
-| `@smart-data-engines/sde` | npm | unclaimed | creating the organisation grants the scope; **no publish needed** |
+| `@smart-data-engines/sde` | npm | **ours since 12 September 2026** | creating the organisation granted the scope; nothing published |
 | `smart-data-engine` | PyPI | unclaimed | an upload, and nothing else |
 | `sde` | PyPI | taken by someone else | — which is why the distribution and the import differ |
 
@@ -94,10 +94,18 @@ that flag is otherwise one someone has to remember on the single day it matters.
 
 Verified on 8 September 2026: `python -m build` succeeds and `twine check` passes on both artefacts.
 
-## 1. npm — reserve the scope, and do it first
+## 1. npm — the scope is ours ✅ (12 September 2026)
 
-Ten minutes, nothing published. First not because it is most urgent but because it is the only step
-whose failure would change code: everything else can be retried, and a taken organisation name cannot.
+**Done.** The `smart-data-engines` organisation exists, `krzysztof-smartdataengines` owns it, and
+`npm org ls smart-data-engines` is what says so rather than a screenshot. Nothing is published under
+the scope and nothing should be — see step 4. Ten minutes, as estimated.
+
+The steps are kept below rather than deleted, because the next scope this organisation reserves
+follows exactly this path and the two warnings in it are the part worth having again.
+
+It went first, and the reason generalises: not because it was the most urgent, but because it was the
+only step whose **failure would have changed code**. Everything else on this page can be retried;
+a taken organisation name would have meant editing six files at once.
 
 npm grants a scope with an account: "When you sign up for an npm user account or create an
 organization, you are granted a scope that matches your user or organization name." So the scope is
@@ -132,7 +140,12 @@ else can publish anything under `@smart-data-engines/`.
    should carry provenance from CI, and publishing by hand would spend that version number to prove
    something the scope already guarantees.
 
-Nothing else on npm is urgent after this.
+**Nothing else on npm is urgent, and the distinction that makes that true is worth keeping straight:
+the scope is ours and the package is unpublished, which are two different facts.** `npm install
+@smart-data-engines/sde` still installs nothing — and cannot install somebody else's package either,
+which is the whole protection the reservation buys. `REGISTRIES` in `_claims.py` therefore reads the
+npm entry as registered while the package does not exist, and that is correct: the flag is about who
+owns the name, not about whether anything has been shipped under it.
 
 ## 2. PyPI — the name is claimed by an upload, and by nothing else
 

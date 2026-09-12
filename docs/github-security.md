@@ -19,7 +19,7 @@ they differ, the difference is called out rather than left to be noticed.
 - **This library gets published to PyPI and npm.** The engine ships source; this ships an artefact
   that runs inside other people's applications and holds their database credentials. A compromised
   release here is a far worse event than a compromised release there, which is what §4 is about.
-- **The distribution names are not registered.** `smart-data-engine` on PyPI is unclaimed while
+- **One distribution name is registered and one is not.** `smart-data-engine` on PyPI is unclaimed while
   `python/README.md` and two of the library's own runtime error messages tell people to install it.
   See §4.1; this is the single most urgent item in this document.
 - **Two languages, so two analyses and ten required checks**, not four (§1).
@@ -244,7 +244,7 @@ Checked while writing this document:
 |---|---|---|
 | `smart-data-engine` | PyPI | **unclaimed** |
 | `smart_data_engine` | PyPI | unclaimed (normalises to the same name) |
-| `@smart-data-engines/sde` | npm | **unclaimed** |
+| `@smart-data-engines/sde` | npm | **ours** — scope held by the `smart-data-engines` organisation since 12 September 2026; nothing published under it yet |
 | `sde` | PyPI | taken by someone else — which is why the import is `sde` and the distribution is not |
 
 Three places in this repository already name the distribution, and the last one is the reason this is
@@ -435,7 +435,8 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ Actions: read-only default token, cannot approve PRs
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
-⚙️ register smart-data-engine on PyPI and @smart-data-engines on npm  ← most urgent, see publishing.md
+⚙️ register smart-data-engine on PyPI  ← most urgent, see publishing.md
+✅ @smart-data-engines scope on npm, held by the organisation since 12 September 2026
 ✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
 ⚙️ org-wide 2FA on Smart-Data-Engines — UI only, the API reports success and changes nothing
 ⚙️ registry accounts with 2FA, before the first publish
