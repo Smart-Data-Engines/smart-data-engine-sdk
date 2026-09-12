@@ -65,6 +65,8 @@ from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..schema import QUOTE, schema_statements
+from ..write_fence import WriteFence
+from ._write_fences import ClickHouseFences
 
 __all__ = ["ClickHouseEngine"]
 
@@ -175,6 +177,10 @@ class ClickHouseEngine:
         if self._client is None:
             raise EngineError("not connected; call connect() first")
         return self._client
+
+    def write_fence(self, table: str, *, project_id: str) -> WriteFence:
+        """DDL capability; use a dedicated connection separate from application traffic."""
+        return WriteFence(ClickHouseFences(self._cx), table, project_id=project_id)
 
     # --- schema ----------------------------------------------------------------------------
 

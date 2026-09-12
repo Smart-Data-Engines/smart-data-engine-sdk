@@ -1,3 +1,5 @@
+import { WriteFence as NativeWriteFence, type ColumnState, type FenceState } from '../src/write-fence.js'
+import { MemoryFences } from './_write-fence.js'
 import { VerificationRequest } from '../src/verification.js'
 /**
  * The conformance runner, TypeScript side.
@@ -807,6 +809,10 @@ describe('migration vectors', () => {
   for (const name of cases('migration')) {
     it(name, async () => {
       const dir = join(VECTORS, 'migration', name)
+      if (existsSync(join(dir, 'fencing.json'))) {
+        await driveWriteFenceVector(dir)
+        return
+      }
       const model = modelFromNeutral(readJson(join(dir, 'model.json')))
       const load: MigrationLoad = existsSync(join(dir, 'load.json'))
         ? readJson(join(dir, 'load.json'))
@@ -1098,3 +1104,32 @@ describe('telemetry vectors', () => {
     expect(unreached).toEqual([])
   })
 })
+
+
+async function driveWriteFenceVector(directory: string): Promise<void> {
+  const want = readJson<{
+    table: string; project_id: string;
+    metadata: { identity: string; column: ColumnState; constraints: Record<string, string> };
+    steps: { op: string; epoch?: number; request_id?: string; error?: string; match?: string; state?: unknown }[];
+  }>(join(directory, 'fencing.json'))
+  const backend = new MemoryFences()
+  backend.identity = want.metadata.identity
+  backend.column = want.metadata.column
+  backend.constraints = { ...want.metadata.constraints }
+  const fence = new NativeWriteFence(backend, want.table, { projectId: want.project_id })
+  for (const step of want.steps) {
+    const invoke = async (): Promise<FenceState> => {
+      switch (step.op) {
+        case 'state': return fence.state()
+        case 'prepare': return fence.prepare(step.epoch as number)
+        case 'advance': return fence.advance(step.epoch as number)
+        case 'freeze': return fence.freeze(step.request_id as string)
+        case 'release': return fence.release(step.request_id as string)
+        default: throw new Error('unknown fencing fixture operation')
+      }
+    }
+    if (step.error !== undefined) await refusesAsync(invoke, step.error, step.match as string)
+    else expect((await invoke()).asRecord()).toEqual(step.state)
+  }
+  expect(backend.calls).toEqual(readJson(join(directory, 'calls.json')))
+}

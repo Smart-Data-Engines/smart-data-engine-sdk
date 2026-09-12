@@ -32,6 +32,8 @@ from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..schema import QUOTE, schema_statements
+from ..write_fence import WriteFence
+from ._write_fences import PostgresFences
 
 __all__ = ["PostgresEngine"]
 
@@ -128,6 +130,10 @@ class PostgresEngine:
                 "Nothing was retried, so no write reached the engine twice."
             )
         return message
+
+    def write_fence(self, table: str, *, project_id: str) -> WriteFence:
+        """DDL capability; use a dedicated connection separate from application traffic."""
+        return WriteFence(PostgresFences(self._cx), table, project_id=project_id)
 
     # --- schema ----------------------------------------------------------------------------
 

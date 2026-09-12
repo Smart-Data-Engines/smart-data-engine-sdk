@@ -1,0 +1,17 @@
+{
+  "table": "events",
+  "project_id": "11111111111111111111111111111111",
+  "metadata": {
+    "identity": "table-identity",
+    "column": "valid",
+    "constraints": {}
+  },
+  "steps": [
+    {
+      "op": "prepare",
+      "epoch": 1,
+      "error": "MigrationRefused",
+      "match": "not owned"
+    }
+  ]
+}

@@ -114,6 +114,8 @@ from .watermark import (
     WatermarkStore,
     enforce_forward_only,
 )
+from .write_fence import EPOCH_COLUMN as WRITE_EPOCH_COLUMN
+from .write_fence import FenceState, WriteFence
 
 __version__ = "0.1.0.dev0"
 
@@ -135,6 +137,7 @@ __all__ = [
     "RESERVED_TABLES",
     "SHAPE_KINDS",
     "WATERMARK_TABLE",
+    "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
     "BackfillProgress",
     "CanonicalError",
@@ -149,6 +152,7 @@ __all__ = [
     "EntityProgress",
     "Explains",
     "FanOutStats",
+    "FenceState",
     "Float32",
     "Group",
     "GroupFeatures",
@@ -185,6 +189,7 @@ __all__ = [
     "WatermarkCheck",
     "WatermarkStore",
     "Window",
+    "WriteFence",
     "__version__",
     "backfill",
     "build_model",

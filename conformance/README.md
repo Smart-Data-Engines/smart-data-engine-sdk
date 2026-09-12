@@ -58,6 +58,9 @@ vectors/
     verification.json         optional bound request, local project id, time and expected result/refusal
     calls.json                every call each engine received, in order
     why.json
+  migration/<nnn>-<name>/     native write-fence cases, as an alternative to the row inputs above
+    fencing.json              observed metadata, independently configured project, steps and states/refusals
+    calls.json                ordered column/constraint/drain/restore calls
   telemetry/<nnn>-<name>/
     model.json
     operations.json           operations to record, each naming a shape by identifier
@@ -272,3 +275,8 @@ The verification-request cases use [format-contract §7b](../docs/format-contrac
 They pin the full map fingerprint, project and materialization binding, request decoding and the
 absence of comparison calls on refusal. `verification_vectors.py` adds these cases without
 regenerating the previous vectors and checks the fingerprint independently with openssl.
+
+Native write-fence cases `migration/046`–`061` use the metadata-only shape described in
+[write-fences.md](../docs/write-fences.md#shared-fixtures). A completed barrier id cannot be reused;
+an interrupted epoch change remains closed; retrying a hold repeats the drain. The fixtures are
+explicit state/call expectations, not recordings of either SDK implementation.

@@ -1,0 +1,21 @@
+{
+  "table": "events",
+  "project_id": "11111111111111111111111111111111",
+  "metadata": {
+    "identity": "table-identity",
+    "column": "valid",
+    "constraints": {
+      "__sde_f_owner_11111111111111111111111111111111": "1",
+      "__sde_f_min_1": "__sde_write_epoch >= 1",
+      "__sde_f_max_1": "__sde_write_epoch <= 1",
+      "__sde_f_owner_33333333333333333333333333333333": "1"
+    }
+  },
+  "steps": [
+    {
+      "op": "state",
+      "error": "MigrationRefused",
+      "match": "more than one project"
+    }
+  ]
+}

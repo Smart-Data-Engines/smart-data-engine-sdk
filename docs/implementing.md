@@ -92,6 +92,10 @@ table list columns in the same order, which is a defect we shipped.
 
 **11. Migration participation (Tier 2, second half). Vectors: `migration/`.**
 
+Cases with `fencing.json` implement the [native write-fence protocol](write-fences.md). Initialize
+the supplied metadata and run its steps against a recording DDL backend; compare states, refusals
+and every call. These cases replace the model/map/row inputs with a metadata snapshot.
+
 Also execute each `verification.json` case as specified in [§7b](format-contract.md#7b-verification-requests-and-bound-reports):
 project identity comes from local session configuration, and the complete request is checked before
 comparison. Preserve it in the outgoing report. A stored fingerprint cannot describe a mutable

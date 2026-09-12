@@ -47,6 +47,8 @@ import { request as httpsRequest } from 'node:https'
 import { compareCodePoints } from '../canonical.js'
 import { EngineError } from '../errors.js'
 import { Timestamp } from '../timestamp.js'
+import { WriteFence } from '../write-fence.js'
+import { ClickHouseFences, fenceIO } from './_write-fences.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
@@ -301,6 +303,14 @@ export class ClickHouseEngine {
   private async command(sql: string): Promise<void> {
     this.ensureOpen()
     await this.send(sql)
+  }
+
+  /** DDL capability; use a dedicated connection separate from application traffic. */
+  writeFence(table: string, options: { projectId: string }): WriteFence {
+    return new WriteFence(new ClickHouseFences({
+      query: (sql) => fenceIO(() => this.query(sql)), command: (sql) => fenceIO(() => this.command(sql)),
+      insert: (name, rows) => fenceIO(() => this.insertRows(name, rows)), literal,
+    }), table, options)
   }
 
   // --- schema ------------------------------------------------------------------------------

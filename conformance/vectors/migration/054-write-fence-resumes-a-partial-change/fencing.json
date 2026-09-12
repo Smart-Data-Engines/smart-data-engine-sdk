@@ -1,0 +1,34 @@
+{
+  "table": "events",
+  "project_id": "11111111111111111111111111111111",
+  "metadata": {
+    "identity": "table-identity",
+    "column": "valid",
+    "constraints": {
+      "__sde_f_owner_11111111111111111111111111111111": "1",
+      "__sde_f_min_1": "__sde_write_epoch >= 1",
+      "__sde_f_max_1": "__sde_write_epoch <= 1",
+      "__sde_f_hold_22222222222222222222222222222222": "0",
+      "__sde_f_min_2": "__sde_write_epoch >= 2",
+      "__sde_f_max_2": "__sde_write_epoch <= 2"
+    }
+  },
+  "steps": [
+    {
+      "op": "advance",
+      "epoch": 2,
+      "state": {
+        "identity": "table-identity",
+        "project_id": "11111111111111111111111111111111",
+        "column": "valid",
+        "lower_epoch": 2,
+        "upper_epoch": 2,
+        "holds": [
+          "22222222222222222222222222222222"
+        ],
+        "retired": [],
+        "closed": true
+      }
+    }
+  ]
+}
