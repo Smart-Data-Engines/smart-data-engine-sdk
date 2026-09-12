@@ -227,6 +227,7 @@ class ClickHouseFences:
                 DRAIN_TABLE,
                 [[table, metadata.identity, project_id, hold]],
                 column_names=["table_name", "table_uuid", "project_id", "hold"],
+                settings={"async_insert": 0, "wait_for_async_insert": 1},
             )
         except Exception as exc:
             raise EngineError(f"write-fence drain intent was not confirmed: {exc}") from exc

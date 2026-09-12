@@ -309,7 +309,7 @@ export class ClickHouseEngine {
   writeFence(table: string, options: { projectId: string }): WriteFence {
     return new WriteFence(new ClickHouseFences({
       query: (sql) => fenceIO(() => this.query(sql)), command: (sql) => fenceIO(() => this.command(sql)),
-      insert: (name, rows) => fenceIO(() => this.insertRows(name, rows)), literal,
+      literal,
     }), table, options)
   }
 

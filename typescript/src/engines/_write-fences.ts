@@ -12,7 +12,6 @@ interface PgTransport {
 interface ChTransport {
   query(sql: string): Promise<readonly Row[]>
   command(sql: string): Promise<void>
-  insert(table: string, rows: readonly Row[]): Promise<void>
   literal(value: unknown): string
 }
 
@@ -158,8 +157,10 @@ export class ClickHouseFences implements FenceBackend {
     const metadata = await this.metadata(table)
     held(metadata, options.projectId, options.hold)
     await this.drainLog()
-    await this.transport.insert(DRAIN_TABLE, [{ table_name: table, table_uuid: metadata.identity,
-      project_id: options.projectId, hold: options.hold }])
+    const values = [table, metadata.identity, options.projectId, options.hold].map(this.transport.literal)
+    await this.transport.command(`INSERT INTO ${this.quote(DRAIN_TABLE)} ` +
+      '(table_name, table_uuid, project_id, hold) SETTINGS async_insert=0, wait_for_async_insert=1 ' +
+      `VALUES (${values.join(', ')})`)
     await this.transport.command(`DETACH TABLE ${this.quote(table)} PERMANENTLY SYNC`)
     await this.transport.command(`ATTACH TABLE ${this.quote(table)}`)
     const after = await this.metadata(table)

@@ -197,3 +197,36 @@ def test_clickhouse_barrier_waits_for_an_insert_using_old_metadata(guarded: Any)
     finally:
         pool.shutdown(wait=True)
         writer.close()
+
+
+@pytest.mark.parametrize("guarded", ["clickhouse"], indirect=True)
+def test_drain_intent_is_confirmed_even_with_asynchronous_client_defaults(
+    guarded: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, _table, fence = guarded
+    fence.prepare(1)
+    engine._cx.set_client_setting("async_insert", 1)
+    engine._cx.set_client_setting("wait_for_async_insert", 0)
+    engine._cx.set_client_setting("async_insert_busy_timeout_ms", 2000)
+    engine._cx.set_client_setting("async_insert_use_adaptive_busy_timeout", 0)
+    settings = engine._cx.query(
+        "SELECT getSetting('async_insert'), getSetting('wait_for_async_insert')"
+    ).result_rows
+    assert settings == [(True, False)]
+    backend = fence._backend
+    original = backend._command
+    observed = []
+
+    def require_intent_before_detach(statement: str) -> None:
+        if statement.startswith("DETACH TABLE"):
+            rows = engine._cx.query(
+                "SELECT count() FROM __sde_fence_drains WHERE hold={hold:String}",
+                parameters={"hold": HOLD},
+            ).result_rows
+            observed.append(rows[0][0])
+            assert rows[0][0] == 1, "DETACH would begin before the intent is present in the engine"
+        original(statement)
+
+    monkeypatch.setattr(backend, "_command", require_intent_before_detach)
+    assert fence.freeze(HOLD).closed
+    assert observed == [1]

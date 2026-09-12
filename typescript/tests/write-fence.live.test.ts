@@ -4,9 +4,10 @@ import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Client } from 'pg'
 import { describe, expect, it } from 'vitest'
-import { WRITE_EPOCH_COLUMN } from '../src/index.js'
+import { WRITE_EPOCH_COLUMN, WriteFence, type Row } from '../src/index.js'
+import { ClickHouseFences } from '../src/engines/_write-fences.js'
 import { PostgresEngine } from '../src/engines/postgres.js'
-import { ClickHouseEngine } from '../src/engines/clickhouse.js'
+import { ClickHouseEngine, literal } from '../src/engines/clickhouse.js'
 import { QUOTE } from '../src/schema.js'
 
 const PG = process.env['SDE_POSTGRES_DSN'], CH = process.env['SDE_CLICKHOUSE_DSN']
@@ -17,9 +18,10 @@ function peer(action: string, dialect: Dialect, namespace: string, table: string
     resolve('../python/tests/fence_peer.py'), action, dialect, namespace, table,
   ], { encoding: 'utf8', timeout: 30_000 })) as Record<string, unknown>
 }
-async function rawCh(sql: string): Promise<string> {
+async function rawCh(sql: string, settings: Record<string, string> = {}): Promise<string> {
   const dsn = new URL(CH as string)
-  const response = await fetch(`http://${dsn.host}/?wait_end_of_query=1`, {
+  const parameters = new URLSearchParams({ wait_end_of_query: '1', ...settings })
+  const response = await fetch(`http://${dsn.host}/?${parameters.toString()}`, {
     method: 'POST', body: sql,
     headers: { Authorization: `Basic ${Buffer.from(`${decodeURIComponent(dsn.username)}:${decodeURIComponent(dsn.password)}`).toString('base64')}` },
   })
@@ -156,3 +158,29 @@ it.skipIf(PG === undefined)('PostgreSQL drains an open source transaction before
     }
   })
 }, 15_000)
+
+
+it.skipIf(CH === undefined)('confirms the drain intent even when HTTP defaults enable async insertion', async () => {
+  await fixture('clickhouse', async (engine, namespace, table) => {
+    await engine.writeFence(table, { projectId: PROJECT }).prepare(1)
+    const settings = { database: namespace, async_insert: '1', wait_for_async_insert: '0',
+      async_insert_busy_timeout_ms: '2000', async_insert_use_adaptive_busy_timeout: '0' }
+    const query = async (sql: string): Promise<Row[]> =>
+      (JSON.parse(await rawCh(sql + ' FORMAT JSON', settings)) as { data: Row[] }).data
+    const control = await query("SELECT toUInt8(getSetting('async_insert')) AS asynchronous, " +
+      "toUInt8(getSetting('wait_for_async_insert')) AS waits")
+    expect(control).toEqual([{ asynchronous: 1, waits: 0 }])
+    const observed: number[] = []
+    const command = async (sql: string): Promise<void> => {
+      if (sql.startsWith('DETACH TABLE')) {
+        const rows = await query(`SELECT count() AS n FROM __sde_fence_drains WHERE hold='${HOLD}'`)
+        observed.push(Number(rows[0]?.['n']))
+        expect(Number(rows[0]?.['n'])).toBe(1)
+      }
+      await rawCh(sql, settings)
+    }
+    const fence = new WriteFence(new ClickHouseFences({ query, command, literal }), table, { projectId: PROJECT })
+    expect((await fence.freeze(HOLD)).closed).toBe(true)
+    expect(observed).toEqual([1])
+  })
+})

@@ -90,7 +90,9 @@ See [ClickHouse constraints](https://clickhouse.com/docs/reference/statements/al
 
 Before DETACH, `__sde_fence_drains` records `table_name String`, `table_uuid UUID`,
 `project_id FixedString(32)` and `hold String`, in a local MergeTree ordered by
-`(table_uuid, project_id, hold)`. Repeated identical records are allowed. A detached table is
+`(table_uuid, project_id, hold)`. Its INSERT explicitly sets `async_insert=0` and
+`wait_for_async_insert=1`; a client default must not acknowledge an intent still waiting in a queue.
+Repeated identical records are allowed. A detached table is
 reattached only when the supplied operation has a recorded intent matching its exact Atomic UUID;
 its owner and hold must still match afterward. The log is metadata in the customer's engine, with
 that engine's durability guarantees. It contains no application rows or credentials. Deleting it
