@@ -76,3 +76,19 @@ refusals are `errors/039`–`049`; `signature/008` is signed independently by Op
 integral JSON-number spellings, an expected fingerprint, project and epochs. Live tests exercise
 stale sessions on shared connections, future-map watermark refusal, both copy directions and a
 late transaction fan-out that must not overwrite a newer generation's row.
+
+
+## Acceptance record — 12 September 2026
+
+Full suites passed against PostgreSQL and ClickHouse: 849 Python tests plus 10 optional orderbook
+skips, 354 TypeScript tests, and 1130 control-plane tests with zero skips. Both conformance runners
+pass 178 tests over 165 vector directories. The new cases include an OpenSSL-signed map with
+integral JSON-number spellings and 20 map/session scenarios. Forty deliberate source mutations were
+detected with named failing witnesses, exact restoration and passing baselines. Live witnesses
+cover stale sessions sharing adapters, watermark ordering, changed model columns, historical copy
+epochs and a deferred fan-out which cannot overwrite a newer generation.
+
+Locally built wheel/sdist/npm artifacts passed archive checks. Clean wheel and npm installations
+loaded a contract-4 map, stamped source and fan-out rows, and returned logical fields. No registry
+publication or release-workflow run was performed. These checks do not replace the remaining
+cutover, stale-reader, recovery and workload-qualification gates.
