@@ -10,14 +10,24 @@ what decides which ones are worth a visit today and which are worth nothing unti
 
 | Name | Registry | State | How it gets claimed |
 |---|---|---|---|
-| `@smart-data-engines/sde` | npm | **ours since 12 September 2026** | creating the organisation granted the scope; nothing published |
 | `smart-data-engine-sdk` | PyPI | **ours since 12 September 2026** | the upload that claimed it |
-| `smart-data-engine-sdk` | PyPI | **refused** | too similar to `smartdata-engine`; see §2.0 |
+| `@smart-data-engines/sde` | npm | **scope ours since 12 September 2026**, package not yet published | creating the organisation granted the scope |
+| `com.smartdataengines` | Maven Central | **ours since 12 September 2026** | a DNS TXT record; nothing published, ever |
+| `smart-data-engine` | PyPI | **refused** | too similar to `smartdata-engine`; see §2.0 |
 | `sde` | PyPI | taken by someone else | — which is why the distribution and the import differ |
 
+**The refused row said `smart-data-engine-sdk` until 12 September**, contradicting the row above it in
+the same table. The distribution was renamed that day and the substitution caught a mention of the
+*old* name whose role was "the name PyPI refused" — so the page claimed one name was simultaneously
+ours and rejected, and read plausibly enough for nobody to notice. `test_packaging.py` now refuses any
+row that gives a name we own a state other than "ours"; the general rule is in
+`contract-pitfalls.md`, and it is that when a name is a prefix of another name, a rename has to
+classify each hit by role before substituting.
+
 Section 4 does the same for the other seven languages. The short version, if you read nothing else:
-**npm and Maven Central are worth doing today and cost nothing; PyPI costs one version number; the
-rest are worth nothing until the library exists, and one of them would breach a registry's policy.**
+**npm, Maven Central and PyPI are done; the rest are worth nothing until the library exists, and one
+of them would breach a registry's policy.** The ordering that produced that, worth reusing: do the
+one with a waiting period first, not the one that feels urgent.
 
 Checked against the live registries on 11 September 2026, each with a control that must answer
 differently so a silent instrument cannot read as good news:
@@ -296,43 +306,91 @@ eventually reaches. §4.2 of [`github-security.md`](github-security.md) is the s
 
 ## 3. When you are done, one line changes here
 
-`python/tests/_claims.py` holds `REGISTRIES`, and today both entries say `False`:
+`python/tests/_claims.py` holds `REGISTRIES`, and all three entries now say `True`:
 
 ```python
 REGISTRIES = (
-    ("PyPI", "smart-data-engine-sdk", False),
-    ("npm", "@smart-data-engines/sde", False),
+    ("PyPI", "smart-data-engine-sdk", True),
+    ("npm", "@smart-data-engines/sde", True),
+    ("Maven Central", "com.smartdataengines", True),
 )
 ```
 
-Flip the flag for whatever you registered — or just tell me and I will. The test that reads it fails in
-both directions: while a name is unregistered some page must say so, and once it is registered no page
-may still call it unclaimed. So flipping one boolean names every document that has quietly become
-false, including this one. That is on purpose: a claim that something has *not* happened is the one
-kind nothing ever tries to use, so nothing ever disproves it, and this repository has now been caught
-by that shape six times.
+The test that reads it fails in both directions: while a name is unregistered some page must say so,
+and once it is registered no page may still call it unclaimed. So flipping one boolean names every
+document that has quietly become false. **It earned that on 12 September**, twice — the flip named
+eight passages across five files, and reading would not have found them.
+
+Two things the mechanism learned that day. The caveat has to sit **beside** the install command and
+not merely somewhere in the repository: a first version asked for "somewhere", and deleting the
+warning from the one page a person is actually reading while copying the command survived it. And the
+install command is now looked up in a table (`INSTALL_COMMAND`) rather than derived by a two-branch
+conditional — that conditional was correct with two registries and silently invented
+`npm install com.smartdataengines` the moment a third arrived.
+
+Add a line here the day another name becomes ours. A claim that something has *not* happened is the
+one kind nothing ever tries to use, so nothing ever disproves it, and this repository has now been
+caught by that shape six times.
 
 ## 4. The other seven languages
 
 `implementations.md` names the planned libraries: **Java, Rust, C# / .NET, Go, Kotlin, PHP and Ruby**,
-none started and none claimed. Their registries do not resemble each other, and the differences are
-not cosmetic — they decide whether a name can be held before there is code to put under it.
+none of them started. Two of their names are now settled anyway and a third never needed settling,
+because their registries do not resemble each other — and the differences are not cosmetic. They
+decide whether a name can be held before there is code to put under it.
 
 | Language | Registry | How a name is claimed | Holdable with nothing published? |
 |---|---|---|---|
-| Java | Maven Central | namespace verification, then artefacts under it | **Yes** — DNS TXT record, no artefact |
-| Kotlin | Maven Central | same namespace as Java | **Yes** — one verification covers both |
+| Java | Maven Central | namespace verification, then artefacts under it | **Yes, and done** ✅ — `com.smartdataengines` |
+| Kotlin | Maven Central | same namespace as Java | **Yes, and done** ✅ — the same verification covered it |
 | Go | **none** | the module path *is* the repository URL | **Already ours** — nothing to register, ever |
 | C# / .NET | NuGet | publish; or an ID prefix reservation by review | Partly — see below |
 | Rust | crates.io | publish, first-come-first-served | **No**, and a placeholder breaches policy |
 | PHP | Packagist | submit a repository URL; vendor is protected after the first publish | **No** |
 | Ruby | RubyGems | publish, name must be unique | **No** |
 
-### 4.1 Maven Central — the one with a waiting period, so it is the one worth doing today ⚙️
+### 4.1 Maven Central — the namespace is ours ✅ (12 September 2026)
 
-Java and Kotlin share a namespace, so **one verification covers two of the seven planned libraries**,
-and it can be done now with nothing to publish: "Publishing an artifact is NOT required to claim a
-namespace. Registration and verification precede any artifact publication."
+**Done.** `com.smartdataengines` is verified on the Central Portal, so **two of the seven planned
+libraries have their name settled before either has a line of code**. Java and Kotlin share a
+namespace, and nothing had to be published to hold it: "Publishing an artifact is NOT required to
+claim a namespace. Registration and verification precede any artifact publication." Verification key
+`bvhnylcfw8`.
+
+The steps are kept below rather than deleted. The key is single-use, so the next domain this company
+verifies walks exactly this path — and two things on it sent me the wrong way once each.
+
+**The zone is managed at Squarespace, and no DNS answer says so.** `dig NS smartdataengines.com`
+returns `ns-cloud-b{1,2,3,4}.googledomains.com`, which is what step 4 below used to say and what I
+acted on. The record is added at
+<https://account.squarespace.com/domains/managed/smartdataengines.com/dns/dns-settings>: Squarespace
+bought Google Domains, kept the Google Cloud DNS nameservers, and moved the control panel. So every
+instrument you have points at a company that no longer has the form you need, and nothing measurable
+reveals it. That is the detail most likely to send the next reader to the wrong place.
+
+**A measurement of mine was right while its conclusion was one possibility too early.** I queried the
+authoritative nameservers directly, correctly saw no key, and said this was not propagation but a
+record in the wrong place. The write had landed between my two commands. With a DNS change, "I cannot
+see it" and "it is not there" stay different claims for as long as any cache holds the old answer;
+the honest report is the measurement and the minute it was taken, not the conclusion drawn from it.
+
+**Measured from four resolvers afterwards, and they did not agree** — which is the whole argument for
+asking more than one:
+
+| resolver | apex TXT, after verification succeeded |
+|---|---|
+| `8.8.8.8` Google | `v=spf1 …` **and** `bvhnylcfw8` |
+| `1.1.1.1` Cloudflare | `bvhnylcfw8` **and** `v=spf1 …` |
+| `9.9.9.9` Quad9 | **`v=spf1 …` alone** — still serving the pre-change set from cache |
+| `208.67.222.222` OpenDNS | `bvhnylcfw8` **and** `v=spf1 …` |
+
+One resolver in four still denied the record after the Portal had accepted it. A single `dig` against
+a resolver that happens to be Quad9 therefore reads exactly like a failed edit, and the conclusion it
+invites — go back and change the record — is the one that breaks something.
+
+**Mail survived, and that is the check that matters more than the key**: `dig +short MX
+smartdataengines.com` still answers `1 smtp.google.com.` Replacing the apex TXT instead of adding to
+it would have broken company mail silently, in the direction of other people's spam folders.
 
 Two kinds of namespace are on offer and we want the first:
 
@@ -345,10 +403,11 @@ Take the domain. `io.github.smart-data-engines` would tie every Java artefact we
 GitHub account name, and a groupId cannot be changed after release without becoming a different
 artefact to every build tool that resolves it. We own the domain; the GitHub account name is a tenancy.
 
-**The reason this is today's job and not next quarter's: you are going to be at the DNS registrar
-anyway.** The same visit that sets up forwarding for `contact@smartdataengines.com` can add the TXT
-record, and a DNS change plus a verification round-trip is the only item on this whole page that
-cannot be compressed into one sitting. Everything else here is instant or nearly so.
+**Why it went before PyPI, which generalises to the next one.** A DNS change plus a verification
+round-trip was the only item on this whole page that could not be compressed into one sitting, and it
+needed a visit to the registrar that was happening anyway for `contact@smartdataengines.com`. Order
+the page by what has a waiting period, not by what feels urgent: everything else here turned out to
+be instant or nearly so, including the upload that was supposed to be the hard part.
 
 **One verification covers every future Java and Kotlin artefact, not just the first.** Quoted, because
 the alternative reading would mean registering a namespace per library: "if you are the owner or
@@ -373,8 +432,9 @@ domain name exactly, even if the domain name contains hyphens" — ours has none
      registrar UI that presents TXT as one editable value invites replacing it, and replacing it
      breaks mail — quietly, in the direction of other people's spam folders. Multiple TXT records on
      one name are normal and correct.
-   - The zone is on Google Cloud DNS (`ns-cloud-b*.googledomains.com`), where a TXT record *set* on
-     the apex holds several values in one multi-line field. Add a line.
+   - **The panel is at Squarespace even though the nameservers say `googledomains`** (see above).
+     The zone is served by Google Cloud DNS, where a TXT record *set* on the apex holds several
+     values in one multi-line field. Add a line.
 5. Wait, then confirm in the Portal. "If you have set up your DNS TXT record correctly, it should
    only take a few minutes for us to verify your namespace" and the check is automated, but their own
    warning still applies: "Do not proceed with verification unless you have added and verified your
@@ -387,6 +447,8 @@ domain name exactly, even if the domain name contains hyphens" — ours has none
    ```
 
 6. Stop. Publish nothing — nothing exists to publish, and the namespace is held permanently.
+   **Check from at least two resolvers**, for the reason in the table above, and check mail in the
+   same breath.
 
 **What publishing there will later need, so that it is clear the namespace is the only thing missing
 today** and the rest is our work rather than yours: a POM carrying name, description, url, at least
@@ -447,20 +509,112 @@ justify the request would be right to.
 Worth knowing rather than worth doing: `SmartDataEngines.*` is the prefix to ask for, the ask is one
 email, and the right moment is when the first C# package is ready to publish — not before.
 
-## 5. What comes after, and is ours rather than yours
+## 5. Releasing, which is a tag ✅ (built 12 September 2026)
 
-Publishing by hand is the right way to claim a name and the wrong way to ship a release. The next piece
-of work is a release workflow, and it is code, so it is our side:
+Publishing by hand is the right way to claim a name and the wrong way to ship a release. Both names
+were claimed on 12 September, so this section stopped being a plan the same day. What does it:
+`.github/workflows/release.yml`, with `tools/release_tag.py` and `tools/check_artefact.py` as the two
+refusals in front of it, and `.github/rulesets/check_contexts.py` keeping the configuration from
+drifting away from any of it.
 
-- **OIDC trusted publishing on both registries**, so no long-lived credential exists anywhere. The
-  ordering is not the same on the two, which section 2 now states rather than glossing: npm configures
-  trusted publishing from an existing package's settings page, so there it genuinely comes *after* the
-  first claim. On PyPI a pending publisher can *be* the first claim — it just cannot reserve the name
-  in advance.
-- **Provenance.** npm generates attestations automatically when publishing through trusted publishing
-  from GitHub Actions, so a consumer can check which workflow run and which commit produced the tarball
-  they installed.
-- **A GitHub Environment with a required reviewer**, not a plain repository secret, so a merge cannot
-  become a publish without a person.
-- **Tag-gated**, under the existing `refs/tags/v*` ruleset, with build and publish as separate jobs so
-  that no job which has run a fork's code holds the publishing identity.
+**No credential exists anywhere.** Both registries authenticate the workflow over OIDC, so there is
+no token in this repository, in its Actions secrets, or on a laptop — nothing to leak, nothing to
+rotate, nothing to forget to delete. That matters more here than the convenience suggests: an
+account-scoped PyPI token publishes to every project that account owns, forever, and section 2.4
+exists because the alternative was keeping one.
+
+### 5.1 Cutting a release
+
+Bump the version on `main` through a pull request like any other change, then tag the commit that
+landed:
+
+```bash
+git tag python-v0.1.0     && git push origin python-v0.1.0       # -> PyPI
+git tag typescript-v0.1.0 && git push origin typescript-v0.1.0   # -> npm
+```
+
+Then approve the deployment on GitHub. The publish job waits on an environment with you as a required
+reviewer, so a merge cannot become a publish without a person — and the environments are scoped to
+their own tag pattern, so nothing but a `python-v*` tag can even ask to use the PyPI one.
+
+**The tags are per-language, and the reason is not tidiness.** One shared tag would publish an
+artefact byte-identical to its predecessor, with an empty changelog, every time the *other* language
+moved — at a version number neither registry ever hands back. What makes the two libraries agree is
+the conformance suite and `conformance/contract-version.txt`; making the version number carry that
+meaning as well would be a second mechanism for something already held, and a duplicated guarantee
+cannot be mutated separately.
+
+### 5.2 What it refuses, and why each refusal exists
+
+Everything here fails *before* the reviewer is asked, except the last two, which fail before the
+upload:
+
+| Refusal | The failure it prevents |
+|---|---|
+| a bare `v0.1.0` tag | A tag that triggers nothing is a release that **looks done**: the tag is in the repository, protected, and nothing was published. The workflow triggers on `v*` purely so this can be said out loud, with both correct forms named. |
+| the tag disagrees with the manifest | Publishing the manifest's version under the tag's name. Neither half is correctable: the registry will not reuse a version number and the ruleset will not move the tag. |
+| the tagged commit is not on `main` | The ruleset protects `main` with eleven required checks; it does **not** stop a tag being pointed at any commit in the repository, including one on a branch nobody reviewed. Ancestry is what makes "the published artefact passed CI" a fact rather than an assumption. |
+| the artefact is missing a licence, `py.typed`, or `dist/` | All three have actually been missing, on 8 September, and none of it was visible from a green suite — the suite runs the source tree and a user runs the artefact. The worst would have put an importable-looking package with no code in it under our own scope. |
+| the artefact records a version other than the tag's | The gate agreeing with the manifest does not prove the *build* used it, and what a user installs is the number inside the file. |
+
+`tools/check_artefact.py` carries a control in the same run: one member that cannot exist must be
+reported absent. A checker stuck on "present" would find every required file and report a flawless
+package, which is the shape of good news worth distrusting.
+
+### 5.3 Three things still need you
+
+1. **PyPI: add the trusted publisher** ⚙️ — <https://pypi.org/manage/project/smart-data-engine-sdk/settings/publishing/>.
+   Four fields, and all four must match exactly or the token is refused:
+
+   | Field | Value |
+   |---|---|
+   | Owner | `Smart-Data-Engines` |
+   | Repository name | `smart-data-engine-sdk` |
+   | Workflow name | `release.yml` |
+   | Environment name | `pypi` |
+
+   The environment field is optional at PyPI and is filled in deliberately: with it, a token minted by
+   any other job in this repository is rejected at the registry rather than trusted.
+
+2. **npm: the first publish has to be by hand** ⚙️, and this is npm's constraint rather than a
+   shortcut. Trusted publishing there is configured on a package's own settings page, and `npm trust`
+   (npm ≥ 11.15.0) says the same thing in its documentation: "The package you're configuring must
+   already exist on the npm registry." So the sequence is fixed:
+
+   ```bash
+   cd typescript
+   npm login                      # 2FA, the auth-and-writes mode from section 1
+   npm publish --access public    # prepack builds; this is the 0.1.0-dev.0 already on PyPI
+   npm view @smart-data-engines/sde version
+   ```
+
+   Then configure the publisher, either on the package page or in one command:
+
+   ```bash
+   npx npm@11.15.0 trust github @smart-data-engines/sde \
+       --repo Smart-Data-Engines/smart-data-engine-sdk --file release.yml --env npm
+   ```
+
+   **Do not put a token in an Actions secret to avoid this.** It would buy one attestation and leave
+   behind a credential that publishes under our scope for as long as nobody remembers it is there.
+
+3. **The two environments** ✅ — already created, with you as the required reviewer and each one
+   locked to its own tag pattern. Worth reading back rather than trusting, since this API answers
+   `200` to writes that change nothing:
+
+   ```bash
+   R=Smart-Data-Engines/smart-data-engine-sdk
+   gh api "/repos/$R/environments" --jq '.environments[] | {name, rules: [.protection_rules[].type]}'
+   gh api "/repos/$R/environments/pypi/deployment-branch-policies" --jq '.branch_policies[].name'
+   ```
+
+### 5.4 The one cost, named rather than hidden
+
+**The first npm tarball will have no provenance attestation.** `npm publish --provenance` only works
+from a supported CI provider on a cloud-hosted runner, and the publish that has to happen by hand
+cannot be either. Every version after it gets one automatically, because trusted publishing generates
+the attestation itself rather than leaving it to a flag somebody has to remember.
+
+What makes that acceptable rather than merely tolerable: the version without an attestation is
+`0.1.0-dev.0`, matching the `0.1.0.dev0` already on PyPI. It is a dev release, so **every version a
+client would actually pin is attested** — the gap lands on the one release nobody depends on.

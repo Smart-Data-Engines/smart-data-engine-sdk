@@ -2,12 +2,12 @@
 
 Three documents make that claim, to three different readers: `README.md` to a client deciding
 whether to depend on this, `docs/implementing.md` to someone writing a fifth library, and
-`docs/implementations.md` to whoever has to know who fixes a defect. **A claim of absence is the one
-kind that cannot fail on its own.** A claim of presence fails the moment somebody tries to use the
-thing; "there is no migration engine" keeps reading correctly for as long as nobody rereads it,
+`docs/implementations.md` to whoever has to know who fixes a defect. **A claim of absence is the
+one kind that cannot fail on its own.** A claim of presence fails the moment somebody tries to use
+the thing; "there is no migration engine" keeps reading correctly for as long as nobody rereads it,
 which was four days - the migration engine landed on 2 September 2026 and the front page of the
-public repository still denied it on the 6th, four lines above a table claiming the tier that
-*is* migration.
+public repository still denied it on the 6th, four lines above a table claiming the tier that *is*
+migration.
 
 The detector lives here rather than inside either test because two copies of it is how the phrasing
 drifts. A README that started saying "does not yet exist" would slip past a checker that only knew
@@ -56,7 +56,21 @@ MEASUREMENTS = (("Go", ".go"), ("Rust", ".rs"))
 REGISTRIES = (
     ("PyPI", "smart-data-engine-sdk", True),
     ("npm", "@smart-data-engines/sde", True),
+    ("Maven Central", "com.smartdataengines", True),
 )
+
+#: How each registry spells "install this", for the half of the ratchet that wants the caveat to
+#: sit *beside* the command a person is copying.  A map rather than the two-branch conditional this
+#: replaced. That conditional read `"pip install" if registry == "PyPI" else "npm install"`, which
+#: was correct while there were two entries and silently invented `npm install
+#: com.smartdataengines` the moment a third arrived. A namespace is held with no artefact under it,
+#: so `None` is the honest answer and not a gap: there is no line for a reader to copy, so there is
+#: nowhere for a warning to belong.
+INSTALL_COMMAND: dict[str, str | None] = {
+    "PyPI": "pip install {name}",
+    "npm": "npm install {name}",
+    "Maven Central": None,
+}
 
 #: The word our documents use for a name nobody owns. One word, not a list of phrasings: the pages
 #: were read before this was written and they all say this, and a loose pattern here would match

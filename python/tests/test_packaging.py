@@ -45,7 +45,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from _claims import REGISTRIES, UNCLAIMED, sentences
+from _claims import INSTALL_COMMAND, REGISTRIES, UNCLAIMED, sentences
 
 import sde
 
@@ -272,7 +272,16 @@ def test_the_pages_agree_with_whether_the_name_is_ours(
     # correctly, since two other pages still carried one. Neither of those two is the page a person
     # is reading when they copy the command, which is the only moment the warning does any work.
     admitting = {document for document, _ in found}
-    command = f"pip install {name}" if registry == "PyPI" else f"npm install {name}"
+    if registry not in INSTALL_COMMAND:
+        raise AssertionError(
+            f"{registry!r} is in REGISTRIES and not in INSTALL_COMMAND, so this test does not "
+            f"know what line a reader would copy for it. Teach it rather than letting it guess: "
+            f"the version this replaced would have invented `npm install {name}`."
+        )
+    template = INSTALL_COMMAND[registry]
+    if template is None:
+        return  # A namespace with nothing under it. No command, so nowhere for a caveat to belong.
+    command = template.format(name=name)
     for page in _documents():
         relative = page.relative_to(ROOT).as_posix()
         if command in page.read_text(encoding="utf-8") and relative not in admitting:
@@ -382,4 +391,62 @@ def test_the_runbook_answers_for_every_language_the_plan_names() -> None:
             f"docs/implementations.md plans a {language} library and docs/publishing.md has no "
             f"table row about it. A reader cannot tell whether its name needs registering, whether "
             f"it can be held before the library exists, or whether there is a registry at all."
+        )
+
+
+#: The state table at the top of `docs/publishing.md`, found by its header row.
+_STATE_TABLE_HEADER = "| Name | Registry | State | How it gets claimed |"
+
+#: Words that contradict ownership. `taken` is in here because the page uses it for `sde`, a name
+#: somebody else holds, and a row that ever applied it to one of ours is the same defect.
+_NOT_OURS = re.compile(r"\brefused\b|\btaken\b|\bunclaimed\b", re.IGNORECASE)
+
+
+def _state_rows() -> list[tuple[str, str, str]]:
+    """`(name, registry, state)` per row, names unwrapped from their backticks."""
+    text = (ROOT / "docs" / "publishing.md").read_text(encoding="utf-8")
+    assert _STATE_TABLE_HEADER in text, (
+        "docs/publishing.md no longer has the state table this test reads. A checker that passes "
+        "by finding nothing to check is worse than no checker, so this is an error, not a skip."
+    )
+    lines = text.split("\n")
+    rows = []
+    for line in lines[lines.index(_STATE_TABLE_HEADER) + 2:]:  # +2 skips the |---| separator
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 3:
+            break
+        rows.append((cells[0].strip("`"), cells[1], cells[2]))
+    assert rows, "the state table parsed as empty"
+    return rows
+
+
+@pytest.mark.parametrize(("registry", "name", "registered"), REGISTRIES)
+def test_the_state_table_does_not_call_a_name_we_own_refused(
+    registry: str, name: str, registered: bool
+) -> None:
+    """A name cannot be ours and rejected in the same table, and one was for a day.
+
+    The distribution was renamed to `smart-data-engine-sdk` on 12 September, and the substitution
+    caught a mention of the old name whose role was *the name PyPI refused* - so the row directly
+    below "ours since 12 September 2026" said `smart-data-engine-sdk` was "refused". Both rows read
+    plausibly on their own, which is exactly why reading the page did not find it.
+
+    The general rule is recorded as a pitfall: when a name is a prefix of another name, a rename has
+    to classify each hit by role before substituting. This is the mechanism for the one table where
+    that mistake is checkable, because ownership is single-sourced in :data:`REGISTRIES`.
+    """
+    if not registered:
+        return
+    rows = [row for row in _state_rows() if row[0] == name and row[1] == registry]
+    assert rows, (
+        f"{name} on {registry} is ours and the state table in docs/publishing.md has no row for "
+        f"it. That table is what a reader consults first."
+    )
+    for _, _, state in rows:
+        assert "ours" in state.lower(), f"{name} on {registry} is ours; the table says {state!r}"
+        assert not _NOT_OURS.search(state), (
+            f"{name} on {registry} is ours and the table says {state!r}. A name cannot be ours and "
+            f"rejected at once - this is how a rename that did not classify hits by role reads."
         )

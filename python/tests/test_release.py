@@ -1,15 +1,16 @@
 """The two decisions a release cannot take back, checked here rather than in a workflow's shell.
 
-A release in this repository is a tag and nothing else, and two things about it are irreversible. The
-tag is immutable under the `refs/tags/*` ruleset, and both registries refuse to reuse a version
+A release in this repository is a tag and nothing else, and two things about it are irreversible.
+The tag is immutable under the `refs/tags/*` ruleset, and both registries refuse to reuse a version
 number - so a tag that disagrees with its manifest publishes the manifest's version under the tag's
 name, permanently, and neither half can be corrected afterwards. The artefact is the other one: the
 suite runs the source tree and a user runs the built package, and on 8 September 2026 that gap held
 three defects, the worst of which would have put an importable-looking package with no code in it
 under our own scope.
 
-Both decisions therefore live in tested scripts rather than in `run:` blocks. Shell inside a workflow
-is the least reviewed code in any repository, and these are the most consequential lines in this one.
+Both decisions therefore live in tested scripts rather than in `run:` blocks. Shell inside a
+workflow is the least reviewed code in any repository, and these are the most consequential lines
+in this one.
 
 What is *not* here is the agreement between the release workflow and the tag ruleset - that needs
 PyYAML, which only the `contract` job installs, so it lives in `.github/rulesets/check_contexts.py`
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import tarfile
 import zipfile
 from pathlib import Path
@@ -77,9 +79,9 @@ def test_the_typescript_tag_agrees_with_its_manifest() -> None:
 def test_the_version_is_read_from_the_path_pyproject_names() -> None:
     """Not from a path written in the script, which is how it would come to check a dead file.
 
-    The failure this forbids is quiet and points the wrong way: the script would keep agreeing with a
-    file the build no longer reads, and the disagreement would surface as a published artefact
-    carrying a version nobody chose.
+    The failure this forbids is quiet and points the wrong way: the script would keep agreeing
+    with a file the build no longer reads, and the disagreement would surface as a published
+    artefact carrying a version nobody chose.
     """
     import tomllib
 
@@ -213,7 +215,7 @@ def test_a_wheel_missing_a_required_member_is_named(tmp_path: Path, omit: str) -
 
 
 def test_the_two_file_tarball_that_started_all_of_this_is_refused(tmp_path: Path) -> None:
-    """`npm pack` produced exactly `package.json` and `README.md`, and npm would have accepted it."""
+    """`npm pack` produced exactly `package.json` and `README.md`, and npm accepts that."""
     problems = check_artefact.verify("npm", _npm(tmp_path / "p.tgz", only_two=True), "1.2.3")
     assert any("fewer than" in problem for problem in problems), problems
 
@@ -221,10 +223,10 @@ def test_the_two_file_tarball_that_started_all_of_this_is_refused(tmp_path: Path
 def test_a_matcher_stuck_on_present_cannot_report_a_perfect_artefact(tmp_path: Path) -> None:
     """The control, and it needs its pair to mean anything.
 
-    A checker that answered "present" to every question would find every required member and report a
-    flawless package. Asking one question whose answer must be "absent" is what distinguishes that
-    from an instrument that is looking. The pair is the mechanism: the archive with the sentinel in it
-    must complain, and the one without it must not.
+    A checker that answered "present" to every question would find every required member and
+    report a flawless package. Asking one question whose answer must be "absent" is what
+    distinguishes that from an instrument that is looking. The pair is the mechanism: the archive
+    with the sentinel in it must complain, and the one without it must not.
     """
     with_sentinel = _wheel(tmp_path / "a.whl", extra=check_artefact.CONTROL)
     without = _wheel(tmp_path / "b.whl")
@@ -238,14 +240,16 @@ def test_a_star_does_not_cross_a_slash(tmp_path: Path) -> None:
     """Otherwise every pattern here is looser than it reads.
 
     `fnmatch` is the obvious implementation and its `*` matches `/`, which would let
-    `*.dist-info/METADATA` be satisfied by a file nested anywhere at all - and a pattern that matches
-    more than intended fails in the direction that publishes.
+    `*.dist-info/METADATA` be satisfied by a file nested anywhere at all - and a pattern that
+    matches more than intended fails in the direction that publishes.
     """
     assert check_artefact.matches("*.dist-info/METADATA", ["sdk-1.0.dist-info/METADATA"])
     assert not check_artefact.matches("*.dist-info/METADATA", ["nested/sdk-1.0.dist-info/METADATA"])
 
 
-def test_an_artefact_whose_recorded_version_is_not_the_tagged_one_is_refused(tmp_path: Path) -> None:
+def test_an_artefact_whose_recorded_version_is_not_the_tagged_one_is_refused(
+    tmp_path: Path,
+) -> None:
     """The tag gate agreeing with the manifest does not prove the build used it.
 
     What a user installs is the number inside the artefact, so that is the number checked - against
@@ -326,3 +330,37 @@ def test_a_static_version_is_read_from_pyproject_itself(
     _synthetic_tree(tmp_path, hatch_path=None, version="")
     monkeypatch.setattr(release_tag, "ROOT", tmp_path)
     assert release_tag.resolve("refs/tags/python-v9.9.9") == ("python", "9.9.9")
+
+
+def test_the_security_document_counts_the_required_checks_the_ruleset_requires() -> None:
+    """A number about our own configuration, written by hand, was wrong by one for two weeks.
+
+    `docs/github-security.md` said "ten required checks" while `main.json` required eleven. Nobody
+    was careless: the sentence was right when it was written, and every change since then added a
+    *context* rather than revisiting the count of them. That is the same one-directional rot as a
+    status section, and the fix is the same - derive it, so that the day an analysis is added the
+    document fails until somebody has reread it.
+    """
+    from _claims import WORDS
+
+    ruleset = json.loads((ROOT / ".github" / "rulesets" / "main.json").read_text())
+    contexts = [
+        rule["parameters"]["required_status_checks"]
+        for rule in ruleset["rules"]
+        if rule["type"] == "required_status_checks"
+    ]
+    assert len(contexts) == 1, "main.json has no single required_status_checks rule to count"
+    count = len(contexts[0])
+    assert count < len(WORDS), f"{count} is past the end of the number words in _claims.py"
+
+    text = (ROOT / "docs" / "github-security.md").read_text(encoding="utf-8")
+    written = re.findall(r"(\w+) required checks", text)
+    assert written, (
+        "docs/github-security.md no longer states a count of required checks, so this test would "
+        "pass by finding nothing. Say the number, or delete this test deliberately."
+    )
+    for word in written:
+        assert word == WORDS[count], (
+            f"the ruleset requires {count} checks ({WORDS[count]}) and the document says {word!r}. "
+            f"Adding a matrix entry or an analysis changes the first number and not the second."
+        )
