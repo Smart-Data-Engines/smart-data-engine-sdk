@@ -243,8 +243,8 @@ def test_the_pages_agree_with_whether_the_name_is_ours(
 
     **Registered, and a page still calls it unclaimed.** That sentence is not trivia: three runtime
     error messages in this library tell a user, at the moment something has already failed, to run
-    `pip install 'smart-data-engine[...]'`. A page saying the name belongs to nobody tells them the
-    instruction their own dependency just gave them is not ours.
+    `pip install 'smart-data-engine-sdk[...]'`. A page saying the name belongs to nobody tells them
+    the instruction their own dependency just gave them is not ours.
 
     **Unregistered, and no page says so.** Our README hands a reader an installation line for a name
     we do not own. Deleting the warning while it is still true is how this rots, and a one-sided

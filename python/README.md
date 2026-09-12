@@ -79,23 +79,26 @@ and tested, not tolerated — it is also the honest answer to what happens if yo
 ## Install
 
 ```bash
-pip install smart-data-engine              # core, no dependencies at all
-pip install 'smart-data-engine[signed]'    # verify maps we signed
-pip install 'smart-data-engine[postgres]'  # PostgreSQL engine driver
+pip install smart-data-engine-sdk              # core, no dependencies at all
+pip install 'smart-data-engine-sdk[signed]'    # verify maps we signed
+pip install 'smart-data-engine-sdk[postgres]'  # PostgreSQL engine driver
 ```
 
 The core has no runtime dependencies. This library goes into your application, so every dependency
 would be one you inherit and a version conflict you might have to resolve.
 
-The distribution is `smart-data-engine` and the import is `sde`, because `sde` was already taken on
-PyPI. Mildly annoying, and better than a cute misspelling.
+**The distribution is `smart-data-engine-sdk` and the import is `sde`, and neither half of that is a
+preference.** `sde` alone is taken on PyPI by somebody else, and renaming the import to a
+squatting-adjacent misspelling is worse for you than a distribution name that differs from it. The
+obvious distribution name, `smart-data-engine`, is *refused by PyPI*: it answers 400, "the name is
+too similar to an existing project". The project is `smartdata-engine`, registered by somebody else
+with zero releases — PyPI compares names after stripping `._-` and folding `l`/`i` to `1` and `o` to
+`0`, and both reduce to `smartdataeng1ne`. The suffix changes the reduction, and it matches the
+repository name, which is the consistency worth having regardless.
 
-**`smart-data-engine` is unclaimed on PyPI, so those three commands install nothing today.** That is
-the honest state and not a typo: the library is not published yet. Read it as a warning rather than
-a footnote, because three error messages inside this library point at the same commands - if someone
-else registers the name before we do, a person who is already debugging gets told, by code they had
-decided to trust, to install a stranger's package. [`../docs/publishing.md`](../docs/publishing.md)
-is what closes this.
+Published to PyPI on 12 September 2026. Until then this section was the one instruction in this
+repository that was knowingly untrue, and it carried a warning saying so; the warning is gone because
+the commands work.
 
 ## Conformance
 

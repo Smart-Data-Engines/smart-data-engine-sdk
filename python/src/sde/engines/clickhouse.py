@@ -123,7 +123,7 @@ class ClickHouseEngine:
         except ImportError as exc:  # pragma: no cover - depends on the install extra
             raise EngineError(
                 "the ClickHouse adapter needs the 'clickhouse' extra: "
-                "pip install 'smart-data-engine[clickhouse]'. "
+                "pip install 'smart-data-engine-sdk[clickhouse]'. "
                 "The core library has no dependencies, because it goes into your application and "
                 "every dependency here would be one you inherit."
             ) from exc

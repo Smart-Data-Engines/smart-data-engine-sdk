@@ -19,8 +19,10 @@ they differ, the difference is called out rather than left to be noticed.
 - **This library gets published to PyPI and npm.** The engine ships source; this ships an artefact
   that runs inside other people's applications and holds their database credentials. A compromised
   release here is a far worse event than a compromised release there, which is what §4 is about.
-- **One distribution name is registered and one is not.** `smart-data-engine` on PyPI is unclaimed while
-  `python/README.md` and two of the library's own runtime error messages tell people to install it.
+- **Both distribution names are ours** ✅ — `smart-data-engine-sdk` published to PyPI and the
+  `@smart-data-engines` scope held on npm, both on 12 September 2026. Until that day
+  `python/README.md` and three of the library's own runtime error messages named a distribution
+  nobody owned, which is why this was the most urgent item on this page for two weeks.
   See §4.1; this is the single most urgent item in this document.
 - **Two languages, so two analyses and ten required checks**, not four (§1).
 - **The default branch is `main`, not `master`.** The rulesets differ in that one string, and a
@@ -242,7 +244,7 @@ Checked while writing this document:
 
 | Name | Registry | State |
 |---|---|---|
-| `smart-data-engine` | PyPI | **unclaimed** |
+| `smart-data-engine-sdk` | PyPI | **ours** — published 12 September 2026 |
 | `smart_data_engine` | PyPI | unclaimed (normalises to the same name) |
 | `@smart-data-engines/sde` | npm | **ours** — scope held by the `smart-data-engines` organisation since 12 September 2026; nothing published under it yet |
 | `sde` | PyPI | taken by someone else — which is why the import is `sde` and the distribution is not |
@@ -250,11 +252,11 @@ Checked while writing this document:
 Three places in this repository already name the distribution, and the last one is the reason this is
 not merely tidiness:
 
-- `python/README.md` — an installation section with `pip install smart-data-engine` and both extras
-- `python/pyproject.toml` — `name = "smart-data-engine"`, which is what a publish would claim
+- `python/README.md` — an installation section with `pip install smart-data-engine-sdk` and both extras
+- `python/pyproject.toml` — `name = "smart-data-engine-sdk"`, which is what a publish would claim
 - **`sde/placement.py` and `sde/engines/postgres.py` — runtime error messages.** A user who loads a
   signed map without the extra is told, by the library, at the moment something failed, to run
-  `pip install 'smart-data-engine[signed]'`. That is the worst possible moment to be pointed at a name
+  `pip install 'smart-data-engine-sdk[signed]'`. That is the worst possible moment to be pointed at a name
   somebody else controls: the person is debugging, they will copy the command, and the instruction came
   from inside the code they trusted.
 
@@ -435,7 +437,7 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ Actions: read-only default token, cannot approve PRs
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
-⚙️ register smart-data-engine on PyPI  ← most urgent, see publishing.md
+✅ smart-data-engine-sdk on PyPI, published 12 September 2026
 ✅ @smart-data-engines scope on npm, held by the organisation since 12 September 2026
 ✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
 ⚙️ org-wide 2FA on Smart-Data-Engines — UI only, the API reports success and changes nothing
