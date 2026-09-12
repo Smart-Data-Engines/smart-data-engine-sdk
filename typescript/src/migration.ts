@@ -29,6 +29,7 @@
  */
 
 import { compareCodePoints } from './canonical.js'
+import { Timestamp } from './timestamp.js'
 import { MIGRATABLE_MEMBERS, satisfies } from './capabilities.js'
 import { EngineError, MigrationRefused } from './errors.js'
 import { colocationGroups } from './groups.js'
@@ -50,10 +51,8 @@ export const CHUNK_ROWS = 1000
 /**
  * Sub-second digits each dialect keeps, for the neutral types where dialects differ.
  *
- * PostgreSQL's `timestamptz` is microsecond-resolution and ClickHouse's `DateTime64(3)` is
- * millisecond-resolution, which is a stated choice and a fine one for storage. It is not fine for a
- * copy: a current timestamp has microseconds, so the truncation affects essentially every row, and
- * it is silent - the insert succeeds and the value comes back changed.
+ * Both current SQL timestamp types retain six digits. This table guards future dialects; the
+ * runtime value must preserve those digits too, which is why the adapters return Timestamp.
  */
 export const DIALECT_PRECISION: Readonly<Record<string, number>> = {
   'timestamp|postgres': 6,
@@ -736,7 +735,10 @@ async function missingInTarget(
  * puts the resume point after rows nobody copied.
  */
 function keyOf(order: readonly string[], row: Row): string {
-  return JSON.stringify(order.map((column) => row[column] ?? null))
+  // Timestamp.toJSON preserves six digits; native int64 keys must also remain exact.
+  return JSON.stringify(order.map((column) => row[column] ?? null), (_key, value: unknown) =>
+    typeof value === 'bigint' ? ['bigint', value.toString()] : value,
+  )
 }
 
 /**
@@ -764,12 +766,15 @@ function differingColumns(source: Row, target: Row): readonly string[] {
 /**
  * Whether two column values are the same.
  *
- * `Object.is` after a `Date` and a `Buffer` are reduced to something comparable, because this
- * runtime's `===` on two equal dates is false and a copy would then report every timestamp column
+ * Exact epoch microseconds for Timestamp, with Date and Buffer also reduced to comparable values.
+ * This runtime's `===` on two equal dates is false and would report every timestamp column
  * as differing - the failure mode being a healthy migration that can never pass its gate. The
  * reference implementation gets this for free from Python's `==`.
  */
 function sameValue(left: unknown, right: unknown): boolean {
+  if (left instanceof Timestamp && right instanceof Timestamp) {
+    return left.epochMicroseconds === right.epochMicroseconds
+  }
   if (left instanceof Date && right instanceof Date) return left.getTime() === right.getTime()
   if (left instanceof Uint8Array && right instanceof Uint8Array) {
     return left.length === right.length && left.every((byte, index) => byte === right[index])

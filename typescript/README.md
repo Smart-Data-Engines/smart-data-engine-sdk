@@ -114,3 +114,11 @@ sufficient on its own; if it is not, that is a bug in the document and worth rep
 ## Licence
 
 Apache-2.0.
+
+## Timestamp values
+
+Both adapters return `Timestamp`, an immutable value with microsecond precision, for `timestamp`
+and `timestamptz`. `Date` is still accepted on writes. Use `Timestamp.from(isoText)` for six-digit
+inputs, `.toISOString()` for text and `.epochMicroseconds` for exact comparison; `.toDate()` refuses
+if converting would lose digits. See [exact timestamps](../docs/timestamps.md) for examples and
+migration from the previous `Date` return type.

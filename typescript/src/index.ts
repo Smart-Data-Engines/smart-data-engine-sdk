@@ -154,6 +154,7 @@ export {
 } from './telemetry.js'
 export type { FieldType, NeutralType } from './types.js'
 export { checkType, NEUTRAL_TYPES, T } from './types.js'
+export { Timestamp } from './timestamp.js'
 
 /** The format contract version this library implements. */
 export const CONTRACT_VERSION = 1

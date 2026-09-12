@@ -14,7 +14,7 @@
  * its ClickHouse `connect_timeout` never fired - the TCP connect succeeds, so what was left was a
  * read timeout whose driver default is 300 seconds. And every type conversion here is ours, which
  * is not extra work: it was already ours in the reference, because a driver's idea of what a
- * `DateTime64` is differs from the next driver's.
+ * `DateTime64` differs from the next driver's.
  *
  * Three things here are genuinely different from the PostgreSQL adapter, and none of them is a
  * detail. Each is a place where "the same operation" means something else because the engine is
@@ -23,7 +23,7 @@
  *
  * **A naive datetime is UTC. Always, explicitly, here.** A `Date` in this runtime is an instant, so
  * there is no naive case to get wrong on the way in - but there is on the way *out*: ClickHouse
- * returns `DateTime64(3, 'UTC')` as `2026-08-27 12:00:00.000`, with no zone in the text. Read as
+ * returns `DateTime64(6, 'UTC')` as `2026-08-27 12:00:00.123456`, with no zone in the text. Read as
  * local time that is a different instant on every machine, and after a migration between engines
  * every timestamp in the client's analytics would shift by the offset of whichever host happened to
  * write the row. The reference measured that divergence at two hours with no error anywhere.
@@ -46,6 +46,7 @@ import { request as httpsRequest } from 'node:https'
 
 import { compareCodePoints } from '../canonical.js'
 import { EngineError } from '../errors.js'
+import { Timestamp } from '../timestamp.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
@@ -147,8 +148,7 @@ function convert(value: unknown, type: string): unknown {
     // `2026-08-27 12:00:00.000`, with no zone in the text. Read as local time it is a different
     // instant on every machine, so the zone is supplied here - and it is UTC because that is what
     // the column declares and what the PostgreSQL side stores.
-    const text = String(value)
-    return new Date(`${text.replace(' ', 'T')}${/[Zz]|[+-]\d\d:?\d\d$/.test(text) ? '' : 'Z'}`)
+    return Timestamp.from(String(value))
   }
   if (bare.startsWith('Date')) {
     // A calendar date has no time and no zone. `YYYY-MM-DD` says exactly that, and the PostgreSQL
@@ -162,9 +162,9 @@ function convert(value: unknown, type: string): unknown {
 /** One value on the way *in*, as a JSON-safe form ClickHouse will accept. */
 function outbound(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString()
-  if (value instanceof Date) {
-    // `DateTime64(3, 'UTC')` takes `YYYY-MM-DD hh:mm:ss.mmm`. Rendered from the UTC parts, never
-    // from the local ones: this is the write half of the divergence the module docstring names.
+  if (value instanceof Timestamp || value instanceof Date) {
+    // Date remains a valid millisecond-resolution input; Timestamp retains six digits.
+    // Both serialize UTC parts, independently of the process timezone.
     return value.toISOString().replace('T', ' ').replace('Z', '')
   }
   return value
@@ -678,7 +678,7 @@ export function literal(value: unknown): string {
   }
   if (typeof value === 'bigint') return value.toString()
   if (typeof value === 'boolean') return value ? '1' : '0'
-  if (value instanceof Date) return `'${String(outbound(value))}'`
+  if (value instanceof Timestamp || value instanceof Date) return `'${String(outbound(value))}'`
   if (typeof value === 'string') return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
   throw new EngineError(
     `a key value of type ${typeof value} cannot be rendered for ClickHouse. Rendering it as a ` +

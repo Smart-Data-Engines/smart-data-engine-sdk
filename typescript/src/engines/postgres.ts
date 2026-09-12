@@ -35,6 +35,7 @@ import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
 import { QUOTE, schemaStatements } from '../schema.js'
 import type { Row } from '../session.js'
 import { keyColumns, sameWidth } from '../migration.js'
+import { Timestamp } from '../timestamp.js'
 
 // Bound from the one definition in schema.ts, so that DDL and DML cannot disagree about how an
 // identifier is escaped.
@@ -90,8 +91,8 @@ const OID = {
  * timezone - so the same stored date reads as a different day depending on where the reader runs.
  * A calendar date has no time and no zone; `YYYY-MM-DD` says exactly that.
  *
- * **`timestamptz` becomes a `Date`.** That one is unambiguous: it is an instant, `pg` already
- * parses it, and the ClickHouse adapter parses its own string form into the same thing.
+ * **Both timestamp types become `Timestamp`.** Client-local parsers retain their text before pg
+ * can discard microseconds. Converting a Date after the driver parsed it is already too late.
  */
 function convert(value: unknown, oid: number): unknown {
   if (value === null || value === undefined) return null
@@ -106,7 +107,7 @@ function convert(value: unknown, oid: number): unknown {
       return value instanceof Date ? isoDate(value) : String(value)
     case OID.timestamp:
     case OID.timestamptz:
-      return value instanceof Date ? value : new Date(String(value))
+      return Timestamp.from(value instanceof Date ? value : String(value))
     default:
       return value
   }
@@ -123,11 +124,12 @@ function isoDate(value: Date): string {
  * One value on the way *in*.
  *
  * A `bigint` is handed to `pg` as a string, because the driver has no encoder for it and would
- * otherwise throw. A `Date` and everything else go through untouched: `pg` sends a timestamp as UTC,
- * which is what the ClickHouse adapter does explicitly - and that divergence, measured in the
- * reference implementation, was two hours wide with no error anywhere.
+ * otherwise throw. Both `Timestamp` and `Date` are serialized explicitly as UTC text, including
+ * for timezone-free columns; everything else goes through untouched. Passing Date to pg unchanged
+ * would serialize local clock parts, whose offset a timezone-free SQL column discards.
  */
 function outbound(value: unknown): unknown {
+  if (value instanceof Timestamp || value instanceof Date) return Timestamp.from(value).toISOString()
   if (typeof value === 'bigint') return value.toString()
   return value
 }
@@ -138,6 +140,7 @@ interface QueryResultLike {
 }
 
 interface ClientLike {
+  setTypeParser(oid: number, parser: (value: string) => unknown): void
   connect(): Promise<void>
   end(): Promise<void>
   query(text: string, values?: readonly unknown[]): Promise<QueryResultLike>
@@ -203,6 +206,9 @@ export class PostgresEngine {
       connectionTimeoutMillis: connectBound(this.dsn),
     }
     const client = new driver.Client(config)
+    // Preserve text before pg's Date parser loses precision, only on our own client.
+    client.setTypeParser(OID.timestamp, (value) => value)
+    client.setTypeParser(OID.timestamptz, (value) => value)
     // Attached before `connect`, because the window between them is one a server can fail in.
     client.on('error', (error: Error) => {
       this.lost = error

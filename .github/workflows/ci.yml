@@ -176,6 +176,15 @@ jobs:
         working-directory: typescript
         run: npm ci
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Python peer for the live interoperability slice
+        run: |
+          python -m venv python/.venv
+          python/.venv/bin/pip install -e './python[postgres,clickhouse]'
+
       - name: types
         working-directory: typescript
         run: npx tsc --noEmit
@@ -183,6 +192,7 @@ jobs:
       - name: the same vectors Python runs, and both engine slices
         working-directory: typescript
         env:
+          TZ: America/New_York
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: npx vitest run
@@ -212,7 +222,7 @@ jobs:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          for slice in engines.live cut-connection.live; do
+          for slice in engines.live cut-connection.live timestamps.live; do
             npx vitest run "tests/$slice.test.ts" --reporter=json --outputFile=/tmp/$slice.json
             node -e '
               const report = require("/tmp/" + process.argv[1] + ".json")

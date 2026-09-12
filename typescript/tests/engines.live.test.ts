@@ -31,7 +31,7 @@ import { afterAll, beforeAll,
 describe, expect, it } from 'vitest'
 
 import type { LogicalModel, PlacementMap, Row } from '../src/index.js'
-import { EngineError, loadMap, Session } from '../src/index.js'
+import { EngineError, loadMap, Session, Timestamp } from '../src/index.js'
 import { ClickHouseEngine } from '../src/engines/clickhouse.js'
 import { PostgresEngine } from '../src/engines/postgres.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
@@ -73,8 +73,8 @@ function sample(id: string): Row {
     narrow: 0.5,
     money: '12.34',
     flag: true,
-    at: new Date('2026-08-27T12:00:00.000Z'),
-    naive: new Date('2026-08-27T12:00:00.000Z'),
+    at: Timestamp.from('2026-08-27T12:00:00.123456Z'),
+    naive: Timestamp.from('2026-08-27T12:00:00.123456Z'),
     day: '2026-08-27',
   }
 }
@@ -131,7 +131,7 @@ describe.skipIf(!PG_DSN)('the PostgreSQL adapter', () => {
     expect(back?.['money']).toBe('12.34')
     // a calendar date has no zone, so it stays a calendar date.
     expect(back?.['day']).toBe('2026-08-27')
-    expect((back?.['at'] as Date).toISOString()).toBe('2026-08-27T12:00:00.000Z')
+    expect((back?.['at'] as Timestamp).toISOString()).toBe('2026-08-27T12:00:00.123456Z')
     expect(back?.['label']).toBe('zażółć gęślą jaźń')
     expect(back?.['flag']).toBe(true)
     expect(back?.['small']).toBe(-2_147_483_648)
@@ -332,7 +332,7 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect(back?.['big']).toBe(9_007_199_254_740_993n)
     expect(back?.['money']).toBe('12.34')
     expect(back?.['day']).toBe('2026-08-27')
-    expect((back?.['at'] as Date).toISOString()).toBe('2026-08-27T12:00:00.000Z')
+    expect((back?.['at'] as Timestamp).toISOString()).toBe('2026-08-27T12:00:00.123456Z')
     expect(back?.['label']).toBe('zażółć gęślą jaźń')
     expect(back?.['flag']).toBe(true)
   })
@@ -476,8 +476,8 @@ describe.skipIf(!PG_DSN || !CH_DSN)('the two engines agree', () => {
       const here = fromPg?.[column]
       const there = fromCh?.[column]
       expect(typeof here, `${column}: the two engines disagree about the type`).toBe(typeof there)
-      if (here instanceof Date) {
-        expect((there as Date).toISOString(), `${column}`).toBe(here.toISOString())
+      if (here instanceof Timestamp) {
+        expect((there as Timestamp).toISOString(), `${column}`).toBe(here.toISOString())
       } else {
         expect(there, `${column}`).toEqual(here)
       }
