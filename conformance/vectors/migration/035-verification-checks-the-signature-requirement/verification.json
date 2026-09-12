@@ -1,0 +1,29 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "request": {
+    "protocol": 1,
+    "request_id": "22222222222222222222222222222222",
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "fe8473623a7c98b7",
+    "map_version": 1,
+    "map_fingerprint": "3913711e96f023c472cde92996beb0b5413096934e8a8a28799b67873465f2d9",
+    "group": "Reading",
+    "source": {
+      "engine": "pg-main",
+      "id": "Reading@pg"
+    },
+    "targets": [
+      {
+        "engine": "pg-copy",
+        "id": "Reading@pg2"
+      }
+    ],
+    "requested_at": "2026-09-12T12:00:00Z",
+    "requires_signature": true
+  },
+  "group": "Reading",
+  "at": "2026-09-12T12:00:01Z",
+  "chunk_rows": 3,
+  "error": "MigrationRefused",
+  "match": "does not match"
+}

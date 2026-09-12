@@ -1,0 +1,58 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "request": {
+    "protocol": 1.0,
+    "request_id": "22222222222222222222222222222222",
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "fe8473623a7c98b7",
+    "map_version": 1.0,
+    "map_fingerprint": "3913711e96f023c472cde92996beb0b5413096934e8a8a28799b67873465f2d9",
+    "group": "Reading",
+    "source": {
+      "engine": "pg-main",
+      "id": "Reading@pg"
+    },
+    "targets": [
+      {
+        "engine": "pg-copy",
+        "id": "Reading@pg2"
+      }
+    ],
+    "requested_at": "2026-09-12T12:00:00Z",
+    "requires_signature": false
+  },
+  "group": "Reading",
+  "at": "2026-09-12T12:00:01Z",
+  "chunk_rows": 3,
+  "report": {
+    "at": "2026-09-12T12:00:01Z",
+    "chunks_compared": 5,
+    "chunks_mismatched": 0,
+    "tail_rows_read": 0,
+    "tail_rows_missing_in_target": 0,
+    "rows_source": 11,
+    "rows_target": 11,
+    "request": {
+      "protocol": 1,
+      "request_id": "22222222222222222222222222222222",
+      "project_id": "11111111111111111111111111111111",
+      "model_version": "fe8473623a7c98b7",
+      "map_version": 1,
+      "map_fingerprint": "3913711e96f023c472cde92996beb0b5413096934e8a8a28799b67873465f2d9",
+      "group": "Reading",
+      "source": {
+        "engine": "pg-main",
+        "id": "Reading@pg"
+      },
+      "targets": [
+        {
+          "engine": "pg-copy",
+          "id": "Reading@pg2"
+        }
+      ],
+      "requested_at": "2026-09-12T12:00:00Z",
+      "requires_signature": false
+    }
+  },
+  "matched": true
+}

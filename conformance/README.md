@@ -55,6 +55,7 @@ vectors/
     watermark.json            the forward-only decision, or the refusal
     backfill.json             the progress record, or the refusal
     verify.json               the seven counts, and the differences that stay on the client's side
+    verification.json         optional bound request, local project id, time and expected result/refusal
     calls.json                every call each engine received, in order
     why.json
   telemetry/<nnn>-<name>/
@@ -265,3 +266,9 @@ Add the case that a bug taught you, not the case that was easy to write. Every v
 traceable to a way two implementations could plausibly disagree: number formatting, string
 normalisation, key ordering, sort stability, the boundary between a type and a value.
 
+
+
+The verification-request cases use [format-contract §7b](../docs/format-contract.md#7b-verification-requests-and-bound-reports).
+They pin the full map fingerprint, project and materialization binding, request decoding and the
+absence of comparison calls on refusal. `verification_vectors.py` adds these cases without
+regenerating the previous vectors and checks the fingerprint independently with openssl.

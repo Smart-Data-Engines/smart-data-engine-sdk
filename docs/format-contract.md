@@ -1061,6 +1061,67 @@ all, or the engine imposes its own schema and has nowhere to put one. `schema/00
 name-did-not-move case and `schema/013` is the one where it did — and before `013` existed those two
 answers were the same input for ClickHouse, so a library refusing every ClickHouse view passed.
 
+## 7b. Verification requests and bound reports
+
+A controller records a verification request in the history of the migration **before** a client
+compares the copies. A successful count is not evidence about a particular migration until it is
+bound to that request. Request protocol `1` is independent of the IR and map contracts: neither
+existing encoding changes, and an unbound verification report retains its previous shape.
+
+The request has exactly these fields; unknown or missing fields are refused:
+
+| Field | Meaning |
+|---|---|
+| `protocol` | integer `1` |
+| `request_id` | 32 lowercase hexadecimal digits; an unpredictable, fresh id for this comparison round |
+| `project_id` | 32 lowercase hexadecimal digits, supplied independently in the client's local enrollment configuration |
+| `model_version` | the map's 16-digit model digest |
+| `map_version` | positive safe integer, at most 2^53 − 1 |
+| `map_fingerprint` | 64 lowercase hex digits: SHA-256 of the canonical map document with the entire `signature` member removed |
+| `group` | the group being compared |
+| `source` | exactly `{ "engine": "...", "id": "..." }`, naming the source materialization |
+| `targets` | nonempty array of the same engine/id pairs, naming every `also_write` target; unique ids, no source id, sorted by engine then id by code point |
+| `requested_at` | ISO time: `YYYY-MM-DDTHH:mm:ss`, optional one to six fractional digits, then `Z` or numeric `±HH:MM` offset |
+| `requires_signature` | boolean; the signature status of the map the requester used |
+
+Names are nonempty strings. Integral JSON numbers such as `1.0` normalize to integers; booleans,
+fractions and unsafe integers do not. Times require a valid calendar date and an offset, and do
+not accept leap seconds or submicrosecond precision. The requester uses a new id for each round,
+never reuses an id already in that migration's history, and persists it before requesting work.
+The id is not a credential.
+
+The SDK compares the request with its **locally configured** project, requested group, session
+model and loaded map before reading any rows for the comparison. It must not learn its project id
+from this request. Matching versions alone are insufficient: different layouts or routing at the
+same version have different fingerprints. Signature values and the untrusted `key_id` hint do not
+change a fingerprint. A mismatched signature requirement is also refused.
+
+A loaded map is a snapshot of its input and immutable through normal mapping operations, including
+nested layouts and indexes. Mutating a layout after the fingerprint was computed previously allowed
+a verifier to read another table while reporting the old fingerprint. Constructing a new map by
+copying a loaded object does not establish verified provenance; load and validate the new document.
+Noncanonical annotations on a legacy unsigned map retain the old load behavior, but such a map has
+no fingerprint and cannot be used for this optional protocol.
+
+A bound report adds `request`, the exact request record, to the existing counts and `at`. It still
+contains no row keys, row values or difference details. Its timestamp cannot predate the request;
+a verifier clock behind the controller produces a named refusal. There is no guessed maximum age:
+request identity provides causality and the controller compares the complete request against the
+current one in the migration history. A renewed request or a changed current map invalidates the
+old result. Old unbound reports can be read for historical purposes but cannot authorize a new
+managed cutover.
+
+The request is metadata, not authority to change routing. The SDK reads the map it already holds,
+and the controller accepts a result only for its own stored request. This binds a comparison to
+one round; it **does not prove** that writes arriving after comparison reached the copy. Writer
+coordination is a separate requirement before production cutover.
+
+The shared `migration/` vectors with `verification.json` exercise this protocol. Load a session
+using that file's optional `project_id`, then decode its `request` **inside** the expected-error
+assertion and call verification with its group, `at` and `chunk_rows`. Compare `report`, `matched`
+and the full `calls.json` sequence, or require the stated error and message. A refused binding
+performs no comparison calls; signed-session startup calls remain distinct from comparison calls.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read

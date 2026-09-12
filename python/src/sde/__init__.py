@@ -180,6 +180,7 @@ __all__ = [
     "Session",
     "ShapeStats",
     "Timestamp",
+    "VerificationRequest",
     "VerifyReport",
     "WatermarkCheck",
     "WatermarkStore",
@@ -222,5 +223,8 @@ __all__ = [
     "schema_statements",
     "snake_case",
     "stored_types",
+    "verification_request",
     "verify",
 ]
+
+from .verification import VerificationRequest, verification_request

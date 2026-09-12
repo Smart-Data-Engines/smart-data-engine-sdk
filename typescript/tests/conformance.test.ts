@@ -1,3 +1,4 @@
+import { VerificationRequest } from '../src/verification.js'
 /**
  * The conformance runner, TypeScript side.
  *
@@ -906,6 +907,27 @@ describe('migration vectors', () => {
           'the differences differ. These hold the client\'s own key values and are deliberately ' +
             'absent from the record that crosses the boundary.',
         ).toEqual(want.differences)
+      }
+
+      const boundFile = join(dir, 'verification.json')
+      if (existsSync(boundFile)) {
+        const want = readJson<{
+          project_id?: string; group: string; request: unknown; at: string; chunk_rows?: number;
+          error?: string; match?: string; report?: unknown; matched?: boolean
+        }>(boundFile)
+        const boundSession = await Session.open(model, map, engines,
+          want.project_id === undefined ? {} : { projectId: want.project_id })
+        const compare = async () => verify(boundSession, want.group, {
+          request: VerificationRequest.fromRecord(want.request), at: want.at,
+          chunkRows: want.chunk_rows ?? 3,
+        })
+        if (want.error !== undefined) {
+          await refusesAsync(compare, want.error, want.match as string)
+        } else {
+          const report = await compare()
+          expect(verifyRecord(report)).toEqual(want.report)
+          expect(report.matched).toBe(want.matched)
+        }
       }
 
       const operationsFile = join(dir, 'operations.json')

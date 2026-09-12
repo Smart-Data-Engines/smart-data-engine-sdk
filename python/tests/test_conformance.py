@@ -488,6 +488,22 @@ def test_migration_vector(case: Path) -> None:
             "nowhere else."
         )
 
+    bound = case / "verification.json"
+    if bound.is_file():
+        want = _read_json(bound)
+        session = sde.Session(model, placement, engines, project_id=want.get("project_id"))
+        def compare() -> sde.VerifyReport:
+            request = sde.VerificationRequest.from_record(want["request"])
+            return sde.verify(session, want["group"], request=request,
+                              at=want["at"], chunk_rows=want.get("chunk_rows", 3))
+        if "error" in want:
+            with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+                compare()
+        else:
+            report = compare()
+            assert report.as_record() == want["report"]
+            assert report.matched is want["matched"]
+
     operations = case / "operations.json"
     if operations.is_file():
         _drive_session(case, model, placement, engines)

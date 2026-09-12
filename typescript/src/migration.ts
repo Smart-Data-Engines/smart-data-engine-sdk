@@ -30,6 +30,7 @@
 
 import { compareCodePoints } from './canonical.js'
 import { Timestamp } from './timestamp.js'
+import type { VerificationRequest } from './verification.js'
 import { MIGRATABLE_MEMBERS, satisfies } from './capabilities.js'
 import { EngineError, MigrationRefused } from './errors.js'
 import { colocationGroups } from './groups.js'
@@ -247,6 +248,7 @@ const DIFFERENCES_KEPT = 20
  * deliberately absent from the record.
  */
 export interface VerifyReport {
+  readonly request?: VerificationRequest
   readonly at: string
   readonly group: string
   readonly chunksCompared: number
@@ -271,6 +273,7 @@ export interface VerifyReport {
 export function verifyRecord(report: VerifyReport): Record<string, unknown> {
   return {
     at: report.at,
+    ...(report.request === undefined ? {} : { request: report.request.asRecord() }),
     chunks_compared: report.chunksCompared,
     chunks_mismatched: report.chunksMismatched,
     tail_rows_read: report.tailRowsRead,
@@ -597,6 +600,7 @@ async function resumePoint(copy: Copy, marker: number): Promise<readonly unknown
 }
 
 export interface VerifyOptions {
+  readonly request?: VerificationRequest
   readonly chunkRows?: number
   /**
    * The instant the report is stamped with. Absent reads the calendar clock.
@@ -623,6 +627,11 @@ export async function verify(
   group: string,
   options: VerifyOptions = {},
 ): Promise<VerifyReport> {
+  options.request?.checkSession(session.placement, session.projectId, group)
+  if (options.at !== undefined) options.request?.checkTime(options.at)
+  if (options.request !== undefined && session.model.version !== options.request.modelVersion) {
+    throw new MigrationRefused('verification request names another session model')
+  }
   const chunkRows = options.chunkRows ?? CHUNK_ROWS
   if (chunkRows < 1) throw new MigrationRefused(`a chunk of ${chunkRows} rows is not a chunk`)
   let chunksCompared = 0
@@ -671,8 +680,11 @@ export async function verify(
     }
   }
 
+  const at = options.at ?? new Date().toISOString()
+  options.request?.checkTime(at)
   return {
-    at: options.at ?? new Date().toISOString(),
+    at,
+    ...(options.request === undefined ? {} : { request: options.request }),
     group,
     chunksCompared,
     chunksMismatched,

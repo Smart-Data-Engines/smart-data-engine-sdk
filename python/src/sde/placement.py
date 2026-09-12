@@ -24,11 +24,13 @@ against.
 from __future__ import annotations
 
 import base64
+import hashlib
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, NoReturn, TypeVar
 
-from .canonical import canonical_bytes
+from .canonical import CanonicalError, canonical_bytes
 from .errors import MapError
 from .logging import log
 from .model import LogicalModel
@@ -136,6 +138,8 @@ class PlacementMap:
     the irreversible half, and a client cannot know when the old key is safe to drop without
     seeing which key the maps they are actually receiving were signed with.
     """
+
+    fingerprint: str | None = field(default=None, init=False)
 
     def placement_of(self, group: str) -> GroupPlacement:
         try:
@@ -548,6 +552,7 @@ def _parse_map(
     if not isinstance(raw, dict):
         raise MapError("a placement map is an object")
 
+    raw = deepcopy(dict(raw))
     contract = raw.get("contract")
     if not isinstance(contract, int) or isinstance(contract, bool):
         raise MapError(
@@ -676,15 +681,27 @@ def _parse_map(
     else:
         _check_routing_targets(routing, groups, None)
 
-    return PlacementMap(
+    try:
+        fingerprint = hashlib.sha256(
+            canonical_bytes({key: value for key, value in raw.items() if key != "signature"})
+        ).hexdigest()
+    except CanonicalError:
+        # An unsigned legacy map may carry noncanonical annotations. Preserve its old behavior;
+        # the optional bound-verification protocol refuses a map it cannot fingerprint.
+        fingerprint = None
+
+    frozen_groups = _FrozenDict({name: _freeze_group(spot) for name, spot in groups.items()})
+    result = PlacementMap(
         contract=contract,
         model_version=model_version,
         map_version=map_version,
-        groups=groups,
-        routing={str(k): str(v) for k, v in routing.items()},
+        groups=frozen_groups,
+        routing=_FrozenDict({str(k): str(v) for k, v in routing.items()}),
         signed=signature_present,
         verified_with=verified_with,
     )
+    object.__setattr__(result, "fingerprint", fingerprint)
+    return result
 
 
 def _refuse_shadowing(placement: GroupPlacement) -> None:
@@ -816,3 +833,57 @@ def _check_routing_targets(
                 f"declare. Materialisation ids are unique only within a group, so this would read "
                 f"{shape.entity} out of a copy that does not hold it."
             )
+
+
+_K = TypeVar("_K")
+_V = TypeVar("_V")
+
+
+class _FrozenDict(dict[_K, _V]):
+    """Read-only through normal mapping operations, while retaining JSON/dict compatibility."""
+
+    @staticmethod
+    def _deny(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise TypeError("a loaded placement map is immutable; load a new document")
+
+    __setitem__ = _deny
+    __delitem__ = _deny
+    clear = _deny
+    pop = _deny
+    popitem = _deny
+    setdefault = _deny
+    update = _deny
+    __ior__ = _deny
+
+    def __deepcopy__(self, _memo: dict[int, Any]) -> _FrozenDict[_K, _V]:
+        return self
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _FrozenDict({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _freeze_group(spot: GroupPlacement) -> GroupPlacement:
+    materials = {}
+    for material in spot.all():
+        layout = material.layout
+        materials[material.id] = replace(
+            material,
+            layout=replace(
+                layout,
+                tables=_freeze(dict(layout.tables)),
+                columns=_freeze(dict(layout.columns)),
+                indexes=_freeze(layout.indexes),
+                partition_by=_freeze(dict(layout.partition_by)),
+            ),
+        )
+    return replace(
+        spot,
+        source=materials[spot.source.id],
+        derived=tuple(materials[mat.id] for mat in spot.derived),
+        also_write=tuple(materials[mat.id] for mat in spot.also_write),
+    )

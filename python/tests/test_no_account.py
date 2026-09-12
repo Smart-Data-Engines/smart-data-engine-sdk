@@ -242,6 +242,7 @@ MAY_IMPORT = frozenset(
         "ast",
         "base64",
         "collections",
+        "copy",  # snapshot JSON input before signature verification; no network facility
         "contextlib",
         "contextvars",
         "dataclasses",

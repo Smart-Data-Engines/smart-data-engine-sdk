@@ -39,6 +39,7 @@ import type { OperationShape, ShapeKind } from './shapes.js'
 import { enumerateShapes, shapeId } from './shapes.js'
 import type { Recorder } from './telemetry.js'
 import type { WatermarkCheck } from './watermark.js'
+import { checkProjectId } from './verification.js'
 import { enforceForwardOnly } from './watermark.js'
 
 export type Row = Record<string, unknown>
@@ -64,6 +65,7 @@ export interface Engine {
 }
 
 export interface SessionOptions {
+  readonly projectId?: string
   /**
    * Telemetry is optional and off by default. A library that starts measuring the moment it is
    * imported is a library people are right to be suspicious of; measurement begins when a recorder
@@ -131,6 +133,7 @@ export class Session {
      * document.
      */
     readonly rollbackProtection: WatermarkCheck,
+    readonly projectId: string | undefined,
   ) {
     this.groups = colocationGroups(model)
     for (const shape of enumerateShapes(model)) {
@@ -168,6 +171,7 @@ export class Session {
     engines: Readonly<Record<string, Engine>>,
     options: SessionOptions = {},
   ): Promise<Session> {
+    checkProjectId(options.projectId)
     const required = new Set<string>()
     for (const group of Object.keys(placement.groups)) {
       const body = placementOf(placement, group)
@@ -226,6 +230,7 @@ export class Session {
       options.recorder,
       options.names,
       protection,
+      options.projectId,
     )
   }
 

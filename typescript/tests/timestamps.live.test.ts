@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Client } from 'pg'
 import { describe, expect, it } from 'vitest'
-import { backfill, buildModel, entity, loadMap, Session, T, Timestamp, verify } from '../src/index.js'
+import { backfill, buildModel, entity, loadMap, Session, T, Timestamp, verify, neutralDeclaration, VerificationRequest, verifyRecord } from '../src/index.js'
 import { PostgresEngine } from '../src/engines/postgres.js'
 import { ClickHouseEngine } from '../src/engines/clickhouse.js'
 
@@ -44,6 +44,7 @@ async function fixture(sourceName: Dialect, body: (context: {
   table: string
   targetName: Dialect
   raw: Client
+  document: Record<string, unknown>
 }) => Promise<void>): Promise<void> {
   const table = `ts_time_${randomUUID().replaceAll('-', '')}`
   const model = buildModel([entity('Event', {
@@ -65,17 +66,18 @@ async function fixture(sourceName: Dialect, body: (context: {
     },
   })
   try {
-    const map = loadMap({ contract: 3, map_version: 1, model_version: model.version,
+    const document = { contract: 3, map_version: 1, model_version: model.version,
       groups: { Event: { source: materialization(sourceName),
         derived: [{ ...materialization(targetName), lag_budget_ms: 30000 }],
         also_write: [materialization(targetName).id] } },
-    }, { model })
+    }
+    const map = loadMap(document, { model })
     for (const name of ['postgres', 'clickhouse'] as const) {
       const placement = name === sourceName ? map.groups['Event']!.source : map.groups['Event']!.derived[0]!
       await engines[name].ensureSchema(placement.layout, { keys: { Event: ['at', 'id'] } })
     }
-    const session = await Session.open(model, map, engines)
-    await body({ source: engines[sourceName], target: engines[targetName], session, table, targetName, raw })
+    const session = await Session.open(model, map, engines, { projectId: '1'.repeat(32) })
+    await body({ source: engines[sourceName], target: engines[targetName], session, table, targetName, raw, document })
   } finally {
     await raw.query(`DROP TABLE IF EXISTS "${table}"`)
     await rawClickHouse(`DROP TABLE IF EXISTS ${table}`)
@@ -93,7 +95,7 @@ it.skipIf(!PG || !CH)('has the engines required for timestamp interoperability',
 describe.skipIf(!PG || !CH)('lossless Python / TypeScript timestamps', () => {
   for (const direction of ['postgres', 'clickhouse'] as const) {
     it(`reads Python microseconds and resumes a copy from ${direction}`, async () => {
-      await fixture(direction, async ({ source, session, table, targetName }) => {
+      await fixture(direction, async ({ source, session, table, targetName, document }) => {
         peer('write', direction, table)
         const first = await source.keyRange(table, ['at', 'id'], { limit: 1 })
         expect(first[0]?.['at']).toBeInstanceOf(Timestamp)
@@ -107,7 +109,17 @@ describe.skipIf(!PG || !CH)('lossless Python / TypeScript timestamps', () => {
         expect(resumed.rowsThisRun).toBe(1)
         expect(resumed.complete).toBe(true)
         expect(peer('read', targetName, table)).toEqual(ROWS)
-        expect((await verify(session, 'Event')).matched).toBe(true)
+        const request = VerificationRequest.fromRecord(JSON.parse(execFileSync(
+          resolve('../python/.venv/bin/python'), [resolve('../python/tests/verification_peer.py')], {
+            input: JSON.stringify({ model: neutralDeclaration(session.model), map: document,
+              project_id: '1'.repeat(32), request_id: '2'.repeat(32), group: 'Event',
+              requested_at: '2000-01-01T00:00:00Z' }),
+            encoding: 'utf8', timeout: 30_000,
+          },
+        )))
+        const report = await verify(session, 'Event', { request })
+        expect(report.matched).toBe(true)
+        expect(verifyRecord(report)['request']).toEqual(request.asRecord())
       })
     }, 30_000)
 

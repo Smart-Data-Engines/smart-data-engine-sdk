@@ -10,9 +10,9 @@
  * come from us, when there is no key to check the claim against.
  */
 
-import { createPublicKey, verify as verifySignature } from 'node:crypto'
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 
-import { canonicalBytes, compareCodePoints } from './canonical.js'
+import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError } from './errors.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
@@ -69,6 +69,7 @@ export interface PlacementMap {
    * the irreversible half, and a client cannot know when the old key is safe to drop without
    * seeing which key the maps they are actually receiving were signed with.
    */
+  readonly fingerprint?: string | undefined
   readonly verifiedWith: string | null
 }
 
@@ -498,7 +499,7 @@ function checkRoutingTargets(
 }
 
 export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
-  const body = asRecord(raw, 'a placement map')
+  const body = asRecord(structuredClone(raw), 'a placement map')
 
   const contract = body['contract']
   if (typeof contract !== 'number' || !Number.isInteger(contract)) {
@@ -671,7 +672,16 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
 
   checkRoutingTargets(routingRaw as Record<string, unknown>, groups, options.model)
 
-  return {
+  let fingerprint: string | undefined
+  try {
+    const payload = { ...body }
+    delete payload['signature']
+    fingerprint = createHash('sha256').update(canonicalBytes(payload)).digest('hex')
+  } catch (error) {
+    if (!(error instanceof CanonicalError)) throw error
+  }
+
+  const result: PlacementMap = {
     // The document's number, not this library's. Reporting CONTRACT here said "this map declares
     // contract 2" of a document declaring 1, and the Python field has always carried the
     // document's.
@@ -681,8 +691,24 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     groups,
     routing: routingRaw as Record<string, string>,
     signed: signaturePresent,
+    fingerprint,
     verifiedWith,
   }
+  freeze(result)
+  loadedFingerprints.set(result, fingerprint)
+  return result
+}
+
+const loadedFingerprints = new WeakMap<PlacementMap, string | undefined>()
+
+export function fingerprintOf(map: PlacementMap): string | undefined {
+  return loadedFingerprints.get(map)
+}
+
+function freeze(value: unknown): void {
+  if (typeof value !== 'object' || value === null) return
+  for (const member of Object.values(value)) freeze(member)
+  Object.freeze(value)
 }
 
 export function placementOf(map: PlacementMap, group: string): GroupPlacement {
