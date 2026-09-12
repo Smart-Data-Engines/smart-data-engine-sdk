@@ -96,12 +96,9 @@ with zero releases — PyPI compares names after stripping `._-` and folding `l`
 `0`, and both reduce to `smartdataeng1ne`. The suffix changes the reduction, and it matches the
 repository name, which is the consistency worth having regardless.
 
-**`smart-data-engine-sdk` is unclaimed on PyPI, so those three commands install nothing today.** That
-is the honest state and not a typo: the library is not published yet. Read it as a warning rather
-than a footnote, because three error messages inside this library point at the same commands - if
-someone else registers the name before we do, a person who is already debugging gets told, by code
-they had decided to trust, to install a stranger's package.
-[`../docs/publishing.md`](../docs/publishing.md) is what closes this.
+Published to PyPI on 12 September 2026. Until then this section was the one instruction in this
+repository that was knowingly untrue, and it carried a warning saying so; the warning is gone because
+the commands work.
 
 ## Conformance
 

@@ -54,7 +54,7 @@ MEASUREMENTS = (("Go", ".go"), ("Rust", ".rs"))
 #: *not* happened, which nothing tries to use and so nothing disproves. Flip one boolean here and
 #: every page still saying the old thing fails until it is rewritten.
 REGISTRIES = (
-    ("PyPI", "smart-data-engine-sdk", False),
+    ("PyPI", "smart-data-engine-sdk", True),
     ("npm", "@smart-data-engines/sde", True),
 )
 

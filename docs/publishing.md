@@ -11,7 +11,7 @@ what decides which ones are worth a visit today and which are worth nothing unti
 | Name | Registry | State | How it gets claimed |
 |---|---|---|---|
 | `@smart-data-engines/sde` | npm | **ours since 12 September 2026** | creating the organisation granted the scope; nothing published |
-| `smart-data-engine-sdk` | PyPI | unclaimed | an upload, and nothing else |
+| `smart-data-engine-sdk` | PyPI | **ours since 12 September 2026** | the upload that claimed it |
 | `smart-data-engine-sdk` | PyPI | **refused** | too similar to `smartdata-engine`; see §2.0 |
 | `sde` | PyPI | taken by someone else | — which is why the distribution and the import differ |
 
@@ -152,7 +152,16 @@ which is the whole protection the reservation buys. `REGISTRIES` in `_claims.py`
 npm entry as registered while the package does not exist, and that is correct: the flag is about who
 owns the name, not about whether anything has been shipped under it.
 
-## 2. PyPI — the name is claimed by an upload, and by nothing else
+## 2. PyPI — published ✅ (12 September 2026)
+
+**Done.** `smart-data-engine-sdk` `0.1.0.dev0` is on PyPI, and what says so is
+`pip install smart-data-engine-sdk` in an empty virtualenv rather than the page rendering: it
+imports, the wheel carries `licenses/LICENSE`, `licenses/NOTICE` and `py.typed`, and
+`[signed,postgres]` resolves `cryptography` and `psycopg` from the real index.
+
+It took two attempts and the first one is §2.0, which is the part of this section worth reading.
+The steps are kept below because the second distribution this repository publishes walks the same
+path — and because §2.4 is the step people skip.
 
 PyPI has a "pending publisher" feature that lets you configure a trusted publisher for a project that
 does not exist yet, and it looks like a reservation. It is not one: "A 'pending' publisher does **not**
@@ -169,10 +178,14 @@ no token existing anywhere, ever.
 
 That is strictly better on credentials and it costs a release workflow that has to work on the first
 real attempt — against an upload that is irreversible, since PyPI never reuses a filename. Weighed
-honestly, for tonight: **take the token path below.** The name is the thing at risk today; a token
-that exists for ten minutes and is then deleted is a small, bounded exposure, and trusted publishing
-gets configured on the existing project afterwards, which is the ordinary path. The workflow is on my
-list either way (section 5) — it is just not worth standing between you and an unclaimed name.
+honestly, the token path was taken, and it was the right call: the first attempt failed on the *name*
+(§2.0), which a workflow would have failed on just as hard and slower. Trusted publishing gets
+configured on the existing project now, which is the ordinary path, and section 5 is the workflow.
+
+What the token path actually cost, recorded so the next decision is made on evidence rather than on
+the argument above: an account-scoped token in `~/.pypirc`, which arrived with mode **664** —
+world-readable — until it was corrected to 600. That is the failure mode of "it only exists for ten
+minutes": it exists for as long as the file does, and the file outlives the intention.
 
 ### 2.0 The name is `smart-data-engine-sdk`, and the suffix was forced ⚠️
 
