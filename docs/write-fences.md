@@ -114,3 +114,16 @@ project, execute each step, and compare its state or named refusal plus the comp
 `conformance/tools/fencing_vectors.py` writes explicit states/traces without importing an SDK.
 Real-engine tests separately cover native constraints, quoting, old writers, cross-language DDL,
 and recovery after confirmed DETACH.
+
+
+## Acceptance record — 12 September 2026
+
+The full SDK suites passed with PostgreSQL and ClickHouse: 800 Python tests (10 optional orderbook
+cases skipped) and 305 TypeScript tests. Both runners execute all 16 new fencing cases. Thirty
+source mutations were detected, with named failing assertions, exact source restoration and passing
+baselines. Omitting the drain failed the live old-INSERT test in both languages; removing synchronous
+intent insertion failed a server-observed check before DETACH in each language. A locally built
+wheel, sdist and npm tarball passed archive checks, and clean wheel/npm installations executed the
+public lifecycle and foreign-project refusal vectors. These are local artifact checks, not a package
+publication or a run of the release workflow. The remaining cutover integrations listed above are
+still required.
