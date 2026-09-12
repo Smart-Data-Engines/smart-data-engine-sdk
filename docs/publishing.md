@@ -106,12 +106,28 @@ else can publish anything under `@smart-data-engines/`.
 
 1. Sign up at <https://www.npmjs.com/signup>. Use an address the company will still control in five
    years; `contact@smartdataengines.com` is fine now that it forwards.
-2. Turn on 2FA immediately, set to **auth and writes**, with a TOTP app or a hardware key. Store the
-   recovery codes in the password manager, not in a mailbox that 2FA protects.
-3. Create the organisation: <https://www.npmjs.com/org/create>, name `smart-data-engines`, free plan.
-   The free plan publishes public packages; it is the private ones that cost money, and ours is
-   public. **If the name is taken, stop and tell me** — the package name in `typescript/package.json`
-   and every document that cites it would have to change together, and that is a code change.
+2. Turn on 2FA immediately, in the mode npm calls **`auth-and-writes`** (the other, `auth-only`,
+   leaves publishing unprotected). Store the recovery codes in the password manager, not in a mailbox
+   that 2FA protects — npm says they are "the only way to ensure you can recover your account if you
+   lose access to your second factor device".
+
+   **Losing the device is worse than it sounds, which is the argument for the password manager.**
+   Using a recovery code puts "a temporary 72-hour security hold on your account" during which you
+   cannot publish, create tokens or change settings. So the failure mode is not an afternoon of
+   annoyance, it is three days in which a release cannot go out — and linking the GitHub account,
+   which npm recommends as a second recovery route, costs one click now.
+3. Create the organisation. Profile picture → **Add an Organization**; the name you type *becomes the
+   scope*, so it has to be exactly `smart-data-engines`. Choose the free plan — npm words the choice
+   as "unlimited public packages" (free) against "unlimited private packages" (paid), and ours is
+   public. Skip the invite-members step.
+
+   **Do not take the "convert your user account to an organization" route.** It is a different
+   operation on a neighbouring page: it turns the account you just made into the org and hands your
+   personal scope over, which is not what we want and is awkward to undo.
+
+   **If the name is taken, stop and tell me** — six files cite the scope (`typescript/package.json`,
+   its lockfile, `typescript/README.md`, and three documents), and they would all have to change
+   together. That is a code change, not a rename.
 4. That is the whole reservation. Do not publish. The library is at `0.1.0-dev.0`, the first publish
    should carry provenance from CI, and publishing by hand would spend that version number to prove
    something the scope already guarantees.
