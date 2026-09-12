@@ -523,6 +523,21 @@ rotate, nothing to forget to delete. That matters more here than the convenience
 account-scoped PyPI token publishes to every project that account owns, forever, and section 2.4
 exists because the alternative was keeping one.
 
+**Nothing has been released through it yet, and that is the first thing to know before trusting it.**
+As of 12 September 2026 this repository has **zero tags** and this workflow has **never run** —
+`gh run list --workflow=release.yml` returns nothing. Every refusal in section 5.2 is covered by a
+test or by `check_contexts.py`, and nineteen mutations were used to show each one goes red when it
+should. What is *not* covered is the half only a real run exercises: whether PyPI accepts the OIDC
+token, whether the environment gate actually pauses, whether `npm publish` of a prebuilt tarball
+behaves the way its documentation says.
+
+**It cannot be rehearsed, and that is a property of the design rather than an omission.** The only
+trigger is a tag push; tags are immutable under the ruleset; neither registry reuses a version
+number. So the first real release *is* the first test of the publishing half. Two things follow, and
+both are worth planning for rather than discovering: spend a version number you are willing to lose
+on it, and expect a failure — if there is one — in the few lines that talk to a registry rather than
+in the gate, because the gate is the half that has tests behind it.
+
 ### 5.1 Cutting a release
 
 Bump the version on `main` through a pull request like any other change, then tag the commit that
