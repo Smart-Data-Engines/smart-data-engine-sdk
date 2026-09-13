@@ -92,6 +92,10 @@ table list columns in the same order, which is a defect we shipped.
 
 **11. Migration participation (Tier 2, second half). Vectors: `migration/`.**
 
+`frozen.json` cases add the [exact native-barrier comparison](frozen-verification.md): epochs can
+differ during operator maintenance; a runtime session and its watermark must not stand in for an
+inspection context. Data values stay local, while barriers and comparison counts form the record.
+
 Contract-4 `generation.json` cases additionally configure independently observed native epochs,
 open a session, and compare every stored row and call. See [generation-bearing maps](generation-maps.md).
 

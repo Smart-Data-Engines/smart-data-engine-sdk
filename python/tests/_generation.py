@@ -9,7 +9,9 @@ from _write_fence import MemoryFences
 from sde.write_fence import EPOCH_COLUMN, FENCE_PREFIX, WriteFence
 
 
-def bind_generation_metadata(engines: dict[str, Any], metadata: dict[str, Any]) -> None:
+def bind_generation_metadata(
+    engines: dict[str, Any], metadata: dict[str, Any], *, record_fences: bool = False
+) -> None:
     for name, tables in metadata.items():
         backends: dict[str, MemoryFences] = {}
         for table, record in tables.items():
@@ -22,6 +24,17 @@ def bind_generation_metadata(engines: dict[str, Any], metadata: dict[str, Any]) 
                 FENCE_PREFIX + "min_" + str(epoch): EPOCH_COLUMN + " >= " + str(epoch),
                 FENCE_PREFIX + "max_" + str(epoch): EPOCH_COLUMN + " <= " + str(epoch),
             }
+            if record_fences:
+                original = backend.done
+
+                def note(*call: Any, original: Any = original, engine: Any = engines[name]) -> None:
+                    original(*call)
+                    operation, table_name, *arguments = call
+                    engine.recorded.note(
+                        engine.name, "fence_" + operation, table=table_name, arguments=arguments
+                    )
+
+                backend.done = note
             backends[table] = backend
 
         def factory(

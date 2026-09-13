@@ -1,3 +1,4 @@
+import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
 import { bindGenerationMetadata } from './_generation.js'
 import { WriteFence as NativeWriteFence, type ColumnState, type FenceState } from '../src/write-fence.js'
 import { MemoryFences } from './_write-fence.js'
@@ -842,6 +843,10 @@ describe('migration vectors', () => {
         await driveGenerationVector(dir, model, map, engines)
         return
       }
+      if (existsSync(join(dir, 'frozen.json'))) {
+        await driveFrozenVector(dir, model, map, engines)
+        return
+      }
 
       const watermarkFile = join(dir, 'watermark.json')
       if (existsSync(watermarkFile)) {
@@ -1182,5 +1187,34 @@ async function driveGenerationVector(directory: string, model: LogicalModel, map
     }
   }
   expect(Object.fromEntries(Object.entries(engines).map(([name, engine]) => [name, engine.tables]))).toEqual(want.tables)
+  expect(Object.values(engines)[0]!.recorded.calls).toEqual(readJson(join(directory, 'calls.json')))
+}
+
+
+async function driveFrozenVector(directory: string, model: LogicalModel, map: PlacementMap,
+  engines: Record<string, MemoryEngine>): Promise<void> {
+  const want = readJson<{ project_id: string; group: string; request: unknown; hold_id: string;
+    epochs: Record<string, number>; at: string; retry?: boolean; report?: unknown; error?: string; match?: string;
+    engine_generations: Record<string, Record<string, {project_id: string; epoch: number}>>;
+  }>(join(directory, 'frozen.json'))
+  bindGenerationMetadata(engines, want.engine_generations, true)
+  const context = new InspectionContext(model, map, engines, {projectId: want.project_id})
+  const request = VerificationRequest.fromRecord(want.request)
+  const invoke = () => verifyFrozen(context, want.group, { request, holdId: want.hold_id,
+    epochs: want.epochs, at: want.at, chunkRows: 3 })
+  if (want.error !== undefined) await refusesAsync(invoke, want.error, want.match as string)
+  else {
+    for (let run = 0; run < (want.retry ? 2 : 1); run += 1) {
+      const report = await invoke(), record = frozenVerifyRecord(report)
+      expect(Number.isSafeInteger(record['elapsed_ms'])).toBe(true)
+      expect(Number(record['elapsed_ms'])).toBeGreaterThanOrEqual(0)
+      record['elapsed_ms'] = '<measured>'
+      expect(record).toEqual(want.report)
+      for (const barrier of report.barriers) {
+        const engine = engines[barrier.engine] as MemoryEngine & {writeFence(table: string, options: {projectId: string}): NativeWriteFence}
+        expect((await engine.writeFence(barrier.table, {projectId: want.project_id}).state()).holds).toContain(want.hold_id)
+      }
+    }
+  }
   expect(Object.values(engines)[0]!.recorded.calls).toEqual(readJson(join(directory, 'calls.json')))
 }

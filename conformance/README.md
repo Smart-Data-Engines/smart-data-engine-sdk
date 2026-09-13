@@ -287,3 +287,9 @@ owns data behavior and call recording; the fixture adds only native generation m
 refusals are `errors/039`–`049`. `signature/008` independently signs a map containing integral JSON
 number spellings and pins its fingerprint, project and group epochs. The generator requires
 `--i-am-changing-the-contract --scratch <session-scratchpad>`; private test keys never enter the repo.
+
+`migration/071`–`078` use `frozen.json` for the [exact comparison under barriers](../docs/frozen-verification.md).
+Initialize the existing row engine plus supplied native epoch metadata, then construct an operator
+inspection context. Compare the result with `<measured>` replacing a verified nonnegative elapsed
+millisecond value, assert the holds remain, and compare the combined DDL/drain/data-read trace.
+The retry case executes the complete call twice. Fixtures are explicit outcomes, not SDK recordings.

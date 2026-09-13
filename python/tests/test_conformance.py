@@ -435,6 +435,9 @@ def test_migration_vector(case: Path) -> None:
     if (case / "generation.json").is_file():
         _drive_generation_vector(case, model, placement, engines)
         return
+    if (case / "frozen.json").is_file():
+        _drive_frozen_vector(case, model, placement, engines)
+        return
 
     watermark = case / "watermark.json"
     if watermark.is_file():
@@ -946,4 +949,32 @@ def _drive_generation_vector(
             else:
                 invoke()
     assert {name: engine.tables for name, engine in engines.items()} == want["tables"]
+    assert next(iter(engines.values())).recorded.as_list() == _read_json(case / "calls.json")
+
+
+def _drive_frozen_vector(
+    case: Path, model: sde.LogicalModel, placement: sde.PlacementMap, engines: Any
+) -> None:
+    want = _read_json(case / "frozen.json")
+    bind_generation_metadata(engines, want["engine_generations"], record_fences=True)
+    context = sde.InspectionContext(model, placement, engines, want["project_id"])
+    request = sde.VerificationRequest.from_record(want["request"])
+    def invoke() -> sde.FrozenVerifyReport:
+        return sde.verify_frozen(context, want["group"], request=request, hold_id=want["hold_id"],
+                                 epochs=want["epochs"], chunk_rows=3, at=want["at"])
+    if "error" in want:
+        with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+            invoke()
+    else:
+        for _ in range(2 if want.get("retry") else 1):
+            report = invoke()
+            record = report.as_record()
+            assert type(record["elapsed_ms"]) is int
+            assert record["elapsed_ms"] >= 0
+            record["elapsed_ms"] = "<measured>"
+            assert record == want["report"]
+            for barrier in report.barriers:
+                assert want["hold_id"] in engines[barrier.engine].write_fence(
+                    barrier.table, project_id=want["project_id"]
+                ).state().holds
     assert next(iter(engines.values())).recorded.as_list() == _read_json(case / "calls.json")

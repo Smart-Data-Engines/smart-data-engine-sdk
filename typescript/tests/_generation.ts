@@ -3,7 +3,7 @@ import { EPOCH_COLUMN, FENCE_PREFIX, WriteFence } from '../src/write-fence.js'
 import { MemoryFences } from './_write-fence.js'
 
 export function bindGenerationMetadata(engines: Record<string, MemoryEngine>, metadata:
-  Record<string, Record<string, { project_id: string; epoch: number }>>): void {
+  Record<string, Record<string, { project_id: string; epoch: number }>>, recordFences = false): void {
   for (const [name, tables] of Object.entries(metadata)) {
     const backends = new Map<string, MemoryFences>()
     for (const [table, record] of Object.entries(tables)) {
@@ -14,6 +14,14 @@ export function bindGenerationMetadata(engines: Record<string, MemoryEngine>, me
         [FENCE_PREFIX + 'owner_' + record.project_id]: '1',
         [FENCE_PREFIX + 'min_' + record.epoch]: `${EPOCH_COLUMN} >= ${record.epoch}`,
         [FENCE_PREFIX + 'max_' + record.epoch]: `${EPOCH_COLUMN} <= ${record.epoch}`,
+      }
+      if (recordFences) {
+        const original = backend.done.bind(backend)
+        backend.done = (...call: unknown[]): void => {
+          original(...call)
+          const [operation, tableName, ...args] = call
+          engines[name]!.recorded.note(name, 'fence_' + String(operation), { table: tableName, arguments: args })
+        }
       }
       backends.set(table, backend)
     }

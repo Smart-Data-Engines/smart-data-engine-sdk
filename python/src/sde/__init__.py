@@ -46,9 +46,11 @@ from .errors import (
     SdeError,
 )
 from .explain import Cost, Explains, PlanFinding, QueryPlan, QueryPlanRefused, explain
+from .frozen_verification import FrozenVerifyReport, verify_frozen
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .infer import InferredModel, Note, infer_model, infer_models
+from .inspection import InspectionContext
 from .internal import internal_failures, reset_internal_failures
 from .layout import (
     DIALECTS,
@@ -155,11 +157,13 @@ __all__ = [
     "FanOutStats",
     "FenceState",
     "Float32",
+    "FrozenVerifyReport",
     "Group",
     "GroupFeatures",
     "GroupPlacement",
     "Histogram",
     "InferredModel",
+    "InspectionContext",
     "Int32",
     "Json",
     "LogicalModel",
@@ -232,6 +236,7 @@ __all__ = [
     "stored_types",
     "verification_request",
     "verify",
+    "verify_frozen",
 ]
 
 from .verification import VerificationRequest, verification_request
