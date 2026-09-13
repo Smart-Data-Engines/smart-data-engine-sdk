@@ -194,6 +194,11 @@ def main() -> None:
             prefix + differing_calls,
         )
     )
+    case(
+        "078-frozen-comparison-refuses-unrelated-epoch",
+        bad_epochs={**epochs, "unrelated": 2},
+        message="epochs must name exactly",
+    )
     for name, state, want, calls in cases:
         directory = root / name
         directory.mkdir(exist_ok=True)

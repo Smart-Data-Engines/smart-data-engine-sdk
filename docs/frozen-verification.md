@@ -92,7 +92,7 @@ not serialize two administrative executors by itself. Use the single durable pro
 and lock required by the native protocol; retain the barriers through the durable activation or
 rollback decision.
 
-Shared cases `migration/071`–`077` pin ordering, retry, exact counts plus values, independent epoch
+Shared cases `migration/071`–`078` pin ordering, retry, exact counts plus values, independent epoch
 coverage and request identity. A recording native metadata fixture contributes DDL/drain events to
 the same call trace as data reads. Live tests independently exercise both SQL engines, different
 maintenance generations, released barriers and extra/changed target rows.
