@@ -10,7 +10,7 @@ export class MemoryFences implements FenceBackend {
   async metadata(_table: string): Promise<FenceMetadata> {
     return { identity: this.identity, column: this.column, constraints: { ...this.constraints } }
   }
-  private done(...call: unknown[]): void {
+  done(...call: unknown[]): void {
     this.calls.push(call)
     if (this.calls.length === this.failAfter) throw new Error('lost the response after the DDL took effect')
   }

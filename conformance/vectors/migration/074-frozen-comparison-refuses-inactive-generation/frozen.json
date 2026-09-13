@@ -1,0 +1,56 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "group": "Reading",
+  "request": {
+    "protocol": 1,
+    "request_id": "77777777777777777777777777777777",
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "fe8473623a7c98b7",
+    "map_version": 2,
+    "map_fingerprint": "be1129c408ac057b1b04a0d19af087b8a0fa00437855b56436defb5c7e23656a",
+    "group": "Reading",
+    "source": {
+      "engine": "pg-main",
+      "id": "Reading@pg"
+    },
+    "targets": [
+      {
+        "engine": "pg-copy",
+        "id": "Reading@pg2"
+      }
+    ],
+    "requested_at": "2026-09-12T12:00:00Z",
+    "requires_signature": false
+  },
+  "hold_id": "66666666666666666666666666666666",
+  "epochs": {
+    "Reading@pg": 2,
+    "Reading@pg2": 3
+  },
+  "at": "2026-09-12T12:00:00Z",
+  "retry": false,
+  "error": "MigrationRefused",
+  "match": "expected write generation"
+}

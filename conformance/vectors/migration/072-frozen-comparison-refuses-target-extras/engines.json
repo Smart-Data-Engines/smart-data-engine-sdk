@@ -1,0 +1,34 @@
+{
+  "pg-main": {
+    "tables": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 1
+        }
+      ],
+      "sample": []
+    }
+  },
+  "pg-copy": {
+    "tables": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 3,
+          "__sde_write_epoch": 2
+        },
+        {
+          "id": 99,
+          "celsius": 99,
+          "__sde_write_epoch": 2
+        }
+      ],
+      "sample": []
+    },
+    "markers": {
+      "Reading@pg2|Reading": 1
+    }
+  }
+}

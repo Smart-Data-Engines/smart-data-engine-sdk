@@ -83,6 +83,7 @@ from .capabilities import satisfies
 from .errors import EngineError, MigrationRefused
 from .generation import EPOCH_COLUMN
 from .groups import Group, colocation_groups
+from .inspection import MigrationView
 from .logging import log
 from .placement import BACKFILL_TABLE, Materialization
 from .verification import VerificationRequest
@@ -416,7 +417,7 @@ class VerifyReport:
         return "\n".join(lines)
 
 
-def _group(session: Session, group: str) -> Group:
+def _group(session: MigrationView, group: str) -> Group:
     for candidate in colocation_groups(session.model):
         if candidate.name == group:
             return candidate
@@ -426,7 +427,7 @@ def _group(session: Session, group: str) -> Group:
     )
 
 
-def _migratable(session: Session, engine_name: str, role: str, group: str) -> Migratable:
+def _migratable(session: MigrationView, engine_name: str, role: str, group: str) -> Migratable:
     engine = session.engines[engine_name]
     # `satisfies` rather than `isinstance`: a runtime_checkable protocol ignores `__getattr__`, so
     # a client's wrapper around one of our adapters would be refused here for a property of their
@@ -494,7 +495,7 @@ def precision_refusal(
     return None
 
 
-def _plan(session: Session, group: str) -> tuple[_Copy, ...]:
+def _plan(session: MigrationView, group: str) -> tuple[_Copy, ...]:
     """Every refusal, before a single row moves.
 
     A migration is the operation with the least tolerance for a late discovery in this whole
@@ -693,7 +694,7 @@ def _resume_point(copy: _Copy, marker: int) -> tuple[Any, ...] | None:
 
 
 def verify(
-    session: Session, group: str, *, chunk_rows: int = CHUNK_ROWS,
+    session: MigrationView, group: str, *, chunk_rows: int = CHUNK_ROWS,
     request: VerificationRequest | None = None,
     at: str | None = None,
 ) -> VerifyReport:

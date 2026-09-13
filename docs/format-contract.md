@@ -1140,6 +1140,14 @@ Earlier map contracts remain readable in their legacy mode. A document's declare
 match the fields it carries; a reader's newest supported version is not a producer's implicit
 schema choice. The generation primitive is not the final cutover authorization gate.
 
+## 7e. Exact verification under native barriers
+
+The client-side operation and metadata-only result protocol are specified in
+[frozen-verification.md](frozen-verification.md). It drains native INSERT barriers, compares logical
+content plus stable counts, and rechecks table identity and its holds. It neither activates a map
+nor permits releasing those holds. `migration/071`–`077` pin the result and the combined barrier/
+data-read trace. The ordinary live verification record retains its existing meaning.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read

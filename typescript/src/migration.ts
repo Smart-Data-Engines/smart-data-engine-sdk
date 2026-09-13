@@ -1,3 +1,4 @@
+import type { MigrationView } from './inspection.js'
 import { EPOCH_COLUMN } from './generation.js'
 /**
  * Copying a group's rows into the copy a map fans writes out to, and comparing the two.
@@ -318,7 +319,7 @@ export function verifyForAHuman(report: VerifyReport): string {
   return lines.join('\n')
 }
 
-function migratable(session: Session, name: string, role: string, group: string): Migratable {
+function migratable(session: MigrationView, name: string, role: string, group: string): Migratable {
   const engine = session.engineNamed(name)
   if (!satisfies(engine, MIGRATABLE_MEMBERS)) {
     throw new MigrationRefused(
@@ -431,7 +432,7 @@ function shapesAgree(
  * the cost of finding a problem at chunk four thousand is four thousand chunks of the client's I/O
  * and an operator who now has to decide whether what has been copied is safe to leave.
  */
-function plan(session: Session, group: string): readonly Copy[] {
+function plan(session: MigrationView, group: string): readonly Copy[] {
   const members = colocationGroups(session.model).find((candidate) => candidate.name === group)
   if (members === undefined) {
     const names = colocationGroups(session.model)
@@ -628,7 +629,7 @@ export interface VerifyOptions {
  * migration.
  */
 export async function verify(
-  session: Session,
+  session: MigrationView,
   group: string,
   options: VerifyOptions = {},
 ): Promise<VerifyReport> {
