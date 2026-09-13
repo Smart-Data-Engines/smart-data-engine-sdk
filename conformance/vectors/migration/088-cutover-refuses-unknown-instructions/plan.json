@@ -1,0 +1,257 @@
+{
+  "kind": "sde-cutover",
+  "protocol": 1,
+  "plan_id": "33333333333333333333333333333333",
+  "project_id": "11111111111111111111111111111111",
+  "group": "Event",
+  "pause_budget_ms": 5000,
+  "query_impact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "before": {
+    "contract": 4,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "groups": {
+      "Event": {
+        "write_epoch": 1,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        },
+        "derived": [
+          {
+            "engine": "ch-1",
+            "id": "Event@ch",
+            "lag_budget_ms": 30000,
+            "layout": {
+              "tables": {
+                "Event": "event_copy"
+              },
+              "columns": {
+                "Event": {
+                  "at": "DateTime64(6, 'UTC')",
+                  "id": "UUID",
+                  "name": "String"
+                }
+              }
+            }
+          }
+        ],
+        "also_write": [
+          "Event@ch"
+        ]
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "cutover",
+      "value": "cgKxpAz3zO0iZQTWFtXV02VRe4EPh0cA+Wcm9D9uZ8gMoWTDycvpC1kQ0fBhU5l2FGTDS1A4eyNH0LnGcMWQCw=="
+    }
+  },
+  "success": {
+    "contract": 4,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 2,
+    "groups": {
+      "Event": {
+        "write_epoch": 3,
+        "source": {
+          "engine": "ch-1",
+          "id": "source@ch-1",
+          "layout": {
+            "tables": {
+              "Event": "event_copy"
+            },
+            "columns": {
+              "Event": {
+                "at": "DateTime64(6, 'UTC')",
+                "id": "UUID",
+                "name": "String"
+              }
+            }
+          }
+        }
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "cutover",
+      "value": "jDaJbwWKBXeysZJek9HwTu3plcyAapWc4xlfEDQ9bjAzcyL1yk9qKps8b9s72KMy+hArmv4NCNMmiy1tU1veDQ=="
+    }
+  },
+  "abort": {
+    "contract": 4,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 3,
+    "groups": {
+      "Event": {
+        "write_epoch": 2,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        }
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "cutover",
+      "value": "n8YyrmhfVzDeQ8vIrEap6uJomyIE5QRtYdKJPviTvofWO2ATiEJjTWOLj98w8EexXx0uNC/Gwi6qemDk/6TQDQ=="
+    }
+  },
+  "endpoint": "not-an-instruction-field",
+  "verification": {
+    "protocol": 1,
+    "request_id": "22222222222222222222222222222222",
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "map_fingerprint": "5821fb01d4b40bb9bd7f957befc82e2dade04806e61be520a44b5af554f514cd",
+    "group": "Event",
+    "source": {
+      "engine": "pg-main",
+      "id": "Event@pg"
+    },
+    "targets": [
+      {
+        "engine": "ch-1",
+        "id": "Event@ch"
+      }
+    ],
+    "requested_at": "2026-09-13T18:00:00Z",
+    "requires_signature": true
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "cutover",
+    "value": "jELuRJi6t8x40iAfJmDhqdiVasLcq41/7ABlReJo1QXWY6DkLtrnEdlh4yVsNqh7CwOpFbtNc/kBaRguk1XDAQ=="
+  }
+}

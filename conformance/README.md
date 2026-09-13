@@ -298,3 +298,9 @@ The retry case executes the complete call twice. Fixtures are explicit outcomes,
 variants retain the exact signed payload of the positive case. `errors/050`–`051` refuse unpaired
 Unicode surrogates at map load. `tools/nfc_map_vectors.py` uses its own fixture-scoped encoder and
 OpenSSL; regeneration requires an explicit scratch directory outside the repository.
+
+`migration/079`–`098` carry `plan.json` and `cutover.json` for signed local cutover authorization.
+They are decoded before any engine fixture is constructed. `tools/cutover_vectors.py` builds the
+explicit maps, request and digests independently, signs them with OpenSSL, and requires a caller's
+scratch directory outside the repository. Packet validation does not claim executor or controller
+reservation support.

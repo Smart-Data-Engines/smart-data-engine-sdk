@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .capabilities import members_of, satisfies
+from .cutover import CUTOVER_PROTOCOL, CutoverPlan, load_cutover_plan
 from .entity import Ref, clear_registry, entity, registry
 from .errors import (
     DeclarationError,
@@ -127,6 +128,7 @@ __all__ = [
     "BACKFILL_TABLE",
     "CHUNK_ROWS",
     "CONTRACT",
+    "CUTOVER_PROTOCOL",
     "DIALECTS",
     "DIALECT_PRECISION",
     "FIXED_SCHEMA",
@@ -147,6 +149,7 @@ __all__ = [
     "CompatibilityViews",
     "CopyFreshness",
     "Cost",
+    "CutoverPlan",
     "DeclarationError",
     "DerivedLayout",
     "Difference",
@@ -219,6 +222,7 @@ __all__ = [
     "infer_model",
     "infer_models",
     "internal_failures",
+    "load_cutover_plan",
     "load_map",
     "load_or_create_salt",
     "members_of",

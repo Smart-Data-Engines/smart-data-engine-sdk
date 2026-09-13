@@ -392,7 +392,8 @@ function keySet(
  * stop paying and nothing breaks" true. Revocation is the client removing a key from their own
  * configuration, which is why the id that verified is reported.
  */
-function verifyMapSignature(
+/** Internal shared verifier for signed instruction envelopes; not a package entry point. */
+export function verifyMapSignature(
   raw: Record<string, unknown>,
   publicKey: Uint8Array | Readonly<Record<string, Uint8Array>>,
 ): string | null {

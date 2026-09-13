@@ -442,3 +442,8 @@ results, and allowed mutation or copying of a loaded map's provenance. Baselines
 after exact source restoration. Local wheel and npm tarball installations also exercised the new
 root exports, map binding and wrong-project refusal outside the source checkout; this was a local
 artifact check, not a registry publication or a run of the release workflow.
+
+The optional [signed cutover packet](cutover-packets.md) is an authorization envelope over existing
+map and verification contracts. Its current-map check preserves signed admission mode, not only
+the payload fingerprint. `migration/079`–`098` exercise both accepted packets and named refusals;
+implementing this decoder does not imply a durable local executor is available.
