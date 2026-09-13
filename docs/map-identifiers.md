@@ -36,3 +36,17 @@ key-hint behavior and invalid scalar text. OpenSSL produced and checked the sign
 fixture generator derives the payload without importing either SDK. Per-language tests cover
 all four map contracts and preserve the encoder's existing normalization behavior. Native tests
 keep signed save/get working for canonical accented and astral table names.
+
+
+## Acceptance on 13 September 2026
+
+Full suites passed with both engines available: 906 Python tests, with only the 10 optional
+orderbook skips, and 404 TypeScript tests without skips. The shared suite now has 181 vector
+directories and 194 cases in each runner. The fourteen new per-language parser tests included
+twelve failures before the repair; canonical acceptance and the unsigned key-hint control passed.
+
+All twelve intentional mutations were detected by named failures: removing NFC/scalar checks,
+omitting member names or arrays, checking only contract 4, and incorrectly treating the unsigned
+key hint as instruction text. Exact sources were restored and both 208-case selected suites passed.
+Wheel, sdist and npm archives passed inspection; fresh wheel/npm consumers passed all eight new
+shared cases without importing the source checkout. No publication or deployment was performed.
