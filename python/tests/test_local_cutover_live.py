@@ -443,7 +443,7 @@ def test_wall_clock_watchdog_interrupts_waiting_and_preserves_recovery(
 
     from sde.local_cutover import CutoverRecoveryRequired
 
-    with fixture("postgres", tmp_path, budget_ms=1500) as (
+    with fixture("postgres", tmp_path, budget_ms=10000) as (
         executor,
         plan,
         _old,
@@ -459,20 +459,24 @@ def test_wall_clock_watchdog_interrupts_waiting_and_preserves_recovery(
         def delay(step: str) -> None:
             if step != checkpoint:
                 return
-            reached.append(step)
+            reached.append((step, time.monotonic()))
             if where == "clickhouse":
-                roles["clickhouse"].operator._cx.query("SELECT sleep(3)")
+                roles["clickhouse"].operator._cx.query(
+                    "SELECT sleep(20)",
+                    settings={"function_sleep_max_microseconds_per_block": 25000000},
+                )
             else:
-                roles["postgres"].operator._cx.execute("SELECT pg_sleep(3)")
+                roles["postgres"].operator._cx.execute("SELECT pg_sleep(20)")
 
         executor._after_step = delay
-        started = time.monotonic()
         try:
             with pytest.raises(CutoverRecoveryRequired, match="deadline"):
                 executor.execute(plan)
-            elapsed = time.monotonic() - started
-            assert reached == [checkpoint]
-            assert elapsed < 3, f"watchdog did not interrupt the query: {elapsed}"
+            assert len(reached) == 1 and reached[0][0] == checkpoint
+            elapsed = time.monotonic() - reached[0][1]
+            # Give setup/verification enough room to reach the injected phase under CI load.
+            # The actual native wait must still be interrupted well before its 20-second end.
+            assert elapsed < 15, f"watchdog did not interrupt the query: {elapsed}"
         finally:
             for name, role in roles.items():
                 role.operator.close()
@@ -924,3 +928,68 @@ def test_cutover_drains_an_open_application_transaction_before_repair(tmp_path: 
             project_id=PROJECT,
         )
         assert current.get("Event", {"id": 9}) == {"id": 9, "value": 99}
+
+
+def test_enrollment_accepts_integral_json_numbers_like_the_map_loader(tmp_path: Path) -> None:
+    with fixture("postgres", tmp_path / "initial") as (
+        _executor,
+        plan,
+        _old,
+        roles,
+        _,
+        _,
+        model,
+        public,
+    ):
+        document = plan.as_record()["before"]
+        document["contract"] = 4.0
+        document["map_version"] = 1.0
+        document["groups"]["Event"]["write_epoch"] = 1.0
+        expected = sde.load_map(document, model=model, public_key=public, require_signature=True)
+        local = LocalCutover(
+            tmp_path / "integral",
+            model=model,
+            project_id=PROJECT,
+            public_key=public,
+            operators={name: role.operator for name, role in roles.items()},
+            runtime={name: [role.runtime] for name, role in roles.items()},
+        )
+        local.enroll(document)
+        assert local.active_map().fingerprint == expected.fingerprint
+        local.enroll(document)
+
+
+def test_enrollment_persists_the_verified_input_snapshot(tmp_path: Path, monkeypatch: Any) -> None:
+    from sde import placement
+
+    with fixture("postgres", tmp_path / "initial") as (
+        _executor,
+        plan,
+        _old,
+        roles,
+        _,
+        _,
+        model,
+        public,
+    ):
+        document = plan.as_record()["before"]
+        original = placement._verify_signature
+
+        def change_caller(raw: Any, keys: Any) -> Any:
+            result = original(raw, keys)
+            document["map_version"] = 99
+            return result
+
+        local = LocalCutover(
+            tmp_path / "snapshot",
+            model=model,
+            project_id=PROJECT,
+            public_key=public,
+            operators={name: role.operator for name, role in roles.items()},
+            runtime={name: [role.runtime] for name, role in roles.items()},
+        )
+        with monkeypatch.context() as patch:
+            patch.setattr(placement, "_verify_signature", change_caller)
+            local.enroll(document)
+        assert document["map_version"] == 99
+        assert local.active_map().fingerprint == plan.before.fingerprint

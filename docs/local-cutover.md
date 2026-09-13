@@ -84,7 +84,9 @@ cover every engine the application's signed sessions use for watermark protectio
 Before enrollment, provision the signed before-map with `sde.prepare_schema` using operator
 connections, including an otherwise unused supplied engine's bookkeeping. Set up the restricted
 runtime grants described in [runtime roles](runtime-roles.md). Enrollment only records the exact
-signed map; it does not provision databases or grant runtime access.
+signed map; it does not provision databases or grant runtime access. It takes one input snapshot
+and applies the map contract's integral-JSON normalization before both verification and publication,
+so caller changes after verification cannot replace the document being persisted.
 
 ```sh
 sde-operator --config local-operator.json --project-dir ./client-state enroll --map before.json

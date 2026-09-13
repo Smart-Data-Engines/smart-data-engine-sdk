@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic_ns
@@ -15,7 +16,7 @@ from .canonical import canonical_bytes
 from .cutover import CutoverPlan, load_cutover_plan
 from .errors import EngineError, MigrationRefused
 from .frozen_verification import verify_frozen
-from .generation import EPOCH_COLUMN, check_map_project
+from .generation import EPOCH_COLUMN, check_map_project, json_numbers
 from .groups import colocation_groups
 from .inspection import InspectionContext
 from .layout import group_columns
@@ -149,11 +150,12 @@ class LocalCutover:
 
     def enroll(self, current: Mapping[str, Any]) -> None:
         self._owner()
-        parsed = load_map(current, model=self.model, public_key=self.keys, require_signature=True)
+        document = json_numbers(deepcopy(dict(current)))
+        parsed = load_map(document, model=self.model, public_key=self.keys, require_signature=True)
         if parsed.contract != 4:
             raise MigrationRefused("local cutover enrollment requires map contract 4")
         check_map_project(parsed, self.project_id)
-        self.store.enroll(dict(current), canonical_bytes(current))
+        self.store.enroll(document, canonical_bytes(document))
 
     def active_map(self) -> PlacementMap:
         return load_local_map(
