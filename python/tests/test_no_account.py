@@ -285,6 +285,13 @@ MAY_IMPORT = frozenset(
 # socket is a question this project answers by measuring, not by reading an API.
 MAY_IMPORT_COMPILED = frozenset({"cryptography"})
 
+# Dedicated local execution: atomic files/flock and a bounded POSIX process alarm. These are
+# permitted only in the modules implementing that mechanism; no network import is introduced.
+MAY_IMPORT_LOCAL_OPERATOR = {
+    "_local_state.py": frozenset({"errno", "fcntl", "tempfile"}),
+    "_operator_deadline.py": frozenset({"signal"}),
+}
+
 
 def _imported_top_level(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -308,7 +315,11 @@ def test_the_import_surface_outside_the_engine_adapters_is_an_allowlist() -> Non
     for path in _library_files():
         if path.parts[-2] == "engines":
             continue
-        allowed = MAY_IMPORT | MAY_IMPORT_COMPILED
+        allowed = (
+            MAY_IMPORT
+            | MAY_IMPORT_COMPILED
+            | MAY_IMPORT_LOCAL_OPERATOR.get(str(path.relative_to(SOURCE)), frozenset())
+        )
         for name in sorted(_imported_top_level(path) - allowed):
             offenders.append(f"{path.relative_to(SOURCE)}: {name}")
     assert not offenders, offenders
@@ -336,7 +347,8 @@ def test_the_allowlist_itself_names_nothing_network_capable() -> None:
         "webbrowser",
         "xmlrpc",
     }
-    assert (MAY_IMPORT | MAY_IMPORT_COMPILED) & network == set()
+    local = frozenset().union(*MAY_IMPORT_LOCAL_OPERATOR.values())
+    assert (MAY_IMPORT | MAY_IMPORT_COMPILED | local) & network == set()
 
 
 def test_the_document_lists_exactly_the_vocabulary_the_code_has() -> None:

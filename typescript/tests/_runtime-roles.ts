@@ -10,6 +10,8 @@ export interface Roles {
   readonly operator: Database
   readonly runtime: Database
   readonly namespace: string
+  readonly operatorDsn: string
+  readonly runtimeDsn: string
   statement(sql: string, runtime?: boolean): Promise<Record<string, unknown>[]>
   grant(table: string, revokeSelect?: boolean): Promise<void>
 }
@@ -52,7 +54,7 @@ export function withRoles(dialect: Dialect, body: (roles: Roles) => Promise<void
         runtime = new ClickHouseEngine(app.toString())
       }
       await runtime.connect()
-      await body({ operator, runtime, namespace, statement,
+      await body({ operator, runtime, namespace, operatorDsn: base.toString(), runtimeDsn: app.toString(), statement,
         grant: async (table, revokeSelect = false) => {
           await statement(`${revokeSelect ? 'REVOKE SELECT' : 'GRANT SELECT, INSERT'} ON ` +
             `${quote(namespace)}.${quote(table)} ${revokeSelect ? 'FROM' : 'TO'} ${quote(username)}`)

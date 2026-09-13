@@ -3,8 +3,8 @@
 `load_cutover_plan` / `loadCutoverPlan` validates the exact authorization for a local migration's
 final step. It binds one group, three signed maps, the existing verification request, an approved
 query-impact digest, and a finite pause budget. It performs no database operation, reservation,
-map activation or watermark adoption. The durable executor and controller reservation workflow
-are separate components still under construction.
+map activation or watermark adoption. The Python [local operator](local-cutover.md) executes the
+packet. Controller reservation and successive-map staging remain separate integration work.
 
 The caller supplies the locally configured project, logical model and trusted public key or key
 set. All three maps and the outer packet must verify against that trust configuration. A customer
@@ -96,5 +96,5 @@ restored and both 223-case selected suites passed. Wheel/sdist/npm archives pass
 fresh wheel/npm consumers validated all twenty packet cases and decoded the signed candidates
 without importing the source checkout. No package was published or deployment performed.
 
-This acceptance covers the authorization packet. It does not claim durable executor, grant
-revocation, budget enforcement, controller reservation, activation, or recovery is implemented.
+This historical acceptance covers the authorization packet. See [the local operator](local-cutover.md)
+for the subsequent execution component and its remaining integration boundaries.

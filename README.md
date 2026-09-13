@@ -95,6 +95,9 @@ verification notices. The work on the data is in these libraries rather than in 
 because copying and comparing rows means reading them — `sde.backfill` and `sde.verify` — and what
 crosses the boundary is counters, never rows. Verification is a gate rather than a report: reads are
 not switched to a copy that does not match.
+The Python [local cutover operator](docs/local-cutover.md) adds durable execution and crash recovery
+for signed generation-bearing packets, including native access changes for existing Python and
+TypeScript processes. Its controller reservation and successive-map setup integration remain open.
 
 What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
 neither directory is here. The day one of them appears, the test over this page fails until the row
