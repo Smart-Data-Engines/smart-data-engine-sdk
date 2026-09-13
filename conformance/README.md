@@ -293,3 +293,8 @@ Initialize the existing row engine plus supplied native epoch metadata, then con
 inspection context. Compare the result with `<measured>` replacing a verified nonnegative elapsed
 millisecond value, assert the holds remain, and compare the combined DDL/drain/data-read trace.
 The retry case executes the complete call twice. Fixtures are explicit outcomes, not SDK recordings.
+
+`signature/009`–`014` pin canonical map text and the non-authoritative signature hint; the negative
+variants retain the exact signed payload of the positive case. `errors/050`–`051` refuse unpaired
+Unicode surrogates at map load. `tools/nfc_map_vectors.py` uses its own fixture-scoped encoder and
+OpenSSL; regeneration requires an explicit scratch directory outside the repository.

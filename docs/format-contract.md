@@ -1450,3 +1450,22 @@ If your library cannot reproduce a byte this document requires, the first hypoth
 language-neutral. That has already happened once: the rule "no floating point anywhere" conflated the
 encoding with the type system, and had to be split into "no float literals in the encoding" and
 "`float64` is a perfectly good field type".
+
+## 7f. Canonical text in placement instructions
+
+A placement-map payload must already contain NFC-normalized Unicode scalar strings in every
+string value and object member name, recursively. Unpaired surrogate code units/code points and
+non-NFC text are refused with `MapError` at map load, before returning instructions. This applies
+to signed and unsigned maps at every supported map contract version. The top-level `signature`
+block is outside the payload; its `key_id` remains a non-authoritative lookup hint.
+
+The canonical encoder in §1 continues to normalize strings for canonical bytes. A map loader must
+**refuse**, not normalize and continue: database object names retain their exact spelling, so two
+spellings that canonical encoding makes equal can identify different physical tables or engine
+bindings. Renaming an existing physical object is a separate operator action. Canonical producer
+output, its signatures, and the fingerprint scheme remain unchanged.
+
+`signature/009`–`014` pair a canonical signed map with noncanonical variants of the very same signed
+payload, plus a key-hint control. Their payload and signature are derived independently of the SDKs.
+`errors/050`–`051` cover invalid Unicode scalar text. [Map identifier compatibility](map-identifiers.md)
+describes the upgrade boundary.

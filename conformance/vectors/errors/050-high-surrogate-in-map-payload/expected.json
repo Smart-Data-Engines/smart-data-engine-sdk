@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "Unicode scalar text in NFC",
+  "stage": "map"
+}

@@ -501,6 +501,22 @@ function checkRoutingTargets(
   }
 }
 
+function requireCanonicalText(value: unknown): void {
+  if (typeof value === 'string') {
+    // With /u, a valid surrogate pair is one astral code point; only unpaired halves match.
+    if (value !== value.normalize('NFC') || /[\uD800-\uDFFF]/u.test(value)) {
+      throw new MapError('placement map payload strings and member names must be Unicode scalar text in NFC')
+    }
+  } else if (Array.isArray(value)) {
+    for (const child of value) requireCanonicalText(child)
+  } else if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value)) {
+      requireCanonicalText(key)
+      requireCanonicalText(child)
+    }
+  }
+}
+
 export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   const body = asRecord(structuredClone(raw), 'a placement map')
 
@@ -526,6 +542,10 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
         'field meaning zero. Upgrade the library.',
     )
   }
+
+  // Reject instead of rewriting physical names after verifying a normalized signature.
+  // key_id is outside the payload and remains only a hint about which trusted key to try first.
+  requireCanonicalText(Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'signature')))
 
   const projectId = contract >= 4 ? body['project_id'] : undefined
   if (contract >= 4 && (typeof projectId !== 'string' || !/^[0-9a-f]{32}$/.test(projectId))) {
