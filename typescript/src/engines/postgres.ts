@@ -469,18 +469,23 @@ export class PostgresEngine {
   /**
    * The highest map version applied against this engine, creating the table if missing.
    *
-   * Creating on read rather than on write, and that closes a real gap: with the table appearing
-   * only on the first write, the first load of a signed map has nothing to compare against and a
-   * file swapped immediately after a deployment goes unnoticed.
+   * An existing table needs only read privileges. CREATE IF NOT EXISTS still requires schema
+   * CREATE even when the table exists; lazy creation is retained only for an absent table.
    */
   async mapWatermark(): Promise<number | null> {
     try {
-      await this.run(
-        `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
-          `${quote('map_version')} bigint NOT NULL, ` +
-          `${quote('model_version')} text NOT NULL, ` +
-          `${quote('seen_at')} timestamptz NOT NULL DEFAULT now())`,
-      )
+      const existing = await this.run('SELECT to_regclass($1) AS relation', [WATERMARK_TABLE])
+      if (existing.rows.length !== 1 || !('relation' in existing.rows[0]!)) {
+        throw new EngineError('watermark catalog lookup returned no result')
+      }
+      if (existing.rows[0]!['relation'] === null) {
+        await this.run(
+          `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
+            `${quote('map_version')} bigint NOT NULL, ` +
+            `${quote('model_version')} text NOT NULL, ` +
+            `${quote('seen_at')} timestamptz NOT NULL DEFAULT now())`,
+        )
+      }
       const result = await this.run(
         `SELECT max(${quote('map_version')}) AS high FROM ${quote(WATERMARK_TABLE)}`,
       )

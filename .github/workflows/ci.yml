@@ -58,6 +58,7 @@ jobs:
         env:
           CLICKHOUSE_PASSWORD: sde
           CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
         ports: ["8123:8123"]
         # 127.0.0.1 rather than localhost, and the difference is the whole reason the first attempt
         # at this failed. `wget` in the alpine image resolves `localhost` to the IPv6 `[::1]`, and
@@ -114,9 +115,9 @@ jobs:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          for slice in test_postgres_slice test_clickhouse_slice test_engine_agreement test_failure_semantics; do
-            pytest "tests/$slice.py" -q | tee /tmp/slice.txt
-            grep -qv "skipped" /tmp/slice.txt || { echo "$slice was skipped"; exit 1; }
+          for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_*_live.py; do
+            pytest "$slice" -q --junitxml="$RUNNER_TEMP/sde-integration.xml"
+            python ../tools/check_junit.py "$RUNNER_TEMP/sde-integration.xml"
           done
 
   typescript:
@@ -152,6 +153,7 @@ jobs:
         env:
           CLICKHOUSE_PASSWORD: sde
           CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
         ports: ["8123:8123"]
         # 127.0.0.1 rather than localhost: `wget` in the alpine image resolves `localhost` to the
         # IPv6 `[::1]` and ClickHouse listens on IPv4 only, so the probe fails against a server that
@@ -222,10 +224,12 @@ jobs:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          for slice in engines.live cut-connection.live timestamps.live; do
-            npx vitest run "tests/$slice.test.ts" --reporter=json --outputFile=/tmp/$slice.json
+          for file in tests/*.live.test.ts; do
+            slice=${file#tests/}
+            slice=${slice%.test.ts}
+            npx vitest run "$file" --reporter=json --outputFile="$RUNNER_TEMP/$slice.json"
             node -e '
-              const report = require("/tmp/" + process.argv[1] + ".json")
+              const report = require(process.env.RUNNER_TEMP + "/" + process.argv[1] + ".json")
               const slice = process.argv[1]
               if (report.numPendingTests > 0) {
                 console.error(slice + ": " + report.numPendingTests +

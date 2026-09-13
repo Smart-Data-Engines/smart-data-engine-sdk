@@ -1,10 +1,12 @@
 /** Prepare client-owned physical schema before opening runtime connections. */
+import { compareCodePoints } from './canonical.js'
 import { MigrationRefused } from './errors.js'
 import { checkMapProject, type Fencable } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
 import type { PlacementMap } from './placement.js'
 import type { Engine } from './session.js'
+import type { WatermarkStore } from './watermark.js'
 
 export async function prepareSchema(model: LogicalModel, placement: PlacementMap,
   engines: Readonly<Record<string, Engine>>, options: { projectId?: string } = {}): Promise<void> {
@@ -32,6 +34,15 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
         for (const table of Object.values(material.layout.tables).sort()) {
           await engine.writeFence(table, { projectId: project as string }).prepare(spot.writeEpoch)
         }
+      }
+    }
+  }
+  if (placement.signed) {
+    // Prepare storage without adopting this map's version before runtime activation.
+    for (const name of Object.keys(engines).sort(compareCodePoints)) {
+      const store = engines[name] as Engine & Partial<WatermarkStore>
+      if (typeof store.mapWatermark === 'function' && typeof store.recordMapVersion === 'function') {
+        await store.mapWatermark()
       }
     }
   }

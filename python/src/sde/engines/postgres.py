@@ -412,20 +412,24 @@ class PostgresEngine:
     def map_watermark(self) -> int | None:
         """The highest map version applied against this engine, creating the table if missing.
 
-        Creating on read rather than on write, and that closes a real gap: with the table appearing
-        only on the first write, the first load of a signed map has nothing to compare against and a
-        file swapped immediately after a deployment goes unnoticed. Reading is also the cheaper of
-        the two paths to make idempotent - `CREATE TABLE IF NOT EXISTS` here costs one statement per
-        session, once per process.
+        Existing bookkeeping needs only read privileges. CREATE IF NOT EXISTS still checks schema
+        CREATE permission even when the table exists, so test existence through the catalog first.
+        Lazy creation remains available for legacy callers; prepare_schema creates signed-map
+        bookkeeping with the operator connection before restricted runtime credentials are used.
         """
         try:
             with self._cx.cursor() as cur:
-                cur.execute(
-                    f"CREATE TABLE IF NOT EXISTS {_quote(WATERMARK_TABLE)} ("
-                    f"{_quote('map_version')} bigint NOT NULL, "
-                    f"{_quote('model_version')} text NOT NULL, "
-                    f"{_quote('seen_at')} timestamptz NOT NULL DEFAULT now())"
-                )
+                cur.execute("SELECT to_regclass(%s)", [WATERMARK_TABLE])
+                existing = cur.fetchone()
+                if existing is None:
+                    raise EngineError("watermark catalog lookup returned no result")
+                if existing[0] is None:
+                    cur.execute(
+                        f"CREATE TABLE IF NOT EXISTS {_quote(WATERMARK_TABLE)} ("
+                        f"{_quote('map_version')} bigint NOT NULL, "
+                        f"{_quote('model_version')} text NOT NULL, "
+                        f"{_quote('seen_at')} timestamptz NOT NULL DEFAULT now())"
+                    )
                 cur.execute(f"SELECT max({_quote('map_version')}) FROM {_quote(WATERMARK_TABLE)}")
                 row = cur.fetchone()
         except Exception as exc:
