@@ -88,3 +88,24 @@ SDK Makefile and CI start a disposable ClickHouse with
 retains its old configuration when merely restarted; recreate that disposable test container or
 point the tests at a separately configured one. This is a test administrator setting, not a runtime
 grant. No customer account or hosting service is configured by these tests.
+
+
+## Acceptance on 13 September 2026
+
+Full suites passed against PostgreSQL and a local ClickHouse Atomic instance with test account
+management enabled: 882 Python tests, with only the 10 optional orderbook skips, and 380 TypeScript
+tests with no skips. Each language has ten native restricted-role cases. Eight additional Python
+cases exercise the integration-report checker as a subprocess. Shared vectors are unchanged.
+
+All 18 intentional mutations were detected by named failures: unconditional CREATE in each
+adapter, omitted provisioning, premature version adoption, unsigned bookkeeping, omitted extra
+engines, unreadable metadata treated as empty, and a CI checker accepting skipped/empty reports.
+The exact sources were restored and both selected suites passed afterwards. The actual Python CI
+fragment was also executed with both engine DSNs removed; real pytest skips caused its refusal.
+Every native live-test file is included in the CI check for skipped tests.
+
+Wheel/sdist/npm archives passed inspection. Fresh wheel/npm consumers, with the tested driver
+versions, ran signed save/get and watermark checks on restricted logins in both databases without
+importing the source checkout. No registry publication or customer deployment was performed.
+This acceptance establishes the startup and bookkeeping behavior above; complete cutover role
+qualification and durable activation remain open.
