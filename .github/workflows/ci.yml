@@ -185,7 +185,7 @@ jobs:
       - name: Python peer for the live interoperability slice
         run: |
           python -m venv python/.venv
-          python/.venv/bin/pip install -e './python[postgres,clickhouse]'
+          python/.venv/bin/pip install -e './python[signed,postgres,clickhouse]'
 
       - name: types
         working-directory: typescript

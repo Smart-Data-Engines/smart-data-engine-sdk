@@ -68,6 +68,9 @@ Issues = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/issues"
 "Format contract" = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/format-contract.md"
 "Failure semantics" = "https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/failure-semantics.md"
 
+[project.scripts]
+sde-operator = "sde_operator.__main__:main"
+
 [project.optional-dependencies]
 signed = ["cryptography>=42"]
 postgres = ["psycopg[binary]>=3.1"]
@@ -84,7 +87,7 @@ path = "src/sde/__init__.py"
 # otherwise looks for a directory named after the project and fails - which it did, and better here
 # than at publish time.
 [tool.hatch.build.targets.wheel]
-packages = ["src/sde"]
+packages = ["src/sde", "src/sde_operator"]
 # `src/sde/py.typed` needs no entry here: hatchling includes it because it lives inside the package
 # directory, which was checked by building the wheel both ways rather than assumed. A `force-include`
 # for it was written first and then removed - dead configuration that looks load-bearing is worse than

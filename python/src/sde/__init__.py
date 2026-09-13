@@ -68,6 +68,7 @@ from .layout import (
     snake_case,
     stored_types,
 )
+from .local_cutover import CutoverReceipt, CutoverRecoveryRequired, LocalCutover, load_local_map
 from .migration import (
     BACKFILL_TABLE,
     CHUNK_ROWS,
@@ -150,6 +151,8 @@ __all__ = [
     "CopyFreshness",
     "Cost",
     "CutoverPlan",
+    "CutoverReceipt",
+    "CutoverRecoveryRequired",
     "DeclarationError",
     "DerivedLayout",
     "Difference",
@@ -169,6 +172,7 @@ __all__ = [
     "InspectionContext",
     "Int32",
     "Json",
+    "LocalCutover",
     "LogicalModel",
     "MapError",
     "MapRolledBack",
@@ -223,6 +227,7 @@ __all__ = [
     "infer_models",
     "internal_failures",
     "load_cutover_plan",
+    "load_local_map",
     "load_map",
     "load_or_create_salt",
     "members_of",
