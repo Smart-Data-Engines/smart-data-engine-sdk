@@ -79,3 +79,22 @@ local executor commits its corresponding decision.
 
 Shared `migration/079`–`098` cases pin the authorized shape and refusal boundaries. Their maps,
 requests, digests and OpenSSL signatures are built without importing the SDKs into the generator.
+
+
+## Acceptance on 13 September 2026
+
+Full suites passed with both native engines available: 935 Python tests, with only the 10 optional
+orderbook skips, and 433 TypeScript tests without skips. The shared suite has 201 vector directories
+and 214 cases in each runner. Twenty new packet vectors use explicit maps/requests/digests and
+OpenSSL signatures without importing an SDK into their generator. Nine per-language tests cover
+input/output snapshots, loader provenance, signed current-map mode, and canonical representation.
+
+All thirty intentional mutations were detected by named behavioral failures, including signature,
+project/request/current-map checks, version and generation order, unrelated routing/groups,
+physical layout, extra copies, base64 padding and copied-plan provenance. Exact sources were
+restored and both 223-case selected suites passed. Wheel/sdist/npm archives passed inspection;
+fresh wheel/npm consumers validated all twenty packet cases and decoded the signed candidates
+without importing the source checkout. No package was published or deployment performed.
+
+This acceptance covers the authorization packet. It does not claim durable executor, grant
+revocation, budget enforcement, controller reservation, activation, or recovery is implemented.
