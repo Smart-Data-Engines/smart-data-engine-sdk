@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
+from .capabilities import satisfies
 from .errors import MigrationRefused
 from .generation import Fencable, check_map_project
 from .groups import colocation_groups
 from .model import LogicalModel
 from .placement import PlacementMap
+from .watermark import WatermarkStore
 
 if TYPE_CHECKING:
     from .session import Engine
@@ -51,3 +53,9 @@ def prepare_schema(
                     cast(Fencable, engine).write_fence(table, project_id=local_project).prepare(
                         spot.write_epoch
                     )
+    if placement.signed:
+        # Prepare storage only. Recording this map here would activate a future watermark before
+        # the native generations are ready for runtime and could lock out the current map.
+        for name in sorted(engines):
+            if satisfies(engines[name], WatermarkStore):
+                cast(WatermarkStore, engines[name]).map_watermark()

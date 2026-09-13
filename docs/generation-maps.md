@@ -92,3 +92,8 @@ Locally built wheel/sdist/npm artifacts passed archive checks. Clean wheel and n
 loaded a contract-4 map, stamped source and fan-out rows, and returned logical fields. No registry
 publication or release-workflow run was performed. These checks do not replace the remaining
 cutover, stale-reader, recovery and workload-qualification gates.
+
+
+Signed-map provisioning also prepares the namespace's map bookkeeping on all supplied capable
+engines, without adopting the map version. See [restricted runtime credentials](runtime-roles.md)
+for the tested grants and the distinction between provisioning and runtime access.

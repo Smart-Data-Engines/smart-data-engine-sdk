@@ -457,13 +457,17 @@ class ClickHouseEngine:
         aggregate, so there are no duplicates to collapse and no reason to pay for `FINAL`.
         """
         try:
-            self._cx.command(
-                f"CREATE TABLE IF NOT EXISTS {_quote(WATERMARK_TABLE)} ("
-                f"{_quote('map_version')} Int64, "
-                f"{_quote('model_version')} String, "
-                f"{_quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3, 'UTC')) "
-                f"ENGINE = MergeTree ORDER BY ({_quote('map_version')})"
-            )
+            existing = self._cx.query(f"EXISTS TABLE {_quote(WATERMARK_TABLE)}").result_rows
+            if not existing or existing[0][0] not in (0, 1):
+                raise EngineError("watermark catalog lookup returned no presence result")
+            if existing[0][0] == 0:
+                self._cx.command(
+                    f"CREATE TABLE IF NOT EXISTS {_quote(WATERMARK_TABLE)} ("
+                    f"{_quote('map_version')} Int64, "
+                    f"{_quote('model_version')} String, "
+                    f"{_quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3, 'UTC')) "
+                    f"ENGINE = MergeTree ORDER BY ({_quote('map_version')})"
+                )
             result = self._cx.query(
                 f"SELECT max({_quote('map_version')}) FROM {_quote(WATERMARK_TABLE)}"
             )

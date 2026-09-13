@@ -103,6 +103,7 @@ pg-down:
 ch-up:
 	@docker start sde_test_ch 2>/dev/null || docker run -d --name sde_test_ch \
 		-e CLICKHOUSE_PASSWORD=sde -e CLICKHOUSE_DB=sde \
+		-e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
 		-p 127.0.0.1:$(CH_PORT):8123 clickhouse/clickhouse-server:24.8-alpine
 	@n=0; until curl -fs -o /dev/null http://127.0.0.1:$(CH_PORT)/ping; do \
 		n=$$((n+1)); \

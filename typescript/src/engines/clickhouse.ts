@@ -475,12 +475,19 @@ export class ClickHouseEngine {
 
   async mapWatermark(): Promise<number | null> {
     try {
-      await this.command(
-        `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
-          `${quote('map_version')} Int64, ${quote('model_version')} String, ` +
-          `${quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3)) ` +
-          `ENGINE = MergeTree ORDER BY (${quote('map_version')})`,
-      )
+      const existing = await this.query(`EXISTS TABLE ${quote(WATERMARK_TABLE)}`)
+      const present = Number(existing[0]?.['result'])
+      if (present !== 0 && present !== 1) {
+        throw new EngineError('watermark catalog lookup returned no presence result')
+      }
+      if (present === 0) {
+        await this.command(
+          `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
+            `${quote('map_version')} Int64, ${quote('model_version')} String, ` +
+            `${quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3)) ` +
+            `ENGINE = MergeTree ORDER BY (${quote('map_version')})`,
+        )
+      }
       const rows = await this.query(
         `SELECT max(${quote('map_version')}) AS high, count() AS n FROM ${quote(WATERMARK_TABLE)}`,
       )
