@@ -1,3 +1,4 @@
+import { loadCutoverPlan } from '../src/cutover.js'
 import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
 import { bindGenerationMetadata } from './_generation.js'
 import { WriteFence as NativeWriteFence, type ColumnState, type FenceState } from '../src/write-fence.js'
@@ -824,6 +825,10 @@ describe('migration vectors', () => {
         return
       }
       const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      if (existsSync(join(dir, 'cutover.json'))) {
+        driveCutoverVector(dir, model)
+        return
+      }
       const load: MigrationLoad = existsSync(join(dir, 'load.json'))
         ? readJson(join(dir, 'load.json'))
         : {}
@@ -1217,4 +1222,32 @@ async function driveFrozenVector(directory: string, model: LogicalModel, map: Pl
     }
   }
   expect(Object.values(engines)[0]!.recorded.calls).toEqual(readJson(join(directory, 'calls.json')))
+}
+
+
+function driveCutoverVector(dir: string, model: LogicalModel): void {
+  const raw = readJson<Record<string, unknown>>(join(dir, 'plan.json'))
+  const wanted = readJson<{ project_id: string; error?: string; match?: string; plan_fingerprint: string;
+    verified_with: string; source_epoch: number; maintenance_epoch: number; activation_epoch: number;
+    candidate_fingerprints: Record<'before' | 'success' | 'abort', string> }>(join(dir, 'cutover.json'))
+  const keys = readJson<Record<string, string>>(join(dir, 'keys.json'))
+  const publicKey = Object.fromEntries(Object.entries(keys).map(([name, value]) => [name, Buffer.from(value, 'base64')]))
+  const options = { model, projectId: wanted.project_id, publicKey }
+  if (wanted.error !== undefined) {
+    expect(() => loadCutoverPlan(raw, options)).toThrow(wanted.match)
+    return
+  }
+  const plan = loadCutoverPlan(raw, options)
+  expect(plan.fingerprint).toBe(wanted.plan_fingerprint)
+  expect(plan.verifiedWith).toBe(wanted.verified_with)
+  expect([plan.sourceEpoch, plan.maintenanceEpoch, plan.activationEpoch]).toEqual([
+    wanted.source_epoch, wanted.maintenance_epoch, wanted.activation_epoch,
+  ])
+  expect(plan.asRecord()).toEqual(raw)
+  plan.checkCurrent(plan.before)
+  for (const name of ['before', 'success', 'abort'] as const) expect(plan[name].fingerprint).toBe(wanted.candidate_fingerprints[name])
+  for (const outcome of ['success', 'abort'] as const) {
+    const candidate = loadMap(JSON.parse(Buffer.from(plan.candidatePayload(outcome)).toString('utf8')), { model, publicKey, requireSignature: true })
+    expect(candidate.fingerprint).toBe(wanted.candidate_fingerprints[outcome])
+  }
 }

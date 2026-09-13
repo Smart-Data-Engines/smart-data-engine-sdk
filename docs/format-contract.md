@@ -1469,3 +1469,12 @@ output, its signatures, and the fingerprint scheme remain unchanged.
 payload, plus a key-hint control. Their payload and signature are derived independently of the SDKs.
 `errors/050`–`051` cover invalid Unicode scalar text. [Map identifier compatibility](map-identifiers.md)
 describes the upgrade boundary.
+
+## 7g. Signed local cutover packet
+
+[The cutover packet protocol](cutover-packets.md) defines the exact version-1 envelope, signed map
+candidates, verification binding, scope checks and E/E+1/E+2 generation schedule. Its loader is a
+pure authorization boundary; it does not reserve versions, execute a migration or activate a map.
+`migration/079`–`098` pin the shared packet acceptance/refusal rules. Copying a parsed object does
+not copy loader provenance, and the current-map check includes signed admission mode as well as
+the canonical payload fingerprint.

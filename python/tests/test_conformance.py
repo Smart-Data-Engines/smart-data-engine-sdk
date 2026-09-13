@@ -430,6 +430,9 @@ def test_migration_vector(case: Path) -> None:
         _drive_write_fence_vector(case)
         return
     model = model_from_neutral(_read_json(case / "model.json"))
+    if (case / "cutover.json").is_file():
+        _drive_cutover_vector(case, model)
+        return
     placement = _placement_of(case, model)
     engines = engines_from(_read_json(case / "engines.json"))
     if (case / "generation.json").is_file():
@@ -978,3 +981,35 @@ def _drive_frozen_vector(
                     barrier.table, project_id=want["project_id"]
                 ).state().holds
     assert next(iter(engines.values())).recorded.as_list() == _read_json(case / "calls.json")
+
+
+def _drive_cutover_vector(case: Path, model: sde.LogicalModel) -> None:
+    raw = _read_json(case / "plan.json")
+    wanted = _read_json(case / "cutover.json")
+    keys = {name: b64decode(value) for name, value in _read_json(case / "keys.json").items()}
+    if "error" in wanted:
+        with pytest.raises(_ERRORS[wanted["error"]], match=re.escape(wanted["match"])):
+            sde.load_cutover_plan(
+                raw, model=model, project_id=wanted["project_id"], public_key=keys
+            )
+        return
+    plan = sde.load_cutover_plan(raw, model=model, project_id=wanted["project_id"], public_key=keys)
+    assert plan.fingerprint == wanted["plan_fingerprint"]
+    assert plan.verified_with == wanted["verified_with"]
+    assert (plan.source_epoch, plan.maintenance_epoch, plan.activation_epoch) == (
+        wanted["source_epoch"],
+        wanted["maintenance_epoch"],
+        wanted["activation_epoch"],
+    )
+    assert plan.as_record() == raw
+    plan.check_current(plan.before)
+    for name in ("before", "success", "abort"):
+        assert getattr(plan, name).fingerprint == wanted["candidate_fingerprints"][name]
+    for outcome in ("success", "abort"):
+        decoded = sde.load_map(
+            json.loads(plan.candidate_payload(outcome)),
+            model=model,
+            public_key=keys,
+            require_signature=True,
+        )
+        assert decoded.fingerprint == wanted["candidate_fingerprints"][outcome]
