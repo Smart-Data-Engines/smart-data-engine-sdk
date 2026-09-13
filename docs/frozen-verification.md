@@ -96,3 +96,24 @@ Shared cases `migration/071`–`078` pin ordering, retry, exact counts plus valu
 coverage and request identity. A recording native metadata fixture contributes DDL/drain events to
 the same call trace as data reads. Live tests independently exercise both SQL engines, different
 maintenance generations, released barriers and extra/changed target rows.
+
+## Acceptance on 13 September 2026
+
+The full SDK suites passed with PostgreSQL and ClickHouse available: 864 Python tests, with only
+10 optional orderbook tests skipped, and 370 TypeScript tests with no skips. The shared suite has
+173 vector directories; each runner executes 186 cases. Eight new frozen-comparison vectors use
+explicit expected records and combined metadata/data traces, without importing either SDK into
+the fixture generator.
+
+All 23 intentional mutations were detected by named behavioral failures, including count/value
+checks, native freeze and repeated drain, post-comparison identity/hold checks, preflight request,
+epoch and retired-id checks, and TypeScript request capture across asynchronous metadata calls.
+A surviving extra-epoch mutation exposed a missing negative fixture; case 078 now covers it.
+Sources were restored byte-for-byte and both selected suites passed after restoration.
+
+Wheel, sdist and npm archives passed the artifact checker. Fresh wheel/npm installations executed
+the exported operator context and frozen comparison against a local metadata fixture without
+importing the SDK source checkout. Native behavior is exercised separately by the live tests.
+No registry publication was performed. This acceptance covers the comparison primitive; cutover
+activation, durable executor recovery, runtime role qualification and pause-budget enforcement
+remain separate work.
