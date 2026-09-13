@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -545,6 +546,24 @@ def load_map(
     return placement
 
 
+def _require_canonical_text(value: Any) -> None:
+    """Reject ambiguous identifiers; normalizing here could silently choose another SQL object."""
+    if isinstance(value, str):
+        if value != unicodedata.normalize("NFC", value) or any(
+            0xD800 <= ord(char) <= 0xDFFF for char in value
+        ):
+            raise MapError(
+                "placement map payload strings and member names must be Unicode scalar text in NFC"
+            )
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            _require_canonical_text(key)
+            _require_canonical_text(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _require_canonical_text(child)
+
+
 def _parse_map(
     raw: Mapping[str, Any],
     *,
@@ -580,6 +599,11 @@ def _parse_map(
             f"this map declares format contract {contract} and the oldest this library still "
             f"reads is {MAP_CONTRACT_FLOOR}."
         )
+
+    # Signatures/fingerprints normalize text, whereas database identifiers preserve its bytes.
+    # The instruction payload must already have the canonical spelling. The signature block is
+    # excluded: its key_id is an unauthenticated hint and cannot change the selected instruction.
+    _require_canonical_text({key: value for key, value in raw.items() if key != "signature"})
 
     project_id = raw.get("project_id") if contract >= 4 else None
     if contract >= 4 and (
