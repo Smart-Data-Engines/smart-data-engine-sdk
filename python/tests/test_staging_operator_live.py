@@ -510,6 +510,7 @@ def test_staging_recovery_refuses_changed_native_objects_before_publication(
         elif changed == "watermark":
             native.command("DROP TABLE " + native.quote("sde_map_state"))
             roles[target].operator.map_watermark()
+            roles[target].grant("sde_map_state")
         else:
             marker = NativeStaging(native).marker(table)[1]
             native.command("DROP TABLE " + native.quote(table))
@@ -519,6 +520,8 @@ def test_staging_recovery_refuses_changed_native_objects_before_publication(
                 )
             else:
                 roles[source].operator.ensure_schema(layout, keys={"Event": ["id"]})
+                roles[source].operator.write_fence(table, project_id=PROJECT).prepare(1)
+                roles[source].grant(table)
         operator._after_step = lambda _step: None
         with pytest.raises(sde.CutoverRecoveryRequired) as refused:
             operator.resume()
