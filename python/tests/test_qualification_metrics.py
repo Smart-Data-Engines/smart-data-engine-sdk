@@ -109,3 +109,60 @@ def test_analysis_does_not_rewrite_worker_measurements() -> None:
     before = deepcopy(raw)
     analyze(raw, [], ORIGIN, ORIGIN + 10_000_000_000)
     assert raw == before
+
+
+def test_a_success_gap_cannot_be_hidden_by_resetting_the_reported_schedule() -> None:
+    raw = report()
+    after = report()
+    for sample in after["samples"]:
+        sample["start_ns"] = str(int(sample["start_ns"]) + 70_000_000_000)
+        if "scheduled_ns" in sample:
+            sample["scheduled_ns"] = str(int(sample["scheduled_ns"]) + 70_000_000_000)
+    raw["samples"].extend(after["samples"])
+    events = [
+        {
+            "action": "execute",
+            "start_ns": str(ORIGIN + 10_000_000_000),
+            "end_ns": str(ORIGIN + 70_000_000_000),
+        }
+    ]
+    with pytest.raises(AssertionError, match="success gap"):
+        analyze(raw, events, ORIGIN, ORIGIN + 80_000_000_000)
+
+
+def test_accumulated_request_latency_is_checked_even_with_regular_completions() -> None:
+    raw = report(50)
+    for number in range(500):
+        raw["samples"].append(
+            {
+                "op": "save",
+                "ok": True,
+                "scheduled_ns": str(ORIGIN + 5_000_000_000 + number * 100_000_000),
+                "start_ns": str(ORIGIN + 5_000_000_000 + number * 200_000_000),
+                "duration_ns": 200_000_000,
+            }
+        )
+    after = report(50)
+    for sample in after["samples"]:
+        sample["start_ns"] = str(int(sample["start_ns"]) + 110_000_000_000)
+        if "scheduled_ns" in sample:
+            sample["scheduled_ns"] = str(int(sample["scheduled_ns"]) + 110_000_000_000)
+    raw["samples"].extend(after["samples"])
+    events = [
+        {
+            "action": "execute",
+            "start_ns": str(ORIGIN + 5_000_000_000),
+            "end_ns": str(ORIGIN + 105_000_000_000),
+        }
+    ]
+    with pytest.raises(AssertionError, match="response"):
+        analyze(raw, events, ORIGIN, ORIGIN + 115_000_000_000)
+
+
+def test_slow_steady_reads_do_not_disappear_behind_fast_writes() -> None:
+    raw = report()
+    for sample in raw["samples"]:
+        if sample["op"] == "get":
+            sample["duration_ns"] = 300_000_000
+    with pytest.raises(AssertionError, match="p99"):
+        analyze(raw, [], ORIGIN, ORIGIN + 10_000_000_000)
