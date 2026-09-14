@@ -1,0 +1,12 @@
+{
+  "kind": "plan",
+  "columns": {
+    "id": "float64"
+  },
+  "key": [
+    "id"
+  ],
+  "options": {
+    "paginate": false
+  }
+}

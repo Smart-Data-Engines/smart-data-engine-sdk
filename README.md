@@ -192,7 +192,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **235 of them, in nine families** — that every
+And [`conformance/`](conformance/) holds the vectors — **258 of them, in ten families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 
@@ -322,3 +322,6 @@ Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 Batch operations: [logical bulk writes](docs/bulk-writes.md) document `save_many` / `saveMany`,
 bounds, source/copy ordering and uncertain outcomes.
+
+[Logical reads and exact summaries](docs/logical-reads.md) cover scan, count and summarize,
+including portable keyset pages, typed values and explicit failure semantics.

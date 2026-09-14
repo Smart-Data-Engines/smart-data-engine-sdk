@@ -1,0 +1,15 @@
+{
+  "filters": [],
+  "order": [
+    "a",
+    "b",
+    "c"
+  ],
+  "descending": false,
+  "after": [
+    "1",
+    "2",
+    "3"
+  ],
+  "limit": 100
+}

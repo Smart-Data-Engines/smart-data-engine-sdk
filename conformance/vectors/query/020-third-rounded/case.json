@@ -1,0 +1,12 @@
+{
+  "kind": "summary",
+  "type": "int64",
+  "mean_scale": 6,
+  "record": {
+    "sde_count": "3",
+    "sde_present": "3",
+    "sde_min": "0",
+    "sde_max": "2",
+    "sde_total": "2"
+  }
+}

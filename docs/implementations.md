@@ -125,3 +125,7 @@ six defects in the two libraries above and the second found ten. Publishing eith
 support claim we cannot keep, and a fourth and fifth implementation to hold in sync with every
 contract change. What they produced is written down in
 [`implementing.md`](implementing.md#the-measurement).
+
+Both Tier 2 implementations provide [logical reads and exact summaries](logical-reads.md),
+with the shared `query/` family and native PostgreSQL/ClickHouse tests. These APIs preserve
+existing migration checkpoint ordering and require a declared complete page key.

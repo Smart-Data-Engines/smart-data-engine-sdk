@@ -68,6 +68,7 @@ from ..explain import (
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
+from ..query import ReadColumn, ReadPlan, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
 from ..write_fence import WriteFence
 from ._write_fences import ClickHouseFences
@@ -601,6 +602,61 @@ class ClickHouseEngine:
             raise EngineError(
                 f"recording a map version in {WATERMARK_TABLE} failed: {exc}"
             ) from exc
+
+    @guarded
+    def select_rows(self, table: str, plan: ReadPlan) -> list[dict[str, Any]]:
+        parameters: dict[str, Any] = {}
+        def parameter(value: Any) -> str:
+            return _query_parameter(f"read_{len(parameters)}", value, parameters)
+        statement = read_sql(table, plan, dialect=self.dialect, parameter=parameter)
+        try:
+            result = self._cx.query(statement, parameters=parameters)
+            rows = [_row(result.column_names, result.column_types, row)
+                    for row in result.result_rows]
+            for row in rows:
+                for column in plan.columns:
+                    value = row[column.name]
+                    if value is not None and column.type in ("timestamp", "timestamptz"):
+                        instant = (
+                            value.replace(tzinfo=_dt.UTC)
+                            if value.tzinfo is None else value.astimezone(_dt.UTC)
+                        )
+                        row[column.name] = (
+                            instant.replace(tzinfo=None) if column.type == "timestamp" else instant
+                        )
+            return rows
+        except Exception as exc:
+            raise EngineError(f"logical scan of {table} failed: {exc}") from exc
+
+    @guarded
+    def count_rows(self, table: str, plan: ReadPlan) -> int:
+        parameters: dict[str, Any] = {}
+        def parameter(value: Any) -> str:
+            return _query_parameter(f"read_{len(parameters)}", value, parameters)
+        statement = read_sql(table, plan, dialect=self.dialect, parameter=parameter, count=True)
+        try:
+            result = self._cx.query(statement, parameters=parameters)
+            if not result.result_rows:
+                raise EngineError("count query returned no result")
+            return int(result.result_rows[0][0])
+        except Exception as exc:
+            raise EngineError(f"logical count of {table} failed: {exc}") from exc
+
+    @guarded
+    def summarize_rows(
+        self, table: str, plan: ReadPlan, column: ReadColumn,
+    ) -> Mapping[str, Any]:
+        parameters: dict[str, Any] = {}
+        def parameter(value: Any) -> str:
+            return _query_parameter(f"read_{len(parameters)}", value, parameters)
+        statement = summary_sql(table, plan, column, dialect=self.dialect, parameter=parameter)
+        try:
+            result = self._cx.query(statement, parameters=parameters)
+            if not result.result_rows:
+                raise EngineError("summary query returned no result")
+            return dict(zip(result.column_names, result.result_rows[0], strict=True))
+        except Exception as exc:
+            raise EngineError(f"logical summary of {table} failed: {exc}") from exc
 
     @guarded
     def range(

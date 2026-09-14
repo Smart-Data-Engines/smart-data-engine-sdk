@@ -463,6 +463,15 @@ def default_layout(
             for column, neutral_type in neutral[entity_name].items()
         }
 
+        if dialect == "clickhouse":
+            spec = model.entity(entity_name)
+            # Keys remain non-nullable, as in PostgreSQL's PRIMARY KEY. Other optional fields
+            # must not lose their nullability when a neutral declaration becomes native DDL.
+            for declared in spec.fields:
+                if declared.nullable and declared.name not in spec.key:
+                    native_type = columns[entity_name][declared.name]
+                    columns[entity_name][declared.name] = f"Nullable({native_type})"
+
         # One index, and only because a foreign key without one turns every relation walk into a
         # sequential scan. Anything beyond this is a planner decision with a cost attached, and the
         # library has no business guessing at it.

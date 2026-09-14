@@ -1,0 +1,21 @@
+{
+  "kind": "plan",
+  "columns": {
+    "id": "int64",
+    "label": "string",
+    "at": "timestamptz",
+    "amount": "decimal(12,2)"
+  },
+  "key": [
+    "id"
+  ],
+  "options": {
+    "order_by": "label",
+    "descending": true,
+    "after": {
+      "label": null,
+      "id": 7
+    },
+    "limit": 1
+  }
+}

@@ -125,3 +125,6 @@ Loaded placement maps are immutable; load a new document when their layout or ro
 
 Batch operations: [logical bulk writes](../docs/bulk-writes.md) document `save_many` / `saveMany`,
 bounds, source/copy ordering and uncertain outcomes.
+
+[Logical reads and exact summaries](../docs/logical-reads.md) cover scan, count and summarize,
+including portable keyset pages, typed values and explicit failure semantics.

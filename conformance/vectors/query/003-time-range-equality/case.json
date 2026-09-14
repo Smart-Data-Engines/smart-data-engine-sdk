@@ -1,0 +1,24 @@
+{
+  "kind": "plan",
+  "columns": {
+    "id": "int64",
+    "label": "string",
+    "at": "timestamptz",
+    "amount": "decimal(12,2)"
+  },
+  "key": [
+    "id"
+  ],
+  "options": {
+    "where": {
+      "label": "é"
+    },
+    "bounds": {
+      "field": "at",
+      "low": "2026-09-14T12:00:00.123456+02:00",
+      "high": "2026-09-14T10:00:00.123457Z"
+    },
+    "order_by": "at",
+    "limit": 2
+  }
+}

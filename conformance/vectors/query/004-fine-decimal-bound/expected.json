@@ -1,0 +1,16 @@
+{
+  "filters": [
+    {
+      "field": "amount",
+      "type": "decimal(12,2)",
+      "op": "ge",
+      "value": "123456.005"
+    }
+  ],
+  "order": [
+    "id"
+  ],
+  "descending": false,
+  "after": null,
+  "limit": 100
+}

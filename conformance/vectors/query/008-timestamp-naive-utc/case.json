@@ -1,0 +1,14 @@
+{
+  "kind": "plan",
+  "columns": {
+    "at": "timestamp"
+  },
+  "key": [
+    "at"
+  ],
+  "options": {
+    "after": {
+      "at": "1965-09-14T12:00:00.123456+02:00"
+    }
+  }
+}

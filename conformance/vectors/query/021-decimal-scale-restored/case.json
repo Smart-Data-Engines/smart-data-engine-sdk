@@ -1,0 +1,12 @@
+{
+  "kind": "summary",
+  "type": "decimal(12,2)",
+  "mean_scale": 3,
+  "record": {
+    "sde_count": "2",
+    "sde_present": "2",
+    "sde_min": "3.25",
+    "sde_max": "5.25",
+    "sde_total": "8.5"
+  }
+}
