@@ -255,3 +255,35 @@ def test_clickhouse_lost_response_does_not_replay_an_accepted_insert(
         # FINAL would collapse the duplicate and hide the very defect this test measures.
         assert role.operator._cx.query(f"SELECT count() FROM {table}").result_rows[0][0] == 1
         assert role.operator.get(table, {"id": 1}) == values
+
+
+@pytest.mark.parametrize("guarded", ["clickhouse"], indirect=True)
+def test_drain_binds_the_exact_native_identity_as_uuid(
+    guarded: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from uuid import UUID
+
+    engine, table, fence = guarded
+    native_identity = str(
+        engine._cx.query(
+            "SELECT uuid FROM system.tables WHERE database=currentDatabase() AND name=%(table)s",
+            parameters={"table": table},
+        ).result_rows[0][0]
+    )
+    insert = engine._cx.insert
+    seen: list[str] = []
+
+    def check_uuid(name: str, data: Any, **options: Any) -> Any:
+        columns = options.get("column_names", [])
+        if "table_uuid" in columns:
+            value = data[0][columns.index("table_uuid")]
+            # clickhouse-connect 0.7.0 accepts UUID objects, but rejects hyphenated UUID text.
+            assert isinstance(value, UUID)
+            assert str(value) == native_identity
+            seen.append(str(value))
+        return insert(name, data, **options)
+
+    monkeypatch.setattr(engine._cx, "insert", check_uuid)
+    assert fence.prepare(1).epoch == 1
+    assert seen == [native_identity]

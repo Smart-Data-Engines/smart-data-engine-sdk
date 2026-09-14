@@ -102,3 +102,7 @@ bytes have not changed. Shared `migration/122`–`132` vectors pin call order, t
 failures and exact value-free metric bytes. Native tests cover both engines and languages,
 1000-row values with adjacent microseconds, generation changes, source/copy execution, PostgreSQL
 statement count, conflicts and rollback, and the controlled lost-response regression.
+
+The declared clickhouse-connect floor is exercised as well as the current driver. The floor
+requires native UUID objects when writing the fence-drain identity; the adapter binds that exact
+identity as UUID instead of relying on a newer driver's acceptance of hyphenated text.
