@@ -78,7 +78,7 @@ def runtime_roles(dialect: str) -> Iterator[Roles]:
         from psycopg.conninfo import make_conninfo
 
         with PostgresEngine(dsn) as operator:
-            runtime = None
+            runtime: Any = None
             created = False
             try:
                 operator._cx.execute(
