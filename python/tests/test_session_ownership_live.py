@@ -324,6 +324,9 @@ def test_begin_cannot_race_a_native_operation_already_waiting_on_the_server(shar
 
     first, other, role = shared
     pid = role.runtime._cx.info.backend_pid
+    # A deliberately removed admission guard must fail this test, not wait forever behind
+    # the fixture's table lock while the fixture waits for BEGIN to return.
+    role.runtime._cx.execute("SET lock_timeout = '2s'")
     results: list[Any] = []
 
     def read() -> None:
