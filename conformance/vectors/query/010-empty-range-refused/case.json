@@ -1,0 +1,17 @@
+{
+  "kind": "plan",
+  "columns": {
+    "id": "int64",
+    "label": "string",
+    "at": "timestamptz",
+    "amount": "decimal(12,2)"
+  },
+  "key": [
+    "id"
+  ],
+  "options": {
+    "bounds": {
+      "field": "at"
+    }
+  }
+}

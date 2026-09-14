@@ -447,3 +447,12 @@ The optional [signed cutover packet](cutover-packets.md) is an authorization env
 map and verification contracts. Its current-map check preserves signed admission mode, not only
 the payload fingerprint. `migration/079`–`098` exercise both accepted packets and named refusals;
 implementing this decoder does not imply a durable local executor is available.
+
+
+**12. Logical reads and exact summaries (Tier 2). Vectors: `query/`.**
+
+Tier 2 implementations offering the logical read API run the `query/` family in addition to
+schema/migration vectors. It pins normalized filters, typed positions, bounds and exact decimal
+summary results. Native tests must separately execute the generated SQL against each supported
+engine; a normalized plan alone does not prove ordering, null handling or arithmetic in that engine.
+The query family does not change the model/map bytes or migration checkpoint ordering.

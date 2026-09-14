@@ -39,6 +39,19 @@ from .logging import log
 from .migration import precision_refusal
 from .model import LogicalModel
 from .placement import Materialization, PlacementMap
+from .query import (
+    NumericSummary,
+    QueryRefused,
+    Range,
+    ReadColumn,
+    ReadPlan,
+    ScanPage,
+    numeric_summary,
+    plan_read,
+    query_engine,
+    summary_engine,
+    summary_scale,
+)
 from .routing import Router
 from .shapes import OperationShape, enumerate_shapes
 from .telemetry import Recorder
@@ -596,6 +609,170 @@ class Session:
         finally:
             self._observe(shape, started, rows=0 if row is None else 1, failed=failed)
         return self._fields_out(entity, logical_row(self._placement, row))
+
+    def _prepare_read(
+        self, entity: str, *, where: Mapping[str, Any] | None, bounds: Range | None,
+        order_by: str | None = None, descending: bool = False,
+        after: Mapping[str, Any] | None = None, limit: int = 100, paginate: bool = True,
+    ) -> tuple[str, ReadPlan]:
+        if not isinstance(entity, str):
+            raise QueryRefused("a query needs a logical entity name")
+        try:
+            target = self._entity(entity)
+            spec = self._model.entity(target)
+        except (KeyError, ModelPlanningError):
+            raise QueryRefused("query refers to an entity this model does not declare") from None
+
+        def translated(values: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+            if values is None:
+                return None
+            if not isinstance(values, Mapping) or any(not isinstance(name, str) for name in values):
+                raise QueryRefused("query arguments must map logical field names to values")
+            try:
+                return self._fields_in(entity, values)
+            except ModelPlanningError as exc:
+                raise QueryRefused(str(exc)) from exc
+
+        def field(name: str) -> str:
+            if not isinstance(name, str):
+                raise QueryRefused("query fields must be logical field names")
+            mapped = translated({name: None})
+            assert mapped is not None
+            return next(iter(mapped))
+
+        if bounds is not None:
+            if not isinstance(bounds, Range):
+                raise QueryRefused("bounds must be a Range")
+            bounds = Range(field(bounds.field), bounds.low, bounds.high)
+        columns = group_columns(self._model, self.group_of(entity))[target]
+        plan = plan_read(
+            tuple(ReadColumn(name, kind) for name, kind in sorted(columns.items())), spec.key,
+            where=translated(where), bounds=bounds,
+            order_by=None if order_by is None else field(order_by), descending=descending,
+            after=translated(after), limit=limit, paginate=paginate,
+        )
+        return target, plan
+
+    @staticmethod
+    def _read_projection(
+        material: Materialization, entity: str, plan: ReadPlan, *, count: bool,
+    ) -> None:
+        required = {predicate.column.name for predicate in plan.filters}
+        if not count:
+            required.update(column.name for column in plan.columns)
+        available = set(material.layout.columns.get(entity, {}))
+        if not required <= available:
+            raise QueryRefused(
+                "the routed materialization does not contain every field this query needs; "
+                "request fresh=True to read the source or have the placement revised"
+            )
+
+    @session_call
+    def scan(
+        self, entity: str, *, where: Mapping[str, Any] | None = None,
+        bounds: Range | None = None, order_by: str | None = None, descending: bool = False,
+        after: Mapping[str, Any] | None = None, limit: int = 100, fresh: bool = False,
+    ) -> ScanPage:
+        """Read one bounded page in logical order, independently of migration checkpoints."""
+        if not isinstance(fresh, bool):
+            raise QueryRefused("fresh must be a bool")
+        target, plan = self._prepare_read(
+            entity, where=where, bounds=bounds, order_by=order_by, descending=descending,
+            after=after, limit=limit,
+        )
+        if bounds is None:
+            shape = self._shape(target, "full_scan")
+        else:
+            ranged = next(item for item in plan.filters if item.operation in ("ge", "lt"))
+            shape = self._shape(target, "range_read", (ranged.column.name,))
+        engine, material = self._target(shape, fresh=fresh)
+        self._read_projection(material, target, plan, count=False)
+        reader = query_engine(engine)
+        table = material.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed, returned = False, 0
+        try:
+            rows = reader.select_rows(table, plan)
+            self._session_usage.check()
+            visible = rows[:plan.limit]
+            position = None
+            if len(rows) > plan.limit:
+                position = self._fields_out(
+                    entity, {column.name: visible[-1][column.name] for column in plan.order}
+                )
+                position = MappingProxyType(snapshot_rows([position])[0])
+            result = tuple(self._fields_out(entity, row) for row in visible)
+            returned = len(result)
+            return ScanPage(result, position)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=returned, failed=failed)
+
+    @session_call
+    def count(
+        self, entity: str, *, where: Mapping[str, Any] | None = None,
+        bounds: Range | None = None, fresh: bool = False,
+    ) -> int:
+        """Count matching rows in the engine. The count value itself is never telemetry."""
+        if not isinstance(fresh, bool):
+            raise QueryRefused("fresh must be a bool")
+        target, plan = self._prepare_read(entity, where=where, bounds=bounds, paginate=False)
+        shape = self._shape(target, "aggregate")
+        engine, material = self._target(shape, fresh=fresh)
+        self._read_projection(material, target, plan, count=True)
+        reader = query_engine(engine)
+        table = material.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        try:
+            result = reader.count_rows(table, plan)
+            self._session_usage.check()
+            return result
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=0 if failed else 1, failed=failed)
+
+    @session_call
+    def summarize(
+        self, entity: str, field: str, *, where: Mapping[str, Any] | None = None,
+        bounds: Range | None = None, mean_scale: int = 6, fresh: bool = False,
+    ) -> NumericSummary:
+        """Exact integer/decimal statistics; half-even mean at an explicit decimal scale."""
+        if not isinstance(fresh, bool):
+            raise QueryRefused("fresh must be a bool")
+        target, plan = self._prepare_read(entity, where=where, bounds=bounds, paginate=False)
+        if not isinstance(field, str):
+            raise QueryRefused("a summary needs a logical field name")
+        try:
+            name = next(iter(self._fields_in(entity, {field: None})))
+        except ModelPlanningError as exc:
+            raise QueryRefused(str(exc)) from exc
+        column = next((item for item in plan.columns if item.name == name), None)
+        if column is None:
+            raise QueryRefused("summary refers to a field this entity does not declare")
+        summary_scale(column, mean_scale)
+        shape = self._shape(target, "aggregate")
+        engine, material = self._target(shape, fresh=fresh)
+        self._read_projection(material, target, plan, count=True)
+        if name not in material.layout.columns.get(target, {}):
+            raise QueryRefused("the routed materialization does not contain the summary field")
+        reader = summary_engine(engine)
+        table = material.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        try:
+            raw = reader.summarize_rows(table, plan, column)
+            self._session_usage.check()
+            return numeric_summary(raw, column, mean_scale)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=0 if failed else 1, failed=failed)
 
     def _observe(self, shape: OperationShape, started: int, *, rows: int, failed: bool) -> None:
         """Hand one observation to the recorder, if there is one.

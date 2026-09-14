@@ -33,6 +33,7 @@ from ..explain import (
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
+from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
 from ..write_fence import WriteFence
 from ._write_fences import PostgresFences
@@ -501,6 +502,59 @@ class PostgresEngine:
             raise EngineError(
                 f"recording a map version in {WATERMARK_TABLE} failed: {exc}"
             ) from exc
+
+    @guarded
+    def select_rows(self, table: str, plan: ReadPlan) -> list[dict[str, Any]]:
+        params: list[Any] = []
+        def parameter(value: Any) -> str:
+            params.append(value)
+            return "%s"
+        statement = read_sql(table, plan, dialect=self.dialect, parameter=parameter)
+        try:
+            with self._cx.cursor() as cursor:
+                cursor.execute(statement, params)
+                names = [column.name for column in cursor.description or ()]
+                return [read_row(plan.columns, dict(zip(names, row, strict=True)))
+                        for row in cursor.fetchall()]
+        except Exception as exc:
+            raise EngineError(f"logical scan of {table} failed: {self._explain(exc)}") from exc
+
+    @guarded
+    def count_rows(self, table: str, plan: ReadPlan) -> int:
+        params: list[Any] = []
+        def parameter(value: Any) -> str:
+            params.append(value)
+            return "%s"
+        statement = read_sql(table, plan, dialect=self.dialect, parameter=parameter, count=True)
+        try:
+            with self._cx.cursor() as cursor:
+                cursor.execute(statement, params)
+                row = cursor.fetchone()
+                if row is None:
+                    raise EngineError("count query returned no result")
+                return int(row[0])
+        except Exception as exc:
+            raise EngineError(f"logical count of {table} failed: {self._explain(exc)}") from exc
+
+    @guarded
+    def summarize_rows(
+        self, table: str, plan: ReadPlan, column: ReadColumn,
+    ) -> Mapping[str, Any]:
+        params: list[Any] = []
+        def parameter(value: Any) -> str:
+            params.append(value)
+            return "%s"
+        statement = summary_sql(table, plan, column, dialect=self.dialect, parameter=parameter)
+        try:
+            with self._cx.cursor() as cursor:
+                cursor.execute(statement, params)
+                names = [item.name for item in cursor.description or ()]
+                row = cursor.fetchone()
+                if row is None:
+                    raise EngineError("summary query returned no result")
+                return dict(zip(names, row, strict=True))
+        except Exception as exc:
+            raise EngineError(f"logical summary of {table} failed: {self._explain(exc)}") from exc
 
     @guarded
     def range(

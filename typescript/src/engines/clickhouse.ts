@@ -47,6 +47,7 @@ import { request as httpsRequest } from 'node:https'
 
 import { compareCodePoints } from '../canonical.js'
 import { batchColumns } from '../bulk.js'
+import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
@@ -493,6 +494,45 @@ export class ClickHouseEngine {
         throw new EngineError(`select from ${table} failed: ${message(error)}`)
       }
 
+    })
+  }
+
+  async selectRows(table: string, plan: ReadPlan): Promise<Row[]> {
+    return this.usage.operation(async () => {
+      const statement = readSql(table, plan, this.dialect, literal)
+      try {
+        const rows = await this.query(statement)
+        for (const row of rows) for (const column of plan.columns) {
+          const value = row[column.name]
+          if (value !== null && ['float32', 'float64'].includes(column.type)) {
+            const text = String(value).toLowerCase()
+            row[column.name] = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+          }
+        }
+        return rows.map(row => readRow(plan.columns, row))
+      } catch (error) { throw new EngineError('logical scan of ' + table + ' failed: ' + message(error)) }
+    })
+  }
+
+  async countRows(table: string, plan: ReadPlan): Promise<bigint> {
+    return this.usage.operation(async () => {
+      const statement = readSql(table, plan, this.dialect, literal, true)
+      try {
+        const row = (await this.query(statement))[0]
+        if (row === undefined || typeof row['sde_count'] !== 'string') throw new EngineError('count query returned no exact result')
+        return BigInt(row['sde_count'])
+      } catch (error) { throw new EngineError('logical count of ' + table + ' failed: ' + message(error)) }
+    })
+  }
+
+  async summarizeRows(table: string, plan: ReadPlan, column: ReadColumn): Promise<Readonly<Row>> {
+    return this.usage.operation(async () => {
+      const statement = summarySql(table, plan, column, this.dialect, literal)
+      try {
+        const row = (await this.query(statement))[0]
+        if (row === undefined) throw new EngineError('summary query returned no result')
+        return row
+      } catch (error) { throw new EngineError('logical summary of ' + table + ' failed: ' + message(error)) }
     })
   }
 

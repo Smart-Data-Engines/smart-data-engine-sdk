@@ -1256,7 +1256,7 @@ languages or the word is worthless.
 |---|---|---|
 | 0 | model → IR → version; shape enumeration and ids; map parsing, signature, refusals; routing; error semantics | `model/`, `routing/`, `errors/` |
 | 1 | telemetry: measurement, window aggregation, local buffering | `telemetry/` |
-| 2 | schema creation, and participation in migration (dual write) | `schema/`, `migration/` |
+| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write) | `schema/`, `migration/`, `query/` |
 | 3 | ergonomics: framework integrations, async variants, pooling | — |
 
 Tier 0 is not optional. An implementation that does not pass the Tier 0 vectors is not an SDE
@@ -1271,11 +1271,12 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are nine kinds:
+There are ten kinds:
 
 | Kind | What it pins |
 |---|---|
 | `model/` | a neutral declaration, and the exact IR bytes, version, groups and shapes it must produce |
+| `query/` | normalized bounded read plans and exact numeric-summary output bytes; query values remain local |
 | `routing/` | a map plus cases: `(shape, in a write transaction?, needs freshness?)` to materialisation |
 | `errors/` | which error, and at what stage it must be raised — `model`, `map` or `session` |
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |

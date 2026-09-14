@@ -31,6 +31,7 @@
 
 import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
+import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
@@ -508,6 +509,42 @@ export class PostgresEngine {
         throw new EngineError(`select from ${table} failed: ${this.explain(error)}`)
       }
 
+    })
+  }
+
+  async selectRows(table: string, plan: ReadPlan): Promise<Row[]> {
+    return this.usage.operation(async () => {
+      const params: unknown[] = []
+      const parameter = (value: unknown) => { params.push(value); return '$' + params.length }
+      const statement = readSql(table, plan, this.dialect, parameter)
+      try { return this.rowsOf(await this.run(statement, params)).map(row => readRow(plan.columns, row)) }
+      catch (error) { throw new EngineError('logical scan of ' + table + ' failed: ' + this.explain(error)) }
+    })
+  }
+
+  async countRows(table: string, plan: ReadPlan): Promise<bigint> {
+    return this.usage.operation(async () => {
+      const params: unknown[] = []
+      const parameter = (value: unknown) => { params.push(value); return '$' + params.length }
+      const statement = readSql(table, plan, this.dialect, parameter, true)
+      try {
+        const row = (await this.run(statement, params)).rows[0]
+        if (row === undefined || typeof row['sde_count'] !== 'string') throw new EngineError('count query returned no exact result')
+        return BigInt(row['sde_count'])
+      } catch (error) { throw new EngineError('logical count of ' + table + ' failed: ' + this.explain(error)) }
+    })
+  }
+
+  async summarizeRows(table: string, plan: ReadPlan, column: ReadColumn): Promise<Readonly<Row>> {
+    return this.usage.operation(async () => {
+      const params: unknown[] = []
+      const parameter = (value: unknown) => { params.push(value); return '$' + params.length }
+      const statement = summarySql(table, plan, column, this.dialect, parameter)
+      try {
+        const row = (await this.run(statement, params)).rows[0]
+        if (row === undefined) throw new EngineError('summary query returned no result')
+        return row
+      } catch (error) { throw new EngineError('logical summary of ' + table + ' failed: ' + this.explain(error)) }
     })
   }
 

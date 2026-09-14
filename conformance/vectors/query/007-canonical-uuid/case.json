@@ -1,0 +1,14 @@
+{
+  "kind": "plan",
+  "columns": {
+    "id": "uuid"
+  },
+  "key": [
+    "id"
+  ],
+  "options": {
+    "after": {
+      "id": "FFFFFFFF-FFFF-FFFF-0000-000000000000"
+    }
+  }
+}

@@ -134,3 +134,6 @@ or copying an object with its old fingerprint.
 
 Batch operations: [logical bulk writes](../docs/bulk-writes.md) document `save_many` / `saveMany`,
 bounds, source/copy ordering and uncertain outcomes.
+
+[Logical reads and exact summaries](../docs/logical-reads.md) cover scan, count and summarize,
+including portable keyset pages, typed values and explicit failure semantics.

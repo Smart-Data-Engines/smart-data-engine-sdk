@@ -100,6 +100,15 @@ from .placement import (
     load_map,
 )
 from .provisioning import prepare_schema
+from .query import (
+    MAX_PAGE_ROWS,
+    NumericSummary,
+    Queryable,
+    QueryRefused,
+    Range,
+    ScanPage,
+    Summarizable,
+)
 from .routing import Router, resolve
 from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
 from .session import Engine, ManagedEngine, Session
@@ -148,6 +157,7 @@ __all__ = [
     "MAP_CONTRACT_FLOOR",
     "MAX_BATCH_ROWS",
     "MAX_BATCH_VALUES",
+    "MAX_PAGE_ROWS",
     "MEASURED_FIELDS",
     "ORDERBOOK_KEY",
     "ORDERBOOK_SHAPE",
@@ -199,6 +209,7 @@ __all__ = [
     "ModelPlanningError",
     "NameMap",
     "Note",
+    "NumericSummary",
     "OperationShape",
     "PhysicalLayout",
     "PlacementMap",
@@ -206,16 +217,21 @@ __all__ = [
     "Protection",
     "QueryPlan",
     "QueryPlanRefused",
+    "QueryRefused",
+    "Queryable",
+    "Range",
     "Recorder",
     "Ref",
     "ResourceBusy",
     "ResourceClosed",
     "Router",
+    "ScanPage",
     "SdeError",
     "Session",
     "ShapeStats",
     "StagingPlan",
     "StagingReceipt",
+    "Summarizable",
     "Timestamp",
     "VerificationRequest",
     "VerifyReport",

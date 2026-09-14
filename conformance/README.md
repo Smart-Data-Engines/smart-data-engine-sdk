@@ -315,3 +315,14 @@ encoder and OpenSSL. Native creation and crash recovery have separate live tests
 call order, transaction outcomes, capability/bound refusals and exact value-free metric bytes.
 The expected effects in `tools/bulk_vectors.py` are hand-specified; the generator does not execute
 Session to obtain them. The existing `bulk_write` shape and older vector bytes remain unchanged.
+
+
+## Logical application reads
+
+The `query/` family contains `case.json`, `expected.json` and `expected.hex` in each case.
+Cases normalize bounded read plans or exact numeric summaries; expected.hex is the canonical UTF-8
+encoding of the expected record. Integer and Decimal values in that record use decimal text,
+timestamps use UTC with six fractional digits, byte keys use hexadecimal, and finite floating
+bounds use their IEEE-754 binary64 bytes in network order. These values are test fixtures, never
+telemetry. Invalid requests produce QueryRefused. The existing operation-shape enumeration remains
+unchanged. PostgreSQL/ClickHouse native tests verify the SQL execution separately.

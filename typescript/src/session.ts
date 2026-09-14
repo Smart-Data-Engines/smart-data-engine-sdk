@@ -34,6 +34,8 @@ import type { NameMap } from './hashing.js'
 import { groupColumns } from './layout.js'
 import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
+import { isQueryMapping, numericSummary, planRead, QueryRefused, queryEngine, summaryEngine, summaryScale } from './query.js'
+import type { NumericSummary, ReadOptions, ReadPlan, ScanPage } from './query.js'
 import type { Materialization, PhysicalLayout, PlacementMap } from './placement.js'
 import { placementOf } from './placement.js'
 import { resolve } from './routing.js'
@@ -67,6 +69,10 @@ export interface Engine {
    */
   transaction<T>(body: () => Promise<T>): Promise<T>
 }
+
+export type ScanOptions = Omit<ReadOptions, 'paginate'> & { readonly fresh?: boolean }
+export type CountOptions = Pick<ScanOptions, 'where' | 'bounds' | 'fresh'>
+export type SummaryOptions = CountOptions & { readonly meanScale?: number }
 
 export interface SessionOptions {
   readonly projectId?: string
@@ -603,6 +609,127 @@ export class Session {
       materialization: entry.materialization,
       nanoseconds: now() - entry.queuedNs,
       failed,
+    })
+  }
+
+  private prepareRead(entity: string, options: ReadOptions): [string, ReadPlan] {
+    if (typeof entity !== 'string') throw new QueryRefused('a query needs a logical entity name')
+    const target = this.entityName(entity), spec = this.model.entities.find(item => item.name === target)
+    if (spec === undefined) throw new QueryRefused('query refers to an entity this model does not declare')
+    const translated = (value: Readonly<Row> | null | undefined): Row | null => {
+      if (value == null) return null
+      if (!isQueryMapping(value)) throw new QueryRefused('query arguments must map logical field names to values')
+      return this.fieldsIn(entity, value)
+    }
+    const field = (name: string): string => {
+      if (typeof name !== 'string') throw new QueryRefused('query fields must be logical field names')
+      return Object.keys(this.fieldsIn(entity, { [name]: null }))[0]!
+    }
+    const bounds = options.bounds == null ? null : { ...options.bounds, field: field(options.bounds.field) }
+    const columns = groupColumns(this.model, this.groupOf(entity))[target]!
+    const plan = planRead(Object.entries(columns).sort(([a], [b]) => compareCodePoints(a, b))
+      .map(([name, type]) => ({ name, type })), spec.key, {
+      ...options, where: translated(options.where), bounds, after: translated(options.after),
+      orderBy: options.orderBy == null ? null : field(options.orderBy),
+    })
+    return [target, plan]
+  }
+
+  private readProjection(material: Materialization, entity: string, plan: ReadPlan, count: boolean): void {
+    const required = new Set(plan.filters.map(predicate => predicate.column.name))
+    if (!count) for (const column of plan.columns) required.add(column.name)
+    const available = material.layout.columns[entity] ?? {}
+    if ([...required].some(name => !Object.hasOwn(available, name))) {
+      throw new QueryRefused('the routed materialization does not contain every field this query needs; request fresh=true to read the source or have the placement revised')
+    }
+  }
+
+  /** One bounded page in logical order, independently of migration checkpoints. */
+  async scan(entity: string, options: ScanOptions = {}): Promise<ScanPage> {
+    return this.usage.operation(async () => {
+      if (options.fresh !== undefined && typeof options.fresh !== 'boolean') throw new QueryRefused('fresh must be a bool')
+      const [target, plan] = this.prepareRead(entity, { ...options, paginate: true })
+      const ranged = plan.filters.find(predicate => predicate.operation !== 'eq')
+      const shape = options.bounds == null ? this.shapeFor(target, 'full_scan')
+        : this.shapeFor(target, 'range_read', [ranged!.column.name])
+      const [engine, material] = this.target(shape, options.fresh === true)
+      this.readProjection(material, target, plan, false)
+      const reader = queryEngine(engine), table = tableFor(material.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false, returned = 0
+      try {
+        const rows = await reader.selectRows(table, plan)
+        this.usage.check()
+        const visible = rows.slice(0, plan.limit)
+        let nextAfter: Readonly<Row> | null = null
+        if (rows.length > plan.limit) {
+          const position = this.fieldsOut(entity, Object.fromEntries(plan.order.map(column =>
+            [column.name, visible[visible.length - 1]![column.name]])))!
+          nextAfter = Object.freeze(snapshotRows([position])[0]!)
+        }
+        const result = visible.map(row => this.fieldsOut(entity, row)!)
+        returned = result.length
+        return { rows: result, nextAfter }
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, returned, failed)
+      }
+    })
+  }
+
+  /** An exact count; the result value itself is never telemetry. */
+  async count(entity: string, options: CountOptions = {}): Promise<bigint> {
+    return this.usage.operation(async () => {
+      if (options.fresh !== undefined && typeof options.fresh !== 'boolean') throw new QueryRefused('fresh must be a bool')
+      const [target, plan] = this.prepareRead(entity, { ...options, paginate: false })
+      const shape = this.shapeFor(target, 'aggregate')
+      const [engine, material] = this.target(shape, options.fresh === true)
+      this.readProjection(material, target, plan, true)
+      const reader = queryEngine(engine), table = tableFor(material.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      try {
+        const result = await reader.countRows(table, plan)
+        this.usage.check()
+        return result
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, failed ? 0 : 1, failed)
+      }
+    })
+  }
+
+  async summarize(entity: string, field: string, options: SummaryOptions = {}): Promise<NumericSummary> {
+    return this.usage.operation(async () => {
+      if (options.fresh !== undefined && typeof options.fresh !== 'boolean') throw new QueryRefused('fresh must be a bool')
+      const [target, plan] = this.prepareRead(entity, { ...options, paginate: false })
+      if (typeof field !== 'string') throw new QueryRefused('a summary needs a logical field name')
+      const name = Object.keys(this.fieldsIn(entity, { [field]: null }))[0]!
+      const column = plan.columns.find(item => item.name === name)
+      if (column === undefined) throw new QueryRefused('summary refers to a field this entity does not declare')
+      const meanScale = options.meanScale === undefined ? 6 : options.meanScale
+      summaryScale(column, meanScale)
+      const shape = this.shapeFor(target, 'aggregate')
+      const [engine, material] = this.target(shape, options.fresh === true)
+      this.readProjection(material, target, plan, true)
+      if (!Object.hasOwn(material.layout.columns[target] ?? {}, name)) throw new QueryRefused('the routed materialization does not contain the summary field')
+      const reader = summaryEngine(engine), table = tableFor(material.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      try {
+        const raw = await reader.summarizeRows(table, plan, column)
+        this.usage.check()
+        return numericSummary(raw, column, meanScale)
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, failed ? 0 : 1, failed)
+      }
     })
   }
 
