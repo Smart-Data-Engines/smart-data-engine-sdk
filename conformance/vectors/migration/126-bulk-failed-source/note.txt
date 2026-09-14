@@ -1,0 +1,1 @@
+Application bulk witness: failed-source. One native batch, with explicit source/copy calls and metric bytes.

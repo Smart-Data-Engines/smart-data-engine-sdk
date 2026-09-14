@@ -1,0 +1,1 @@
+Application bulk witness: source-before-copy. One native batch, with explicit source/copy calls and metric bytes.

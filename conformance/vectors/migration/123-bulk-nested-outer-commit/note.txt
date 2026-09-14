@@ -1,0 +1,1 @@
+Application bulk witness: nested-outer-commit. One native batch, with explicit source/copy calls and metric bytes.

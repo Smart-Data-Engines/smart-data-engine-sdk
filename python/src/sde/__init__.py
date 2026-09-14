@@ -33,11 +33,13 @@ mode, not a loophole.
 
 from __future__ import annotations
 
+from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .capabilities import members_of, satisfies
 from .cutover import CUTOVER_PROTOCOL, CutoverPlan, load_cutover_plan
 from .entity import Ref, clear_registry, entity, registry
 from .errors import (
+    BulkWriteRefused,
     DeclarationError,
     EngineError,
     MapError,
@@ -144,6 +146,8 @@ __all__ = [
     "FIXED_SCHEMA",
     "MAP_CONTRACT",
     "MAP_CONTRACT_FLOOR",
+    "MAX_BATCH_ROWS",
+    "MAX_BATCH_VALUES",
     "MEASURED_FIELDS",
     "ORDERBOOK_KEY",
     "ORDERBOOK_SHAPE",
@@ -156,6 +160,8 @@ __all__ = [
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
     "BackfillProgress",
+    "BulkWritable",
+    "BulkWriteRefused",
     "CanonicalError",
     "CompatibilityViews",
     "CopyFreshness",

@@ -13,6 +13,7 @@ reproduce first and a self-contained file is easier to port and to audit.
 from __future__ import annotations
 
 __all__ = [
+    "BulkWriteRefused",
     "DeclarationError",
     "EngineError",
     "MapError",
@@ -47,6 +48,10 @@ class ModelPlanningError(SdeError):
     of mistake is a design error and should surface in a test run, not in production at the moment a
     customer triggers that code path. The message says which entities would have to share a group.
     """
+
+
+class BulkWriteRefused(ModelPlanningError):
+    """An application batch cannot be executed as requested; no batch I/O has started."""
 
 
 class MapError(SdeError):

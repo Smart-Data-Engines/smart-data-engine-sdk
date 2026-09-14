@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from uuid import UUID
 
 from ..errors import EngineError, MigrationRefused
 from ..schema import QUOTE
@@ -225,7 +226,7 @@ class ClickHouseFences:
         try:
             self._cx.insert(
                 DRAIN_TABLE,
-                [[table, metadata.identity, project_id, hold]],
+                [[table, UUID(metadata.identity), project_id, hold]],
                 column_names=["table_name", "table_uuid", "project_id", "hold"],
                 settings={"async_insert": 0, "wait_for_async_insert": 1},
             )

@@ -25,8 +25,9 @@ import { ResourceBusy } from './errors.js'
  * not been checked, which is the same guarantee the reference gets from doing it in `__init__`.
  */
 
+import { batchColumns, bulkWriter, snapshotRows } from './bulk.js'
 import { compareCodePoints } from './canonical.js'
-import { EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
+import { BulkWriteRefused, EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
 import type { Group } from './groups.js'
 import { colocationGroups, groupOf } from './groups.js'
 import type { NameMap } from './hashing.js'
@@ -90,7 +91,7 @@ interface Deferred {
   readonly group: string
   readonly materialization: string
   readonly queuedNs: number
-  readonly values: Row
+  readonly values: Row | readonly Row[]
 }
 
 function now(): number {
@@ -120,6 +121,7 @@ function shapeKey(entity: string, kind: string, fields: readonly string[]): stri
 
 export class Session {
   private readonly shapes = new Map<string, OperationShape>()
+  private readonly inputFields = new Map<string, Readonly<Record<string, string>>>()
   private readonly groups: readonly Group[]
   private readonly reverseFields = new Map<string, Map<string, string>>()
   private readonly declared: readonly string[]
@@ -157,7 +159,18 @@ export class Session {
       // speaks digests only, and the application keeps saying save('User', { email: ... }).
       // Without this the mode is unusable: a client would have to write the digests in their own
       // source, which nobody will do and which would put them there anyway.
-      for (const [entity, mapping] of Object.entries(names.fields)) {
+      const originalEntities = new Map(Object.entries(names.entities).map(([original, hashed]) => [hashed, original]))
+      for (const [entity, declaredFields] of Object.entries(names.fields)) {
+        const mapping = { ...declaredFields }
+        for (const [originalRelation, hashedRelation] of Object.entries(names.relations[entity] ?? {})) {
+          const relation = model.relations.find(r => r.source === names.entities[entity] && r.name === hashedRelation)!
+          const target = model.entities.find(e => e.name === relation.target)!
+          const targetFields = names.fields[originalEntities.get(target.name)!]!
+          for (const [originalKey, hashedKey] of Object.entries(targetFields)) {
+            if (target.key.includes(hashedKey)) mapping[`${originalRelation}_${originalKey}`] = `${hashedRelation}_${hashedKey}`
+          }
+        }
+        this.inputFields.set(entity, mapping)
         const hashedEntity = names.entities[entity]
         if (hashedEntity === undefined) continue
         const reverse = new Map<string, string>()
@@ -306,19 +319,17 @@ export class Session {
 
   private fieldsIn(entity: string, values: Readonly<Row>): Row {
     if (this.names === undefined) return { ...values }
-    const mapping = this.names.fields[entity] ?? {}
-    const out: Row = {}
-    for (const [name, value] of Object.entries(values)) out[mapping[name] ?? name] = value
-    return out
+    const mapping = this.inputFields.get(entity) ?? {}
+    return Object.fromEntries(Object.entries(values).map(([name, value]) => [
+      Object.hasOwn(mapping, name) ? mapping[name]! : name, value,
+    ]))
   }
 
   private fieldsOut(entity: string, row: Row | null): Row | null {
     if (this.names === undefined || row === null) return row
     const reverse = this.reverseFields.get(this.entityName(entity))
     if (reverse === undefined) return row
-    const out: Row = {}
-    for (const [name, value] of Object.entries(row)) out[reverse.get(name) ?? name] = value
-    return out
+    return Object.fromEntries(Object.entries(row).map(([name, value]) => [reverse.get(name) ?? name, value]))
   }
 
   private clientNames(entity: string, fields: readonly string[]): string[] {
@@ -447,6 +458,44 @@ export class Session {
     })
   }
 
+  /** One bounded native insert. No splitting or retry; see docs/bulk-writes.md. */
+  async saveMany(entity: string, rows: readonly Readonly<Row>[]): Promise<void> {
+    return this.usage.operation(async () => {
+      const target = this.entityName(entity)
+      const shape = this.shapeFor(target, 'bulk_write')
+      const [engine, materialization] = this.target(shape, false)
+      const spot = placementOf(this.placement, shape.group)
+      const columns = batchColumns(rows, spot.writeEpoch === undefined ? 0 : 1)
+      if (columns.length === 0) return
+      const translated = rows.map((row) => this.fieldsIn(entity, row))
+      const fields = Object.keys(translated[0] as Row)
+      const spec = this.model.entities.find((e) => e.name === target)
+      if (spec === undefined) throw new ModelPlanningError(`this model has no entity '${entity}'`)
+      const declared = new Set(Object.keys(groupColumns(this.model, this.groupOf(entity))[target]!))
+      const required = new Set([...spec.fields.filter((field) => !field.nullable).map((field) => field.name), ...spec.key])
+      if (fields.some((field) => !declared.has(field)) || [...required].some((field) => !fields.includes(field))) {
+        throw new BulkWriteRefused('batch fields must be declared and include the key and all non-nullable fields')
+      }
+      const writer = bulkWriter(engine)
+      for (const copy of spot.alsoWrite) bulkWriter(this.engines[copy.engine] as Engine)
+      const snapshot = snapshotRows(translated)
+      const stamped = snapshot.map((row) => stampValues(this.placement, shape.group, row))
+      const table = tableFor(materialization.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      try {
+        await writer.insertMany(table, stamped)
+        this.usage.check()
+        await this.fanOut(target, shape.group, snapshot)
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, snapshot.length, failed)
+      }
+    })
+  }
+
   async get(entity: string, key: Readonly<Row>, options: { fresh?: boolean } = {}): Promise<Row | null> {
     return this.usage.operation(async () => {
       const target = this.entityName(entity)
@@ -501,7 +550,7 @@ export class Session {
    * for a quieter reason: those rows are above the backfill marker, so nothing else copies them,
    * and `verify`'s tail check would refuse the migration of every group that uses a transaction.
    */
-  private async fanOut(entity: string, group: string, values: Row): Promise<void> {
+  private async fanOut(entity: string, group: string, values: Row | readonly Row[]): Promise<void> {
     const body = placementOf(this.placement, group)
     if (body.alsoWrite.length === 0) return
     for (const copy of body.alsoWrite) {
@@ -512,7 +561,7 @@ export class Session {
         group,
         materialization: copy.id,
         queuedNs: now(),
-        values: { ...values },
+        values: Array.isArray(values) ? values : { ...values },
       }
       if (this.inWriteTransaction) {
         this.deferred.push(entry)
@@ -535,7 +584,13 @@ export class Session {
     const engine = this.engines[entry.engine]
     try {
       if (engine === undefined) throw new EngineError(`no adapter for engine '${entry.engine}'`)
-      await engine.insert(entry.table, stampValues(this.placement, entry.group, entry.values))
+      if (Array.isArray(entry.values)) {
+        await bulkWriter(engine).insertMany(
+          entry.table, entry.values.map((row: Row) => stampValues(this.placement, entry.group, row)),
+        )
+      } else {
+        await engine.insert(entry.table, stampValues(this.placement, entry.group, entry.values as Row))
+      }
     } catch {
       // Deliberately swallowed, and the only place in this library that swallows a write failure.
       // There is no logging channel here to record it in, which the reference has - so the

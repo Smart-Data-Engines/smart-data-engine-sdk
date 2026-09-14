@@ -310,3 +310,8 @@ reservation support.
 Both map signatures, exact unchanged source/routing, portable names and envelope provenance are
 validated without constructing engines. `tools/staging_vectors.py` uses the independent fixture
 encoder and OpenSSL. Native creation and crash recovery have separate live tests.
+
+`migration/122`–`132` carry `bulk.json`: application-batch operations, expected source/copy
+call order, transaction outcomes, capability/bound refusals and exact value-free metric bytes.
+The expected effects in `tools/bulk_vectors.py` are hand-specified; the generator does not execute
+Session to obtain them. The existing `bulk_write` shape and older vector bytes remain unchanged.

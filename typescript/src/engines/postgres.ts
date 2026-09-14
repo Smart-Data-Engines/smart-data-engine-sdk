@@ -30,6 +30,7 @@
  */
 
 import { UsageGate } from '../_usage.js'
+import { batchColumns } from '../bulk.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
@@ -468,6 +469,27 @@ export class PostgresEngine {
         throw new EngineError(`insert into ${table} failed: ${this.explain(error)}`)
       }
 
+    })
+  }
+
+  /** Ordinary application INSERT. Do not reuse copyIn's conflict suppression. */
+  async insertMany(table: string, rows: readonly Readonly<Row>[]): Promise<void> {
+    return this.usage.operation(async () => {
+      const columns = batchColumns(rows)
+      if (columns.length === 0) return
+      const values: unknown[] = []
+      const tuples = rows.map((row) => `(${columns.map((column) => {
+        values.push(row[column])
+        return `$${values.length}`
+      }).join(', ')})`)
+      try {
+        await this.run(
+          `INSERT INTO ${quote(table)} (${columns.map(quote).join(', ')}) VALUES ${tuples.join(', ')}`,
+          values,
+        )
+      } catch (error) {
+        throw new EngineError(`batch insert into ${table} failed: ${this.explain(error)}`)
+      }
     })
   }
 

@@ -1,0 +1,11 @@
+{
+  "pg-main": {
+    "dialect": "postgres",
+    "tables": {}
+  },
+  "pg-copy": {
+    "dialect": "postgres",
+    "tables": {},
+    "bulk_writable": false
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "operations": [
+    {
+      "op": "transaction",
+      "body": [
+        {
+          "op": "transaction",
+          "body": [
+            {
+              "op": "save_many",
+              "rows": [
+                {
+                  "id": 1,
+                  "celsius": 20
+                },
+                {
+                  "celsius": 21,
+                  "id": 2
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "rollback": true
+    }
+  ],
+  "calls": [
+    {
+      "engine": "pg-main",
+      "call": "transaction"
+    },
+    {
+      "engine": "pg-main",
+      "call": "transaction"
+    },
+    {
+      "engine": "pg-main",
+      "call": "insert_many",
+      "table": "reading",
+      "rows": 2
+    }
+  ],
+  "tables": {
+    "pg-main": {},
+    "pg-copy": {}
+  },
+  "errors": [],
+  "metrics": {
+    "shapes": [
+      {
+        "shape_id": "9be069a1bf5805ec",
+        "entity": "Reading",
+        "group": "Reading",
+        "kind": "bulk_write",
+        "calls": 1,
+        "rows": 2,
+        "errors": 0
+      }
+    ],
+    "copies": []
+  },
+  "metrics_hex": "7b22636f70696573223a5b5d2c22736861706573223a5b7b2263616c6c73223a312c22656e74697479223a2252656164696e67222c226572726f7273223a302c2267726f7570223a2252656164696e67222c226b696e64223a2262756c6b5f7772697465222c22726f7773223a322c2273686170655f6964223a2239626530363961316266353830356563227d5d7d"
+}

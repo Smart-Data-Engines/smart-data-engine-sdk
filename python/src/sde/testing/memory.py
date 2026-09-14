@@ -99,6 +99,7 @@ class MemoryEngine:
         tables: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
         can_keep_bookkeeping: bool = True,
         can_migrate: bool = True,
+        can_bulk_write: bool = True,
         watermark: int | None = None,
         markers: Mapping[tuple[str, str], int] | None = None,
         fail_inserts: Mapping[str, int] | None = None,
@@ -128,6 +129,8 @@ class MemoryEngine:
         if can_keep_bookkeeping:
             self.map_watermark = self._map_watermark
             self.record_map_version = self._record_map_version
+        if can_bulk_write:
+            self.insert_many = self._insert_many
         if can_migrate:
             self.key_range = self._key_range
             self.nth_key = self._nth_key
@@ -150,6 +153,14 @@ class MemoryEngine:
             self._fail_inserts[table] = remaining - 1
             raise EngineError(f"insert into {table} failed: this engine was told to refuse it")
         self.tables.setdefault(table, []).append(dict(values))
+
+    def _insert_many(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        self.recorded.note(self.name, "insert_many", table=table, rows=len(rows))
+        remaining = self._fail_inserts.get(table, 0)
+        if remaining > 0:
+            self._fail_inserts[table] = remaining - 1
+            raise EngineError("batch insert failed: this engine was told to refuse it")
+        self.tables.setdefault(table, []).extend(dict(row) for row in rows)
 
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:
         self.recorded.note(self.name, "get", table=table)
@@ -306,6 +317,7 @@ def engines_from(
             },
             can_keep_bookkeeping=bool(body.get("bookkeeping", True)),
             can_migrate=bool(body.get("migratable", True)),
+            can_bulk_write=bool(body.get("bulk_writable", True)),
             watermark=body.get("watermark"),
             markers={
                 (key.split("|", 1)[0], key.split("|", 1)[1]): int(value)

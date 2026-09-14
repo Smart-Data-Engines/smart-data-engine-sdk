@@ -110,3 +110,10 @@ yours on the stack. The adapter listens, records it, and reports it as part of t
 message. Neither of these has an equivalent in Python, which is the general point: the contract is
 identical across languages and the *failure modes of the runtimes are not*, so each library measures
 its own.
+## Application batches and a lost ClickHouse response
+
+[Logical bulk writes](bulk-writes.md) preserve one explicit batch boundary and report uncertain
+results without replaying the source. The Python adapter also guards the transport beneath
+clickhouse-connect: that driver can otherwise retry a remote close after an accepted insert.
+A native regression checks physical rows without FINAL, because deduplication can conceal replay.
+The guard covers single inserts, application batches and migration copies.
