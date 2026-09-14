@@ -83,6 +83,22 @@ def _as_utc(value: Any) -> Any:
     return value
 
 
+def _query_parameter(name: str, value: Any, parameters: dict[str, Any]) -> str:
+    """Bind a scalar without letting the driver's datetime formatter discard its fraction.
+
+    The plain datetime formatter emits seconds. Use a bound string and an explicit UTC
+    DateTime64 conversion for temporal comparisons, independent of the driver's formatting zone.
+    Data values still go through the driver's parameter binding; none are interpolated into SQL.
+    """
+    placeholder = f"%({name})s"
+    if isinstance(value, _dt.datetime):
+        utc = _as_utc(value).astimezone(_dt.UTC)
+        parameters[name] = utc.replace(tzinfo=None).isoformat(" ", timespec="microseconds")
+        return f"toDateTime64({placeholder}, 6, 'UTC')"
+    parameters[name] = value
+    return placeholder
+
+
 def _row(names: Sequence[str], types: Sequence[Any], row: Sequence[Any]) -> dict[str, Any]:
     """One result row as a dict, with the timezone put back on values that had one in the schema.
 
@@ -433,11 +449,14 @@ class ClickHouseEngine:
         reaches first until a merge happens - which is to say, nondeterministically the old value.
         Paying for `FINAL` on a point read is the cheaper half of that trade.
         """
-        columns = sorted(key)
-        where = " AND ".join(f"{_quote(c)} = %({c})s" for c in columns)
+        parameters: dict[str, Any] = {}
+        where = " AND ".join(
+            f"{_quote(column)} = {_query_parameter(f'key_{index}', key[column], parameters)}"
+            for index, column in enumerate(sorted(key))
+        )
         sql = f"SELECT * FROM {_quote(table)} FINAL WHERE {where} LIMIT 1"
         try:
-            result = self._cx.query(sql, parameters={c: _as_utc(key[c]) for c in columns})
+            result = self._cx.query(sql, parameters=parameters)
         except Exception as exc:
             raise EngineError(f"select from {table} failed: {exc}") from exc
         if not result.result_rows:
@@ -506,11 +525,11 @@ class ClickHouseEngine:
         clauses: list[str] = []
         parameters: dict[str, Any] = {}
         if low is not None:
-            clauses.append(f"{_quote(column)} >= %(low)s")
-            parameters["low"] = _as_utc(low)
+            bound = _query_parameter("low", low, parameters)
+            clauses.append(f"{_quote(column)} >= {bound}")
         if high is not None:
-            clauses.append(f"{_quote(column)} < %(high)s")
-            parameters["high"] = _as_utc(high)
+            bound = _query_parameter("high", high, parameters)
+            clauses.append(f"{_quote(column)} < {bound}")
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         cap = ""
         if limit is not None:
@@ -521,10 +540,7 @@ class ClickHouseEngine:
             result = self._cx.query(sql, parameters=parameters)
         except Exception as exc:
             raise EngineError(f"range select from {table} failed: {exc}") from exc
-        return [
-            _row(result.column_names, result.column_types, row)
-            for row in result.result_rows
-        ]
+        return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
 
     def count(self, table: str) -> int:
         """`FINAL` here too, so this counts entities rather than stored rows.
@@ -568,14 +584,18 @@ class ClickHouseEngine:
         tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
         if after is not None:
             same_width(after, cols, "after")
-            names = [f"after_{i}" for i in range(len(cols))]
-            clauses.append(f"{tuple_expr} > ({', '.join(f'%({n})s' for n in names)})")
-            parameters.update(zip(names, (_as_utc(v) for v in after), strict=True))
+            bound = [
+                _query_parameter(f"after_{index}", value, parameters)
+                for index, value in enumerate(after)
+            ]
+            clauses.append(f"{tuple_expr} > ({', '.join(bound)})")
         if upto is not None:
             same_width(upto, cols, "upto")
-            names = [f"upto_{i}" for i in range(len(cols))]
-            clauses.append(f"{tuple_expr} <= ({', '.join(f'%({n})s' for n in names)})")
-            parameters.update(zip(names, (_as_utc(v) for v in upto), strict=True))
+            bound = [
+                _query_parameter(f"upto_{index}", value, parameters)
+                for index, value in enumerate(upto)
+            ]
+            clauses.append(f"{tuple_expr} <= ({', '.join(bound)})")
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         cap = ""
         if limit is not None:
