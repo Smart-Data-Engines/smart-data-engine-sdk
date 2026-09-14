@@ -131,3 +131,6 @@ controller's request with `VerificationRequest.fromRecord` and call `verify(sess
 and row-level differences remain local. See [the request protocol](../docs/format-contract.md#7b-verification-requests-and-bound-reports).
 Loaded placement maps are immutable snapshots. Load a new document rather than modifying a layout
 or copying an object with its old fingerprint.
+
+Batch operations: [logical bulk writes](../docs/bulk-writes.md) document `save_many` / `saveMany`,
+bounds, source/copy ordering and uncertain outcomes.

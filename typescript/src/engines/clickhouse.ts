@@ -46,6 +46,7 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 
 import { compareCodePoints } from '../canonical.js'
+import { batchColumns } from '../bulk.js'
 import { EngineError } from '../errors.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
@@ -466,6 +467,19 @@ export class ClickHouseEngine {
    * first until a merge happens - which is to say, nondeterministically the old value. Paying for
    * `FINAL` on a point read is the cheaper half of that trade.
    */
+  /** One HTTP batch, without a cross-block transactional guarantee. */
+  async insertMany(table: string, rows: readonly Readonly<Row>[]): Promise<void> {
+    return this.usage.operation(async () => {
+      const columns = batchColumns(rows)
+      if (columns.length === 0) return
+      try {
+        await this.insertRows(table, rows)
+      } catch (error) {
+        throw new EngineError(`batch insert into ${table} failed: ${message(error)}`)
+      }
+    })
+  }
+
   async get(table: string, key: Readonly<Row>): Promise<Row | null> {
     return this.usage.operation(async () => {
       const columns = Object.keys(key).sort()

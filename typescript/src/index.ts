@@ -32,6 +32,7 @@
 export { CanonicalError, canonicalBytes, canonicalString, compareCodePoints, digest16 } from './canonical.js'
 export {
   DeclarationError,
+  BulkWriteRefused,
   EngineError,
   MapError,
   MapRolledBack,
@@ -109,6 +110,8 @@ export {
 } from './migration.js'
 export type { Engine, ManagedEngine, Row, SessionOptions } from './session.js'
 export { Session, tableFor } from './session.js'
+export type { BulkWritable } from './bulk.js'
+export { MAX_BATCH_ROWS, MAX_BATCH_VALUES } from './bulk.js'
 export type { Protection, WatermarkCheck, WatermarkStore } from './watermark.js'
 export {
   enforceForwardOnly,

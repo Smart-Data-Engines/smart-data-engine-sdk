@@ -93,3 +93,5 @@ These rules apply through ordinary forwarding adapter wrappers because ownership
 the actual native adapter. Private raw driver handles are outside the managed Session interface.
 Use the dedicated operator connections described in the cutover runbook for provisioning/migration.
 ClickHouse and the orderbook adapter continue to refuse multi-statement transactions.
+
+The same lifetime and transaction boundaries cover [logical batch writes](bulk-writes.md).

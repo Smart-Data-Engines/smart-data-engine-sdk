@@ -58,6 +58,7 @@ export interface MemoryOptions {
    */
   readonly canKeepBookkeeping?: boolean
   readonly canMigrate?: boolean
+  readonly canBulkWrite?: boolean
   readonly watermark?: number | null
   readonly markers?: Readonly<Record<string, number>>
   /**
@@ -147,6 +148,7 @@ export class MemoryEngine {
     if (options.canKeepBookkeeping === false) {
       for (const name of ['mapWatermark', 'recordMapVersion']) target[name] = undefined
     }
+    if (options.canBulkWrite === false) target['insertMany'] = undefined
     if (options.canMigrate === false) {
       for (const name of [
         'keyRange',
@@ -191,6 +193,16 @@ export class MemoryEngine {
       throw new EngineError(`insert into ${table} failed: this engine was told to refuse it`)
     }
     this.rows(table).push({ ...values })
+  }
+
+  async insertMany(table: string, rows: readonly Readonly<Row>[]): Promise<void> {
+    this.note('insert_many', { table, rows: rows.length })
+    const remaining = this.failInserts.get(table) ?? 0
+    if (remaining > 0) {
+      this.failInserts.set(table, remaining - 1)
+      throw new EngineError('batch insert failed: this engine was told to refuse it')
+    }
+    this.rows(table).push(...rows.map((row) => ({ ...row })))
   }
 
   async get(table: string, key: Readonly<Row>): Promise<Row | null> {
@@ -347,6 +359,7 @@ export interface EngineSpec {
   readonly tables?: Readonly<Record<string, readonly Row[]>>
   readonly bookkeeping?: boolean
   readonly migratable?: boolean
+  readonly bulk_writable?: boolean
   readonly watermark?: number | null
   readonly markers?: Readonly<Record<string, number>>
   readonly fail_inserts?: Readonly<Record<string, number>>
@@ -372,6 +385,7 @@ export function enginesFrom(
       tables: body.tables ?? {},
       canKeepBookkeeping: body.bookkeeping ?? true,
       canMigrate: body.migratable ?? true,
+      canBulkWrite: body.bulk_writable ?? true,
       watermark: body.watermark ?? null,
       markers: body.markers ?? {},
       failInserts: body.fail_inserts ?? {},

@@ -1,0 +1,19 @@
+{
+  "operations": [
+    {
+      "op": "save_many",
+      "rows": []
+    }
+  ],
+  "calls": [],
+  "tables": {
+    "pg-main": {},
+    "pg-copy": {}
+  },
+  "errors": [],
+  "metrics": {
+    "shapes": [],
+    "copies": []
+  },
+  "metrics_hex": "7b22636f70696573223a5b5d2c22736861706573223a5b5d7d"
+}

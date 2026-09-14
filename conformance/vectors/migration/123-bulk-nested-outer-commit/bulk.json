@@ -1,0 +1,139 @@
+{
+  "operations": [
+    {
+      "op": "transaction",
+      "body": [
+        {
+          "op": "transaction",
+          "body": [
+            {
+              "op": "save_many",
+              "rows": [
+                {
+                  "id": 1,
+                  "celsius": 20
+                },
+                {
+                  "celsius": 21,
+                  "id": 2
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "save_many",
+          "rows": [
+            {
+              "id": 1,
+              "celsius": 20
+            },
+            {
+              "celsius": 21,
+              "id": 2
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "engine": "pg-main",
+      "call": "transaction"
+    },
+    {
+      "engine": "pg-main",
+      "call": "transaction"
+    },
+    {
+      "engine": "pg-main",
+      "call": "insert_many",
+      "table": "reading",
+      "rows": 2
+    },
+    {
+      "engine": "pg-main",
+      "call": "insert_many",
+      "table": "reading",
+      "rows": 2
+    },
+    {
+      "engine": "pg-copy",
+      "call": "insert_many",
+      "table": "reading",
+      "rows": 2
+    },
+    {
+      "engine": "pg-copy",
+      "call": "insert_many",
+      "table": "reading",
+      "rows": 2
+    }
+  ],
+  "tables": {
+    "pg-main": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 20
+        },
+        {
+          "celsius": 21,
+          "id": 2
+        },
+        {
+          "id": 1,
+          "celsius": 20
+        },
+        {
+          "celsius": 21,
+          "id": 2
+        }
+      ]
+    },
+    "pg-copy": {
+      "reading": [
+        {
+          "id": 1,
+          "celsius": 20
+        },
+        {
+          "celsius": 21,
+          "id": 2
+        },
+        {
+          "id": 1,
+          "celsius": 20
+        },
+        {
+          "celsius": 21,
+          "id": 2
+        }
+      ]
+    }
+  },
+  "errors": [],
+  "metrics": {
+    "shapes": [
+      {
+        "shape_id": "9be069a1bf5805ec",
+        "entity": "Reading",
+        "group": "Reading",
+        "kind": "bulk_write",
+        "calls": 2,
+        "rows": 4,
+        "errors": 0
+      }
+    ],
+    "copies": [
+      {
+        "group": "Reading",
+        "materialization": "Reading@pg2",
+        "writes": 2,
+        "failures": 0
+      }
+    ]
+  },
+  "metrics_hex": "7b22636f70696573223a5b7b226661696c75726573223a302c2267726f7570223a2252656164696e67222c226d6174657269616c697a6174696f6e223a2252656164696e6740706732222c22777269746573223a327d5d2c22736861706573223a5b7b2263616c6c73223a322c22656e74697479223a2252656164696e67222c226572726f7273223a302c2267726f7570223a2252656164696e67222c226b696e64223a2262756c6b5f7772697465222c22726f7773223a342c2273686170655f6964223a2239626530363961316266353830356563227d5d7d"
+}

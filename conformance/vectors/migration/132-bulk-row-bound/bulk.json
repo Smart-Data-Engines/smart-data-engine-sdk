@@ -1,0 +1,28 @@
+{
+  "operations": [
+    {
+      "op": "save_many",
+      "rows": [
+        {
+          "id": 1,
+          "celsius": 20
+        }
+      ],
+      "repeat": 1001,
+      "error": "BulkWriteRefused"
+    }
+  ],
+  "calls": [],
+  "tables": {
+    "pg-main": {},
+    "pg-copy": {}
+  },
+  "errors": [
+    "BulkWriteRefused"
+  ],
+  "metrics": {
+    "shapes": [],
+    "copies": []
+  },
+  "metrics_hex": "7b22636f70696573223a5b5d2c22736861706573223a5b5d7d"
+}

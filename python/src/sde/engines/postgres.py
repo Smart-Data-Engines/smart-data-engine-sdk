@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from .._usage import UsageGate, guarded
+from ..bulk import batch_columns
 from ..errors import EngineError
 from ..explain import (
     Cost,
@@ -405,6 +406,30 @@ class PostgresEngine:
             # Surfaced, not swallowed and not rerouted. See the module docstring.
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"insert into {table} failed: {self._explain(exc)}") from exc
+
+    @guarded
+    def insert_many(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """One ordinary INSERT; unlike copy_in, a conflicting key is an error."""
+        cols = batch_columns(rows)
+        if not cols:
+            return
+        from psycopg.types.json import Jsonb
+
+        placeholders = ", ".join(f"({', '.join(['%s'] * len(cols))})" for _ in rows)
+        sql = (
+            f"INSERT INTO {_quote(table)} ({', '.join(_quote(c) for c in cols)}) "
+            f"VALUES {placeholders}"
+        )
+        params = [
+            Jsonb(row[c]) if isinstance(row[c], (dict, list)) else row[c]
+            for row in rows for c in cols
+        ]
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(sql, params)
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            raise EngineError(f"batch insert into {table} failed: {self._explain(exc)}") from exc
 
     @guarded
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -1,0 +1,1 @@
+Application bulk witness: capability-pg-copy. One native batch, with explicit source/copy calls and metric bytes.

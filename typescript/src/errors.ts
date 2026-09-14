@@ -33,7 +33,12 @@ export class DeclarationError extends SdeError {
  * a customer triggers that code path.
  */
 export class ModelPlanningError extends SdeError {
-  override readonly name = 'ModelPlanningError'
+  override readonly name: string = 'ModelPlanningError'
+}
+
+/** A local batch refusal, before any batch I/O. */
+export class BulkWriteRefused extends ModelPlanningError {
+  override readonly name = 'BulkWriteRefused'
 }
 
 /**

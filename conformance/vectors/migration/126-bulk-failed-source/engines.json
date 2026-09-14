@@ -1,0 +1,13 @@
+{
+  "pg-main": {
+    "dialect": "postgres",
+    "tables": {},
+    "fail_inserts": {
+      "reading": 1
+    }
+  },
+  "pg-copy": {
+    "dialect": "postgres",
+    "tables": {}
+  }
+}

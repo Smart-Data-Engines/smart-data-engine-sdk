@@ -55,6 +55,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from .._usage import UsageGate, guarded
+from ..bulk import batch_columns
 from ..errors import EngineError
 from ..explain import (
     Cost,
@@ -131,6 +132,43 @@ CONNECT_TIMEOUT_SECONDS = 10
 HANDSHAKE_TIMEOUT_SECONDS = 15
 
 
+class _NoReplayTransport:
+    """Keep the driver's TLS/proxy pool but forbid ambiguous transport replay for this client.
+
+    clickhouse-connect retries RemoteDisconnected even when its retry count is zero. In a live
+    probe that error followed an accepted INSERT: the driver replayed it and returned success.
+    Translate transport errors before that retry handler, and disable urllib3's own retry layer.
+    The shared pool is never patched; only this client's reference is wrapped.
+    """
+
+    def __init__(self, pool: Any) -> None:
+        self.pool = pool
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.pool, name)
+
+    # The driver keys pool-expiration bookkeeping by manager. Preserve that identity instead of
+    # registering a new shared-pool owner on every connection (and clearing its active sockets).
+    def __hash__(self) -> int:
+        return hash(self.pool)
+
+    def __eq__(self, other: object) -> bool:
+        return self.pool is (other.pool if isinstance(other, _NoReplayTransport) else other)
+
+    def request(self, method: str, url: str, **options: Any) -> Any:
+        from urllib3.exceptions import HTTPError
+
+        options["retries"] = False
+        options["redirect"] = False
+        try:
+            return self.pool.request(method, url, **options)
+        except HTTPError as exc:
+            raise EngineError(
+                "ClickHouse transport failed; the operation was not replayed and its outcome "
+                "may be unknown"
+            ) from exc
+
+
 class ClickHouseEngine:
     """A thin adapter over clickhouse-connect. Executes decisions, makes none."""
 
@@ -175,7 +213,16 @@ class ClickHouseEngine:
             if "send_receive_timeout" not in self._dsn:
                 options["send_receive_timeout"] = HANDSHAKE_TIMEOUT_SECONDS
             try:
-                self._client = self._module.get_client(dsn=self._dsn, **options)
+                client: Any = self._module.get_client(dsn=self._dsn, **options)
+                try:
+                    client.http = _NoReplayTransport(client.http)
+                except BaseException as exc:
+                    try:
+                        client.close()
+                    except BaseException:
+                        exc.add_note("ClickHouse client cleanup also failed after startup.")
+                    raise
+                self._client = client
             except Exception as exc:
                 raise EngineError(f"could not connect to ClickHouse: {exc}") from exc
 
@@ -449,6 +496,19 @@ class ClickHouseEngine:
             # did not happen is not our internal problem to absorb.
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"insert into {table} failed: {exc}") from exc
+
+    @guarded
+    def insert_many(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """One native batch; no promise of cross-block transactional atomicity."""
+        cols = batch_columns(rows)
+        if not cols:
+            return
+        data = [[_as_utc(row[c]) for c in cols] for row in rows]
+        try:
+            self._cx.insert(table, data, column_names=cols)
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            raise EngineError(f"batch insert into {table} failed: {exc}") from exc
 
     @guarded
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:

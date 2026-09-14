@@ -15,7 +15,7 @@ first one is a test failure.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from threading import Lock
 from time import perf_counter_ns
@@ -23,7 +23,14 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from ._usage import SessionUsage, session_call, session_owner
-from .errors import EngineError, MigrationRefused, ModelPlanningError, ResourceBusy
+from .bulk import batch_columns, bulk_writer, snapshot_rows
+from .errors import (
+    BulkWriteRefused,
+    EngineError,
+    MigrationRefused,
+    ModelPlanningError,
+    ResourceBusy,
+)
 from .generation import logical_row, stamp_values, validate_generations
 from .groups import Group, colocation_groups
 from .hashing import NameMap
@@ -39,6 +46,8 @@ from .verification import check_project_id
 from .watermark import WatermarkCheck, enforce_forward_only
 
 __all__ = ["Engine", "ManagedEngine", "Session"]
+
+_WriteValues = dict[str, Any] | tuple[dict[str, Any], ...]
 
 
 class Engine(Protocol):
@@ -99,9 +108,25 @@ class Session:
         # digests in their source anyway.
         self._names = names
         self._reverse_fields: dict[str, dict[str, str]] = {}
+        self._input_fields: dict[str, dict[str, str]] = {}
         self._declared: tuple[str, ...] = ()
         if names is not None:
-            for entity, mapping in names.fields.items():
+            original_entities = {hashed: original for original, hashed in names.entities.items()}
+            for entity, declared_fields in names.fields.items():
+                mapping = dict(declared_fields)
+                for original_relation, hashed_relation in names.relations.get(entity, {}).items():
+                    relation = next(
+                        r for r in model.relations
+                        if r.source == names.entity(entity) and r.name == hashed_relation
+                    )
+                    target = model.entity(relation.target)
+                    target_fields = names.fields[original_entities[target.name]]
+                    for original_key, hashed_key in target_fields.items():
+                        if hashed_key in target.key:
+                            mapping[f"{original_relation}_{original_key}"] = (
+                                f"{hashed_relation}_{hashed_key}"
+                            )
+                self._input_fields[entity] = mapping
                 self._reverse_fields[names.entity(entity)] = {
                     hashed: original for original, hashed in mapping.items()
                 }
@@ -113,7 +138,7 @@ class Session:
         self._groups: tuple[Group, ...] = colocation_groups(model)
         self._shapes = {(s.entity, s.kind, s.fields): s for s in enumerate_shapes(model)}
         self._in_write_transaction = False
-        self._deferred: list[tuple[str, str, str, str, int, dict[str, Any]]] = []
+        self._deferred: list[tuple[str, str, str, str, int, _WriteValues]] = []
         """Rows waiting for their transaction to commit before reaching a copy.
 
         Six-wide rather than three because requirement 5.2 has us report how far behind a copy
@@ -301,7 +326,7 @@ class Session:
     def _fields_in(self, entity: str, values: Mapping[str, Any]) -> Mapping[str, Any]:
         if self._names is None:
             return values
-        mapping = self._names.fields[entity]
+        mapping = self._input_fields[entity]
         try:
             return {mapping[field]: value for field, value in values.items()}
         except KeyError as exc:
@@ -411,9 +436,51 @@ class Session:
             # sees a real degradation with a known cause.
             self._observe(shape, started, rows=1, failed=failed)
 
+    @session_call
+    def save_many(self, entity: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Insert one bounded batch. No splitting or retry; see docs/bulk-writes.md."""
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, materialization = self._target(shape, fresh=False)
+        spot = self._placement.placement_of(shape.group)
+        columns = batch_columns(rows, extra_columns=int(spot.write_epoch is not None))
+        if not columns:
+            return
+        try:
+            translated = tuple(self._fields_in(entity, row) for row in rows)
+        except ModelPlanningError as exc:
+            raise BulkWriteRefused(str(exc)) from exc
+        fields = set(translated[0])
+        spec = self._model.entity(target)
+        declared = set(group_columns(self._model, self.group_of(entity))[target])
+        required = {field.name for field in spec.fields if not field.nullable} | set(spec.key)
+        if not fields <= declared or not required <= fields:
+            raise BulkWriteRefused(
+                "batch fields must be declared and include the key and all non-nullable fields"
+            )
+        writer = bulk_writer(engine)
+        for copy in spot.also_write:
+            bulk_writer(self._engines[copy.engine])
+        snapshot = snapshot_rows(translated)
+        stamped = tuple(stamp_values(self._placement, shape.group, row) for row in snapshot)
+        table = materialization.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        try:
+            writer.insert_many(table, stamped)
+            self._session_usage.check()
+            self._fan_out(target, shape.group, snapshot)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=len(snapshot), failed=failed)
+
     # --- dual write ----------------------------------------------------------------------------
 
-    def _fan_out(self, entity: str, group: str, values: Mapping[str, Any]) -> None:
+    def _fan_out(
+        self, entity: str, group: str, values: Mapping[str, Any] | tuple[dict[str, Any], ...]
+    ) -> None:
         """Write the row to every ``also_write`` copy of the group. Additionally, never
         authoritatively.
 
@@ -437,12 +504,13 @@ class Session:
             return
         for copy in placement.also_write:
             table = copy.layout.table_for(entity)
+            body = dict(values) if isinstance(values, Mapping) else values
             if self._in_write_transaction:
                 self._deferred.append(
-                    (copy.engine, table, group, copy.id, perf_counter_ns(), dict(values))
+                    (copy.engine, table, group, copy.id, perf_counter_ns(), body)
                 )
                 continue
-            self._replay_one(copy.engine, table, group, copy.id, perf_counter_ns(), dict(values))
+            self._replay_one(copy.engine, table, group, copy.id, perf_counter_ns(), body)
 
     def _replay_one(
         self,
@@ -451,7 +519,7 @@ class Session:
         group: str,
         materialization: str,
         queued_ns: int,
-        values: dict[str, Any],
+        values: _WriteValues,
     ) -> None:
         """Write one row to one copy, measure how long the copy was behind, and never raise.
 
@@ -463,7 +531,13 @@ class Session:
         """
         failed = False
         try:
-            self._engines[engine_name].insert(table, stamp_values(self._placement, group, values))
+            engine = self._engines[engine_name]
+            if isinstance(values, tuple):
+                bulk_writer(engine).insert_many(
+                    table, tuple(stamp_values(self._placement, group, row) for row in values)
+                )
+            else:
+                engine.insert(table, stamp_values(self._placement, group, values))
         except Exception as exc:
             # Deliberately swallowed, and the only place in this library that swallows a write
             # failure. The narrow `Exception` rather than `BaseException` matters: a

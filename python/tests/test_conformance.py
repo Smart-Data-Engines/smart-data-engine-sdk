@@ -438,6 +438,10 @@ def test_migration_vector(case: Path) -> None:
         return
     placement = _placement_of(case, model)
     engines = engines_from(_read_json(case / "engines.json"))
+    if (case / "bulk.json").is_file():
+        from bulk_vectors import drive_bulk_vector
+        drive_bulk_vector(case, model, placement, engines)
+        return
     if (case / "generation.json").is_file():
         _drive_generation_vector(case, model, placement, engines)
         return

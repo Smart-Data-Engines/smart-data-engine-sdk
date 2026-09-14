@@ -850,6 +850,11 @@ describe('migration vectors', () => {
         requireSignature: load.require_signature === true,
       })
       const engines = enginesFrom(readJson(join(dir, 'engines.json')))
+      if (existsSync(join(dir, 'bulk.json'))) {
+        const { driveBulkVector } = await import('./_bulk-vectors.js')
+        await driveBulkVector(dir, model, map, engines)
+        return
+      }
       if (existsSync(join(dir, 'generation.json'))) {
         await driveGenerationVector(dir, model, map, engines)
         return
