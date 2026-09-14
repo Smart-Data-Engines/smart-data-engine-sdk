@@ -68,7 +68,7 @@ from ..explain import (
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
-from ..query import ReadColumn, ReadPlan, read_sql, summary_sql
+from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
 from ..write_fence import WriteFence
 from ._write_fences import ClickHouseFences
@@ -624,7 +624,7 @@ class ClickHouseEngine:
                         row[column.name] = (
                             instant.replace(tzinfo=None) if column.type == "timestamp" else instant
                         )
-            return rows
+            return [read_row(plan.columns, row) for row in rows]
         except Exception as exc:
             raise EngineError(f"logical scan of {table} failed: {exc}") from exc
 

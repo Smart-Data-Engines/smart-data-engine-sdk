@@ -352,6 +352,12 @@ def read_sql(
     projection = ", ".join(
         f"toTimeZone({quote(column.name)}, 'UTC') AS {quote(column.name)}"
         if dialect == "clickhouse" and column.type in ("timestamp", "timestamptz")
+        else (
+            f"CAST({quote(column.name)} AS text) AS {quote(column.name)}"
+            if dialect == "postgres"
+            else f"toString({quote(column.name)}) AS {quote(column.name)}"
+        )
+        if column.type.startswith("decimal(")
         else quote(column.name)
         for column in plan.columns
     )
@@ -496,3 +502,20 @@ def numeric_summary(
         )
 
     return NumericSummary(count, present, scaled(minimum), scaled(maximum), scaled(total), mean)
+
+
+def read_row(columns: Sequence[ReadColumn], row: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(row)
+    for column in columns:
+        value = result[column.name]
+        if value is not None and column.type.startswith("decimal("):
+            scale = int(column.type[len("decimal(") : -1].split(",")[1])
+            coefficient = _decimal_integer(_decimal(value), scale)
+            result[column.name] = Decimal(
+                (
+                    int(coefficient < 0),
+                    tuple(int(digit) for digit in str(abs(coefficient))),
+                    -scale,
+                )
+            )
+    return result

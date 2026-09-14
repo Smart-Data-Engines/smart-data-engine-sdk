@@ -245,6 +245,9 @@ export function readSql(table: string, plan: ReadPlan, dialect: string, paramete
     if (dialect === 'clickhouse' && ['timestamp', 'timestamptz'].includes(column.type)) {
       return "toTimeZone(" + name + ", 'UTC') AS " + name
     }
+    if (column.type.startsWith('decimal(')) {
+      return (dialect === 'postgres' ? 'CAST(' + name + ' AS text)' : 'toString(' + name + ')') + ' AS ' + name
+    }
     return dialect === 'clickhouse' && ['float32', 'float64'].includes(column.type)
       ? 'toString(' + name + ') AS ' + name : name
   }).join(', ')
@@ -327,4 +330,21 @@ export function numericSummary(record: Readonly<Row>, column: ReadColumn, meanSc
     return (coefficient < 0n ? '-' : '') + (scale === 0 ? digits : digits.slice(0, point) + '.' + digits.slice(point))
   }
   return { count, nonNullCount, minimum: scaled(minimum), maximum: scaled(maximum), total: scaled(total), mean }
+}
+
+/** Preserve declared Decimal scale without routing the value through Number. */
+export function readRow(columns: readonly ReadColumn[], row: Readonly<Row>): Row {
+  const result = { ...row }
+  for (const column of columns) {
+    const value = result[column.name]
+    if (value !== null && column.type.startsWith('decimal(')) {
+      const scale = Number(column.type.slice('decimal('.length, -1).split(',')[1])
+      const coefficient = decimalInteger(decimal(value), scale)
+      const absolute = coefficient < 0n ? -coefficient : coefficient
+      const digits = absolute.toString().padStart(scale + 1, '0'), point = digits.length - scale
+      result[column.name] = (coefficient < 0n ? '-' : '') +
+        (scale === 0 ? digits : digits.slice(0, point) + '.' + digits.slice(point))
+    }
+  }
+  return result
 }

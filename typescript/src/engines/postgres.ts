@@ -31,7 +31,7 @@
 
 import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
-import { readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
+import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
@@ -517,7 +517,7 @@ export class PostgresEngine {
       const params: unknown[] = []
       const parameter = (value: unknown) => { params.push(value); return '$' + params.length }
       const statement = readSql(table, plan, this.dialect, parameter)
-      try { return this.rowsOf(await this.run(statement, params)) }
+      try { return this.rowsOf(await this.run(statement, params)).map(row => readRow(plan.columns, row)) }
       catch (error) { throw new EngineError('logical scan of ' + table + ' failed: ' + this.explain(error)) }
     })
   }

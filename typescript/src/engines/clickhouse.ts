@@ -47,7 +47,7 @@ import { request as httpsRequest } from 'node:https'
 
 import { compareCodePoints } from '../canonical.js'
 import { batchColumns } from '../bulk.js'
-import { readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
+import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
@@ -509,7 +509,7 @@ export class ClickHouseEngine {
             row[column.name] = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
           }
         }
-        return rows
+        return rows.map(row => readRow(plan.columns, row))
       } catch (error) { throw new EngineError('logical scan of ' + table + ' failed: ' + message(error)) }
     })
   }

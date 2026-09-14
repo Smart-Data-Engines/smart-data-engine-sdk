@@ -59,6 +59,9 @@ can be used in filters; a range excludes NaN as unordered.
 Text uses UTF-8 byte order, with explicit PostgreSQL COLLATE "C". UUID uses the same canonical
 order on both engines, including ClickHouse's explicit toString(UUID) expression.
 Existing migration key_range / nth_key ordering and row-count checkpoints are unchanged.
+Decimal projections preserve the declared scale and use exact text transfer before host decoding;
+this also avoids losing digits under a reduced Python Decimal context.
+
 
 after must contain exactly the complete ordering key. It is an explicit typed position in data,
 not a security token or a persisted migration checkpoint. A new Session can use it. Applications

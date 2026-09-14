@@ -227,3 +227,27 @@ for (const dialect of ['postgres', 'clickhouse'] as const) {
     })
   }, 20000)
 }
+
+for (const dialect of ['postgres', 'clickhouse'] as const) {
+  const enabled = process.env[dialect === 'postgres' ? 'SDE_POSTGRES_DSN' : 'SDE_CLICKHOUSE_DSN'] !== undefined
+  it.skipIf(!enabled)(dialect + ' keeps declared decimal scale and all 38 digits on projection', async () => {
+    await withRoles(dialect, async role => {
+      const model = buildModel([entity('Price', { fields: { id: T.int64, value: T.decimal(38, 18) }, key: ['id'] })])
+      const placement = loadMap({ contract: 3, model_version: model.version, map_version: 1, groups: {
+        Price: { source: { id: 'source', engine: 'db', layout: { tables: { Price: 'price_query' },
+          columns: { Price: { id: dialect === 'postgres' ? 'bigint' : 'Int64',
+            value: dialect === 'postgres' ? 'numeric(38,18)' : 'Decimal(38, 18)' } } } } },
+      } }, { model })
+      await role.operator.ensureSchema(placement.groups['Price']!.source.layout, { keys: { Price: ['id'] } })
+      await role.grant('price_query')
+      const literal = '99999999999999999999.123456789012345678'
+      await role.statement(dialect === 'postgres'
+        ? 'INSERT INTO price_query VALUES (1,' + literal + '),(2,7)'
+        : "INSERT INTO price_query SELECT 1,CAST('" + literal + "' AS Decimal(38,18)) UNION ALL SELECT 2,CAST('7' AS Decimal(38,18))")
+      const session = await Session.open(model, placement, { db: role.runtime })
+      expect((await session.scan('Price')).rows).toEqual([
+        { id: 1n, value: literal }, { id: 2n, value: '7.000000000000000000' },
+      ])
+    })
+  }, 20000)
+}

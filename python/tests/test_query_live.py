@@ -375,3 +375,47 @@ def test_float_projection_preserves_nonfinite_values_and_ranges_exclude_nan(dial
             row["id"] for row in session.scan("FloatValue", bounds=sde.Range("value", 0)).rows
         ] == [1, 3]
         assert session.count("FloatValue", bounds=sde.Range("value", 0)) == 2
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+def test_decimal_projection_preserves_declared_scale_without_context_rounding(dialect: str) -> None:
+    from decimal import localcontext
+
+    with runtime_roles(dialect) as role:
+        sde.clear_registry()
+
+        @sde.entity
+        class Price:
+            id: int
+            value: Annotated[Decimal, sde.precision(38, 18)]
+
+        model = sde.build_model(Price)
+        layout = sde.default_layout(model, sde.colocation_groups(model)[0], dialect=dialect)
+        role.operator.ensure_schema(layout, keys={"Price": ["id"]})
+        role.grant("price")
+        literal = "99999999999999999999.123456789012345678"
+        role.command(
+            f"INSERT INTO price VALUES (1,{literal}),(2,7)"
+            if dialect == "postgres"
+            else f"INSERT INTO price SELECT 1,CAST('{literal}' AS Decimal(38,18)) "
+            "UNION ALL SELECT 2,CAST('7' AS Decimal(38,18))"
+        )
+        raw = {
+            "tables": dict(layout.tables),
+            "columns": {k: dict(v) for k, v in layout.columns.items()},
+        }
+        placement = sde.load_map(
+            {
+                "contract": 3,
+                "model_version": model.version,
+                "map_version": 1,
+                "groups": {"Price": {"source": {"id": "source", "engine": "db", "layout": raw}}},
+            },
+            model=model,
+        )
+        session = sde.Session(model, placement, {"db": role.runtime})
+        with localcontext() as context:
+            context.prec = 3
+            rows = session.scan("Price").rows
+        assert str(rows[0]["value"]) == literal
+        assert str(rows[1]["value"]) == "7.000000000000000000"

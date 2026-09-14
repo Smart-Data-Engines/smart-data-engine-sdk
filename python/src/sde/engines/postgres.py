@@ -33,7 +33,7 @@ from ..explain import (
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
-from ..query import ReadColumn, ReadPlan, read_sql, summary_sql
+from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
 from ..write_fence import WriteFence
 from ._write_fences import PostgresFences
@@ -514,7 +514,8 @@ class PostgresEngine:
             with self._cx.cursor() as cursor:
                 cursor.execute(statement, params)
                 names = [column.name for column in cursor.description or ()]
-                return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
+                return [read_row(plan.columns, dict(zip(names, row, strict=True)))
+                        for row in cursor.fetchall()]
         except Exception as exc:
             raise EngineError(f"logical scan of {table} failed: {self._explain(exc)}") from exc
 
