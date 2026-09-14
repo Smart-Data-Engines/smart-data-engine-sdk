@@ -1,0 +1,14 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "stage_fingerprint": "677ac108f965b59c388ce8e07342174a99e7d3d4167d5da189820eb36786b61d",
+  "verified_with": "staging",
+  "map_fingerprints": {
+    "current": "0932da8dddcdbfc38fda4b219ef853b4ba58f8200b618688fb89e2103b124bff",
+    "prepared": "b6f39cb0d41a6fa10ed9118e57f2764371c45e03c40d75c8f8a14c5bf288044f"
+  },
+  "tables": {
+    "Order": "sde_m_55555555555555555555555555555555_000001",
+    "Payment": "sde_m_55555555555555555555555555555555_000002",
+    "User": "sde_m_55555555555555555555555555555555_000003"
+  }
+}

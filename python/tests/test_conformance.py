@@ -430,6 +430,9 @@ def test_migration_vector(case: Path) -> None:
         _drive_write_fence_vector(case)
         return
     model = model_from_neutral(_read_json(case / "model.json"))
+    if (case / "staging.json").is_file():
+        _drive_staging_vector(case, model)
+        return
     if (case / "cutover.json").is_file():
         _drive_cutover_vector(case, model)
         return
@@ -1013,3 +1016,27 @@ def _drive_cutover_vector(case: Path, model: sde.LogicalModel) -> None:
             require_signature=True,
         )
         assert decoded.fingerprint == wanted["candidate_fingerprints"][outcome]
+
+
+def _drive_staging_vector(case: Path, model: sde.LogicalModel) -> None:
+    raw = _read_json(case / "plan.json")
+    wanted = _read_json(case / "staging.json")
+    keys = {name: b64decode(value) for name, value in _read_json(case / "keys.json").items()}
+    if "error" in wanted:
+        with pytest.raises(sde.MigrationRefused):
+            sde.load_staging_plan(
+                raw, model=model, project_id=wanted["project_id"], public_key=keys
+            )
+        return
+    plan = sde.load_staging_plan(raw, model=model, project_id=wanted["project_id"], public_key=keys)
+    assert plan.fingerprint == wanted["stage_fingerprint"]
+    assert plan.verified_with == wanted["verified_with"]
+    assert plan.as_record() == raw
+    plan.check_current(plan.current)
+    for name in ("current", "prepared"):
+        assert getattr(plan, name).fingerprint == wanted["map_fingerprints"][name]
+    assert dict(plan.prepared.groups[plan.group].derived[0].layout.tables) == wanted["tables"]
+    decoded = sde.load_map(
+        json.loads(plan.prepared_payload()), model=model, public_key=keys, require_signature=True
+    )
+    assert decoded.fingerprint == wanted["map_fingerprints"]["prepared"]

@@ -71,6 +71,16 @@ def sync_directory(path: Path) -> None:
         os.close(fd)
 
 
+def confirm_file(path: Path) -> None:
+    """Confirm an already visible result before treating an uncertain publication as complete."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    sync_directory(path.parent)
+
+
 def ensure_directory(path: Path) -> None:
     """Create parents and persist the directory entries, not only the files placed in them."""
     if path.is_dir():

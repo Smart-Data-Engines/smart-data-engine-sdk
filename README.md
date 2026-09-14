@@ -97,7 +97,8 @@ crosses the boundary is counters, never rows. Verification is a gate rather than
 not switched to a copy that does not match.
 The Python [local cutover operator](docs/local-cutover.md) adds durable execution and crash recovery
 for signed generation-bearing packets, including native access changes for existing Python and
-TypeScript processes. Its controller reservation and successive-map setup integration remain open.
+TypeScript processes. [Staging](docs/staging.md) creates successive fresh copies while preserving
+the source and local recovery history; controller handoff and workload qualification are separate.
 
 What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
 neither directory is here. The day one of them appears, the test over this page fails until the row
@@ -186,7 +187,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **201 of them, in nine families** — that every
+And [`conformance/`](conformance/) holds the vectors — **224 of them, in nine families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 

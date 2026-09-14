@@ -46,6 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     enroll.add_argument("--map", type=Path, required=True)
     execute = commands.add_parser("execute")
     execute.add_argument("--plan", type=Path, required=True)
+    stage = commands.add_parser("stage")
+    stage.add_argument("--plan", type=Path, required=True)
     args = parser.parse_args(argv)
     adapters: list[Any] = []
     try:
@@ -120,6 +122,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "enroll":
             executor.enroll(read(args.map))
             print(json.dumps(executor.status()))
+        elif args.command == "stage":
+            from sde.staging import load_staging_plan
+
+            staging = load_staging_plan(
+                read(args.plan), model=model, project_id=project, public_key=keys
+            )
+            print(json.dumps(executor.stage(staging).as_record()))
         elif args.command == "execute":
             plan = load_cutover_plan(
                 read(args.plan), model=model, project_id=project, public_key=keys

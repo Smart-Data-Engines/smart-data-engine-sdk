@@ -41,7 +41,9 @@ class ProjectState:
                 "sha256",
             }:
                 raise ValueError("invalid state envelope")
-            if type(envelope["storage_contract"]) is not int or envelope["storage_contract"] != 1:
+            if type(envelope["storage_contract"]) is not int or envelope[
+                "storage_contract"
+            ] not in (1, 2):
                 raise ValueError("unsupported state storage contract")
             payload = envelope["payload"]
             if (
@@ -54,14 +56,19 @@ class ProjectState:
                 or payload.get("model_version") != self.model_version
             ):
                 raise ValueError("state belongs to another local project/model")
-            if set(payload) != {
+            fields = {
                 "project_id",
                 "model_version",
                 "active_map",
                 "execution",
                 "completed",
                 "retired_names",
-            }:
+            }
+            if envelope["storage_contract"] == 2:
+                fields.add("stages")
+                if not isinstance(payload.get("stages"), dict):
+                    raise ValueError("staging history must be an object")
+            if set(payload) != fields:
                 raise ValueError("unknown or missing project state fields")
             return payload
         except (OSError, ValueError, TypeError) as exc:
@@ -70,10 +77,16 @@ class ProjectState:
                 "restore verified state before proceeding"
             ) from exc
 
+    def confirm(self) -> None:
+        # Call under the project lock. Neither reading matching bytes nor an in-memory receipt
+        # confirms the directory fsync that may have failed after an earlier publication.
+        _local_state.confirm_file(self.map_path)
+        _local_state.confirm_file(self.path)
+
     def write(self, payload: dict[str, Any]) -> None:
         body = encode(payload)
         envelope = {
-            "storage_contract": 1,
+            "storage_contract": 2 if "stages" in payload else 1,
             "payload": payload,
             "sha256": hashlib.sha256(body).hexdigest(),
         }

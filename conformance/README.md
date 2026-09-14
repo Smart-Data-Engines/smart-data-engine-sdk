@@ -304,3 +304,9 @@ They are decoded before any engine fixture is constructed. `tools/cutover_vector
 explicit maps, request and digests independently, signs them with OpenSSL, and requires a caller's
 scratch directory outside the repository. Packet validation does not claim executor or controller
 reservation support.
+
+
+`migration/099`–`121` carry `plan.json` and `staging.json` for signed fresh-copy preparation.
+Both map signatures, exact unchanged source/routing, portable names and envelope provenance are
+validated without constructing engines. `tools/staging_vectors.py` uses the independent fixture
+encoder and OpenSSL. Native creation and crash recovery have separate live tests.

@@ -1,3 +1,5 @@
+import { loadStagingPlan } from '../src/staging.js'
+import { MigrationRefused as StagingRefused } from '../src/errors.js'
 import { loadCutoverPlan } from '../src/cutover.js'
 import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
 import { bindGenerationMetadata } from './_generation.js'
@@ -825,6 +827,10 @@ describe('migration vectors', () => {
         return
       }
       const model = modelFromNeutral(readJson(join(dir, 'model.json')))
+      if (existsSync(join(dir, 'staging.json'))) {
+        driveStagingVector(dir, model)
+        return
+      }
       if (existsSync(join(dir, 'cutover.json'))) {
         driveCutoverVector(dir, model)
         return
@@ -1250,4 +1256,28 @@ function driveCutoverVector(dir: string, model: LogicalModel): void {
     const candidate = loadMap(JSON.parse(Buffer.from(plan.candidatePayload(outcome)).toString('utf8')), { model, publicKey, requireSignature: true })
     expect(candidate.fingerprint).toBe(wanted.candidate_fingerprints[outcome])
   }
+}
+
+
+function driveStagingVector(dir: string, model: LogicalModel): void {
+  const raw = readJson<Record<string, unknown>>(join(dir, 'plan.json'))
+  const wanted = readJson<{ project_id: string; error?: string; stage_fingerprint: string;
+    verified_with: string; map_fingerprints: Record<'current' | 'prepared', string>;
+    tables: Record<string, string> }>(join(dir, 'staging.json'))
+  const keys = readJson<Record<string, string>>(join(dir, 'keys.json'))
+  const publicKey = Object.fromEntries(Object.entries(keys).map(([name, value]) => [name, Buffer.from(value, 'base64')]))
+  const options = { model, projectId: wanted.project_id, publicKey }
+  if (wanted.error !== undefined) {
+    expect(() => loadStagingPlan(raw, options)).toThrow(StagingRefused)
+    return
+  }
+  const plan = loadStagingPlan(raw, options)
+  expect(plan.fingerprint).toBe(wanted.stage_fingerprint)
+  expect(plan.verifiedWith).toBe(wanted.verified_with)
+  expect(plan.asRecord()).toEqual(raw)
+  plan.checkCurrent(plan.current)
+  for (const name of ['current', 'prepared'] as const) expect(plan[name].fingerprint).toBe(wanted.map_fingerprints[name])
+  expect(plan.prepared.groups[plan.group]!.derived[0]!.layout.tables).toEqual(wanted.tables)
+  const decoded = loadMap(JSON.parse(Buffer.from(plan.preparedPayload()).toString('utf8')), { model, publicKey, requireSignature: true })
+  expect(decoded.fingerprint).toBe(wanted.map_fingerprints.prepared)
 }

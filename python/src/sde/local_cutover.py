@@ -23,6 +23,7 @@ from .layout import group_columns
 from .migration import CHUNK_ROWS, _plan, precision_refusal
 from .model import LogicalModel
 from .placement import WATERMARK_TABLE, PlacementMap, load_map
+from .staging import StagingPlan, StagingReceipt
 
 if TYPE_CHECKING:
     from ._cutover_project import ProjectState
@@ -384,13 +385,11 @@ class LocalCutover:
             raise MigrationRefused("a durable cutover decision cannot be changed")
         if outcome == "success":
             self._check_budget()
-            for row in self._tables(execution, "source"):
-                identity = row["identity"]
-                name = [
-                    identity[key] for key in ("dialect", "server", "database", "namespace", "name")
-                ]
-                if name not in state["retired_names"]:
-                    state["retired_names"].append(name)
+        for row in self._tables(execution, "source" if outcome == "success" else "target"):
+            identity = row["identity"]
+            name = [identity[key] for key in ("dialect", "server", "database", "namespace", "name")]
+            if name not in state["retired_names"]:
+                state["retired_names"].append(name)
         execution["decision"], execution["reason"] = outcome, reason
         self.store.write(state)
         self._after_step("decision:" + outcome)
@@ -545,6 +544,7 @@ class LocalCutover:
                 complete = state["completed"][plan.plan_id]
                 if complete["plan_fingerprint"] != plan.fingerprint:
                     raise MigrationRefused("the completed plan id names another packet")
+                self.store.confirm()
                 return CutoverReceipt(complete["receipt"])
             if state["execution"] is not None:
                 raise CutoverRecoveryRequired("an unfinished local cutover requires resume")
@@ -625,7 +625,25 @@ class LocalCutover:
                     "cutover did not complete; resume its durable local state"
                 ) from exc
 
-    def resume(self) -> CutoverReceipt:
+    def stage(self, plan: StagingPlan) -> StagingReceipt:
+        from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
+        from .staging_operator import execute_stage
+
+        self._owner()
+        try:
+            with OperatorDeadline() as deadline:
+                self._alarm = deadline
+                deadline.arm(30000)
+                return execute_stage(self, plan)
+        except DeadlineInterrupt as exc:
+            self._interrupted()
+            raise CutoverRecoveryRequired(
+                "staging deadline interrupted an operation; reconnect and resume its state"
+            ) from exc
+        finally:
+            self._alarm = None
+
+    def resume(self) -> CutoverReceipt | StagingReceipt:
         from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
 
         self._owner()
@@ -642,13 +660,17 @@ class LocalCutover:
         finally:
             self._alarm = None
 
-    def _resume(self) -> CutoverReceipt:
+    def _resume(self) -> CutoverReceipt | StagingReceipt:
         self._owner()
         with self.store.lock():
             state = self.store.read()
             execution = state["execution"]
             if execution is None:
-                raise MigrationRefused("there is no unfinished local cutover")
+                raise MigrationRefused("there is no unfinished local operation")
+            if execution.get("kind") == "staging":
+                from .staging_operator import resume_stage
+
+                return resume_stage(self, state)
             plan = load_cutover_plan(
                 execution["plan"],
                 model=self.model,
