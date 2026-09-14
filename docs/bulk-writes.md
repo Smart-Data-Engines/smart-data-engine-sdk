@@ -106,3 +106,7 @@ statement count, conflicts and rollback, and the controlled lost-response regres
 The declared clickhouse-connect floor is exercised as well as the current driver. The floor
 requires native UUID objects when writing the fence-drain identity; the adapter binds that exact
 identity as UUID instead of relying on a newer driver's acceptance of hyphenated text.
+
+Table identifiers are quoted by the SDK before they reach the native INSERT client. This also
+keeps the driver's DESCRIBE and INSERT statements valid on the 0.7.0 floor for table names with
+spaces, backticks or backslashes. Ordinary inserts and migration copies share this boundary.

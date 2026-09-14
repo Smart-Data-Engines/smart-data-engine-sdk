@@ -490,7 +490,7 @@ class ClickHouseEngine:
         cols = sorted(values)
         row = [_as_utc(values[c]) for c in cols]
         try:
-            self._cx.insert(table, [row], column_names=cols)
+            self._cx.insert(_quote(table), [row], column_names=cols)
         except Exception as exc:
             # Surfaced, not swallowed and not rerouted, as in the PostgreSQL adapter. A write that
             # did not happen is not our internal problem to absorb.
@@ -505,7 +505,7 @@ class ClickHouseEngine:
             return
         data = [[_as_utc(row[c]) for c in cols] for row in rows]
         try:
-            self._cx.insert(table, data, column_names=cols)
+            self._cx.insert(_quote(table), data, column_names=cols)
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"batch insert into {table} failed: {exc}") from exc
@@ -726,7 +726,7 @@ class ClickHouseEngine:
                 )
         data = [[_as_utc(row[c]) for c in cols] for row in rows]
         try:
-            self._cx.insert(table, data, column_names=cols)
+            self._cx.insert(_quote(table), data, column_names=cols)
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
