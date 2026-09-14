@@ -1478,3 +1478,11 @@ pure authorization boundary; it does not reserve versions, execute a migration o
 `migration/079`–`098` pin the shared packet acceptance/refusal rules. Copying a parsed object does
 not copy loader provenance, and the current-map check includes signed admission mode as well as
 the canonical payload fingerprint.
+
+
+## 7h. Signed materialization staging packet
+
+[Staging protocol 1](staging.md) authorizes one fresh maintained copy while retaining the exact
+source, write generation and routing. Both SDKs validate the signed packet, map binding and
+portable physical names. `migration/099`–`121` pin these shared rules; the Python local operator
+executes creation and recovery. Loading an authorization does not activate its prepared map.

@@ -6,8 +6,7 @@ compares frozen data, persists its decision, activates the authorized map and ca
 process crash. It serves applications using either SDK; the TypeScript interoperability test uses
 an independent Python operator while a TypeScript application's fan-out is suspended.
 
-This is a local execution component. Controller version reservation, receipt acceptance, preparation
-of successive migration maps and workload qualification remain separate integration work. Its
+This is a local execution component. Controller version reservation, receipt acceptance, [staging](staging.md) handoff and workload qualification remain separate integration work. Its
 presence does not make the complete product production ready. No package release is implied by a
 merge to main; use the reviewed distribution artifact when qualifying a deployment.
 
@@ -34,7 +33,7 @@ merge to main; use the reviewed distribution artifact when qualifying a deployme
 The operator compares native server, database and table identities. Different aliases that resolve
 to the same physical table are refused before repair. A migrating table cannot also serve an
 unaffected group. Recovery checks those identities again, including native login identities, and
-will not attach or truncate a replacement table. Retired source names remain in local history and
+will not attach or truncate a replacement table. Retired source names on success and abandoned target names on abort remain in local history and
 cannot be used for another materialization.
 
 ## Local configuration and command handoff

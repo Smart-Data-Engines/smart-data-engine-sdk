@@ -100,6 +100,13 @@ from .routing import Router, resolve
 from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
 from .session import Engine, Session
 from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
+from .staging import (
+    STAGING_PROTOCOL,
+    StagingPlan,
+    StagingReceipt,
+    load_staging_plan,
+    staging_table_name,
+)
 from .telemetry import (
     MEASURED_FIELDS,
     CopyFreshness,
@@ -142,6 +149,7 @@ __all__ = [
     "PRECISION_INDEPENDENT",
     "RESERVED_TABLES",
     "SHAPE_KINDS",
+    "STAGING_PROTOCOL",
     "WATERMARK_TABLE",
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
@@ -195,6 +203,8 @@ __all__ = [
     "SdeError",
     "Session",
     "ShapeStats",
+    "StagingPlan",
+    "StagingReceipt",
     "Timestamp",
     "VerificationRequest",
     "VerifyReport",
@@ -230,6 +240,7 @@ __all__ = [
     "load_local_map",
     "load_map",
     "load_or_create_salt",
+    "load_staging_plan",
     "members_of",
     "neutral_declaration",
     "precision",
@@ -242,6 +253,7 @@ __all__ = [
     "schema_is_fixed",
     "schema_statements",
     "snake_case",
+    "staging_table_name",
     "stored_types",
     "verification_request",
     "verify",
