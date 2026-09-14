@@ -34,7 +34,7 @@ python-lint:
 	cd python && .venv/bin/ruff check --config pyproject.toml src tests ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py
 
 python-types:
-	cd python && .venv/bin/mypy src ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py
+	cd python && .venv/bin/mypy src tests/qualification ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py
 
 python-test:
 	cd python && .venv/bin/python -m pytest
@@ -43,6 +43,7 @@ ts-check: ts-types ts-test
 
 ts-types:
 	cd typescript && npx tsc --noEmit
+	cd typescript && npx tsc --noEmit --allowJs --checkJs --strictNullChecks --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/weather-worker.mjs
 
 ts-test:
 	cd typescript && npx vitest run

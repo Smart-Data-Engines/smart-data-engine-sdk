@@ -99,6 +99,8 @@ The Python [local cutover operator](docs/local-cutover.md) adds durable executio
 for signed generation-bearing packets, including native access changes for existing Python and
 TypeScript processes. [Staging](docs/staging.md) creates successive fresh copies while preserving
 the source and local recovery history; controller handoff and workload qualification are separate.
+The opt-in [workload qualification](docs/cutover-qualification.md) runs installed Python and npm
+artifacts under mixed traffic and checks scheduled latency, native recovery and acknowledged values.
 
 What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
 neither directory is here. The day one of them appears, the test over this page fails until the row
