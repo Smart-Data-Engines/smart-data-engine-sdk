@@ -55,7 +55,7 @@ export class MapError extends SdeError {
  * internal problem, and reporting success for it would be the worst thing this library could do.
  */
 export class EngineError extends SdeError {
-  override readonly name = 'EngineError'
+  override readonly name: string = 'EngineError'
 }
 
 /**
@@ -82,3 +82,9 @@ export class MapRolledBack extends SdeError {
 export class MigrationRefused extends SdeError {
   override readonly name = 'MigrationRefused'
 }
+
+
+/** An operation conflicts with an active session/connection or transaction owner. */
+export class ResourceBusy extends EngineError { override readonly name: string = 'ResourceBusy' }
+/** A session or inherited transaction context has ended. */
+export class ResourceClosed extends EngineError { override readonly name: string = 'ResourceClosed' }

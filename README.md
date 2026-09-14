@@ -101,6 +101,9 @@ TypeScript processes. [Staging](docs/staging.md) creates successive fresh copies
 the source and local recovery history; controller handoff and workload qualification are separate.
 The opt-in [workload qualification](docs/cutover-qualification.md) runs installed Python and npm
 artifacts under mixed traffic and checks scheduled latency, native recovery and acknowledged values.
+[Session lifetime](docs/session-lifecycle.md) defines borrowed/owned connections and transaction
+ownership for concurrent applications.
+
 
 What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
 neither directory is here. The day one of them appears, the test over this page fails until the row

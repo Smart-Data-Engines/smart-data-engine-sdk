@@ -1,3 +1,4 @@
+import { withReader } from './_usage.js'
 import type { MigrationView } from './inspection.js'
 import { EPOCH_COLUMN } from './generation.js'
 /**
@@ -510,18 +511,21 @@ export async function backfill(
   group: string,
   options: BackfillOptions = {},
 ): Promise<BackfillProgress> {
-  const chunkRows = options.chunkRows ?? CHUNK_ROWS
-  if (chunkRows < 1) throw new MigrationRefused(`a chunk of ${chunkRows} rows is not a chunk`)
-  const entities: EntityProgress[] = []
-  for (const copy of plan(session, group)) {
-    entities.push(await backfillOne(copy, chunkRows, options.stopAfter))
-  }
-  return {
-    group,
-    entities,
-    complete: entities.every((entity) => entity.complete),
-    rowsThisRun: entities.reduce((sum, entity) => sum + entity.rowsThisRun, 0),
-  }
+  return withReader(session, async () => {
+    const chunkRows = options.chunkRows ?? CHUNK_ROWS
+    if (chunkRows < 1) throw new MigrationRefused(`a chunk of ${chunkRows} rows is not a chunk`)
+    const entities: EntityProgress[] = []
+    for (const copy of plan(session, group)) {
+      entities.push(await backfillOne(copy, chunkRows, options.stopAfter))
+    }
+    return {
+      group,
+      entities,
+      complete: entities.every((entity) => entity.complete),
+      rowsThisRun: entities.reduce((sum, entity) => sum + entity.rowsThisRun, 0),
+    }
+
+  })
 }
 
 async function backfillOne(
@@ -633,75 +637,78 @@ export async function verify(
   group: string,
   options: VerifyOptions = {},
 ): Promise<VerifyReport> {
-  options.request?.checkSession(session.placement, session.projectId, group)
-  if (options.at !== undefined) options.request?.checkTime(options.at)
-  if (options.request !== undefined && session.model.version !== options.request.modelVersion) {
-    throw new MigrationRefused('verification request names another session model')
-  }
-  const chunkRows = options.chunkRows ?? CHUNK_ROWS
-  if (chunkRows < 1) throw new MigrationRefused(`a chunk of ${chunkRows} rows is not a chunk`)
-  let chunksCompared = 0
-  let chunksMismatched = 0
-  let tailRowsRead = 0
-  let tailMissing = 0
-  let rowsSource = 0
-  let rowsTarget = 0
-  const differences: Difference[] = []
-  let suppressed = 0
-
-  for (const copy of plan(session, group)) {
-    const marker = await copy.target.backfillMarker({
-      materialization: copy.targetId,
-      entity: copy.entity,
-    })
-    rowsSource += await copy.source.count(copy.sourceTable)
-    rowsTarget += await copy.target.count(copy.targetTable)
-    let after: readonly unknown[] | null = null
-    let seen = 0
-    for (;;) {
-      const below = seen < marker
-      const want = below ? Math.min(chunkRows, marker - seen) : chunkRows
-      const rows = await copy.source.keyRange(
-        copy.sourceTable,
-        copy.key,
-        after === null ? { limit: want } : { after, limit: want },
-      )
-      if (rows.length === 0) break
-      const last = rows[rows.length - 1] as Row
-      const high = copy.key.map((column) => last[column])
-      const missing = await missingInTarget(copy, rows, after, high)
-      if (below) {
-        chunksCompared += 1
-        if (missing.length > 0) chunksMismatched += 1
-      } else {
-        tailRowsRead += rows.length
-        tailMissing += missing.length
-      }
-      for (const difference of missing) {
-        if (differences.length < DIFFERENCES_KEPT) differences.push(difference)
-        else suppressed += 1
-      }
-      after = high
-      seen += rows.length
+  return withReader(session, async () => {
+    options.request?.checkSession(session.placement, session.projectId, group)
+    if (options.at !== undefined) options.request?.checkTime(options.at)
+    if (options.request !== undefined && session.model.version !== options.request.modelVersion) {
+      throw new MigrationRefused('verification request names another session model')
     }
-  }
+    const chunkRows = options.chunkRows ?? CHUNK_ROWS
+    if (chunkRows < 1) throw new MigrationRefused(`a chunk of ${chunkRows} rows is not a chunk`)
+    let chunksCompared = 0
+    let chunksMismatched = 0
+    let tailRowsRead = 0
+    let tailMissing = 0
+    let rowsSource = 0
+    let rowsTarget = 0
+    const differences: Difference[] = []
+    let suppressed = 0
 
-  const at = options.at ?? new Date().toISOString()
-  options.request?.checkTime(at)
-  return {
-    at,
-    ...(options.request === undefined ? {} : { request: options.request }),
-    group,
-    chunksCompared,
-    chunksMismatched,
-    tailRowsRead,
-    tailRowsMissingInTarget: tailMissing,
-    rowsSource,
-    rowsTarget,
-    differences,
-    differencesSuppressed: suppressed,
-    matched: chunksMismatched === 0 && tailMissing === 0,
-  }
+    for (const copy of plan(session, group)) {
+      const marker = await copy.target.backfillMarker({
+        materialization: copy.targetId,
+        entity: copy.entity,
+      })
+      rowsSource += await copy.source.count(copy.sourceTable)
+      rowsTarget += await copy.target.count(copy.targetTable)
+      let after: readonly unknown[] | null = null
+      let seen = 0
+      for (;;) {
+        const below = seen < marker
+        const want = below ? Math.min(chunkRows, marker - seen) : chunkRows
+        const rows = await copy.source.keyRange(
+          copy.sourceTable,
+          copy.key,
+          after === null ? { limit: want } : { after, limit: want },
+        )
+        if (rows.length === 0) break
+        const last = rows[rows.length - 1] as Row
+        const high = copy.key.map((column) => last[column])
+        const missing = await missingInTarget(copy, rows, after, high)
+        if (below) {
+          chunksCompared += 1
+          if (missing.length > 0) chunksMismatched += 1
+        } else {
+          tailRowsRead += rows.length
+          tailMissing += missing.length
+        }
+        for (const difference of missing) {
+          if (differences.length < DIFFERENCES_KEPT) differences.push(difference)
+          else suppressed += 1
+        }
+        after = high
+        seen += rows.length
+      }
+    }
+
+    const at = options.at ?? new Date().toISOString()
+    options.request?.checkTime(at)
+    return {
+      at,
+      ...(options.request === undefined ? {} : { request: options.request }),
+      group,
+      chunksCompared,
+      chunksMismatched,
+      tailRowsRead,
+      tailRowsMissingInTarget: tailMissing,
+      rowsSource,
+      rowsTarget,
+      differences,
+      differencesSuppressed: suppressed,
+      matched: chunksMismatched === 0 && tailMissing === 0,
+    }
+
+  })
 }
 
 /**

@@ -1,3 +1,5 @@
+import { registerSession, SessionUsage, withSession } from './_usage.js'
+import { ResourceBusy } from './errors.js'
 /**
  * Routing operations for one model against one placement, and the dual write that makes a
  * migration possible.
@@ -77,6 +79,11 @@ export interface SessionOptions {
   readonly names?: NameMap
 }
 
+export interface ManagedEngine extends Engine {
+  connect(): Promise<void>
+  close(): Promise<void> | void
+}
+
 interface Deferred {
   readonly engine: string
   readonly table: string
@@ -118,6 +125,9 @@ export class Session {
   private readonly declared: readonly string[]
   private inWriteTransaction = false
   private deferred: Deferred[] = []
+  private readonly usage = new SessionUsage(this)
+  private ownedEngines: ManagedEngine[] = []
+  private closing = false
 
   private constructor(
     readonly model: LogicalModel,
@@ -136,6 +146,7 @@ export class Session {
     readonly rollbackProtection: WatermarkCheck,
     readonly projectId: string | undefined,
   ) {
+    registerSession(this, this.usage)
     this.groups = colocationGroups(model)
     for (const shape of enumerateShapes(model)) {
       this.shapes.set(shapeKey(shape.entity, shape.kind, shape.fields), shape)
@@ -172,68 +183,114 @@ export class Session {
     engines: Readonly<Record<string, Engine>>,
     options: SessionOptions = {},
   ): Promise<Session> {
-    checkProjectId(options.projectId)
-    const required = new Set<string>()
-    for (const group of Object.keys(placement.groups)) {
-      const body = placementOf(placement, group)
-      for (const materialization of [body.source, ...body.derived]) {
-        required.add(materialization.engine)
+    return withSession({}, async () => {
+      checkProjectId(options.projectId)
+      const required = new Set<string>()
+      for (const group of Object.keys(placement.groups)) {
+        const body = placementOf(placement, group)
+        for (const materialization of [body.source, ...body.derived]) {
+          required.add(materialization.engine)
+        }
       }
-    }
-    const missing = [...required].filter((name) => !(name in engines)).sort(compareCodePoints)
-    if (missing.length > 0) {
-      throw new EngineError(
-        `the placement map refers to engines that were not supplied: [${missing.join(', ')}]. A ` +
-          `session cannot route an operation to an engine it has no adapter for, and guessing at ` +
-          `a connection is not something a library should do.`,
-      )
-    }
-    // A copy that silently holds different values from its source is refused before the first
-    // write rather than discovered by verify at the end of one. The rule is backfill's and it
-    // lives in one function, because this is the second door asking it and for a long time only
-    // the first one did: measured against live servers, a `timestamptz` written through a fan-out
-    // map came back `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse, with no
-    // error anywhere and backfill refusing the very same copy a phase later. Here rather than at
-    // loadMap, and that is forced: a map names engines by name and carries no dialect, so the
-    // earliest moment this is answerable is the one where the adapters are in hand.
-    for (const group of colocationGroups(model)) {
-      const body = placement.groups[group.name] === undefined ? null : placementOf(placement, group.name)
-      if (body === null || body.alsoWrite.length === 0) continue
-      const columns = groupColumns(model, group)
-      const sourceDialect = (engines[body.source.engine] as Engine).dialect
-      for (const copy of body.alsoWrite) {
-        for (const entity of Object.keys(columns).sort(compareCodePoints)) {
-          const refusal = precisionRefusal(
-            group.name,
-            entity,
-            columns[entity] ?? {},
-            sourceDialect,
-            (engines[copy.engine] as Engine).dialect,
-          )
-          if (refusal !== null) {
-            throw new MigrationRefused(
-              `${refusal} This map fans writes out to ${copy.engine}, so it would happen on every ` +
-                `write rather than once during a copy, and nothing would report it.`,
+      const missing = [...required].filter((name) => !(name in engines)).sort(compareCodePoints)
+      if (missing.length > 0) {
+        throw new EngineError(
+          `the placement map refers to engines that were not supplied: [${missing.join(', ')}]. A ` +
+            `session cannot route an operation to an engine it has no adapter for, and guessing at ` +
+            `a connection is not something a library should do.`,
+        )
+      }
+      // A copy that silently holds different values from its source is refused before the first
+      // write rather than discovered by verify at the end of one. The rule is backfill's and it
+      // lives in one function, because this is the second door asking it and for a long time only
+      // the first one did: measured against live servers, a `timestamptz` written through a fan-out
+      // map came back `09:30:15.123456` from PostgreSQL and `09:30:15.123` from ClickHouse, with no
+      // error anywhere and backfill refusing the very same copy a phase later. Here rather than at
+      // loadMap, and that is forced: a map names engines by name and carries no dialect, so the
+      // earliest moment this is answerable is the one where the adapters are in hand.
+      for (const group of colocationGroups(model)) {
+        const body = placement.groups[group.name] === undefined ? null : placementOf(placement, group.name)
+        if (body === null || body.alsoWrite.length === 0) continue
+        const columns = groupColumns(model, group)
+        const sourceDialect = (engines[body.source.engine] as Engine).dialect
+        for (const copy of body.alsoWrite) {
+          for (const entity of Object.keys(columns).sort(compareCodePoints)) {
+            const refusal = precisionRefusal(
+              group.name,
+              entity,
+              columns[entity] ?? {},
+              sourceDialect,
+              (engines[copy.engine] as Engine).dialect,
             )
+            if (refusal !== null) {
+              throw new MigrationRefused(
+                `${refusal} This map fans writes out to ${copy.engine}, so it would happen on every ` +
+                  `write rather than once during a copy, and nothing would report it.`,
+              )
+            }
           }
         }
       }
-    }
 
-    // It costs one statement per participating engine, once per process, and nothing at all for an
-    // unsigned map - which is checked inside rather than here, because gathering the watermarks
-    // first and then noticing the map was unsigned is the right answer with the promise broken.
-    await validateGenerations(model, placement, engines, options.projectId)
-    const protection = await enforceForwardOnly(placement, engines)
-    return new Session(
-      model,
-      placement,
-      engines,
-      options.recorder,
-      options.names,
-      protection,
-      options.projectId,
-    )
+      // It costs one statement per participating engine, once per process, and nothing at all for an
+      // unsigned map - which is checked inside rather than here, because gathering the watermarks
+      // first and then noticing the map was unsigned is the right answer with the promise broken.
+      await validateGenerations(model, placement, engines, options.projectId)
+      const protection = await enforceForwardOnly(placement, engines)
+      return new Session(
+        model,
+        placement,
+        engines,
+        options.recorder,
+        options.names,
+        protection,
+        options.projectId,
+      )
+
+    })
+  }
+
+  /** Create and own fresh adapters, including cleanup when only part of startup succeeded. */
+  static async connect(
+    model: LogicalModel, placement: PlacementMap,
+    factories: Readonly<Record<string, () => ManagedEngine | Promise<ManagedEngine>>>,
+    options: SessionOptions = {},
+  ): Promise<Session> {
+    return withSession({}, async () => {
+      const created: ManagedEngine[] = []
+      try {
+        const engines: Record<string, ManagedEngine> = {}
+        for (const name of Object.keys(factories).sort(compareCodePoints)) {
+          const engine = await factories[name]!()
+          if (created.includes(engine)) throw new EngineError('owned session factories must provide distinct fresh adapters')
+          created.push(engine); engines[name] = engine
+          await engine.connect()
+        }
+        const session = await Session.open(model, placement, engines, options)
+        session.ownedEngines = created
+        return session
+      } catch (error) {
+        for (const engine of created.reverse()) {
+          try { await engine.close() } catch { /* Preserve the original startup failure. */ }
+        }
+        throw error
+      }
+    })
+  }
+
+  /** Close only adapters created by Session.connect; borrowed adapters remain the caller's. */
+  async close(): Promise<void> {
+    this.usage.close()
+    if (this.closing) throw new ResourceBusy('session cleanup is already in progress')
+    this.closing = true
+    try {
+      const failed: ManagedEngine[] = [], failures: unknown[] = []
+      for (const engine of [...this.ownedEngines].reverse()) {
+        try { await engine.close() } catch (error) { failed.push(engine); failures.push(error) }
+      }
+      this.ownedEngines = failed
+      if (failures.length > 0) throw failures[0]
+    } finally { this.closing = false }
   }
 
   // --- the hashing boundary ----------------------------------------------------------------
@@ -281,6 +338,7 @@ export class Session {
    * which is a worse arrangement than admitting what a session holds.
    */
   engineNamed(name: string): Engine {
+    this.usage.check()
     const engine = this.engines[name]
     if (engine === undefined) {
       throw new EngineError(
@@ -293,6 +351,7 @@ export class Session {
 
   /** The adapters, by the names the map uses. A copy; the session keeps its own. */
   engineNames(): readonly string[] {
+    this.usage.check()
     return Object.keys(this.engines).sort(compareCodePoints)
   }
 
@@ -314,6 +373,7 @@ export class Session {
   }
 
   private target(shape: OperationShape, fresh: boolean): [Engine, Materialization] {
+    this.usage.group(shape.group)
     const materialization = resolve(this.placement, shape, {
       inWriteTransaction: this.inWriteTransaction,
       fresh,
@@ -329,22 +389,25 @@ export class Session {
 
   /** Create what each engine is missing for the groups placed in it. */
   async ensureSchema(): Promise<void> {
-    if (this.placement.contract >= 4) {
-      await validateGenerations(this.model, this.placement, this.engines, this.projectId)
-      return
-    }
-    for (const group of this.groups) {
-      const body = placementOf(this.placement, group.name)
-      const keys: Record<string, readonly string[]> = {}
-      for (const member of group.members) {
-        keys[member] = this.model.entities.find((entity) => entity.name === member)?.key ?? []
+    return this.usage.operation(async () => {
+      if (this.placement.contract >= 4) {
+        await validateGenerations(this.model, this.placement, this.engines, this.projectId)
+        return
       }
-      for (const materialization of [body.source, ...body.derived]) {
-        const engine = this.engines[materialization.engine]
-        if (engine === undefined) continue
-        await engine.ensureSchema(materialization.layout, { keys })
+      for (const group of this.groups) {
+        const body = placementOf(this.placement, group.name)
+        const keys: Record<string, readonly string[]> = {}
+        for (const member of group.members) {
+          keys[member] = this.model.entities.find((entity) => entity.name === member)?.key ?? []
+        }
+        for (const materialization of [body.source, ...body.derived]) {
+          const engine = this.engines[materialization.engine]
+          if (engine === undefined) continue
+          await engine.ensureSchema(materialization.layout, { keys })
+        }
       }
-    }
+
+    })
   }
 
   /** Whether an engine in this map imposes its own schema, so `ensureSchema` sends it nothing. */
@@ -357,61 +420,68 @@ export class Session {
   // --- data --------------------------------------------------------------------------------
 
   async save(entity: string, values: Readonly<Row>): Promise<void> {
-    const target = this.entityName(entity)
-    const body = this.fieldsIn(entity, values)
-    const shape = this.shapeFor(target, 'write')
-    const [engine, materialization] = this.target(shape, false)
-    const table = tableFor(materialization.layout, target)
-    const started = this.recorder === undefined ? 0 : now()
-    let failed = false
-    try {
-      await engine.insert(table, stampValues(this.placement, shape.group, body))
-      await this.fanOut(target, shape.group, body)
-    } catch (error) {
-      failed = true
-      throw error
-    } finally {
-      // Recorded on both paths on purpose: a failed write is exactly the operation whose latency
-      // and error count matter most to a placement decision, and it is the one an early return
-      // would silently omit. The fan-out is inside the timed region, which is a decision - it makes
-      // the client's write slower and the telemetry has to say so, or a placement would be scored
-      // against a latency the application is not experiencing.
-      this.observe(shape, started, 1, failed)
-    }
+    return this.usage.operation(async () => {
+      const target = this.entityName(entity)
+      const body = this.fieldsIn(entity, values)
+      const shape = this.shapeFor(target, 'write')
+      const [engine, materialization] = this.target(shape, false)
+      const table = tableFor(materialization.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      try {
+        await engine.insert(table, stampValues(this.placement, shape.group, body))
+        this.usage.check()
+        await this.fanOut(target, shape.group, body)
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        // Recorded on both paths on purpose: a failed write is exactly the operation whose latency
+        // and error count matter most to a placement decision, and it is the one an early return
+        // would silently omit. The fan-out is inside the timed region, which is a decision - it makes
+        // the client's write slower and the telemetry has to say so, or a placement would be scored
+        // against a latency the application is not experiencing.
+        this.observe(shape, started, 1, failed)
+      }
+
+    })
   }
 
   async get(entity: string, key: Readonly<Row>, options: { fresh?: boolean } = {}): Promise<Row | null> {
-    const target = this.entityName(entity)
-    const given = this.fieldsIn(entity, key)
-    const spec = this.model.entities.find((e) => e.name === target)
-    if (spec === undefined) throw new ModelPlanningError(`this model has no entity '${entity}'`)
-    const expected = [...spec.key].sort(compareCodePoints)
-    const supplied = Object.keys(given).sort(compareCodePoints)
-    if (supplied.join(SEP) !== expected.join(SEP)) {
-      // Both lists are put back into the client's vocabulary: with hashing on, an error naming
-      // digests tells them nothing about their own code.
-      throw new ModelPlanningError(
-        `a point read of ${entity} needs exactly its key ` +
-          `[${this.clientNames(entity, expected).join(', ')}], and was given ` +
-          `[${this.clientNames(entity, supplied).join(', ')}]. A partial key is a range read, ` +
-          `which is a different shape and may well be routed somewhere else.`,
-      )
-    }
-    const shape = this.shapeFor(target, 'point_read', expected)
-    const [engine, materialization] = this.target(shape, options.fresh === true)
-    const table = tableFor(materialization.layout, target)
-    const started = this.recorder === undefined ? 0 : now()
-    let failed = false
-    let row: Row | null = null
-    try {
-      row = await engine.get(table, given)
-      return this.fieldsOut(entity, logicalRow(this.placement, row))
-    } catch (error) {
-      failed = true
-      throw error
-    } finally {
-      this.observe(shape, started, row === null ? 0 : 1, failed)
-    }
+    return this.usage.operation(async () => {
+      const target = this.entityName(entity)
+      const given = this.fieldsIn(entity, key)
+      const spec = this.model.entities.find((e) => e.name === target)
+      if (spec === undefined) throw new ModelPlanningError(`this model has no entity '${entity}'`)
+      const expected = [...spec.key].sort(compareCodePoints)
+      const supplied = Object.keys(given).sort(compareCodePoints)
+      if (supplied.join(SEP) !== expected.join(SEP)) {
+        // Both lists are put back into the client's vocabulary: with hashing on, an error naming
+        // digests tells them nothing about their own code.
+        throw new ModelPlanningError(
+          `a point read of ${entity} needs exactly its key ` +
+            `[${this.clientNames(entity, expected).join(', ')}], and was given ` +
+            `[${this.clientNames(entity, supplied).join(', ')}]. A partial key is a range read, ` +
+            `which is a different shape and may well be routed somewhere else.`,
+        )
+      }
+      const shape = this.shapeFor(target, 'point_read', expected)
+      const [engine, materialization] = this.target(shape, options.fresh === true)
+      const table = tableFor(materialization.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      let row: Row | null = null
+      try {
+        row = await engine.get(table, given)
+        return this.fieldsOut(entity, logicalRow(this.placement, row))
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, row === null ? 0 : 1, failed)
+      }
+
+    })
   }
 
   // --- dual write --------------------------------------------------------------------------
@@ -544,12 +614,18 @@ export class Session {
     const engine = this.engines[engineName]
     if (engine === undefined) throw new EngineError(`no adapter for engine '${engineName}'`)
 
+    return this.usage.transaction(group.name, async () => {
     const previous = this.inWriteTransaction
     const outer = this.deferred.length
     this.inWriteTransaction = true
     let committed = false
     try {
-      const result = await engine.transaction(async () => body(this))
+      const result = await engine.transaction(async () => {
+        const value = await body(this)
+        this.usage.idle()
+        this.usage.seal()
+        return value
+      })
       committed = true
       return result
     } finally {
@@ -567,6 +643,7 @@ export class Session {
       // Rolled back: the rows never existed in the source, so they must never exist in the copy -
       // dropping them is the whole reason the fan-out was deferred.
     }
+    })
   }
 }
 

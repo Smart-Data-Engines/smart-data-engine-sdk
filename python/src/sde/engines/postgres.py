@@ -21,6 +21,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
+from .._usage import UsageGate, guarded
 from ..errors import EngineError
 from ..explain import (
     Cost,
@@ -69,9 +70,12 @@ class PostgresEngine:
         self._psycopg = psycopg
         self._dsn = dsn
         self._conn: Any = None
+        self._usage = UsageGate()
+        self._unusable = False
 
     # --- connection ------------------------------------------------------------------------
 
+    @guarded
     def connect(self) -> None:
         """Open the connection, with a bound on how long that may take.
 
@@ -84,15 +88,21 @@ class PostgresEngine:
         The default is only applied when the caller has not chosen one. A ``connect_timeout`` in
         the DSN is their decision about their own network and this must not override it.
         """
+        if self._conn is not None and self._unusable:
+            raise EngineError(
+                "transaction completion was uncertain; close() then connect() before reuse"
+            )
         if self._conn is None:
             options: dict[str, Any] = {}
             if "connect_timeout" not in self._dsn:
                 options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
             try:
                 self._conn = self._psycopg.connect(self._dsn, autocommit=True, **options)
+                self._unusable = False
             except Exception as exc:
                 raise EngineError(f"could not connect to PostgreSQL: {exc}") from exc
 
+    @guarded
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
@@ -107,6 +117,10 @@ class PostgresEngine:
 
     @property
     def _cx(self) -> Any:
+        if self._unusable:
+            raise EngineError(
+                "transaction completion was uncertain; close() then connect() before reuse"
+            )
         if self._conn is None:
             raise EngineError("not connected; call connect() first")
         return self._conn
@@ -137,6 +151,7 @@ class PostgresEngine:
 
     # --- schema ----------------------------------------------------------------------------
 
+    @guarded
     def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]) -> None:
         """Create what is missing, change nothing that exists.
 
@@ -157,6 +172,7 @@ class PostgresEngine:
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
         self._verify_schema(layout)
 
+    @guarded
     def validate_schema(self, layout: PhysicalLayout) -> None:
         """Check the existing physical columns without issuing DDL."""
         self._verify_schema(layout)
@@ -267,9 +283,9 @@ class PostgresEngine:
             row = cur.fetchone()
         return bool(row is not None and row[0] is not None and row[0] == row[1])
 
-
     # --- data ------------------------------------------------------------------------------
 
+    @guarded
     def explain_plan(self, sql: str) -> QueryPlan:
         """Plan an analyst's query without running it, inside a read-only transaction.
 
@@ -372,6 +388,7 @@ class PostgresEngine:
             ),
         )
 
+    @guarded
     def insert(self, table: str, values: Mapping[str, Any]) -> None:
         if not values:
             raise EngineError("nothing to insert")
@@ -389,6 +406,7 @@ class PostgresEngine:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"insert into {table} failed: {self._explain(exc)}") from exc
 
+    @guarded
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:
         where = " AND ".join(f"{_quote(c)} = %s" for c in sorted(key))
         sql = f"SELECT * FROM {_quote(table)} WHERE {where}"
@@ -409,6 +427,7 @@ class PostgresEngine:
     # protocol rather than part of `Engine`: adding these to `Engine` would break every adapter
     # anybody has written, for a capability our own orderbook engine cannot provide.
 
+    @guarded
     def map_watermark(self) -> int | None:
         """The highest map version applied against this engine, creating the table if missing.
 
@@ -438,6 +457,7 @@ class PostgresEngine:
             return None
         return int(row[0])
 
+    @guarded
     def record_map_version(self, version: int, *, model_version: str) -> None:
         """Append. Never update, so there is nothing to contend over and nothing to lose.
 
@@ -457,6 +477,7 @@ class PostgresEngine:
                 f"recording a map version in {WATERMARK_TABLE} failed: {exc}"
             ) from exc
 
+    @guarded
     def range(
         self,
         table: str,
@@ -489,6 +510,7 @@ class PostgresEngine:
         except Exception as exc:
             raise EngineError(f"range select from {table} failed: {exc}") from exc
 
+    @guarded
     def count(self, table: str) -> int:
         try:
             with self._cx.cursor() as cur:
@@ -505,6 +527,7 @@ class PostgresEngine:
     # its schema is fixed in its own source and it has nowhere to keep a marker - and an engine that
     # cannot take part in a migration should be a named refusal rather than a broken adapter.
 
+    @guarded
     def key_range(
         self,
         table: str,
@@ -550,9 +573,8 @@ class PostgresEngine:
         except Exception as exc:
             raise EngineError(f"key range select from {table} failed: {exc}") from exc
 
-    def nth_key(
-        self, table: str, order: Sequence[str], *, position: int
-    ) -> tuple[Any, ...] | None:
+    @guarded
+    def nth_key(self, table: str, order: Sequence[str], *, position: int) -> tuple[Any, ...] | None:
         """The key of the ``position``-th row in key order, one-based, or None if there is no such
         row.
 
@@ -564,10 +586,7 @@ class PostgresEngine:
         if position < 1:
             raise EngineError(f"position is one-based; {position} is not a row")
         projection = ", ".join(_quote(c) for c in cols)
-        sql = (
-            f"SELECT {projection} FROM {_quote(table)} ORDER BY ({projection}) "
-            f"OFFSET %s LIMIT 1"
-        )
+        sql = f"SELECT {projection} FROM {_quote(table)} ORDER BY ({projection}) OFFSET %s LIMIT 1"
         try:
             with self._cx.cursor() as cur:
                 cur.execute(sql, [position - 1])
@@ -576,6 +595,7 @@ class PostgresEngine:
             raise EngineError(f"reading row {position} of {table} failed: {exc}") from exc
         return None if row is None else tuple(row)
 
+    @guarded
     def copy_in(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
         """Insert rows, skipping any whose key is already there.
 
@@ -617,6 +637,7 @@ class PostgresEngine:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
 
+    @guarded
     def backfill_marker(self, *, materialization: str, entity: str) -> int:
         """How many rows of this entity have been copied into this engine. Zero if none.
 
@@ -645,9 +666,8 @@ class PostgresEngine:
             return 0
         return int(row[0])
 
-    def record_backfill_marker(
-        self, *, materialization: str, entity: str, rows: int
-    ) -> None:
+    @guarded
+    def record_backfill_marker(self, *, materialization: str, entity: str, rows: int) -> None:
         """Append the new marker. Never update, so an interrupted run leaves a readable trail."""
         try:
             with self._cx.cursor() as cur:
@@ -673,14 +693,37 @@ class PostgresEngine:
         of a two-phase commit. That is the trade this product makes, and it is why this method is
         four lines rather than a subsystem.
         """
-        cx = self._cx
-        previous = cx.autocommit
-        cx.autocommit = False
-        try:
-            yield self
-            cx.commit()
-        except Exception:
-            cx.rollback()
-            raise
-        finally:
-            cx.autocommit = previous
+        with self._usage.transaction() as scope:
+            cx = self._cx
+            status = self._psycopg.pq.TransactionStatus
+            parent = scope.parent
+            nested = parent is not None and parent.gate is self._usage
+            expected = status.INTRANS if nested else status.IDLE
+            body_error: BaseException | None = None
+            try:
+                with cx.transaction():
+                    try:
+                        yield self
+                        self._usage.idle()
+                        if cx.info.transaction_status == status.INERROR:
+                            raise EngineError(
+                                "the transaction is aborted and cannot be reported as committed"
+                            )
+                        scope.active = False
+                    except BaseException as exc:
+                        scope.active = False
+                        body_error = exc
+                        raise
+            except BaseException as exc:
+                if body_error is None:
+                    self._unusable = True
+                    raise EngineError(
+                        "transaction completion was uncertain; close() then connect() before reuse"
+                    ) from exc
+                raise
+            finally:
+                try:
+                    if cx.info.transaction_status != expected:
+                        self._unusable = True
+                except Exception:
+                    self._unusable = True

@@ -44,6 +44,8 @@ from .errors import (
     MapRolledBack,
     MigrationRefused,
     ModelPlanningError,
+    ResourceBusy,
+    ResourceClosed,
     SdeError,
 )
 from .explain import Cost, Explains, PlanFinding, QueryPlan, QueryPlanRefused, explain
@@ -98,7 +100,7 @@ from .placement import (
 from .provisioning import prepare_schema
 from .routing import Router, resolve
 from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
-from .session import Engine, Session
+from .session import Engine, ManagedEngine, Session
 from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .staging import (
     STAGING_PROTOCOL,
@@ -182,6 +184,7 @@ __all__ = [
     "Json",
     "LocalCutover",
     "LogicalModel",
+    "ManagedEngine",
     "MapError",
     "MapRolledBack",
     "Materialization",
@@ -199,6 +202,8 @@ __all__ = [
     "QueryPlanRefused",
     "Recorder",
     "Ref",
+    "ResourceBusy",
+    "ResourceClosed",
     "Router",
     "SdeError",
     "Session",
