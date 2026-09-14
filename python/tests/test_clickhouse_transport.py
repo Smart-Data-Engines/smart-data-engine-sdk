@@ -46,3 +46,34 @@ def test_transport_error_cannot_enter_the_drivers_remote_close_retry_handler() -
     with pytest.raises(EngineError, match="outcome may be unknown"):
         _NoReplayTransport(pool).request("POST", "http://example.invalid", body=b"insert")
     assert len(pool.calls) == 1
+
+
+@pytest.mark.parametrize("installed", ["0.7.0", "1.7.1", "1.7.2rc1", "1.8.0.dev1"])
+def test_unsupported_driver_refuses_before_opening_a_connection(
+    installed: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sde.engines.clickhouse as adapter
+
+    monkeypatch.setattr(adapter, "version", lambda _name: installed)
+    with pytest.raises(EngineError, match="timestamp and structured"):
+        adapter.ClickHouseEngine("clickhouse://localhost:1/default")
+
+
+@pytest.mark.parametrize("installed", ["1.7.2", "1.7.2.post1", "1.8.0", "2.0.0"])
+def test_stable_compatible_driver_versions_are_accepted(installed: str) -> None:
+    from sde.engines.clickhouse import _require_driver_version
+
+    _require_driver_version(installed)
+
+
+def test_distribution_floor_matches_the_pre_connection_refusal() -> None:
+    import tomllib
+    from pathlib import Path
+
+    from sde.engines.clickhouse import MIN_CLICKHOUSE_CONNECT
+
+    metadata = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    assert metadata["project"]["optional-dependencies"]["clickhouse"] == [
+        f"clickhouse-connect>={MIN_CLICKHOUSE_CONNECT}"
+    ]

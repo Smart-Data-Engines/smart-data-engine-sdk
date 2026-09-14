@@ -51,7 +51,9 @@ in an adapter, and there is no declaration for it yet.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from collections.abc import Iterator, Mapping, Sequence
+from importlib.metadata import version
 from typing import Any
 
 from .._usage import UsageGate, guarded
@@ -169,6 +171,21 @@ class _NoReplayTransport:
             ) from exc
 
 
+MIN_CLICKHOUSE_CONNECT = "1.7.2"
+
+
+def _require_driver_version(installed: str) -> None:
+    parts = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:\.post\d+)?", installed)
+    if parts is None or tuple(int(part) for part in parts.groups()) < tuple(
+        int(part) for part in MIN_CLICKHOUSE_CONNECT.split(".")
+    ):
+        raise EngineError(
+            f"ClickHouse requires stable clickhouse-connect >= {MIN_CLICKHOUSE_CONNECT}; "
+            f"installed {installed}. Older drivers do not meet the timestamp and structured "
+            "error-code contract. Install the SDK clickhouse extra in this environment."
+        )
+
+
 class ClickHouseEngine:
     """A thin adapter over clickhouse-connect. Executes decisions, makes none."""
 
@@ -184,6 +201,7 @@ class ClickHouseEngine:
                 "The core library has no dependencies, because it goes into your application and "
                 "every dependency here would be one you inherit."
             ) from exc
+        _require_driver_version(version("clickhouse-connect"))
         self._module = clickhouse_connect
         self._dsn = dsn
         self._client: Any = None

@@ -128,7 +128,7 @@ jobs:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          python -m pip install 'clickhouse-connect==0.7.0'
+          python -m pip install 'clickhouse-connect==1.7.2'
           pytest tests/test_bulk_live.py tests/test_clickhouse_transport.py -q --junitxml="$RUNNER_TEMP/sde-driver-floor.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-driver-floor.xml"
 

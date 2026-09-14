@@ -103,10 +103,11 @@ failures and exact value-free metric bytes. Native tests cover both engines and 
 1000-row values with adjacent microseconds, generation changes, source/copy execution, PostgreSQL
 statement count, conflicts and rollback, and the controlled lost-response regression.
 
-The declared clickhouse-connect floor is exercised as well as the current driver. The floor
-requires native UUID objects when writing the fence-drain identity; the adapter binds that exact
-identity as UUID instead of relying on a newer driver's acceptance of hyphenated text.
+Python requires stable **clickhouse-connect >= 1.7.2**, and refuses an older or prerelease
+driver before connecting. The previous 0.7 minimum did not satisfy the full SDK contract:
+negative-epoch timestamps were misread and permission errors lacked the structured native code
+needed by the cutover access probe. A passing batch alone did not establish those capabilities.
+The declared minimum is exercised in CI alongside the ordinary dependency resolution.
 
-Table identifiers are quoted by the SDK before they reach the native INSERT client. This also
-keeps the driver's DESCRIBE and INSERT statements valid on the 0.7.0 floor for table names with
-spaces, backticks or backslashes. Ordinary inserts and migration copies share this boundary.
+The adapter binds fence-drain identity as native UUID and quotes table names before passing
+them to INSERT. Those boundaries do not depend on the driver's permissive handling of text.
