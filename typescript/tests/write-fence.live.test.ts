@@ -79,7 +79,8 @@ describe.each(['postgres', 'clickhouse'] as const)('native fencing on %s', (dial
       await engine.insert(table, { id: 4, [WRITE_EPOCH_COLUMN]: 2 })
       expect(await engine.count(table)).toBe(2)
     })
-  })
+  // Two Python peers each have a 30s process bound; a 5s default can expire during correct DDL.
+  }, 75_000)
   it.skipIf(!live)('publishes native constraints Python can read, and releases only its hold', async () => {
     await fixture(dialect, async (engine, namespace, table) => {
       const fence = engine.writeFence(table, { projectId: PROJECT })
@@ -95,7 +96,8 @@ describe.each(['postgres', 'clickhouse'] as const)('native fencing on %s', (dial
       await engine.insert(table, { id: 4, [WRITE_EPOCH_COLUMN]: 2 })
       expect(await engine.count(table)).toBe(2)
     })
-  })
+  // Two Python peers each have a 30s process bound; a 5s default can expire during correct DDL.
+  }, 75_000)
 })
 
 
