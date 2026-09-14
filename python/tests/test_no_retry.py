@@ -271,8 +271,12 @@ def test_no_exception_handler_in_this_library_calls_an_engine_again() -> None:
     telemetry drops it - so what is refused is narrower than a catch: calling the engine *again*
     from the handler.
     """
-    methods = _engine_methods()
-    assert {"insert", "get"} <= methods, "the two methods a retry would use are not being checked"
+    methods = _engine_methods() - {"close"}
+    # Owned startup must close resources after failure. This exception permits no data call or
+    # reconnect: connect remains in the derived set and an implicit reconnect is still refused.
+    assert {"insert", "get", "connect"} <= methods, (
+        "data calls and implicit reconnects must remain covered"
+    )
     offenders: list[str] = []
     for path in _engine_facing():
         tree = ast.parse(path.read_text(encoding="utf-8"))

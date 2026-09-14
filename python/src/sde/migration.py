@@ -79,6 +79,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from ._usage import session_function
 from .capabilities import satisfies
 from .errors import EngineError, MigrationRefused
 from .generation import EPOCH_COLUMN
@@ -581,6 +582,7 @@ def _shapes_agree(
         )
 
 
+@session_function
 def backfill(
     session: Session,
     group: str,
@@ -693,6 +695,7 @@ def _resume_point(copy: _Copy, marker: int) -> tuple[Any, ...] | None:
     return position
 
 
+@session_function
 def verify(
     session: MigrationView, group: str, *, chunk_rows: int = CHUNK_ROWS,
     request: VerificationRequest | None = None,

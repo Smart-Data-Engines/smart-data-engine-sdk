@@ -38,6 +38,8 @@ export {
   MigrationRefused,
   ModelPlanningError,
   SdeError,
+  ResourceBusy,
+  ResourceClosed,
 } from './errors.js'
 export type { NameMap } from './hashing.js'
 export { DIGEST_CHARS, hashIdentifiers } from './hashing.js'
@@ -105,7 +107,7 @@ export {
   verifyForAHuman,
   verifyRecord,
 } from './migration.js'
-export type { Engine, Row, SessionOptions } from './session.js'
+export type { Engine, ManagedEngine, Row, SessionOptions } from './session.js'
 export { Session, tableFor } from './session.js'
 export type { Protection, WatermarkCheck, WatermarkStore } from './watermark.js'
 export {

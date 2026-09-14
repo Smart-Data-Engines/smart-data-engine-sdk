@@ -1,3 +1,4 @@
+import { UsageGate } from '../_usage.js'
 /**
  * ClickHouse adapter, over the HTTP interface, with no driver dependency at all.
  *
@@ -174,6 +175,7 @@ function outbound(value: unknown): unknown {
 
 export class ClickHouseEngine {
   readonly dialect = 'clickhouse'
+  private readonly usage = new UsageGate()
   private readonly target: Parsed
   private open = false
   private serverVersion: string | null = null
@@ -191,25 +193,31 @@ export class ClickHouseEngine {
    * bound never fires, and what is left is the wait for a response.
    */
   async connect(): Promise<void> {
-    if (this.open) return
-    try {
-      const result = await this.send('SELECT version()', {
-        timeoutMs: HANDSHAKE_TIMEOUT_MS,
-        format: 'JSON',
-      })
-      const parsed = JSON.parse(result) as JsonResult
-      this.serverVersion = String(Object.values(parsed.data?.[0] ?? {})[0] ?? '')
-    } catch (error) {
-      throw new EngineError(`could not connect to ClickHouse: ${message(error)}`)
-    }
-    this.open = true
+    return this.usage.operation(async () => {
+      if (this.open) return
+      try {
+        const result = await this.send('SELECT version()', {
+          timeoutMs: HANDSHAKE_TIMEOUT_MS,
+          format: 'JSON',
+        })
+        const parsed = JSON.parse(result) as JsonResult
+        this.serverVersion = String(Object.values(parsed.data?.[0] ?? {})[0] ?? '')
+      } catch (error) {
+        throw new EngineError(`could not connect to ClickHouse: ${message(error)}`)
+      }
+      this.open = true
+
+    })
   }
 
   async close(): Promise<void> {
-    // Nothing to close: every request is its own HTTP exchange on an agent this adapter does not
-    // keep alive. Present so that the shape matches the other adapter - a caller writing
-    // `close()` in a `finally` should not have to know which engine they have.
-    this.open = false
+    return this.usage.operation(async () => {
+      // Nothing to close: every request is its own HTTP exchange on an agent this adapter does not
+      // keep alive. Present so that the shape matches the other adapter - a caller writing
+      // `close()` in a `finally` should not have to know which engine they have.
+      this.open = false
+
+    })
   }
 
   /** What the server said it is, or null before `connect()`. Read by nothing; useful in a report. */
@@ -232,57 +240,60 @@ export class ClickHouseEngine {
     sql: string,
     options: { readonly timeoutMs?: number; readonly format?: string; readonly body?: string } = {},
   ): Promise<string> {
-    const query = options.format === undefined ? sql : `${sql} FORMAT ${options.format}`
-    const search = new URLSearchParams({ database: this.target.database })
-    if (options.body === undefined) search.set('query', query)
-    else search.set('query', query)
-    const path = `/?${search.toString()}`
-    const payload = options.body ?? ''
-    const requestFn = this.target.protocol === 'https:' ? httpsRequest : httpRequest
+    return this.usage.operation(async () => {
+      const query = options.format === undefined ? sql : `${sql} FORMAT ${options.format}`
+      const search = new URLSearchParams({ database: this.target.database })
+      if (options.body === undefined) search.set('query', query)
+      else search.set('query', query)
+      const path = `/?${search.toString()}`
+      const payload = options.body ?? ''
+      const requestFn = this.target.protocol === 'https:' ? httpsRequest : httpRequest
 
-    return new Promise<string>((resolve, reject) => {
-      const req = requestFn(
-        {
-          protocol: this.target.protocol,
-          host: this.target.host,
-          port: this.target.port,
-          method: 'POST',
-          path,
-          headers: {
-            'X-ClickHouse-User': this.target.user,
-            'X-ClickHouse-Key': this.target.password,
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Content-Length': Buffer.byteLength(payload),
+      return new Promise<string>((resolve, reject) => {
+        const req = requestFn(
+          {
+            protocol: this.target.protocol,
+            host: this.target.host,
+            port: this.target.port,
+            method: 'POST',
+            path,
+            headers: {
+              'X-ClickHouse-User': this.target.user,
+              'X-ClickHouse-Key': this.target.password,
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Content-Length': Buffer.byteLength(payload),
+            },
+            ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
           },
-          ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
-        },
-        (response) => {
-          const chunks: Buffer[] = []
-          response.on('data', (chunk: Buffer) => chunks.push(chunk))
-          response.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf8')
-            const status = response.statusCode ?? 0
-            if (status >= 200 && status < 300) resolve(text)
-            // ClickHouse puts its own message in the body, and it names the column or the setting.
-            // A summary of ours would lose exactly that.
-            else reject(new Error(`ClickHouse answered ${status}: ${text.trim()}`))
-          })
-        },
-      )
-      // `timeout` on the options bounds socket inactivity, which covers a host that accepts the
-      // connection and then says nothing - the case this exists for. The socket has to be destroyed
-      // explicitly: Node emits the event and leaves the request open otherwise.
-      req.on('timeout', () => {
-        req.destroy(
-          new Error(
-            `no answer within ${options.timeoutMs} ms. The socket was accepted, so this is a host ` +
-              `that took the connection and did not answer - a firewall that accepts, a load ` +
-              `balancer with no healthy backend, a server mid-restart.`,
-          ),
+          (response) => {
+            const chunks: Buffer[] = []
+            response.on('data', (chunk: Buffer) => chunks.push(chunk))
+            response.on('end', () => {
+              const text = Buffer.concat(chunks).toString('utf8')
+              const status = response.statusCode ?? 0
+              if (status >= 200 && status < 300) resolve(text)
+              // ClickHouse puts its own message in the body, and it names the column or the setting.
+              // A summary of ours would lose exactly that.
+              else reject(new Error(`ClickHouse answered ${status}: ${text.trim()}`))
+            })
+          },
         )
+        // `timeout` on the options bounds socket inactivity, which covers a host that accepts the
+        // connection and then says nothing - the case this exists for. The socket has to be destroyed
+        // explicitly: Node emits the event and leaves the request open otherwise.
+        req.on('timeout', () => {
+          req.destroy(
+            new Error(
+              `no answer within ${options.timeoutMs} ms. The socket was accepted, so this is a host ` +
+                `that took the connection and did not answer - a firewall that accepts, a load ` +
+                `balancer with no healthy backend, a server mid-restart.`,
+            ),
+          )
+        })
+        req.on('error', reject)
+        req.end(payload)
       })
-      req.on('error', reject)
-      req.end(payload)
+
     })
   }
 
@@ -319,15 +330,18 @@ export class ClickHouseEngine {
     layout: PhysicalLayout,
     options: { readonly keys: Readonly<Record<string, readonly string[]>> },
   ): Promise<void> {
-    const statements = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
-    for (const statement of statements) {
-      try {
-        await this.command(statement)
-      } catch (error) {
-        throw new EngineError(`schema statement failed: ${statement}: ${message(error)}`)
+    return this.usage.operation(async () => {
+      const statements = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
+      for (const statement of statements) {
+        try {
+          await this.command(statement)
+        } catch (error) {
+          throw new EngineError(`schema statement failed: ${statement}: ${message(error)}`)
+        }
       }
-    }
-    await this.verifySchema(layout)
+      await this.verifySchema(layout)
+
+    })
   }
 
   /**
@@ -345,7 +359,10 @@ export class ClickHouseEngine {
    */
   /** Check existing physical columns without issuing DDL. */
   async validateSchema(layout: PhysicalLayout): Promise<void> {
-    await this.verifySchema(layout)
+    return this.usage.operation(async () => {
+      await this.verifySchema(layout)
+
+    })
   }
 
   private async verifySchema(layout: PhysicalLayout): Promise<void> {
@@ -431,12 +448,15 @@ export class ClickHouseEngine {
   }
 
   async insert(table: string, values: Readonly<Row>): Promise<void> {
-    if (Object.keys(values).length === 0) throw new EngineError('nothing to insert')
-    try {
-      await this.insertRows(table, [values])
-    } catch (error) {
-      throw new EngineError(`insert into ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      if (Object.keys(values).length === 0) throw new EngineError('nothing to insert')
+      try {
+        await this.insertRows(table, [values])
+      } catch (error) {
+        throw new EngineError(`insert into ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   /**
@@ -447,25 +467,31 @@ export class ClickHouseEngine {
    * `FINAL` on a point read is the cheaper half of that trade.
    */
   async get(table: string, key: Readonly<Row>): Promise<Row | null> {
-    const columns = Object.keys(key).sort()
-    const where = columns.map((column) => `${quote(column)} = ${literal(key[column])}`).join(' AND ')
-    try {
-      const rows = await this.query(
-        `SELECT * FROM ${quote(table)} FINAL WHERE ${where} LIMIT 1`,
-      )
-      return rows[0] ?? null
-    } catch (error) {
-      throw new EngineError(`select from ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const columns = Object.keys(key).sort()
+      const where = columns.map((column) => `${quote(column)} = ${literal(key[column])}`).join(' AND ')
+      try {
+        const rows = await this.query(
+          `SELECT * FROM ${quote(table)} FINAL WHERE ${where} LIMIT 1`,
+        )
+        return rows[0] ?? null
+      } catch (error) {
+        throw new EngineError(`select from ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   async count(table: string): Promise<number> {
-    try {
-      const rows = await this.query(`SELECT count() AS n FROM ${quote(table)} FINAL`)
-      return Number(rows[0]?.['n'] ?? 0)
-    } catch (error) {
-      throw new EngineError(`count on ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      try {
+        const rows = await this.query(`SELECT count() AS n FROM ${quote(table)} FINAL`)
+        return Number(rows[0]?.['n'] ?? 0)
+      } catch (error) {
+        throw new EngineError(`count on ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   // --- rollback protection ------------------------------------------------------------------
@@ -474,44 +500,50 @@ export class ClickHouseEngine {
   // no row to update, nothing to contend over.
 
   async mapWatermark(): Promise<number | null> {
-    try {
-      const existing = await this.query(`EXISTS TABLE ${quote(WATERMARK_TABLE)}`)
-      const present = Number(existing[0]?.['result'])
-      if (present !== 0 && present !== 1) {
-        throw new EngineError('watermark catalog lookup returned no presence result')
-      }
-      if (present === 0) {
-        await this.command(
-          `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
-            `${quote('map_version')} Int64, ${quote('model_version')} String, ` +
-            `${quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3)) ` +
-            `ENGINE = MergeTree ORDER BY (${quote('map_version')})`,
+    return this.usage.operation(async () => {
+      try {
+        const existing = await this.query(`EXISTS TABLE ${quote(WATERMARK_TABLE)}`)
+        const present = Number(existing[0]?.['result'])
+        if (present !== 0 && present !== 1) {
+          throw new EngineError('watermark catalog lookup returned no presence result')
+        }
+        if (present === 0) {
+          await this.command(
+            `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
+              `${quote('map_version')} Int64, ${quote('model_version')} String, ` +
+              `${quote('seen_at')} DateTime64(3, 'UTC') DEFAULT now64(3)) ` +
+              `ENGINE = MergeTree ORDER BY (${quote('map_version')})`,
+          )
+        }
+        const rows = await this.query(
+          `SELECT max(${quote('map_version')}) AS high, count() AS n FROM ${quote(WATERMARK_TABLE)}`,
         )
+        const row = rows[0]
+        if (row === undefined || Number(row['n']) === 0) return null
+        return Number(row['high'])
+      } catch (error) {
+        throw new EngineError(`reading ${WATERMARK_TABLE} failed: ${message(error)}`)
       }
-      const rows = await this.query(
-        `SELECT max(${quote('map_version')}) AS high, count() AS n FROM ${quote(WATERMARK_TABLE)}`,
-      )
-      const row = rows[0]
-      if (row === undefined || Number(row['n']) === 0) return null
-      return Number(row['high'])
-    } catch (error) {
-      throw new EngineError(`reading ${WATERMARK_TABLE} failed: ${message(error)}`)
-    }
+
+    })
   }
 
   async recordMapVersion(
     version: number,
     options: { readonly modelVersion: string },
   ): Promise<void> {
-    try {
-      await this.insertRows(WATERMARK_TABLE, [
-        { map_version: version, model_version: options.modelVersion },
-      ])
-    } catch (error) {
-      throw new EngineError(
-        `recording a map version in ${WATERMARK_TABLE} failed: ${message(error)}`,
-      )
-    }
+    return this.usage.operation(async () => {
+      try {
+        await this.insertRows(WATERMARK_TABLE, [
+          { map_version: version, model_version: options.modelVersion },
+        ])
+      } catch (error) {
+        throw new EngineError(
+          `recording a map version in ${WATERMARK_TABLE} failed: ${message(error)}`,
+        )
+      }
+
+    })
   }
 
   // --- migration ---------------------------------------------------------------------------
@@ -533,26 +565,29 @@ export class ClickHouseEngine {
       readonly limit?: number
     } = {},
   ): Promise<Row[]> {
-    const cols = keyColumns(order, table)
-    const tuple = `(${cols.map(quote).join(', ')})`
-    const clauses: string[] = []
-    if (options.after !== undefined) {
-      sameWidth(options.after, cols, 'after')
-      clauses.push(`${tuple} > (${options.after.map(literal).join(', ')})`)
-    }
-    if (options.upto !== undefined) {
-      sameWidth(options.upto, cols, 'upto')
-      clauses.push(`${tuple} <= (${options.upto.map(literal).join(', ')})`)
-    }
-    const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : ''
-    const cap = options.limit === undefined ? '' : ` LIMIT ${Number(options.limit)}`
-    try {
-      return await this.query(
-        `SELECT * FROM ${quote(table)} FINAL${where} ORDER BY ${tuple}${cap}`,
-      )
-    } catch (error) {
-      throw new EngineError(`key range select from ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const cols = keyColumns(order, table)
+      const tuple = `(${cols.map(quote).join(', ')})`
+      const clauses: string[] = []
+      if (options.after !== undefined) {
+        sameWidth(options.after, cols, 'after')
+        clauses.push(`${tuple} > (${options.after.map(literal).join(', ')})`)
+      }
+      if (options.upto !== undefined) {
+        sameWidth(options.upto, cols, 'upto')
+        clauses.push(`${tuple} <= (${options.upto.map(literal).join(', ')})`)
+      }
+      const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : ''
+      const cap = options.limit === undefined ? '' : ` LIMIT ${Number(options.limit)}`
+      try {
+        return await this.query(
+          `SELECT * FROM ${quote(table)} FINAL${where} ORDER BY ${tuple}${cap}`,
+        )
+      } catch (error) {
+        throw new EngineError(`key range select from ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   async nthKey(
@@ -560,22 +595,25 @@ export class ClickHouseEngine {
     order: readonly string[],
     options: { readonly position: number },
   ): Promise<unknown[] | null> {
-    const cols = keyColumns(order, table)
-    if (options.position < 1) {
-      throw new EngineError(`position is one-based; ${options.position} is not a row`)
-    }
-    const projection = cols.map(quote).join(', ')
-    try {
-      const rows = await this.query(
-        `SELECT ${projection} FROM ${quote(table)} FINAL ORDER BY (${projection}) ` +
-          `LIMIT 1 OFFSET ${Number(options.position) - 1}`,
-      )
-      const row = rows[0]
-      if (row === undefined) return null
-      return cols.map((column) => row[column])
-    } catch (error) {
-      throw new EngineError(`reading row ${options.position} of ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const cols = keyColumns(order, table)
+      if (options.position < 1) {
+        throw new EngineError(`position is one-based; ${options.position} is not a row`)
+      }
+      const projection = cols.map(quote).join(', ')
+      try {
+        const rows = await this.query(
+          `SELECT ${projection} FROM ${quote(table)} FINAL ORDER BY (${projection}) ` +
+            `LIMIT 1 OFFSET ${Number(options.position) - 1}`,
+        )
+        const row = rows[0]
+        if (row === undefined) return null
+        return cols.map((column) => row[column])
+      } catch (error) {
+        throw new EngineError(`reading row ${options.position} of ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   /**
@@ -587,47 +625,53 @@ export class ClickHouseEngine {
    * tests run a backfill in every direction rather than in one.
    */
   async copyIn(table: string, rows: readonly Row[]): Promise<void> {
-    if (rows.length === 0) return
-    const columns = Object.keys(rows[0] as Row).sort()
-    for (const row of rows) {
-      const here = Object.keys(row).sort()
-      if (here.join(' ') !== columns.join(' ')) {
-        throw new EngineError(
-          `copyIn into ${table} was given rows with different columns ([${columns.join(', ')}] ` +
-            `and [${here.join(', ')}]). A chunk comes from one table, so this is a caller ` +
-            `assembling it from two.`,
-        )
+    return this.usage.operation(async () => {
+      if (rows.length === 0) return
+      const columns = Object.keys(rows[0] as Row).sort()
+      for (const row of rows) {
+        const here = Object.keys(row).sort()
+        if (here.join(' ') !== columns.join(' ')) {
+          throw new EngineError(
+            `copyIn into ${table} was given rows with different columns ([${columns.join(', ')}] ` +
+              `and [${here.join(', ')}]). A chunk comes from one table, so this is a caller ` +
+              `assembling it from two.`,
+          )
+        }
       }
-    }
-    try {
-      await this.insertRows(table, rows)
-    } catch (error) {
-      throw new EngineError(`copying ${rows.length} rows into ${table} failed: ${message(error)}`)
-    }
+      try {
+        await this.insertRows(table, rows)
+      } catch (error) {
+        throw new EngineError(`copying ${rows.length} rows into ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   async backfillMarker(options: {
     readonly materialization: string
     readonly entity: string
   }): Promise<number> {
-    try {
-      await this.command(
-        `CREATE TABLE IF NOT EXISTS ${quote(BACKFILL_TABLE)} (` +
-          `${quote('materialization')} String, ${quote('entity')} String, ` +
-          `${quote('rows_copied')} Int64, ${quote('at')} DateTime64(3, 'UTC') DEFAULT now64(3)) ` +
-          `ENGINE = MergeTree ORDER BY (${quote('materialization')}, ${quote('entity')})`,
-      )
-      const rows = await this.query(
-        `SELECT max(${quote('rows_copied')}) AS high, count() AS n FROM ` +
-          `${quote(BACKFILL_TABLE)} WHERE ${quote('materialization')} = ` +
-          `${literal(options.materialization)} AND ${quote('entity')} = ${literal(options.entity)}`,
-      )
-      const row = rows[0]
-      if (row === undefined || Number(row['n']) === 0) return 0
-      return Number(row['high'])
-    } catch (error) {
-      throw new EngineError(`reading ${BACKFILL_TABLE} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      try {
+        await this.command(
+          `CREATE TABLE IF NOT EXISTS ${quote(BACKFILL_TABLE)} (` +
+            `${quote('materialization')} String, ${quote('entity')} String, ` +
+            `${quote('rows_copied')} Int64, ${quote('at')} DateTime64(3, 'UTC') DEFAULT now64(3)) ` +
+            `ENGINE = MergeTree ORDER BY (${quote('materialization')}, ${quote('entity')})`,
+        )
+        const rows = await this.query(
+          `SELECT max(${quote('rows_copied')}) AS high, count() AS n FROM ` +
+            `${quote(BACKFILL_TABLE)} WHERE ${quote('materialization')} = ` +
+            `${literal(options.materialization)} AND ${quote('entity')} = ${literal(options.entity)}`,
+        )
+        const row = rows[0]
+        if (row === undefined || Number(row['n']) === 0) return 0
+        return Number(row['high'])
+      } catch (error) {
+        throw new EngineError(`reading ${BACKFILL_TABLE} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   async recordBackfillMarker(options: {
@@ -635,19 +679,22 @@ export class ClickHouseEngine {
     readonly entity: string
     readonly rows: number
   }): Promise<void> {
-    try {
-      await this.insertRows(BACKFILL_TABLE, [
-        {
-          materialization: options.materialization,
-          entity: options.entity,
-          rows_copied: options.rows,
-        },
-      ])
-    } catch (error) {
-      throw new EngineError(
-        `recording backfill progress in ${BACKFILL_TABLE} failed: ${message(error)}`,
-      )
-    }
+    return this.usage.operation(async () => {
+      try {
+        await this.insertRows(BACKFILL_TABLE, [
+          {
+            materialization: options.materialization,
+            entity: options.entity,
+            rows_copied: options.rows,
+          },
+        ])
+      } catch (error) {
+        throw new EngineError(
+          `recording backfill progress in ${BACKFILL_TABLE} failed: ${message(error)}`,
+        )
+      }
+
+    })
   }
 
   // --- transactions ------------------------------------------------------------------------

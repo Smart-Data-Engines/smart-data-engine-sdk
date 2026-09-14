@@ -15,13 +15,15 @@ first one is a test failure.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
+from threading import Lock
 from time import perf_counter_ns
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from .errors import EngineError, MigrationRefused, ModelPlanningError
+from ._usage import SessionUsage, session_call, session_owner
+from .errors import EngineError, MigrationRefused, ModelPlanningError, ResourceBusy
 from .generation import logical_row, stamp_values, validate_generations
 from .groups import Group, colocation_groups
 from .hashing import NameMap
@@ -36,7 +38,7 @@ from .telemetry import Recorder
 from .verification import check_project_id
 from .watermark import WatermarkCheck, enforce_forward_only
 
-__all__ = ["Engine", "Session"]
+__all__ = ["Engine", "ManagedEngine", "Session"]
 
 
 class Engine(Protocol):
@@ -54,6 +56,11 @@ class Engine(Protocol):
 
     @contextmanager
     def transaction(self) -> Iterator[Any]: ...
+
+
+class ManagedEngine(Engine, Protocol):
+    def connect(self) -> None: ...
+    def close(self) -> None: ...
 
 
 class Session:
@@ -77,6 +84,9 @@ class Session:
         # Telemetry is optional and off by default. A library that starts measuring the moment it is
         # imported is a library people are right to be suspicious of; measurement begins when a
         # recorder is handed in, which is a visible line in the client's code.
+        self._session_usage = SessionUsage(self)
+        self._owned_engines: list[ManagedEngine] = []
+        self._cleanup_lock = Lock()
         check_project_id(project_id)
         self._project_id = project_id
         self._recorder = recorder
@@ -101,9 +111,7 @@ class Session:
         self._engines = dict(engines)
         self._router = Router(placement)
         self._groups: tuple[Group, ...] = colocation_groups(model)
-        self._shapes = {
-            (s.entity, s.kind, s.fields): s for s in enumerate_shapes(model)
-        }
+        self._shapes = {(s.entity, s.kind, s.fields): s for s in enumerate_shapes(model)}
         self._in_write_transaction = False
         self._deferred: list[tuple[str, str, str, str, int, dict[str, Any]]] = []
         """Rows waiting for their transaction to commit before reaching a copy.
@@ -161,8 +169,81 @@ class Session:
         # constructor already refuses a map it cannot route, which is the same kind of refusal in
         # the same place. It costs one statement per participating engine, once per process, and
         # nothing at all for an unsigned map.
-        validate_generations(model, placement, self._engines, project_id)
-        self._forward_only = enforce_forward_only(placement, self._engines)
+        with session_owner(self):
+            validate_generations(model, placement, self._engines, project_id)
+            self._forward_only = enforce_forward_only(placement, self._engines)
+
+    @classmethod
+    def connect(
+        cls,
+        model: LogicalModel,
+        placement: PlacementMap,
+        factories: Mapping[str, Callable[[], ManagedEngine]],
+        *,
+        recorder: Recorder | None = None,
+        names: NameMap | None = None,
+        project_id: str | None = None,
+    ) -> Session:
+        """Create, connect and own fresh adapters; clean up partial startup on any failure."""
+        created: list[ManagedEngine] = []
+        with session_owner(object()):
+            try:
+                engines: dict[str, ManagedEngine] = {}
+                for name, factory in sorted(factories.items()):
+                    engine = factory()
+                    if any(engine is previous for previous in created):
+                        raise EngineError(
+                            "owned session factories must provide distinct fresh adapters"
+                        )
+                    created.append(engine)
+                    engines[name] = engine
+                    engine.connect()
+                session = cls(
+                    model, placement, engines, recorder=recorder, names=names, project_id=project_id
+                )
+                session._owned_engines = created
+                return session
+            except BaseException as exc:
+                for engine in reversed(created):
+                    try:
+                        engine.close()
+                    except BaseException:
+                        exc.add_note(
+                            "An owned adapter also failed to close during startup cleanup."
+                        )
+                raise
+
+    def close(self) -> None:
+        """End this unit of work and close only the adapters created by Session.connect."""
+        self._session_usage.close()
+        if not self._cleanup_lock.acquire(blocking=False):
+            raise ResourceBusy("session cleanup is already in progress")
+        try:
+            failed: list[ManagedEngine] = []
+            failures: list[BaseException] = []
+            for engine in reversed(self._owned_engines):
+                try:
+                    engine.close()
+                except BaseException as exc:
+                    failed.append(engine)
+                    failures.append(exc)
+            self._owned_engines = failed
+            if failures:
+                raise failures[0]
+        finally:
+            self._cleanup_lock.release()
+
+    def __enter__(self) -> Session:
+        self._session_usage.check()
+        return self
+
+    def __exit__(self, _kind: object, error: BaseException | None, _traceback: object) -> None:
+        try:
+            self.close()
+        except BaseException:
+            if error is None:
+                raise
+            error.add_note("Owned adapter cleanup also failed; retry Session.close().")
 
     # --- what a session is -----------------------------------------------------------------
     #
@@ -191,6 +272,7 @@ class Session:
     @property
     def engines(self) -> Mapping[str, Engine]:
         """The adapters, by the names the map uses. A read-only view; the session keeps its own."""
+        self._session_usage.check()
         return MappingProxyType(self._engines)
 
     @property
@@ -276,6 +358,7 @@ class Session:
             ) from None
 
     def _target(self, shape: OperationShape, *, fresh: bool) -> tuple[Engine, Materialization]:
+        self._session_usage.group(shape.group)
         materialization = self._router.resolve(
             shape, in_write_transaction=self._in_write_transaction, fresh=fresh
         )
@@ -283,6 +366,7 @@ class Session:
 
     # --- schema ----------------------------------------------------------------------------
 
+    @session_call
     def ensure_schema(self) -> None:
         """Create what each engine is missing for the groups placed in it."""
         if self._placement.contract >= 4:
@@ -298,6 +382,7 @@ class Session:
 
     # --- data ------------------------------------------------------------------------------
 
+    @session_call
     def save(self, entity: str, values: Mapping[str, Any]) -> None:
         target = self._entity(entity)
         values = self._fields_in(entity, values)
@@ -308,6 +393,7 @@ class Session:
         failed = False
         try:
             engine.insert(table, stamp_values(self._placement, shape.group, values))
+            self._session_usage.check()
             self._fan_out(target, shape.group, values)
         except BaseException:
             failed = True
@@ -406,6 +492,7 @@ class Session:
                 failed=failed,
             )
 
+    @session_call
     def get(self, entity: str, key: Mapping[str, Any], *, fresh: bool = False) -> Any:
         target = self._entity(entity)
         given = self._fields_in(entity, key)
@@ -492,30 +579,31 @@ class Session:
             )
 
         group = self.group_of(names[0])
-        engine = self._engines[self._placement.placement_of(group.name).source.engine]
-        previous = self._in_write_transaction
-        outer = len(self._deferred)
-        self._in_write_transaction = True
-        committed = False
-        try:
-            with engine.transaction():
-                yield self
-            committed = True
-        finally:
-            self._in_write_transaction = previous
-            pending = self._deferred[outer:]
-            del self._deferred[outer:]
-            if committed and not previous:
-                # Replayed after the source transaction has committed, and only by the outermost
-                # one: a nested block that returns to a still-open transaction has not committed
-                # anything yet, so its rows go back on the queue rather than to the copy.
-                for engine_name, table, group_name, copy_id, queued_ns, values in pending:
-                    self._replay_one(
-                        engine_name, table, group_name, copy_id, queued_ns, values
-                    )
-            elif not committed:
-                # Rolled back. The rows never existed in the source, so they must never exist in
-                # the copy - dropping them is the whole reason the fan-out was deferred.
-                pass
-            else:
-                self._deferred.extend(pending)
+        with self._session_usage.transaction(group.name):
+            engine = self._engines[self._placement.placement_of(group.name).source.engine]
+            previous = self._in_write_transaction
+            outer = len(self._deferred)
+            self._in_write_transaction = True
+            committed = False
+            try:
+                with engine.transaction():
+                    yield self
+                    self._session_usage.idle()
+                    self._session_usage.seal()
+                committed = True
+            finally:
+                self._in_write_transaction = previous
+                pending = self._deferred[outer:]
+                del self._deferred[outer:]
+                if committed and not previous:
+                    # Replayed after the source transaction has committed, and only by the outermost
+                    # one: a nested block that returns to a still-open transaction has not committed
+                    # anything yet, so its rows go back on the queue rather than to the copy.
+                    for engine_name, table, group_name, copy_id, queued_ns, values in pending:
+                        self._replay_one(engine_name, table, group_name, copy_id, queued_ns, values)
+                elif not committed:
+                    # Rolled back. The rows never existed in the source, so they must never exist in
+                    # the copy - dropping them is the whole reason the fan-out was deferred.
+                    pass
+                else:
+                    self._deferred.extend(pending)

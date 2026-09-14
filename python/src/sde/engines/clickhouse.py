@@ -54,6 +54,7 @@ import datetime as _dt
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
+from .._usage import UsageGate, guarded
 from ..errors import EngineError
 from ..explain import (
     Cost,
@@ -148,9 +149,11 @@ class ClickHouseEngine:
         self._module = clickhouse_connect
         self._dsn = dsn
         self._client: Any = None
+        self._usage = UsageGate()
 
     # --- connection ------------------------------------------------------------------------
 
+    @guarded
     def connect(self) -> None:
         """Open the client, with a bound on how long that may take.
 
@@ -176,6 +179,7 @@ class ClickHouseEngine:
             except Exception as exc:
                 raise EngineError(f"could not connect to ClickHouse: {exc}") from exc
 
+    @guarded
     def close(self) -> None:
         if self._client is not None:
             self._client.close()
@@ -200,6 +204,7 @@ class ClickHouseEngine:
 
     # --- schema ----------------------------------------------------------------------------
 
+    @guarded
     def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]) -> None:
         """Create what is missing, change nothing that exists.
 
@@ -221,6 +226,7 @@ class ClickHouseEngine:
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
         self._verify_schema(layout)
 
+    @guarded
     def validate_schema(self, layout: PhysicalLayout) -> None:
         """Check the existing physical columns without issuing DDL."""
         self._verify_schema(layout)
@@ -293,6 +299,7 @@ class ClickHouseEngine:
 
     # --- data ------------------------------------------------------------------------------
 
+    @guarded
     def explain_plan(self, sql: str) -> QueryPlan:
         """Plan an analyst's query without running it, with ``readonly=1`` on every statement.
 
@@ -429,6 +436,7 @@ class ClickHouseEngine:
                     found.append((table, database))
         return found
 
+    @guarded
     def insert(self, table: str, values: Mapping[str, Any]) -> None:
         if not values:
             raise EngineError("nothing to insert")
@@ -442,6 +450,7 @@ class ClickHouseEngine:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"insert into {table} failed: {exc}") from exc
 
+    @guarded
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:
         """One row by key, with `FINAL` so a superseded row is never returned.
 
@@ -468,6 +477,7 @@ class ClickHouseEngine:
     # Append-only and `max()`, which is what makes this identical in both engines: no key to
     # enforce, no row to update, nothing for this engine's lack of a unique constraint to spoil.
 
+    @guarded
     def map_watermark(self) -> int | None:
         """The highest map version applied against this engine, creating the table if missing.
 
@@ -501,6 +511,7 @@ class ClickHouseEngine:
         # never reaches this path. Reported as absent, which is the honest reading of the two.
         return highest if highest > 0 else None
 
+    @guarded
     def record_map_version(self, version: int, *, model_version: str) -> None:
         try:
             self._cx.insert(
@@ -513,6 +524,7 @@ class ClickHouseEngine:
                 f"recording a map version in {WATERMARK_TABLE} failed: {exc}"
             ) from exc
 
+    @guarded
     def range(
         self,
         table: str,
@@ -542,6 +554,7 @@ class ClickHouseEngine:
             raise EngineError(f"range select from {table} failed: {exc}") from exc
         return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
 
+    @guarded
     def count(self, table: str) -> int:
         """`FINAL` here too, so this counts entities rather than stored rows.
 
@@ -562,6 +575,7 @@ class ClickHouseEngine:
     # saved twice is an overwrite in this engine rather than an error, and `copy_in` has no
     # conflict clause to write - the collapse *is* the idempotence.
 
+    @guarded
     def key_range(
         self,
         table: str,
@@ -608,6 +622,7 @@ class ClickHouseEngine:
             raise EngineError(f"key range select from {table} failed: {exc}") from exc
         return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
 
+    @guarded
     def nth_key(
         self, table: str, order: Sequence[str], *, position: int
     ) -> tuple[Any, ...] | None:
@@ -629,6 +644,7 @@ class ClickHouseEngine:
         row = _row(result.column_names, result.column_types, result.result_rows[0])
         return tuple(row[column] for column in cols)
 
+    @guarded
     def copy_in(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
         """Insert rows. Duplicates are collapsed by the table rather than rejected by it.
 
@@ -655,6 +671,7 @@ class ClickHouseEngine:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
 
+    @guarded
     def backfill_marker(self, *, materialization: str, entity: str) -> int:
         """How many rows of this entity have been copied into this engine. Zero if none.
 
@@ -683,6 +700,7 @@ class ClickHouseEngine:
             return 0
         return int(result.result_rows[0][0])
 
+    @guarded
     def record_backfill_marker(self, *, materialization: str, entity: str, rows: int) -> None:
         """Append the new marker. Never update, so an interrupted run leaves a readable trail."""
         try:

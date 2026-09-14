@@ -29,6 +29,7 @@
  * one of them would be a dependency they inherit and a version conflict they may have to resolve.
  */
 
+import { UsageGate } from '../_usage.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
@@ -163,6 +164,9 @@ export class PostgresEngine {
   readonly dialect = 'postgres'
   private client: ClientLike | null = null
   private transactions = 0
+  private savepoint = 0
+  private readonly usage = new UsageGate()
+  private unusable = false
   /**
    * The asynchronous failure the driver reported, if any, kept for the next call to explain.
    *
@@ -200,39 +204,54 @@ export class PostgresEngine {
    * {@link connectBound}, where honouring it costs more work here than it does in the reference.
    */
   async connect(): Promise<void> {
-    if (this.client !== null) return
-    const driver = (this.options.driver ?? (await loadDriver())) as {
-      Client: new (config: Record<string, unknown>) => ClientLike
-    }
-    const config: Record<string, unknown> = {
-      connectionString: this.dsn,
-      connectionTimeoutMillis: connectBound(this.dsn),
-    }
-    const client = new driver.Client(config)
-    // Preserve text before pg's Date parser loses precision, only on our own client.
-    client.setTypeParser(OID.timestamp, (value) => value)
-    client.setTypeParser(OID.timestamptz, (value) => value)
-    // Attached before `connect`, because the window between them is one a server can fail in.
-    client.on('error', (error: Error) => {
-      this.lost = error
+    return this.usage.operation(async () => {
+      if (this.client !== null && this.unusable) throw new EngineError('transaction completion was uncertain; close() then connect() before reuse')
+      if (this.client !== null) return
+      const driver = (this.options.driver ?? (await loadDriver())) as {
+        Client: new (config: Record<string, unknown>) => ClientLike
+      }
+      const config: Record<string, unknown> = {
+        connectionString: this.dsn,
+        connectionTimeoutMillis: connectBound(this.dsn),
+      }
+      const client = new driver.Client(config)
+      // Preserve text before pg's Date parser loses precision, only on our own client.
+      client.setTypeParser(OID.timestamp, (value) => value)
+      client.setTypeParser(OID.timestamptz, (value) => value)
+      // Attached before `connect`, because the window between them is one a server can fail in.
+      client.on('error', (error: Error) => {
+        this.lost = error
+      })
+      try {
+        await client.connect()
+      } catch (error) {
+        try { await client.end() } catch { /* Preserve the connect failure. */ }
+        throw new EngineError(`could not connect to PostgreSQL: ${message(error)}`)
+      }
+      this.unusable = false
+      this.lost = null
+      this.client = client
+
     })
-    try {
-      await client.connect()
-    } catch (error) {
-      throw new EngineError(`could not connect to PostgreSQL: ${message(error)}`)
-    }
-    this.lost = null
-    this.client = client
   }
 
   async close(): Promise<void> {
-    if (this.client === null) return
-    const client = this.client
-    this.client = null
-    await client.end()
+    return this.usage.operation(async () => {
+      if (this.client === null) return
+      const client = this.client
+      try {
+        await client.end()
+        this.client = null
+      } catch (error) {
+        this.unusable = true
+        throw error
+      }
+
+    })
   }
 
   private get cx(): ClientLike {
+    if (this.unusable) throw new EngineError('transaction completion was uncertain; close() then connect() before reuse')
     if (this.client === null) throw new EngineError('not connected; call connect() first')
     return this.client
   }
@@ -261,7 +280,10 @@ export class PostgresEngine {
   }
 
   private async run(sql: string, values: readonly unknown[] = []): Promise<QueryResultLike> {
-    return this.cx.query(sql, values.map(outbound))
+    return this.usage.operation(async () => {
+      return this.cx.query(sql, values.map(outbound))
+
+    })
   }
 
   private rowsOf(result: QueryResultLike): Row[] {
@@ -297,15 +319,18 @@ export class PostgresEngine {
     layout: PhysicalLayout,
     options: { readonly keys: Readonly<Record<string, readonly string[]>> },
   ): Promise<void> {
-    const statements = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
-    for (const statement of statements) {
-      try {
-        await this.run(statement)
-      } catch (error) {
-        throw new EngineError(`schema statement failed: ${statement}: ${message(error)}`)
+    return this.usage.operation(async () => {
+      const statements = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
+      for (const statement of statements) {
+        try {
+          await this.run(statement)
+        } catch (error) {
+          throw new EngineError(`schema statement failed: ${statement}: ${message(error)}`)
+        }
       }
-    }
-    await this.verifySchema(layout)
+      await this.verifySchema(layout)
+
+    })
   }
 
   /**
@@ -330,7 +355,10 @@ export class PostgresEngine {
    */
   /** Check existing physical columns without issuing DDL. */
   async validateSchema(layout: PhysicalLayout): Promise<void> {
-    await this.verifySchema(layout)
+    return this.usage.operation(async () => {
+      await this.verifySchema(layout)
+
+    })
   }
 
   private async verifySchema(layout: PhysicalLayout): Promise<void> {
@@ -424,44 +452,53 @@ export class PostgresEngine {
   // --- data --------------------------------------------------------------------------------
 
   async insert(table: string, values: Readonly<Row>): Promise<void> {
-    const columns = Object.keys(values).sort()
-    if (columns.length === 0) throw new EngineError('nothing to insert')
-    const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ')
-    const sql =
-      `INSERT INTO ${quote(table)} (${columns.map(quote).join(', ')}) VALUES (${placeholders})`
-    try {
-      await this.run(
-        sql,
-        columns.map((column) => values[column]),
-      )
-    } catch (error) {
-      // Surfaced, not swallowed and not rerouted. See the module docstring.
-      throw new EngineError(`insert into ${table} failed: ${this.explain(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const columns = Object.keys(values).sort()
+      if (columns.length === 0) throw new EngineError('nothing to insert')
+      const placeholders = columns.map((_, index) => `$${index + 1}`).join(', ')
+      const sql =
+        `INSERT INTO ${quote(table)} (${columns.map(quote).join(', ')}) VALUES (${placeholders})`
+      try {
+        await this.run(
+          sql,
+          columns.map((column) => values[column]),
+        )
+      } catch (error) {
+        // Surfaced, not swallowed and not rerouted. See the module docstring.
+        throw new EngineError(`insert into ${table} failed: ${this.explain(error)}`)
+      }
+
+    })
   }
 
   async get(table: string, key: Readonly<Row>): Promise<Row | null> {
-    const columns = Object.keys(key).sort()
-    const where = columns.map((column, index) => `${quote(column)} = $${index + 1}`).join(' AND ')
-    try {
-      const result = await this.run(
-        `SELECT * FROM ${quote(table)} WHERE ${where}`,
-        columns.map((column) => key[column]),
-      )
-      const rows = this.rowsOf(result)
-      return rows[0] ?? null
-    } catch (error) {
-      throw new EngineError(`select from ${table} failed: ${this.explain(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const columns = Object.keys(key).sort()
+      const where = columns.map((column, index) => `${quote(column)} = $${index + 1}`).join(' AND ')
+      try {
+        const result = await this.run(
+          `SELECT * FROM ${quote(table)} WHERE ${where}`,
+          columns.map((column) => key[column]),
+        )
+        const rows = this.rowsOf(result)
+        return rows[0] ?? null
+      } catch (error) {
+        throw new EngineError(`select from ${table} failed: ${this.explain(error)}`)
+      }
+
+    })
   }
 
   async count(table: string): Promise<number> {
-    try {
-      const result = await this.run(`SELECT count(*) AS n FROM ${quote(table)}`)
-      return Number(result.rows[0]?.['n'] ?? 0)
-    } catch (error) {
-      throw new EngineError(`count on ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      try {
+        const result = await this.run(`SELECT count(*) AS n FROM ${quote(table)}`)
+        return Number(result.rows[0]?.['n'] ?? 0)
+      } catch (error) {
+        throw new EngineError(`count on ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   // --- rollback protection ------------------------------------------------------------------
@@ -473,27 +510,30 @@ export class PostgresEngine {
    * CREATE even when the table exists; lazy creation is retained only for an absent table.
    */
   async mapWatermark(): Promise<number | null> {
-    try {
-      const existing = await this.run('SELECT to_regclass($1) AS relation', [WATERMARK_TABLE])
-      if (existing.rows.length !== 1 || !('relation' in existing.rows[0]!)) {
-        throw new EngineError('watermark catalog lookup returned no result')
-      }
-      if (existing.rows[0]!['relation'] === null) {
-        await this.run(
-          `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
-            `${quote('map_version')} bigint NOT NULL, ` +
-            `${quote('model_version')} text NOT NULL, ` +
-            `${quote('seen_at')} timestamptz NOT NULL DEFAULT now())`,
+    return this.usage.operation(async () => {
+      try {
+        const existing = await this.run('SELECT to_regclass($1) AS relation', [WATERMARK_TABLE])
+        if (existing.rows.length !== 1 || !('relation' in existing.rows[0]!)) {
+          throw new EngineError('watermark catalog lookup returned no result')
+        }
+        if (existing.rows[0]!['relation'] === null) {
+          await this.run(
+            `CREATE TABLE IF NOT EXISTS ${quote(WATERMARK_TABLE)} (` +
+              `${quote('map_version')} bigint NOT NULL, ` +
+              `${quote('model_version')} text NOT NULL, ` +
+              `${quote('seen_at')} timestamptz NOT NULL DEFAULT now())`,
+          )
+        }
+        const result = await this.run(
+          `SELECT max(${quote('map_version')}) AS high FROM ${quote(WATERMARK_TABLE)}`,
         )
+        const high = result.rows[0]?.['high']
+        return high === null || high === undefined ? null : Number(high)
+      } catch (error) {
+        throw new EngineError(`reading ${WATERMARK_TABLE} failed: ${this.explain(error)}`)
       }
-      const result = await this.run(
-        `SELECT max(${quote('map_version')}) AS high FROM ${quote(WATERMARK_TABLE)}`,
-      )
-      const high = result.rows[0]?.['high']
-      return high === null || high === undefined ? null : Number(high)
-    } catch (error) {
-      throw new EngineError(`reading ${WATERMARK_TABLE} failed: ${this.explain(error)}`)
-    }
+
+    })
   }
 
   /**
@@ -504,17 +544,20 @@ export class PostgresEngine {
    * tests would then have to work around.
    */
   async recordMapVersion(version: number, options: { readonly modelVersion: string }): Promise<void> {
-    try {
-      await this.run(
-        `INSERT INTO ${quote(WATERMARK_TABLE)} (${quote('map_version')}, ` +
-          `${quote('model_version')}) VALUES ($1, $2)`,
-        [version, options.modelVersion],
-      )
-    } catch (error) {
-      throw new EngineError(
-        `recording a map version in ${WATERMARK_TABLE} failed: ${message(error)}`,
-      )
-    }
+    return this.usage.operation(async () => {
+      try {
+        await this.run(
+          `INSERT INTO ${quote(WATERMARK_TABLE)} (${quote('map_version')}, ` +
+            `${quote('model_version')}) VALUES ($1, $2)`,
+          [version, options.modelVersion],
+        )
+      } catch (error) {
+        throw new EngineError(
+          `recording a map version in ${WATERMARK_TABLE} failed: ${message(error)}`,
+        )
+      }
+
+    })
   }
 
   // --- migration ---------------------------------------------------------------------------
@@ -539,35 +582,38 @@ export class PostgresEngine {
       readonly limit?: number
     } = {},
   ): Promise<Row[]> {
-    const cols = keyColumns(order, table)
-    const clauses: string[] = []
-    const values: unknown[] = []
-    const tuple = `(${cols.map(quote).join(', ')})`
-    if (options.after !== undefined) {
-      sameWidth(options.after, cols, 'after')
-      clauses.push(`${tuple} > (${cols.map((_, i) => `$${values.length + i + 1}`).join(', ')})`)
-      values.push(...options.after)
-    }
-    if (options.upto !== undefined) {
-      sameWidth(options.upto, cols, 'upto')
-      clauses.push(`${tuple} <= (${cols.map((_, i) => `$${values.length + i + 1}`).join(', ')})`)
-      values.push(...options.upto)
-    }
-    const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : ''
-    let cap = ''
-    if (options.limit !== undefined) {
-      values.push(options.limit)
-      cap = ` LIMIT $${values.length}`
-    }
-    try {
-      const result = await this.run(
-        `SELECT * FROM ${quote(table)}${where} ORDER BY ${tuple}${cap}`,
-        values,
-      )
-      return this.rowsOf(result)
-    } catch (error) {
-      throw new EngineError(`key range select from ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const cols = keyColumns(order, table)
+      const clauses: string[] = []
+      const values: unknown[] = []
+      const tuple = `(${cols.map(quote).join(', ')})`
+      if (options.after !== undefined) {
+        sameWidth(options.after, cols, 'after')
+        clauses.push(`${tuple} > (${cols.map((_, i) => `$${values.length + i + 1}`).join(', ')})`)
+        values.push(...options.after)
+      }
+      if (options.upto !== undefined) {
+        sameWidth(options.upto, cols, 'upto')
+        clauses.push(`${tuple} <= (${cols.map((_, i) => `$${values.length + i + 1}`).join(', ')})`)
+        values.push(...options.upto)
+      }
+      const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : ''
+      let cap = ''
+      if (options.limit !== undefined) {
+        values.push(options.limit)
+        cap = ` LIMIT $${values.length}`
+      }
+      try {
+        const result = await this.run(
+          `SELECT * FROM ${quote(table)}${where} ORDER BY ${tuple}${cap}`,
+          values,
+        )
+        return this.rowsOf(result)
+      } catch (error) {
+        throw new EngineError(`key range select from ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   /**
@@ -582,23 +628,26 @@ export class PostgresEngine {
     order: readonly string[],
     options: { readonly position: number },
   ): Promise<unknown[] | null> {
-    const cols = keyColumns(order, table)
-    if (options.position < 1) {
-      throw new EngineError(`position is one-based; ${options.position} is not a row`)
-    }
-    const projection = cols.map(quote).join(', ')
-    try {
-      const result = await this.run(
-        `SELECT ${projection} FROM ${quote(table)} ORDER BY (${projection}) OFFSET $1 LIMIT 1`,
-        [options.position - 1],
-      )
-      const rows = this.rowsOf(result)
-      const row = rows[0]
-      if (row === undefined) return null
-      return cols.map((column) => row[column])
-    } catch (error) {
-      throw new EngineError(`reading row ${options.position} of ${table} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      const cols = keyColumns(order, table)
+      if (options.position < 1) {
+        throw new EngineError(`position is one-based; ${options.position} is not a row`)
+      }
+      const projection = cols.map(quote).join(', ')
+      try {
+        const result = await this.run(
+          `SELECT ${projection} FROM ${quote(table)} ORDER BY (${projection}) OFFSET $1 LIMIT 1`,
+          [options.position - 1],
+        )
+        const rows = this.rowsOf(result)
+        const row = rows[0]
+        if (row === undefined) return null
+        return cols.map((column) => row[column])
+      } catch (error) {
+        throw new EngineError(`reading row ${options.position} of ${table} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   /**
@@ -613,35 +662,38 @@ export class PostgresEngine {
    * layout asked for. Naming the key here would mean deriving it a second time.
    */
   async copyIn(table: string, rows: readonly Row[]): Promise<void> {
-    if (rows.length === 0) return
-    const columns = Object.keys(rows[0] as Row).sort()
-    for (const row of rows) {
-      const here = Object.keys(row).sort()
-      if (here.join(' ') !== columns.join(' ')) {
-        throw new EngineError(
-          `copyIn into ${table} was given rows with different columns ([${columns.join(', ')}] ` +
-            `and [${here.join(', ')}]). A chunk comes from one table, so this is a caller ` +
-            `assembling it from two.`,
-        )
+    return this.usage.operation(async () => {
+      if (rows.length === 0) return
+      const columns = Object.keys(rows[0] as Row).sort()
+      for (const row of rows) {
+        const here = Object.keys(row).sort()
+        if (here.join(' ') !== columns.join(' ')) {
+          throw new EngineError(
+            `copyIn into ${table} was given rows with different columns ([${columns.join(', ')}] ` +
+              `and [${here.join(', ')}]). A chunk comes from one table, so this is a caller ` +
+              `assembling it from two.`,
+          )
+        }
       }
-    }
-    const values: unknown[] = []
-    const tuples = rows.map((row) => {
-      const placeholders = columns.map((column) => {
-        values.push(row[column])
-        return `$${values.length}`
+      const values: unknown[] = []
+      const tuples = rows.map((row) => {
+        const placeholders = columns.map((column) => {
+          values.push(row[column])
+          return `$${values.length}`
+        })
+        return `(${placeholders.join(', ')})`
       })
-      return `(${placeholders.join(', ')})`
+      try {
+        await this.run(
+          `INSERT INTO ${quote(table)} (${columns.map(quote).join(', ')}) ` +
+            `VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING`,
+          values,
+        )
+      } catch (error) {
+        throw new EngineError(`copying ${rows.length} rows into ${table} failed: ${message(error)}`)
+      }
+
     })
-    try {
-      await this.run(
-        `INSERT INTO ${quote(table)} (${columns.map(quote).join(', ')}) ` +
-          `VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING`,
-        values,
-      )
-    } catch (error) {
-      throw new EngineError(`copying ${rows.length} rows into ${table} failed: ${message(error)}`)
-    }
   }
 
   /**
@@ -655,24 +707,27 @@ export class PostgresEngine {
     readonly materialization: string
     readonly entity: string
   }): Promise<number> {
-    try {
-      await this.run(
-        `CREATE TABLE IF NOT EXISTS ${quote(BACKFILL_TABLE)} (` +
-          `${quote('materialization')} text NOT NULL, ` +
-          `${quote('entity')} text NOT NULL, ` +
-          `${quote('rows_copied')} bigint NOT NULL, ` +
-          `${quote('at')} timestamptz NOT NULL DEFAULT now())`,
-      )
-      const result = await this.run(
-        `SELECT max(${quote('rows_copied')}) AS high FROM ${quote(BACKFILL_TABLE)} ` +
-          `WHERE ${quote('materialization')} = $1 AND ${quote('entity')} = $2`,
-        [options.materialization, options.entity],
-      )
-      const high = result.rows[0]?.['high']
-      return high === null || high === undefined ? 0 : Number(high)
-    } catch (error) {
-      throw new EngineError(`reading ${BACKFILL_TABLE} failed: ${message(error)}`)
-    }
+    return this.usage.operation(async () => {
+      try {
+        await this.run(
+          `CREATE TABLE IF NOT EXISTS ${quote(BACKFILL_TABLE)} (` +
+            `${quote('materialization')} text NOT NULL, ` +
+            `${quote('entity')} text NOT NULL, ` +
+            `${quote('rows_copied')} bigint NOT NULL, ` +
+            `${quote('at')} timestamptz NOT NULL DEFAULT now())`,
+        )
+        const result = await this.run(
+          `SELECT max(${quote('rows_copied')}) AS high FROM ${quote(BACKFILL_TABLE)} ` +
+            `WHERE ${quote('materialization')} = $1 AND ${quote('entity')} = $2`,
+          [options.materialization, options.entity],
+        )
+        const high = result.rows[0]?.['high']
+        return high === null || high === undefined ? 0 : Number(high)
+      } catch (error) {
+        throw new EngineError(`reading ${BACKFILL_TABLE} failed: ${message(error)}`)
+      }
+
+    })
   }
 
   /** Append the new marker. Never update, so an interrupted run leaves a readable trail. */
@@ -681,17 +736,20 @@ export class PostgresEngine {
     readonly entity: string
     readonly rows: number
   }): Promise<void> {
-    try {
-      await this.run(
-        `INSERT INTO ${quote(BACKFILL_TABLE)} (${quote('materialization')}, ${quote('entity')}, ` +
-          `${quote('rows_copied')}) VALUES ($1, $2, $3)`,
-        [options.materialization, options.entity, options.rows],
-      )
-    } catch (error) {
-      throw new EngineError(
-        `recording backfill progress in ${BACKFILL_TABLE} failed: ${message(error)}`,
-      )
-    }
+    return this.usage.operation(async () => {
+      try {
+        await this.run(
+          `INSERT INTO ${quote(BACKFILL_TABLE)} (${quote('materialization')}, ${quote('entity')}, ` +
+            `${quote('rows_copied')}) VALUES ($1, $2, $3)`,
+          [options.materialization, options.entity, options.rows],
+        )
+      } catch (error) {
+        throw new EngineError(
+          `recording backfill progress in ${BACKFILL_TABLE} failed: ${message(error)}`,
+        )
+      }
+
+    })
   }
 
   // --- transactions ------------------------------------------------------------------------
@@ -706,23 +764,44 @@ export class PostgresEngine {
    * lines rather than a subsystem.
    */
   async transaction<T>(body: () => Promise<T>): Promise<T> {
-    this.transactions += 1
-    try {
-      await this.run('BEGIN')
-      const result = await body()
-      await this.run('COMMIT')
-      return result
-    } catch (error) {
+    return this.usage.transaction(async () => {
+      const outer = this.transactions === 0
+      const savepoint = `sde_scope_${++this.savepoint}`
+      const client = this.cx
+      this.transactions++
+      let phase: 'begin' | 'body' | 'commit' = 'begin'
       try {
-        await this.run('ROLLBACK')
-      } catch {
-        // The rollback failing means the connection is gone, which the original error already says.
-        // Reporting this one instead would replace the reason with a symptom.
-      }
-      throw error
-    } finally {
-      this.transactions -= 1
-    }
+        await client.query(outer ? 'BEGIN' : `SAVEPOINT ${savepoint}`)
+        phase = 'body'
+        const result = await body()
+        this.usage.idle()
+        this.usage.seal()
+        try {
+          // pg has no public transaction-status API; COMMIT can succeed with a ROLLBACK tag.
+          await client.query('SELECT 1')
+        } catch {
+          throw new EngineError('the transaction is aborted or unavailable and cannot be reported as committed')
+        }
+        phase = 'commit'
+        await client.query(outer ? 'COMMIT' : `RELEASE SAVEPOINT ${savepoint}`)
+        return result
+      } catch (error) {
+        this.usage.seal()
+        if (phase !== 'body') this.unusable = true
+        try {
+          await client.query(outer ? 'ROLLBACK' : `ROLLBACK TO SAVEPOINT ${savepoint}`)
+          if (!outer) await client.query(`RELEASE SAVEPOINT ${savepoint}`)
+        } catch {
+          this.unusable = true
+        }
+        if (phase !== 'body') {
+          const refused = new EngineError('transaction completion was uncertain; close() then connect() before reuse')
+          refused.cause = error
+          throw refused
+        }
+        throw error
+      } finally { this.transactions-- }
+    })
   }
 }
 

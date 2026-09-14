@@ -19,6 +19,8 @@ __all__ = [
     "MapRolledBack",
     "MigrationRefused",
     "ModelPlanningError",
+    "ResourceBusy",
+    "ResourceClosed",
     "SdeError",
 ]
 
@@ -74,6 +76,14 @@ class EngineError(SdeError):
     happen is not an internal problem, and reporting success for it would be the worst thing this
     library could do.
     """
+
+
+class ResourceBusy(EngineError):
+    """A session or connection belongs to another operation or transaction scope."""
+
+
+class ResourceClosed(EngineError):
+    """A session or inherited transaction scope has ended and cannot be reused."""
 
 
 class MigrationRefused(SdeError):
