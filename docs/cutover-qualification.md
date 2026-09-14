@@ -72,3 +72,31 @@ memory measurement. The harness currently supports the declared append/point-rea
 not establish update/delete semantics, arbitrary customer-volume qualification or production SLOs.
 Controller participation has a separate private test adapter; do not describe a run using locally
 signed synthetic packets as proof of controller allocation/receipt integration under load.
+
+
+## Recorded local acceptance — 14 September 2026
+All six final cases passed with actual controller authorizations and receipt acceptance, using
+installed Python and npm artifacts. Each case ran 180 seconds at 40 scheduled writes/s, checked
+7200 acknowledged application values and 5000 initial values, and satisfied the predeclared
+latency, scheduling, memory and telemetry boundaries. In total, 43,200 acknowledged values and
+30,000 initial values were verified.
+| Initial source | Scenario | Result | Maximum success gap (s) | Maximum scheduled response (s) | Highest worker steady write p99 (ms) |
+|---|---|---|---:|---:|---:|
+| postgres | success | success | 2.489 | 2.394 | 49.359 |
+| clickhouse | success | success | 3.921 | 3.842 | 57.953 |
+| postgres | before_decision | abort | 3.954 | 3.857 | 27.081 |
+| clickhouse | before_decision | abort | 4.257 | 4.173 | 51.786 |
+| postgres | after_decision | success | 5.643 | 5.569 | 51.160 |
+| clickhouse | after_decision | success | 7.904 | 7.830 | 82.006 |
+
+The host had four CPUs and about 16 GiB RAM, with PostgreSQL 15.19 and ClickHouse 24.8.14.39
+in the existing local containers. Applications used Python 3.12.3 and Node 18.19.1. Library code
+was SDK `6ad42d1` for Python and `4c1c5d2` for TypeScript; the TypeScript library did not change
+in the temporal-query repair. The measured harness code was `82fcde6`. The largest steady point-
+read p99 was 70.824 ms, scheduling p99 26.798 ms, and worker RSS 75.96 MiB.
+
+This qualifies the named local append/point-read experiment and its recovery outcomes. A customer's
+new operations, topology, network failure modes and production workload need their own acceptance.
+It does not qualify arbitrary ambiguous-write retries or certify the full product as enterprise-ready.
+Fifteen fast acceptance tests and nine detected mutations check that the report cannot pass by
+ignoring invalid timings, scheduling debt, telemetry loss, late responses, gaps or slow reads.
