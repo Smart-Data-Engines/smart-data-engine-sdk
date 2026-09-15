@@ -328,3 +328,5 @@ bounds, source/copy ordering and uncertain outcomes.
 
 [Logical reads and exact summaries](docs/logical-reads.md) cover scan, count and summarize,
 including portable keyset pages, typed values and explicit failure semantics.
+
+Engine credentials and verified TLS configuration: [connection guide](docs/engine-connections.md).

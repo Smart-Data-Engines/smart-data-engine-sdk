@@ -51,10 +51,14 @@ in an adapter, and there is no declaration for it yet.
 from __future__ import annotations
 
 import datetime as _dt
+import math
+import os
 import re
+import ssl
+import stat
 from collections.abc import Iterator, Mapping, Sequence
 from importlib.metadata import version
-from typing import Any
+from typing import Any, cast
 
 from .._usage import UsageGate, guarded
 from ..bulk import batch_columns
@@ -71,6 +75,16 @@ from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
 from ..write_fence import WriteFence
+from ._clickhouse_connection import (
+    CONNECT_TIMEOUT_SECONDS as CONNECT_TIMEOUT_SECONDS,
+)
+from ._clickhouse_connection import (
+    HANDSHAKE_TIMEOUT_SECONDS as HANDSHAKE_TIMEOUT_SECONDS,
+)
+from ._clickhouse_connection import (
+    ConnectionParameters,
+    parse_dsn,
+)
 from ._write_fences import ClickHouseFences
 
 __all__ = ["ClickHouseEngine"]
@@ -127,14 +141,6 @@ def _row(names: Sequence[str], types: Sequence[Any], row: Sequence[Any]) -> dict
     return out
 
 
-# Seconds, and the same argument as the PostgreSQL adapter's constant of the same name.
-CONNECT_TIMEOUT_SECONDS = 10
-# Seconds, for the version handshake `get_client` performs. The driver's own default is 300, which
-# is a sensible ceiling for a query and a very long time to sit inside a caller's request path
-# waiting for a host that has already accepted the socket and said nothing.
-HANDSHAKE_TIMEOUT_SECONDS = 15
-
-
 class _NoReplayTransport:
     """Keep the driver's TLS/proxy pool but forbid ambiguous transport replay for this client.
 
@@ -187,14 +193,104 @@ def _require_driver_version(installed: str) -> None:
         )
 
 
+MAX_CA_BYTES = 1024 * 1024
+
+
+def _ca_context(path: str | None) -> ssl.SSLContext | None:
+    """Read and qualify private per-client trust before creating any driver connection."""
+    if path is None:
+        return None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(path, flags)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= MAX_CA_BYTES:
+                raise ValueError("CA must be a bounded regular file")
+            pieces: list[bytes] = []
+            size = 0
+            while size <= MAX_CA_BYTES:
+                piece = os.read(fd, min(65536, MAX_CA_BYTES + 1 - size))
+                if not piece:
+                    break
+                pieces.append(piece)
+                size += len(piece)
+            payload = b"".join(pieces)
+        finally:
+            os.close(fd)
+        if not payload or len(payload) > MAX_CA_BYTES:
+            raise ValueError("CA must be nonempty and at most 1 MiB")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=payload.decode("ascii"))
+        if not context.cert_store_stats()["x509"]:
+            raise ValueError("empty CA store")
+        return context
+    except (OSError, ValueError, UnicodeError):
+        raise EngineError(
+            "ClickHouse CA file must contain readable valid PEM certificates within 1 MiB"
+        ) from None
+
+
+def _connect_client(parameters: ConnectionParameters) -> Any:
+    from clickhouse_connect.driver.httpclient import HttpClient
+    from clickhouse_connect.driver.query import TzSource
+    from urllib3 import Timeout
+
+    context = _ca_context(parameters.ca_cert)
+
+    class GuardedHttpClient(HttpClient):
+        def _init_common_settings(self, tz_source: TzSource) -> None:
+            # HttpClient calls this after constructing its native pool/backend and before the
+            # initial version/settings exchange. Change only this client's pool reference.
+            try:
+                self.http = cast(Any, _NoReplayTransport(self.http))
+                self.timeout = Timeout(
+                    connect=parameters.connect_timeout, read=parameters.send_receive_timeout
+                )
+                if context is not None:
+                    if not self._owns_pool_manager:
+                        raise EngineError("The driver did not create an isolated CA pool")
+                    # The native factory owns this pool; pin the already validated CA bytes so
+                    # later sockets do not reread a changed path. Never alter the shared pool.
+                    pool_options = self.http.connection_pool_kw
+                    pool_options["ssl_context"] = context
+                    pool_options.pop("ca_certs", None)
+                super()._init_common_settings(tz_source)
+            except BaseException as exc:
+                try:
+                    self.close()
+                except BaseException:
+                    exc.add_note("ClickHouse client cleanup also failed after startup.")
+                raise
+
+    # Driver 1.7.2 coerces timeout inputs to integers before constructing its backend. Positive
+    # placeholders permit construction; the scoped hook installs the exact requested fractions
+    # before I/O. The URI itself is never reparsed or used as an arbitrary kwargs channel.
+    host = f"[{parameters.host}]" if ":" in parameters.host else parameters.host
+    return GuardedHttpClient(
+        interface=parameters.interface,
+        host=host,
+        port=parameters.port,
+        username=parameters.username,
+        password=parameters.password,
+        database=parameters.database,
+        verify=True,
+        ca_cert=parameters.ca_cert,
+        query_retries=0,
+        connect_timeout=math.ceil(parameters.connect_timeout),
+        send_receive_timeout=math.ceil(parameters.send_receive_timeout),
+    )
+
+
 class ClickHouseEngine:
     """A thin adapter over clickhouse-connect. Executes decisions, makes none."""
 
     dialect = "clickhouse"
 
     def __init__(self, dsn: str) -> None:
+        self._connection = parse_dsn(dsn)
         try:
-            import clickhouse_connect
+            import clickhouse_connect  # noqa: F401 -- validate the optional driver extra
         except ImportError as exc:  # pragma: no cover - depends on the install extra
             raise EngineError(
                 "the ClickHouse adapter needs the 'clickhouse' extra: "
@@ -203,7 +299,6 @@ class ClickHouseEngine:
                 "every dependency here would be one you inherit."
             ) from exc
         _require_driver_version(version("clickhouse-connect"))
-        self._module = clickhouse_connect
         self._dsn = dsn
         self._client: Any = None
         self._usage = UsageGate()
@@ -219,31 +314,22 @@ class ClickHouseEngine:
         one layer up - the TCP connect succeeds, so ``connect_timeout`` never fires, and what is
         left is ``send_receive_timeout``, whose driver default is 300 seconds.
 
-        So both are set, and they are set to different things on purpose. Opening is bounded
-        tightly. Reading is **not**, past this handshake: an analytical query legitimately takes
-        minutes and a library that timed it out would be deciding something about the caller's
-        workload. The handshake is the one exchange whose duration this library knows anything
-        about.
+        Both are transport timers, with distinct defaults for opening and the initial exchange.
+        Exact caller-supplied seconds survive the driver's integer constructor coercion. Socket
+        inactivity is not an absolute query deadline: progress received from a long-running query
+        can keep that exchange alive under the driver's existing transport behavior.
         """
         if self._client is None:
-            options: dict[str, Any] = {}
-            if "connect_timeout" not in self._dsn:
-                options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
-            if "send_receive_timeout" not in self._dsn:
-                options["send_receive_timeout"] = HANDSHAKE_TIMEOUT_SECONDS
             try:
-                client: Any = self._module.get_client(dsn=self._dsn, **options)
-                try:
-                    client.http = _NoReplayTransport(client.http)
-                except BaseException as exc:
-                    try:
-                        client.close()
-                    except BaseException:
-                        exc.add_note("ClickHouse client cleanup also failed after startup.")
-                    raise
-                self._client = client
-            except Exception as exc:
-                raise EngineError(f"could not connect to ClickHouse: {exc}") from exc
+                self._client = _connect_client(self._connection)
+            except EngineError as exc:
+                raise EngineError("could not connect to ClickHouse: " + str(exc)) from None
+            except Exception:
+                # Driver/parser exceptions may echo URL, credentials or server content. The
+                # connection error conveys no proof of rollback and never weakens TLS to retry.
+                raise EngineError(
+                    "could not connect to ClickHouse with the configured transport"
+                ) from None
 
     @guarded
     def close(self) -> None:

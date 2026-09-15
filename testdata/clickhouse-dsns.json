@@ -1,0 +1,606 @@
+{
+  "protocol": 1,
+  "scope": "portable ClickHouse connection intent; synthetic credentials; not placement-format vectors",
+  "cases": [
+    {
+      "id": "clickhouse-default",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db",
+      "expected": {
+        "host": "localhost",
+        "port": 8123,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "clickhouses-default",
+      "dsn": "clickhouses://user:synthetic-secret@localhost/db",
+      "expected": {
+        "host": "localhost",
+        "port": 8443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "http-standard-port",
+      "dsn": "http://user:synthetic-secret@localhost/db",
+      "expected": {
+        "host": "localhost",
+        "port": 80,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "https-standard-port",
+      "dsn": "https://user:synthetic-secret@localhost/db",
+      "expected": {
+        "host": "localhost",
+        "port": 443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "http-explicit-80",
+      "dsn": "http://user:synthetic-secret@localhost:80/db",
+      "expected": {
+        "host": "localhost",
+        "port": 80,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "https-explicit-443",
+      "dsn": "https://user:synthetic-secret@localhost:443/db",
+      "expected": {
+        "host": "localhost",
+        "port": 443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "https-custom-port",
+      "dsn": "https://user:synthetic-secret@localhost:19443/db",
+      "expected": {
+        "host": "localhost",
+        "port": 19443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "clickhouse-secure-query",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db?secure=true",
+      "expected": {
+        "host": "localhost",
+        "port": 8443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "explicit-plain-on-tls-port",
+      "dsn": "clickhouse://user:synthetic-secret@localhost:8443/db?secure=false",
+      "expected": {
+        "host": "localhost",
+        "port": 8443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "explicit-tls-with-default-tls-port",
+      "dsn": "clickhouse://user:synthetic-secret@localhost:443/db?secure=true",
+      "expected": {
+        "host": "localhost",
+        "port": 443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "encoded-user-password-database",
+      "dsn": "clickhouses://%C5%BC%C3%B3%C5%82w:secret%3A%2B%25%40@LOCALHOST/db%20space",
+      "expected": {
+        "host": "localhost",
+        "port": 8443,
+        "username": "\u017c\u00f3\u0142w",
+        "password": "secret:+%@",
+        "database": "db space",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "literal-plus-userinfo-path",
+      "dsn": "clickhouse://user+one:p+ss@localhost/db+one",
+      "expected": {
+        "host": "localhost",
+        "port": 8123,
+        "username": "user+one",
+        "password": "p+ss",
+        "database": "db+one",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "explicit-verified-ca",
+      "dsn": "https://user:synthetic-secret@localhost/db?verify=true&ca_cert=%2Ffixture%2Froot%20ca.pem",
+      "expected": {
+        "host": "localhost",
+        "port": 443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": "/fixture/root ca.pem",
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "query-form-plus",
+      "dsn": "https://user:synthetic-secret@localhost/db?ca_cert=%2Ffixture%2Froot+ca.pem",
+      "expected": {
+        "host": "localhost",
+        "port": 443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": "/fixture/root ca.pem",
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "fractional-timeouts",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db?connect_timeout=0.125&send_receive_timeout=2.5",
+      "expected": {
+        "host": "localhost",
+        "port": 8123,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 0.125,
+        "send_receive_timeout": 2.5
+      }
+    },
+    {
+      "id": "credential-does-not-change-timeout",
+      "dsn": "clickhouse://connect_timeout:send_receive_timeout@localhost/db",
+      "expected": {
+        "host": "localhost",
+        "port": 8123,
+        "username": "connect_timeout",
+        "password": "send_receive_timeout",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "uppercase-scheme-host",
+      "dsn": "HTTPS://user:synthetic-secret@LOCALHOST/db",
+      "expected": {
+        "host": "localhost",
+        "port": 443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "ipv4",
+      "dsn": "clickhouses://user:synthetic-secret@127.0.0.1/db",
+      "expected": {
+        "host": "127.0.0.1",
+        "port": 8443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "ipv6",
+      "dsn": "clickhouses://user:synthetic-secret@[0:0:0:0:0:0:0:1]:18443/db",
+      "expected": {
+        "host": "::1",
+        "port": 18443,
+        "username": "user",
+        "password": "synthetic-secret",
+        "database": "db",
+        "secure": true,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "default-user",
+      "dsn": "clickhouse://localhost/db",
+      "expected": {
+        "host": "localhost",
+        "port": 8123,
+        "username": "default",
+        "password": "",
+        "database": "db",
+        "secure": false,
+        "ca_cert": null,
+        "connect_timeout": 10.0,
+        "send_receive_timeout": 15.0
+      }
+    },
+    {
+      "id": "unknown-scheme",
+      "dsn": "ftp://user:synthetic-secret@localhost/db",
+      "reject": true
+    },
+    {
+      "id": "missing-scheme",
+      "dsn": "user:synthetic-secret@localhost/db",
+      "reject": true
+    },
+    {
+      "id": "missing-host",
+      "dsn": "https:///db",
+      "reject": true
+    },
+    {
+      "id": "missing-database",
+      "dsn": "clickhouse://user:synthetic-secret@localhost",
+      "reject": true
+    },
+    {
+      "id": "empty-database",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/",
+      "reject": true
+    },
+    {
+      "id": "multiple-database-segments",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/first/second",
+      "reject": true
+    },
+    {
+      "id": "encoded-slash",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/first%2Fsecond",
+      "reject": true
+    },
+    {
+      "id": "fragment",
+      "dsn": "https://user:synthetic-secret@localhost/db#ignored",
+      "reject": true
+    },
+    {
+      "id": "empty-fragment",
+      "dsn": "https://user:synthetic-secret@localhost/db#",
+      "reject": true
+    },
+    {
+      "id": "ambiguous-tls-port",
+      "dsn": "clickhouse://user:synthetic-secret@localhost:8443/db",
+      "reject": true
+    },
+    {
+      "id": "ambiguous-443",
+      "dsn": "clickhouse://user:synthetic-secret@localhost:443/db",
+      "reject": true
+    },
+    {
+      "id": "https-disable",
+      "dsn": "https://user:synthetic-secret@localhost/db?secure=false",
+      "reject": true
+    },
+    {
+      "id": "clickhouses-disable",
+      "dsn": "clickhouses://user:synthetic-secret@localhost/db?secure=false",
+      "reject": true
+    },
+    {
+      "id": "http-enable",
+      "dsn": "http://user:synthetic-secret@localhost/db?secure=true",
+      "reject": true
+    },
+    {
+      "id": "secure-typo",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db?secure=tru",
+      "reject": true
+    },
+    {
+      "id": "secure-empty",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db?secure=",
+      "reject": true
+    },
+    {
+      "id": "verify-disabled",
+      "dsn": "https://user:synthetic-secret@localhost/db?verify=false",
+      "reject": true
+    },
+    {
+      "id": "verify-typo",
+      "dsn": "https://user:synthetic-secret@localhost/db?verify=tru",
+      "reject": true
+    },
+    {
+      "id": "verify-empty",
+      "dsn": "https://user:synthetic-secret@localhost/db?verify=",
+      "reject": true
+    },
+    {
+      "id": "verify-on-plain",
+      "dsn": "http://user:synthetic-secret@localhost/db?verify=true",
+      "reject": true
+    },
+    {
+      "id": "ca-on-plain",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db?ca_cert=%2Fca.pem",
+      "reject": true
+    },
+    {
+      "id": "duplicate-secure",
+      "dsn": "clickhouse://user:synthetic-secret@localhost/db?secure=false&secure=true",
+      "reject": true
+    },
+    {
+      "id": "duplicate-verify",
+      "dsn": "https://user:synthetic-secret@localhost/db?verify=true&verify=false",
+      "reject": true
+    },
+    {
+      "id": "unknown-query",
+      "dsn": "https://user:synthetic-secret@localhost/db?unexpected=value",
+      "reject": true
+    },
+    {
+      "id": "proxy-outside-profile",
+      "dsn": "https://user:synthetic-secret@localhost/db?https_proxy=http%3A%2F%2Fproxy",
+      "reject": true
+    },
+    {
+      "id": "bad-percent-user",
+      "dsn": "https://user%ZZ:synthetic-secret@localhost/db",
+      "reject": true
+    },
+    {
+      "id": "bad-percent-database",
+      "dsn": "https://user:synthetic-secret@localhost/db%",
+      "reject": true
+    },
+    {
+      "id": "invalid-utf8",
+      "dsn": "https://user:synthetic-secret@localhost/db%FF",
+      "reject": true
+    },
+    {
+      "id": "userinfo-control",
+      "dsn": "https://user:secret%0Avalue@localhost/db",
+      "reject": true
+    },
+    {
+      "id": "username-colon",
+      "dsn": "https://user%3Aname:synthetic-secret@localhost/db",
+      "reject": true
+    },
+    {
+      "id": "zero-port",
+      "dsn": "https://user:synthetic-secret@localhost:0/db",
+      "reject": true
+    },
+    {
+      "id": "port-overflow",
+      "dsn": "https://user:synthetic-secret@localhost:65536/db",
+      "reject": true
+    },
+    {
+      "id": "empty-port",
+      "dsn": "https://user:synthetic-secret@localhost:/db",
+      "reject": true
+    },
+    {
+      "id": "relative-ca",
+      "dsn": "https://user:synthetic-secret@localhost/db?ca_cert=ca.pem",
+      "reject": true
+    },
+    {
+      "id": "zero-timeout",
+      "dsn": "https://user:synthetic-secret@localhost/db?connect_timeout=0",
+      "reject": true
+    },
+    {
+      "id": "negative-timeout",
+      "dsn": "https://user:synthetic-secret@localhost/db?send_receive_timeout=-1",
+      "reject": true
+    },
+    {
+      "id": "nan-timeout",
+      "dsn": "https://user:synthetic-secret@localhost/db?connect_timeout=NaN",
+      "reject": true
+    },
+    {
+      "id": "infinite-timeout",
+      "dsn": "https://user:synthetic-secret@localhost/db?send_receive_timeout=1e999",
+      "reject": true
+    },
+    {
+      "id": "non-ascii-host",
+      "dsn": "https://user:synthetic-secret@\u017c\u00f3\u0142w.example/db",
+      "reject": true
+    },
+    {
+      "id": "legacy-integer-ip",
+      "dsn": "https://user:synthetic-secret@2130706433/db",
+      "reject": true
+    },
+    {
+      "id": "legacy-short-ip",
+      "dsn": "https://user:synthetic-secret@127.1/db",
+      "reject": true
+    },
+    {
+      "id": "legacy-octal-ip",
+      "dsn": "https://user:synthetic-secret@0177.0.0.1/db",
+      "reject": true
+    },
+    {
+      "id": "ipv6-zone",
+      "dsn": "https://user:synthetic-secret@[fe80::1%25eth0]/db",
+      "reject": true
+    },
+    {
+      "id": "timeout-below-one-millisecond",
+      "dsn": "https://user:synthetic-secret@localhost/db?connect_timeout=0.0001",
+      "reject": true
+    },
+    {
+      "id": "timeout-over-node-timer",
+      "dsn": "https://user:synthetic-secret@localhost/db?send_receive_timeout=2147484",
+      "reject": true
+    },
+    {
+      "id": "empty-user",
+      "dsn": "https://:pass@host/db",
+      "reject": true
+    },
+    {
+      "id": "dot-db",
+      "dsn": "https://host/.",
+      "reject": true
+    },
+    {
+      "id": "dotdot-db",
+      "dsn": "https://host/%2e%2e",
+      "reject": true
+    },
+    {
+      "id": "underscore-host",
+      "dsn": "https://a_b/db",
+      "reject": true
+    },
+    {
+      "id": "leading-hyphen-host",
+      "dsn": "https://-host/db",
+      "reject": true
+    },
+    {
+      "id": "trailing-hyphen-host",
+      "dsn": "https://host-/db",
+      "reject": true
+    },
+    {
+      "id": "long-label",
+      "dsn": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/db",
+      "reject": true
+    },
+    {
+      "id": "long-host",
+      "dsn": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/db",
+      "reject": true
+    },
+    {
+      "id": "surrogate-password",
+      "dsn": "https://user:\ud800@host/db",
+      "reject": true
+    },
+    {
+      "id": "surrogate-database",
+      "dsn": "https://host/\udc00",
+      "reject": true
+    },
+    {
+      "id": "raw-nbsp",
+      "dsn": "https://host/db\u00a0name",
+      "reject": true
+    },
+    {
+      "id": "raw-nel",
+      "dsn": "https://host/db\u0085name",
+      "reject": true
+    },
+    {
+      "id": "raw-line-separator",
+      "dsn": "https://host/db\u2028name",
+      "reject": true
+    },
+    {
+      "id": "raw-password-backslash",
+      "dsn": "https://user:pass\\word@host/db",
+      "reject": true
+    },
+    {
+      "id": "raw-ca-backslash",
+      "dsn": "https://host/db?ca_cert=/root\\ca.pem",
+      "reject": true
+    }
+  ]
+}

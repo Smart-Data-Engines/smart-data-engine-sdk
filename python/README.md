@@ -134,3 +134,5 @@ including portable keyset pages, typed values and explicit failure semantics.
 The unreleased [Weather starter](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/weather-starter.md)
 installs from reviewed artifacts and exercises logical operations with restricted runtime credentials.
 It includes local setup, telemetry, operator handoffs and an ownership-checked reset.
+
+Engine credentials and verified TLS configuration: [connection guide](../docs/engine-connections.md).

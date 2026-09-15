@@ -44,6 +44,8 @@ import { UsageGate } from '../_usage.js'
 
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import type { ConnectionOptions, TLSSocket } from 'node:tls'
+import { parseDsn, verifiedTls, type ConnectionParameters } from './_clickhouse-connection.js'
 
 import { compareCodePoints } from '../canonical.js'
 import { batchColumns } from '../bulk.js'
@@ -79,41 +81,6 @@ export const CONNECT_TIMEOUT_MS = 10_000
  */
 export const HANDSHAKE_TIMEOUT_MS = 15_000
 
-interface Parsed {
-  readonly protocol: 'http:' | 'https:'
-  readonly host: string
-  readonly port: number
-  readonly user: string
-  readonly password: string
-  readonly database: string
-}
-
-/**
- * A `clickhouse://user:password@host:port/database` DSN, as the reference implementation's driver
- * takes it, so one client can configure two languages from one string.
- */
-function parse(dsn: string): Parsed {
-  let url: URL
-  try {
-    url = new URL(dsn)
-  } catch {
-    throw new EngineError(
-      `'${dsn}' is not a ClickHouse DSN. The form is ` +
-        `clickhouse://user:password@host:port/database, which is what the reference ` +
-        `implementation's driver takes - so one string configures both languages.`,
-    )
-  }
-  const secure = url.protocol === 'clickhouses:' || url.protocol === 'https:'
-  const database = url.pathname.replace(/^\//, '')
-  return {
-    protocol: secure ? 'https:' : 'http:',
-    host: url.hostname,
-    port: url.port === '' ? (secure ? 8443 : 8123) : Number(url.port),
-    user: decodeURIComponent(url.username) || 'default',
-    password: decodeURIComponent(url.password),
-    database: database === '' ? 'default' : database,
-  }
-}
 
 interface Meta {
   readonly name: string
@@ -178,12 +145,13 @@ function outbound(value: unknown): unknown {
 export class ClickHouseEngine {
   readonly dialect = 'clickhouse'
   private readonly usage = new UsageGate()
-  private readonly target: Parsed
+  private readonly target: ConnectionParameters
+  private trust: ConnectionOptions = {}
   private open = false
   private serverVersion: string | null = null
 
   constructor(dsn: string) {
-    this.target = parse(dsn)
+    this.target = parseDsn(dsn)
   }
 
   /**
@@ -198,8 +166,9 @@ export class ClickHouseEngine {
     return this.usage.operation(async () => {
       if (this.open) return
       try {
+        this.trust = this.target.secure ? verifiedTls(this.target) : {}
         const result = await this.send('SELECT version()', {
-          timeoutMs: HANDSHAKE_TIMEOUT_MS,
+          timeoutMs: Math.ceil(this.target.send_receive_timeout * 1000),
           format: 'JSON',
         })
         const parsed = JSON.parse(result) as JsonResult
@@ -234,9 +203,9 @@ export class ClickHouseEngine {
   /**
    * One HTTP exchange.
    *
-   * `timeoutMs` is **absent for a query**, which is the whole timeout design of this adapter: only
-   * the handshake carries a bound, so nothing here can cut a slow analytical query. A caller who
-   * wants one sets it on the server, where it belongs, with `max_execution_time`.
+   * The handshake has a receive-inactivity default. Later queries retain their unbounded
+   * default unless the caller supplies send_receive_timeout. Neither is an absolute execution
+   * deadline; server-side max_execution_time can constrain the workload itself.
    */
   private send(
     sql: string,
@@ -250,22 +219,24 @@ export class ClickHouseEngine {
       const path = `/?${search.toString()}`
       const payload = options.body ?? ''
       const requestFn = this.target.protocol === 'https:' ? httpsRequest : httpRequest
+      const inactivity = options.timeoutMs ?? (this.target.receive_timeout_supplied
+        ? Math.ceil(this.target.send_receive_timeout * 1000) : undefined)
 
       return new Promise<string>((resolve, reject) => {
         const req = requestFn(
           {
+            ...this.trust,
             protocol: this.target.protocol,
             host: this.target.host,
             port: this.target.port,
             method: 'POST',
             path,
             headers: {
-              'X-ClickHouse-User': this.target.user,
-              'X-ClickHouse-Key': this.target.password,
+              Authorization: `Basic ${Buffer.from(`${this.target.username}:${this.target.password}`, 'utf8').toString('base64')}`,
               'Content-Type': 'text/plain; charset=utf-8',
               'Content-Length': Buffer.byteLength(payload),
             },
-            ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+            ...(inactivity === undefined ? {} : { timeout: inactivity }),
           },
           (response) => {
             const chunks: Buffer[] = []
@@ -286,13 +257,23 @@ export class ClickHouseEngine {
         req.on('timeout', () => {
           req.destroy(
             new Error(
-              `no answer within ${options.timeoutMs} ms. The socket was accepted, so this is a host ` +
+              `no answer within ${inactivity} ms. The socket was accepted, so this is a host ` +
                 `that took the connection and did not answer - a firewall that accepts, a load ` +
                 `balancer with no healthy backend, a server mid-restart.`,
             ),
           )
         })
-        req.on('error', reject)
+        const connecting = setTimeout(() => req.destroy(new Error('ClickHouse connection establishment timed out')),
+          Math.ceil(this.target.connect_timeout * 1000))
+        const connected = (): void => { clearTimeout(connecting) }
+        req.on('socket', (socket) => {
+          if ((!this.target.secure && !socket.connecting) ||
+            (this.target.secure && (socket as TLSSocket).authorized === true)) connected()
+          else socket.once(this.target.secure ? 'secureConnect' : 'connect', connected)
+          socket.once('error', connected)
+        })
+        req.once('close', connected)
+        req.on('error', (error) => { connected(); reject(error) })
         req.end(payload)
       })
 
