@@ -77,8 +77,14 @@ def main() -> None:
                 keys={"A": ["id"]},
             )
             engine.insert(current_table, row)
-            engine.insert_many(current_table, [{**row, "id": "two"}, {**row, "id": "three"}])
-            assert engine.get(current_table, {"id": "synthetic"}) == row
+            engine.insert_many(
+                current_table, [{**row, "id": "two"}, {**row, "id": "three"}]
+            )
+            for identity in ("synthetic", "two", "three"):
+                assert engine.get(current_table, {"id": identity}) == {
+                    **row,
+                    "id": identity,
+                }
             assert engine.count(current_table) == 3
             if dialect == "postgres":
                 assert engine._cx.execute(

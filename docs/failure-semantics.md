@@ -33,10 +33,10 @@ this existing at all rather than a description of one.
 
 | What failed | What your call does | What is retried | What can be lost | Pinned by |
 |---|---|---|---|---|
-| The engine is not listening | `connect()` raises `EngineError` carrying the driver's own reason. Measured: 0.16 s to fail against a closed port | nothing | nothing: no operation was attempted | `test_failure_semantics.py` |
+| The engine is not listening | `connect()` raises `EngineError`; ClickHouse connection refusals avoid reflecting the URI or server content. Measured: 0.16 s to fail against a closed port | nothing | nothing: no operation was attempted | `test_failure_semantics.py` |
 | The engine accepts the socket and never answers | `connect()` raises after **10 s** on PostgreSQL and **15 s** on ClickHouse (measured; before these bounds existed the call did not return within 45 seconds). Both are defaults this library supplies and a value in your DSN wins | nothing | nothing | `test_failure_semantics.py`, `failure.test.ts` |
 | The connection dies under an operation | the failing call raises `EngineError` carrying what the server said. Every call after it raises "the connection is closed", plus the sentence that matters: this library does not reopen a connection it was handed | nothing | the operation either reached the engine or did not, and the error is your signal. Nothing was written twice | `test_failure_semantics.py` |
-| A query is simply slow | not a failure, and not bounded by us. Set `statement_timeout` in your PostgreSQL DSN, or `max_execution_time` on your ClickHouse server. Measured on the Python side, where a bound does exist past the handshake: with `send_receive_timeout` at 15 s, a 23-second and a 24-second query both returned normally | nothing | nothing | see "what we do not do" |
+| A query is simply slow | there is no SDK statement deadline, but a transport inactivity limit can still end a request. Configure PostgreSQL `statement_timeout` or ClickHouse `max_execution_time` when needed. Earlier Python probes with `send_receive_timeout` at 15 s completed a 23-second and a 24-second query; receiving progress can keep an inactivity timer alive | nothing | an interrupted operation can have an uncertain outcome | [connection and timeout profile](engine-connections.md) |
 | A read asked for freshness | goes to the source, before any routing table is consulted. A derived copy is behind by design, so it cannot answer this | nothing | nothing | `routing/` conformance vectors |
 | A write during a migration | goes to the source, and additionally to every fan-out target the map names. The additional write is **never authoritative**: if the copy refuses it, your call still succeeds and the failure is counted | nothing | nothing you were told was written. The copy's gap is what the migration's verification exists to find, and it refuses to switch reads until the copy matches value by value | `test_dual_write.py`, and the control plane's gate |
 | The map is for a different model version | refused when the map loads, naming both versions. Never reconciled: the difference between two models cannot be guessed from either side | nothing | nothing | `errors/007` |
@@ -56,13 +56,11 @@ this existing at all rather than a description of one.
   allowed. Reconnecting is `close()` then `connect()`, and the error message says so.
 - **No connection pooling.** That is Tier 3 in the format contract and it is your pool's job. Hand
   the session a connection from it.
-- **No statement timeout.** An analytical query legitimately takes minutes, and a library that cut
-  it off would be deciding something about your workload that it cannot know. The one exchange this
-  library does know the shape of is the connection handshake, which is why that is the only thing
-  it bounds. The two libraries reach that position differently and it is worth knowing which you
-  have: in Python the driver's read bound applies to every request and a slow query survives it
-  anyway (measured, above); in TypeScript only the handshake request carries a timeout at all, which
-  is one fewer thing to be right about.
+- **No statement timeout.** Query execution limits are a workload policy. Transport timers are
+  separate: Python's ClickHouse receive-inactivity bound applies to later requests too. TypeScript
+  retains unbounded query receive time by default; an explicit `send_receive_timeout` now applies
+  there as well. Neither is a total duration guarantee. See the [connection guide](engine-connections.md)
+  for defaults, accepted bounds and the distinction between establishment and receive inactivity.
 - **No fallback to another engine.** A read that cannot be served where the map sends it fails.
   Answering it from somewhere else would mean answering from a copy you did not ask for.
 - **No retry of a write.** See rule 2.

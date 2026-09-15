@@ -28,7 +28,9 @@ for (const [dialect, scheme, secureOption] of [['postgres', 'postgresql', false]
     await engine.ensureSchema({ tables: { A: currentTable }, columns: { A: dialect === 'postgres' ? { id: 'text', big: 'bigint', at: 'timestamptz', label: 'text', money: 'numeric(12,2)' } : { id: 'String', big: 'Int64', at: "DateTime64(6, 'UTC')", label: 'String', money: 'Decimal(12, 2)' } }, indexes: [], partitionBy: {} }, { keys: { A: ['id'] } })
     await engine.insert(currentTable, row)
     await engine.insertMany(currentTable, [{ ...row, id: 'two' }, { ...row, id: 'three' }])
-    assert.deepEqual(await engine.get(currentTable, { id: row.id }), row)
+    for (const id of ['synthetic', 'two', 'three']) {
+      assert.deepEqual(await engine.get(currentTable, { id }), { ...row, id })
+    }
     assert.equal(await engine.count(currentTable), 3)
     console.log(JSON.stringify({ language: 'typescript', dialect, scheme, secure_option: secureOption, rows: 3, exact_values: true }))
   } finally { await engine.close() }
