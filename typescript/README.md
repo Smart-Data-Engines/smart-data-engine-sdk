@@ -137,3 +137,9 @@ bounds, source/copy ordering and uncertain outcomes.
 
 [Logical reads and exact summaries](../docs/logical-reads.md) cover scan, count and summarize,
 including portable keyset pages, typed values and explicit failure semantics.
+
+## Local Weather starter
+
+The unreleased [Weather starter](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/weather-starter.md)
+installs from reviewed artifacts and exercises logical operations with restricted runtime credentials.
+It includes local setup, telemetry, operator handoffs and an ownership-checked reset.

@@ -1,0 +1,38 @@
+{
+  "entities": [
+    {
+      "name": "WeatherReading",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "celsius",
+          "type": "decimal(8,2)"
+        },
+        {
+          "name": "humidity",
+          "type": "int64"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "station",
+        "at"
+      ],
+      "residency": "EU"
+    }
+  ],
+  "cost_ceiling": {
+    "amount": "500.00",
+    "currency": "EUR"
+  }
+}

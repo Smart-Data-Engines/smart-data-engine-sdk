@@ -1,0 +1,13 @@
+{
+  "model_version": "794ff972d69c52e5",
+  "run_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "worker": 0,
+  "sequence": 999,
+  "reading": {
+    "at": "2026-01-01T00:00:00.000999Z",
+    "celsius": "25.24",
+    "humidity": "49",
+    "id": "e62e91a8-327d-4efd-96af-0f7f2b7237a3",
+    "station": "weather-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0"
+  }
+}

@@ -1,0 +1,232 @@
+"""A bounded logical workload with explicit uncertain writes and value-free reports."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable, Mapping
+from decimal import Decimal
+from functools import partial
+from pathlib import Path
+from typing import Any, TypeVar
+from uuid import uuid4
+
+import sde
+
+from .model import BASE_TIME, model, reading
+from .project import DemoRefused, config, credentials, engine, public_keys, write
+
+T = TypeVar("T")
+
+
+def limits(iterations: int, batch_size: int, interval_ms: int, recovery_ms: int) -> None:
+    if (
+        any(type(value) is not int for value in (iterations, batch_size, interval_ms, recovery_ms))
+        or not 1 <= iterations <= 1000
+        or not 1 <= batch_size <= 1000
+        or iterations * batch_size > 10000
+        or not 0 <= interval_ms <= 1000
+        or not 0 <= recovery_ms <= 30000
+    ):
+        raise DemoRefused(
+            "Use 1-1000 iterations/batch, at most 10000 rows, interval 0-1000 ms "
+            "and recovery 0-30000 ms."
+        )
+
+
+def run(
+    root: Path,
+    *,
+    iterations: int = 10,
+    batch_size: int = 10,
+    interval_ms: int = 100,
+    recovery_ms: int = 10000,
+    workload: str = "mixed",
+) -> dict[str, Any]:
+    limits(iterations, batch_size, interval_ms, recovery_ms)
+    if workload not in ("mixed", "point", "analytics"):
+        raise DemoRefused("Choose the mixed, point or analytics workload.")
+    settings = config(root)
+    logical, keys = model(), public_keys(settings["public_keys"])
+    dsns = credentials(root, "runtime", settings["engines"])
+    factories = {
+        name: (lambda dialect=binding["dialect"], dsn=dsns[name]: engine(dialect, dsn))
+        for name, binding in settings["engines"].items()
+    }
+    run_id = uuid4().hex
+    directory = root / "runs" / run_id
+    recorder = sde.Recorder(logical.version)
+    session: sde.Session | None = None
+    fingerprint: str | None = None
+    report: dict[str, Any] = {
+        "protocol": 1,
+        "run_id": run_id,
+        "language": "python",
+        "status": "running",
+        "workload": workload,
+        "sdk_version": sde.__version__,
+        "sdk_module": sde.__file__,
+        "project_id": settings["project_id"],
+        "model_version": logical.version,
+        "acknowledged_rows": 0,
+        "verified_after_uncertain_rows": 0,
+        "verified_rows": 0,
+        "pending": None,
+        "map_versions": [],
+        "read_retries": 0,
+    }
+
+    def checkpoint() -> None:
+        write(directory / "report.json", report)
+
+    def opened(*, fresh: bool = False) -> sde.Session:
+        nonlocal session, fingerprint
+        if (root / "reset-request.json").exists():
+            raise DemoRefused("Reset was requested; this workload has stopped.")
+        placement = sde.load_local_map(
+            root / "state", model=logical, project_id=settings["project_id"], public_key=keys
+        )
+        if fresh or session is None or placement.fingerprint != fingerprint:
+            if session is not None:
+                session.close()
+                session = None
+            required = {
+                material.engine for group in placement.groups.values() for material in group.all()
+            }
+            if required - factories.keys():
+                raise DemoRefused("An active materialization has no local binding.")
+            active_factories = {name: factories[name] for name in sorted(required)}
+            session = sde.Session.connect(
+                logical,
+                placement,
+                active_factories,
+                recorder=recorder,
+                project_id=settings["project_id"],
+            )
+            fingerprint = placement.fingerprint
+            if placement.map_version not in report["map_versions"]:
+                report["map_versions"].append(placement.map_version)
+        return session
+
+    def read_retry(action: Callable[[sde.Session], T]) -> T:
+        deadline = time.monotonic() + recovery_ms / 1000
+        fresh = False
+        while True:
+            try:
+                return action(opened(fresh=fresh))
+            except (sde.EngineError, sde.MapRolledBack, sde.MigrationRefused):
+                if time.monotonic() >= deadline:
+                    raise
+                report["read_retries"] += 1
+                fresh = True
+                time.sleep(0.05)
+
+    def same(actual: Mapping[str, Any] | None, expected: dict[str, Any]) -> None:
+        if actual != expected:
+            raise DemoRefused("A logical read did not match this run's synthetic input.")
+
+    def check_rows(client: sde.Session, rows: list[dict[str, Any]]) -> bool:
+        for row in rows:
+            actual = client.get(
+                "WeatherReading", {key: row[key] for key in ("station", "at")}, fresh=True
+            )
+            if actual is None:
+                return False
+            same(actual, row)
+        return True
+
+    def point(current: sde.Session, row: dict[str, Any]) -> Any:
+        return current.get("WeatherReading", {key: row[key] for key in ("station", "at")})
+
+    def counted(current: sde.Session, where: dict[str, Any]) -> int:
+        return current.count("WeatherReading", where=where)
+
+    def summarized(current: sde.Session, where: dict[str, Any]) -> Any:
+        return current.summarize("WeatherReading", "celsius", where=where)
+
+    checkpoint()
+    began = time.monotonic_ns()
+    try:
+        for iteration in range(iterations):
+            first = iteration * batch_size + 1
+            rows = [reading(run_id, 0, number) for number in range(first, first + batch_size)]
+            # Opening/refresh errors happen before the write intent and may be retried safely.
+            client = read_retry(lambda current: current)
+            report["pending"] = {"first": first, "count": batch_size}
+            checkpoint()
+            try:
+                client.save_many("WeatherReading", rows)
+            except sde.EngineError:
+                # No replay. A visible exact batch establishes the result; an absent or partial
+                # batch does not prove rollback. Leave its durable range pending on refusal.
+                deadline = time.monotonic() + recovery_ms / 1000
+                while True:
+                    try:
+                        if check_rows(opened(fresh=True), rows):
+                            report["verified_after_uncertain_rows"] += batch_size
+                            break
+                    except (sde.EngineError, sde.MapRolledBack, sde.MigrationRefused):
+                        pass
+                    if time.monotonic() >= deadline:
+                        raise DemoRefused(
+                            "Write outcome is uncertain. Inspect this run's pending "
+                            "range locally; the starter did not replay it."
+                        ) from None
+                    time.sleep(0.05)
+            else:
+                report["acknowledged_rows"] += batch_size
+            report["pending"] = None
+            checkpoint()
+            last = rows[-1]
+            repeats = 20 if workload == "point" else 1
+            for _ in range(repeats):
+                same(read_retry(partial(point, row=last)), last)
+            count = first + batch_size - 1
+            where = {"station": last["station"]}
+            if workload != "point" or iteration == iterations - 1:
+
+                def check_page(
+                    current: sde.Session, where: dict[str, Any] = where, count: int = count
+                ) -> None:
+                    page = current.scan(
+                        "WeatherReading",
+                        where=where,
+                        bounds=sde.Range("at", low=BASE_TIME),
+                        limit=min(count, 1000),
+                    )
+                    expected = [reading(run_id, 0, index) for index in range(1, len(page.rows) + 1)]
+                    if list(page.rows) != expected or len(page.rows) != min(count, 1000):
+                        raise DemoRefused("The bounded logical page did not match this run.")
+
+                read_retry(check_page)
+                if read_retry(partial(counted, where=where)) != count:
+                    raise DemoRefused("The logical count did not match this run.")
+                summary = read_retry(partial(summarized, where=where))
+                cents = sum(1525 + index % 1000 for index in range(1, count + 1))
+                total = Decimal(f"{cents // 100}.{cents % 100:02d}")
+                if summary.count != count or summary.total != total:
+                    raise DemoRefused("The exact logical summary did not match this run.")
+            report["verified_rows"] = count
+            checkpoint()
+            if interval_ms and iteration + 1 < iterations:
+                time.sleep(interval_ms / 1000)
+        report["status"] = "complete"
+    except BaseException as exc:
+        report["status"] = "incomplete"
+        report["failure"] = type(exc).__name__
+        raise
+    finally:
+        report["elapsed_ns"] = str(time.monotonic_ns() - began)
+        try:
+            if session is not None:
+                session.close()
+        except BaseException:
+            report["status"] = "incomplete"
+            report["cleanup_failed"] = True
+            raise
+        finally:
+            window = recorder.roll()
+            if window is not None:
+                write(directory / "window.json", window.as_record(logical))
+                recorder.acknowledge(1)
+            checkpoint()
+    return report

@@ -118,6 +118,9 @@ class ProjectState:
                 self.write(state)
             if not self.map_path.exists():
                 _local_state.write_bytes(self.map_path, map_payload, replace=False)
+            # Matching visible files may come from a publication whose directory fsync failed.
+            # An identical retry must confirm their durability before enrollment succeeds.
+            self.confirm()
 
     def publish(self, payload: bytes) -> None:
         _local_state.write_bytes(self.map_path, payload)

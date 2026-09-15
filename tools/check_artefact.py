@@ -51,6 +51,8 @@ REQUIRED = {
     "wheel": (
         "sde/__init__.py",
         "sde/py.typed",
+        "sde_demo/__main__.py",
+        "sde_demo/py.typed",
         "*.dist-info/METADATA",
         "*.dist-info/licenses/LICENSE",
         "*.dist-info/licenses/NOTICE",
@@ -60,6 +62,7 @@ REQUIRED = {
         "*/NOTICE",
         "*/pyproject.toml",
         "*/src/sde/py.typed",
+        "*/src/sde_demo/__main__.py",
     ),
     "npm": (
         "package/package.json",
@@ -67,6 +70,9 @@ REQUIRED = {
         "package/NOTICE",
         "package/dist/index.js",
         "package/dist/index.d.ts",
+        "package/bin/weather.mjs",
+        "package/dist/demo/weather.js",
+        "package/dist/demo/weather.d.ts",
         "package/dist/engines/postgres.js",
         "package/dist/engines/clickhouse.js",
         "package/dist/testing/memory.js",

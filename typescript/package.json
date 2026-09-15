@@ -41,20 +41,25 @@
     "./testing": {
       "types": "./dist/testing/memory.d.ts",
       "import": "./dist/testing/memory.js"
+    },
+    "./weather": {
+      "types": "./dist/demo/weather.d.ts",
+      "import": "./dist/demo/weather.js"
     }
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "bin"
   ],
   "engines": {
     "node": ">=18 <23"
   },
   "scripts": {
     "prepack": "npm run build",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc --noEmit --allowJs --checkJs --strict --target ES2022 --module NodeNext --types node --skipLibCheck bin/weather.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --max-warnings 0"
@@ -73,5 +78,8 @@
     "pg": {
       "optional": true
     }
+  },
+  "bin": {
+    "sde-weather-ts": "./bin/weather.mjs"
   }
 }
