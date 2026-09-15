@@ -30,7 +30,7 @@ chown -R postgres:postgres /run/sde-tls
 chmod 700 /run/sde-tls
 chmod 600 /run/sde-tls/server_key.pem
 exec docker-entrypoint.sh postgres -c ssl=on \\
-  -c ssl_cert_file=/run/sde-tls/server_cert.pem \\
+  -c ssl_cert_file=/run/sde-tls/ip_only_cert.pem \\
   -c ssl_key_file=/run/sde-tls/server_key.pem \\
   -c ssl_ca_file=/run/sde-tls/ca.pem
 """
@@ -173,7 +173,7 @@ def main() -> None:
         env = os.environ | {"SDE_TLS_TEST": str(manifest), "TMPDIR": str(scratch)}
         if args.language in ("python", "both"):
             subprocess.run(
-                [sys.executable, str(REPO / "tools/tls_python.py")],
+                [sys.executable, "-I", str(REPO / "tools/tls_python.py")],
                 env=env,
                 check=True,
                 timeout=120,

@@ -82,6 +82,17 @@ options outside the qualified profile retain their native interpretation. In par
 without server identity verification is a weaker property. Do not infer it from a successful
 connection or from a `require` / `prefer` spelling across different drivers.
 
+The TypeScript adapter binds a literal IP from the driver's effective connection configuration
+to TLS certificate verification, including IPv6. The native driver otherwise supplied a connected
+socket without this identity, causing Node to check its `localhost` fallback: a DNS-only localhost
+certificate was accepted for an IP connection, while a correct IP-only certificate was refused.
+The fix preserves CA material, callbacks and existing SSL modes, and clones SSL option descriptors
+so another client or `pg.defaults.ssl` is not changed. Active TLS also supplies
+`rejectUnauthorized=true` unless the native configuration explicitly requests `false`, preventing
+`NODE_TLS_REJECT_UNAUTHORIZED=0` from weakening `verify-full`. Explicit legacy `no-verify` and
+`disable` keep their native meaning; they are outside the verified profile. URI IPv6 brackets are removed only after
+identifying a valid literal IP. Native CI uses an IP-only PostgreSQL certificate to cover this case.
+
 The [PostgreSQL TLS documentation](https://www.postgresql.org/docs/current/libpq-ssl.html)
 explains libpq's modes. The [Node driver documentation](https://node-postgres.com/features/ssl)
 also warns that SSL URI options can replace a separately supplied SSL object. Qualify the exact
