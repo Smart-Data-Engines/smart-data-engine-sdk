@@ -1,0 +1,157 @@
+{
+  "runs": [
+    {
+      "source_commit": "57cc11201edc13d75f4027af91c70c308a25f0e2",
+      "source_sha256": {
+        "python/src/sde/engines/clickhouse.py": "35ff9224855a33b083f0562bb5d55826dfbc970d179dc6420944be94559c9a60",
+        "python/src/sde/engines/_clickhouse_connection.py": "f0fcb4f093c194ac7d76963a541b840fb645cff41a4892c53d70e8c4991882c8"
+      },
+      "results": [
+        {
+          "case": "positive-before-py",
+          "exit_code": 0,
+          "seconds": 7.455
+        },
+        {
+          "case": "py-transport",
+          "exit_code": 1,
+          "seconds": 7.002
+        },
+        {
+          "case": "py-first-replay",
+          "exit_code": 1,
+          "seconds": 7.855
+        },
+        {
+          "case": "py-first-redirect",
+          "exit_code": 1,
+          "seconds": 7.608
+        },
+        {
+          "case": "py-urllib3-redirect-and-retry",
+          "exit_code": 1,
+          "seconds": 8.157
+        },
+        {
+          "case": "py-verify-typo",
+          "exit_code": 1,
+          "seconds": 11.279
+        },
+        {
+          "case": "py-https-port",
+          "exit_code": 1,
+          "seconds": 7.92
+        },
+        {
+          "case": "py-ca-pinning",
+          "exit_code": 1,
+          "seconds": 7.653
+        },
+        {
+          "case": "positive-after-py",
+          "exit_code": 0,
+          "seconds": 8.404
+        }
+      ],
+      "restored_exactly": true
+    },
+    {
+      "source_commit": "cae879708ff994ebcbcfc5f7de6679d11453e936",
+      "source_sha256": {
+        "typescript/src/engines/_clickhouse-connection.ts": "c6d6b304773b46ac46c9e3fe812e6e8d712d8055a2c97df08870148659d144f5",
+        "typescript/src/engines/clickhouse.ts": "b2135a30ad5dce892c0f551d30a2f367b2c644107e4aeae17a9f04118d71239b",
+        "typescript/src/engines/postgres.ts": "3e8b1c68e837afe7dc14518e1d86ee5001ddbb72ff37620380cb1667af4607e2",
+        "typescript/src/engines/_tls-peer-identity.ts": "f60b4b8ad2c32cf9e38b2af844e932f0e0c792fd7cf12e16d5e14af8fc5bc817"
+      },
+      "results": [
+        {
+          "case": "positive-before-ts",
+          "exit_code": 0,
+          "seconds": 4.751
+        },
+        {
+          "case": "ts-secure-query",
+          "exit_code": 1,
+          "seconds": 4.899
+        },
+        {
+          "case": "ts-host-identity",
+          "exit_code": 1,
+          "seconds": 4.808
+        },
+        {
+          "case": "ts-verify-typo",
+          "exit_code": 1,
+          "seconds": 4.856
+        },
+        {
+          "case": "ts-https-port",
+          "exit_code": 1,
+          "seconds": 4.904
+        },
+        {
+          "case": "ts-unicode",
+          "exit_code": 1,
+          "seconds": 5.071
+        },
+        {
+          "case": "ts-ca-selection",
+          "exit_code": 1,
+          "seconds": 4.807
+        },
+        {
+          "case": "ts-pg-entry",
+          "exit_code": 1,
+          "seconds": 4.801
+        },
+        {
+          "case": "ts-pg-ip-identity",
+          "exit_code": 1,
+          "seconds": 4.699
+        },
+        {
+          "case": "ts-pg-verify-default",
+          "exit_code": 1,
+          "seconds": 5.077
+        },
+        {
+          "case": "ts-pg-shared-options",
+          "exit_code": 1,
+          "seconds": 4.793
+        },
+        {
+          "case": "ts-pg-ipv6-address",
+          "exit_code": 1,
+          "seconds": 5.02
+        },
+        {
+          "case": "ts-peer-ip-match",
+          "exit_code": 1,
+          "seconds": 4.926
+        },
+        {
+          "case": "ts-peer-malformed",
+          "exit_code": 1,
+          "seconds": 4.7
+        },
+        {
+          "case": "ts-peer-missing-raw",
+          "exit_code": 1,
+          "seconds": 5.053
+        },
+        {
+          "case": "ts-pg-peer-binding",
+          "exit_code": 1,
+          "seconds": 4.746
+        },
+        {
+          "case": "positive-after-ts",
+          "exit_code": 0,
+          "seconds": 4.745
+        }
+      ],
+      "restored_exactly": true
+    }
+  ],
+  "detected_mutations": 22
+}

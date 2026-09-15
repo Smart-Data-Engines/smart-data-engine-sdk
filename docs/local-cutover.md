@@ -187,3 +187,7 @@ source commit, executes the Python operator, writes a newer value on the new Cli
 then resumes the old fan-out. The delayed old-generation write is refused and the newer value
 survives. These are tests of the local component; the full reservation-to-demo workflow and sustained
 workload acceptance remain required.
+
+The operator uses the same SDK engine adapters. Configure customer-local operator and runtime
+connections using the [verified TLS profile](engine-connections.md); never include their URIs
+or CA files in a controller handoff.

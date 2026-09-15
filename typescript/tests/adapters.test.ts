@@ -100,7 +100,7 @@ describe('the ClickHouse literal renderer is total', () => {
   it('refuses a DSN that is not one, at construction', () => {
     // At construction rather than at the first query, because a typo in a connection string is a
     // deployment mistake and the moment to report it is the moment it is read.
-    expect(() => new ClickHouseEngine('not a dsn')).toThrow('is not a ClickHouse DSN')
+    expect(() => new ClickHouseEngine('not a dsn')).toThrow('Invalid ClickHouse connection')
   })
 })
 

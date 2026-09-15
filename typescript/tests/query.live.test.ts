@@ -2,6 +2,7 @@
 import { expect, it } from 'vitest'
 import { buildModel, colocationGroups, entity, hashIdentifiers, loadMap, Recorder, Session, T,
   Timestamp, type Row, type ScanOptions } from '../src/index.js'
+import { QUOTE } from '../src/schema.js'
 import { withRoles } from './_runtime-roles.js'
 import type { Dialect } from './_generation-engines.js'
 
@@ -167,10 +168,21 @@ for (const dialect of ['postgres', 'clickhouse'] as const) {
       await role.operator.insertMany('timed_query', rows)
       const dsn = new URL(role.runtimeDsn)
       if (dialect === 'postgres') dsn.searchParams.set('options', dsn.searchParams.get('options') + ' -cTimeZone=America/New_York')
-      else dsn.searchParams.set('session_timezone', 'America/New_York')
+      else {
+        // The old adapter ignored query options, so the previous DSN-only fixture never changed
+        // the connection zone. Set the isolated login's default and observe it on SDK transport.
+        const user = (QUOTE['clickhouse'] as (name: string) => string)(decodeURIComponent(dsn.username))
+        await role.statement(`ALTER USER ${user} SETTINGS session_timezone='America/New_York'`)
+      }
       const engine = dialect === 'postgres' ? new PostgresEngine(dsn.toString()) : new ClickHouseEngine(dsn.toString())
       await engine.connect()
       try {
+        if (dialect === 'clickhouse') {
+          const native = engine as unknown as { query(sql: string): Promise<Row[]> }
+          expect(await native.query("SELECT getSetting('session_timezone') AS zone")).toEqual([
+            { zone: 'America/New_York' },
+          ])
+        }
         const session = await Session.open(model, placement, { db: engine })
         const first = await session.scan('Timed', { bounds: { field: 'at',
           low: '2026-09-14T12:00:00.123456+02:00', high: '2026-09-14T10:00:00.123458Z' }, orderBy: 'at', limit: 1 })

@@ -121,6 +121,9 @@ jobs:
           done
 
 
+      - name: verified TLS against isolated native engines
+        run: python tools/qualify_tls.py --language python --scratch "$RUNNER_TEMP/sde-native-tls"
+
       - name: application batches on the supported ClickHouse driver floor
         if: matrix.python == '3.11'
         working-directory: python
@@ -129,8 +132,9 @@ jobs:
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
           python -m pip install 'clickhouse-connect==1.7.2'
-          pytest tests/test_bulk_live.py tests/test_clickhouse_transport.py -q --junitxml="$RUNNER_TEMP/sde-driver-floor.xml"
+          pytest tests/test_bulk_live.py tests/test_clickhouse_transport.py tests/test_clickhouse_tls.py -q --junitxml="$RUNNER_TEMP/sde-driver-floor.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-driver-floor.xml"
+          python ../tools/qualify_tls.py --language python --scratch "$RUNNER_TEMP/sde-floor-tls"
 
   typescript:
     runs-on: ubuntu-latest
@@ -205,6 +209,10 @@ jobs:
           npx tsc --noEmit
           npm run build
           npx tsc --noEmit --allowJs --checkJs --strictNullChecks --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/weather-worker.mjs
+          npx tsc --noEmit --allowJs --checkJs --strict --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/tls-worker.mjs
+
+      - name: verified TLS against isolated native engines
+        run: python/.venv/bin/python tools/qualify_tls.py --language typescript --scratch "$RUNNER_TEMP/sde-native-tls"
 
       - name: the same vectors Python runs, and both engine slices
         working-directory: typescript

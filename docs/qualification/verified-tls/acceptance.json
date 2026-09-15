@@ -1,0 +1,134 @@
+{
+  "date": "2026-09-15",
+  "source_commit": "cae879708ff994ebcbcfc5f7de6679d11453e936",
+  "python": {
+    "passed": 1643,
+    "skipped": 10,
+    "skip_scope": "optional orderbook engine only",
+    "seconds": 425.85
+  },
+  "typescript": {
+    "18": {
+      "passed": 789,
+      "skipped": 0
+    },
+    "22": {
+      "passed": 789,
+      "skipped": 0
+    }
+  },
+  "shared_dsn_cases": 80,
+  "floor_installed_tests": {
+    "passed": 127,
+    "skipped": 0,
+    "clickhouse_connect": "1.7.2"
+  },
+  "development_clickhouse_connect": "1.8.0",
+  "postgres_driver_python": "3.3.5",
+  "postgres_driver_typescript": "8.23.0",
+  "local_python": "3.12.3",
+  "local_node": [
+    "18.19.1",
+    "22.23.2"
+  ],
+  "engines": [
+    "postgres:15-alpine",
+    "clickhouse/clickhouse-server:24.8-alpine"
+  ],
+  "artifacts": {
+    "smart_data_engine_sdk-0.1.0.dev0-py3-none-any.whl": "ed9e37c05c14df1b30d9a12da21182e369c1f7e5575dcfa5258fb4adcfdeef2a",
+    "smart-data-engines-sde-0.1.0-dev.0.tgz": "db113d0b13df6df008d6f3510b55f203681362d375bb1897617902d695f38a67"
+  },
+  "installed_native_cases": [
+    {
+      "language": "python",
+      "dialect": "postgres",
+      "scheme": "postgresql",
+      "secure_option": false,
+      "rows": 3,
+      "exact_values": true
+    },
+    {
+      "language": "python",
+      "dialect": "postgres",
+      "scheme": "postgresql",
+      "wrong_ca_refused": true
+    },
+    {
+      "language": "python",
+      "dialect": "clickhouse",
+      "scheme": "https",
+      "secure_option": false,
+      "rows": 3,
+      "exact_values": true
+    },
+    {
+      "language": "python",
+      "dialect": "clickhouse",
+      "scheme": "https",
+      "wrong_ca_refused": true
+    },
+    {
+      "language": "python",
+      "dialect": "clickhouse",
+      "scheme": "clickhouse",
+      "secure_option": true,
+      "rows": 3,
+      "exact_values": true
+    },
+    {
+      "language": "python",
+      "dialect": "clickhouse",
+      "scheme": "clickhouse",
+      "wrong_ca_refused": true
+    },
+    {
+      "language": "typescript",
+      "dialect": "postgres",
+      "scheme": "postgresql",
+      "secure_option": false,
+      "rows": 3,
+      "exact_values": true
+    },
+    {
+      "language": "typescript",
+      "dialect": "postgres",
+      "scheme": "postgresql",
+      "wrong_ca_refused": true
+    },
+    {
+      "language": "typescript",
+      "dialect": "clickhouse",
+      "scheme": "https",
+      "secure_option": false,
+      "rows": 3,
+      "exact_values": true
+    },
+    {
+      "language": "typescript",
+      "dialect": "clickhouse",
+      "scheme": "https",
+      "wrong_ca_refused": true
+    },
+    {
+      "language": "typescript",
+      "dialect": "clickhouse",
+      "scheme": "clickhouse",
+      "secure_option": true,
+      "rows": 3,
+      "exact_values": true
+    },
+    {
+      "language": "typescript",
+      "dialect": "clickhouse",
+      "scheme": "clickhouse",
+      "wrong_ca_refused": true
+    }
+  ],
+  "mutations": 22,
+  "private_keys_committed": false,
+  "release_tags_created": false,
+  "production_deployment_qualified": false,
+  "installed_node": "22.23.2",
+  "strict_pki_probe": true
+}

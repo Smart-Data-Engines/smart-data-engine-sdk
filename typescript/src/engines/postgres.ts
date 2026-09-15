@@ -29,6 +29,9 @@
  * one of them would be a dependency they inherit and a version conflict they may have to resolve.
  */
 
+import { isIP } from 'node:net'
+import type { PeerCertificate } from 'node:tls'
+
 import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
@@ -41,6 +44,7 @@ import { keyColumns, sameWidth } from '../migration.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
 import { PostgresFences, fenceIO } from './_write-fences.js'
+import { verifyPeerIdentity } from './_tls-peer-identity.js'
 
 // Bound from the one definition in schema.ts, so that DDL and DML cannot disagree about how an
 // identifier is escaped.
@@ -152,6 +156,57 @@ interface ClientLike {
   on(event: 'error', listener: (error: Error) => void): unknown
 }
 
+/** Pin verified TLS defaults and the native connection's literal-IP certificate identity.
+ *
+ * The native parser remains authoritative for SSL mode, CA and any verification callback.
+ * An absent rejection flag must not inherit NODE_TLS_REJECT_UNAUTHORIZED=0. For IPs, pg also
+ * needs host passed to tls.connect: a supplied socket has no DNS name and can fall back to localhost.
+ */
+function configureTlsVerification(client: ClientLike): void {
+  const native = client as ClientLike & {
+    host?: unknown
+    ssl?: unknown
+    connectionParameters?: { host?: unknown; ssl?: unknown }
+    connection?: { ssl?: unknown }
+  }
+  const selected = native.connection?.ssl ?? native.ssl ?? native.connectionParameters?.ssl
+  if (selected !== true && (selected === null || typeof selected !== 'object')) return
+  // pg.defaults.ssl may be shared. Clone own descriptors so neither that object nor another
+  // client's IP changes, and non-enumerable private keys/getters retain their original behavior.
+  const descriptors: PropertyDescriptorMap = selected === true ? {} : Object.getOwnPropertyDescriptors(selected)
+  if (selected === true || (selected as { rejectUnauthorized?: unknown }).rejectUnauthorized !== false) {
+    descriptors.rejectUnauthorized = { value: true, enumerable: true, configurable: true, writable: true }
+  }
+  const configured = native.host ?? native.connectionParameters?.host
+  let ip: string | undefined
+  if (typeof configured === 'string') {
+    const candidate = configured.startsWith('[') && configured.endsWith(']')
+      ? configured.slice(1, -1) : configured
+    if (isIP(candidate) !== 0) {
+      ip = candidate
+      descriptors.host = { value: ip, enumerable: true, configurable: true, writable: true }
+      const options = selected as { rejectUnauthorized?: unknown; checkServerIdentity?: unknown }
+      if (options.rejectUnauthorized !== false && options.checkServerIdentity === undefined) {
+        descriptors.checkServerIdentity = {
+          value: (_hostname: string, certificate: PeerCertificate) => verifyPeerIdentity(candidate, certificate),
+          enumerable: true, configurable: true, writable: true,
+        }
+      }
+    }
+  }
+  const ssl = Object.create(selected === true ? Object.prototype : Object.getPrototypeOf(selected),
+    descriptors) as Record<string, unknown>
+  native.ssl = ssl
+  if (native.connectionParameters) native.connectionParameters.ssl = ssl
+  if (native.connection) native.connection.ssl = ssl
+  // pg-connection-string retains URI IPv6 brackets; net.connect needs the unbracketed address.
+  // This is only normalization of a proven literal IP, after the native DSN parser has finished.
+  if (ip !== undefined) {
+    native.host = ip
+    if (native.connectionParameters) native.connectionParameters.host = ip
+  }
+}
+
 export interface PostgresOptions {
   /**
    * The `pg` module, for a caller who has it under a different name or wants to hand in a double.
@@ -225,6 +280,7 @@ export class PostgresEngine {
         this.lost = error
       })
       try {
+        configureTlsVerification(client)
         await client.connect()
       } catch (error) {
         try { await client.end() } catch { /* Preserve the connect failure. */ }

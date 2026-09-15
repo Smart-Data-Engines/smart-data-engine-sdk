@@ -7,13 +7,14 @@
 PY := python/.venv/bin
 
 .PHONY: help check python-check python-test python-lint python-types ts-check ts-test ts-types \
-        conformance clean pg-up pg-down ch-up ch-down engines-up engines-down
+        conformance tls-check clean pg-up pg-down ch-up ch-down engines-up engines-down
 
 help:
 	@echo "check         everything CI runs"
 	@echo "python-check  lint, types and tests for the Python library"
 	@echo "ts-check      types and tests for the TypeScript library"
 	@echo "conformance   run the shared vectors in every language that has them"
+	@echo "tls-check     isolated TLS engines; set TLS_SCRATCH and optional TLS_DOCKER_FLAGS=--sudo"
 	@echo "engines-up    start both engines the integration slices need"
 	@echo "engines-down  stop them"
 	@echo "pg-up/ch-up   start one of them"
@@ -45,9 +46,14 @@ ts-types:
 	cd typescript && npx tsc --noEmit
 	cd typescript && npm run build
 	cd typescript && npx tsc --noEmit --allowJs --checkJs --strictNullChecks --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/weather-worker.mjs
+	cd typescript && npx tsc --noEmit --allowJs --checkJs --strict --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/tls-worker.mjs
 
 ts-test:
 	cd typescript && npx vitest run
+
+tls-check: ts-types
+	@test -n "$(TLS_SCRATCH)" || { echo "Set TLS_SCRATCH to a new test directory"; exit 1; }
+	$(PY)/python tools/qualify_tls.py --scratch "$(TLS_SCRATCH)" $(TLS_DOCKER_FLAGS)
 
 conformance:
 	cd python && .venv/bin/python -m pytest tests/test_conformance.py -v
