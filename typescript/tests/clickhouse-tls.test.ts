@@ -241,3 +241,22 @@ describe('connection-local trust and credentials', () => {
     expect(endpoint.observed.tcp).toBe(0)
   })
 })
+
+
+describe('IPv6 certificate identity and trust', () => {
+  it.each([
+    ['ip_only_cert', 'ca', true],
+    ['dns_only_cert', 'ca', false],
+    ['ip_only_cert', 'other_ca', false],
+    ['expired_cert', 'ca', false],
+  ] as const)('checks IPv6 certificate %s with trust %s, accepted=%s', async (certificate, trust, accepted) => {
+    const endpoint = await tlsEndpoint(certificate, '::1')
+    const engine = new ClickHouseEngine(`https://user:synthetic@[::1]:${endpoint.port}/db?ca_cert=${encodeURIComponent(material[trust]!)}`)
+    try {
+      if (accepted) { await engine.connect(); expect(engine.version).toBe('24.8.14.39') }
+      else await expect(engine.connect()).rejects.toThrow()
+    } finally { await engine.close() }
+    expect(endpoint.observed.tcp).toBeGreaterThan(0)
+    expect(endpoint.observed.requests).toBe(accepted ? 1 : 0)
+  })
+})

@@ -3,9 +3,10 @@ import { X509Certificate } from 'node:crypto'
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { isAbsolute } from 'node:path'
-import { checkServerIdentity, createSecureContext, type ConnectionOptions } from 'node:tls'
+import { createSecureContext, type ConnectionOptions } from 'node:tls'
 
 import { EngineError } from '../errors.js'
+import { verifyPeerIdentity } from './_tls-peer-identity.js'
 
 export interface ConnectionParameters {
   readonly host: string
@@ -145,6 +146,6 @@ export function verifiedTls(target: ConnectionParameters): ConnectionOptions {
   return {
     ...(ca === undefined ? {} : { ca }), rejectUnauthorized: true,
     ...(isIP(target.host) === 0 ? { servername: target.host } : {}),
-    checkServerIdentity: (_host, certificate) => checkServerIdentity(target.host, certificate),
+    checkServerIdentity: (_host, certificate) => verifyPeerIdentity(target.host, certificate),
   }
 }

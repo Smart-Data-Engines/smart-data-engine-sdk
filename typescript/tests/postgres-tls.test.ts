@@ -1,7 +1,7 @@
 /** Peer identity must match the configured PG host, not a TLS library's default hostname. */
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { createServer, type AddressInfo, type Socket } from 'node:net'
+import { createServer, type AddressInfo, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createSecureContext, TLSSocket } from 'node:tls'
@@ -24,7 +24,8 @@ async function endpoint(certificate: string, bindHost = '127.0.0.1') {
   const context = createSecureContext({ key: readFileSync(material.server_key!), cert: readFileSync(material[certificate]!) })
   const sockets: Socket[] = []
   const observed = { tcp: 0, sslRequests: 0, startup: [] as Buffer[], tlsErrors: [] as string[] }
-  const server = createServer((raw) => {
+  const servers: Server[] = []
+  const handleConnection = (raw: Socket): void => {
     sockets.push(raw); observed.tcp++
     raw.setTimeout(2000, () => raw.destroy())
     let initial = Buffer.alloc(0)
@@ -57,12 +58,36 @@ async function endpoint(certificate: string, bindHost = '127.0.0.1') {
     }
     raw.on('data', negotiate)
     raw.on('error', () => raw.destroy())
-  })
-  await new Promise<void>((resolve) => server.listen(0, bindHost, resolve))
-  return { port: (server.address() as AddressInfo).port, observed, close: async () => {
+  }
+  const close = async (): Promise<void> => {
     for (const socket of sockets) socket.destroy()
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-  } }
+    await Promise.all(servers.map((server) => new Promise<void>((resolve) => {
+      if (server.listening) server.close(() => resolve())
+      else resolve()
+    })))
+  }
+  // localhost resolution may prefer either family. Bind only the two loopback addresses,
+  // on one port with the same handler; a wildcard listener would expose the test endpoint.
+  const addresses = bindHost === 'localhost' ? ['127.0.0.1', '::1'] : [bindHost]
+  let port = 0
+  try {
+    for (const address of addresses) {
+      const server = createServer(handleConnection)
+      servers.push(server)
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen({ port, host: address, ...(address === '::1' ? { ipv6Only: true } : {}) }, () => {
+          server.off('error', reject)
+          resolve()
+        })
+      })
+      port = (server.address() as AddressInfo).port
+    }
+  } catch (error) {
+    await close()
+    throw error
+  }
+  return { port, observed, close }
 }
 
 it.each([
@@ -73,7 +98,7 @@ it.each([
   ['[::1]', 'dns_only_cert', false],
   ['[::1]', 'ip_only_cert', true],
 ] as const)('verify-full host %s with %s permits StartupMessage=%s', async (host, certificate, accepted) => {
-  const server = await endpoint(certificate, host === '[::1]' ? '::1' : '127.0.0.1')
+  const server = await endpoint(certificate, host === '[::1]' ? '::1' : host)
   const dsn = `postgresql://tls_probe:synthetic@${host}:${server.port}/tls_probe?sslmode=verify-full&sslrootcert=${encodeURIComponent(material.ca!)}&connect_timeout=2`
   const engine = new PostgresEngine(dsn)
   try {
@@ -119,7 +144,8 @@ it('binds boolean SSL true in the actual connection object without changing TLS 
     ssl: Record<string, unknown>, connection: { ssl: Record<string, unknown> },
     connectionParameters: { ssl: Record<string, unknown> },
   }
-  expect(native.connection.ssl).toEqual({ host: '127.0.0.1', rejectUnauthorized: true })
+  expect(native.connection.ssl).toEqual({ host: '127.0.0.1', rejectUnauthorized: true,
+    checkServerIdentity: expect.any(Function) })
   expect(native.ssl).toBe(native.connection.ssl)
   expect(native.connectionParameters.ssl).toBe(native.connection.ssl)
 })
@@ -168,10 +194,12 @@ it.each([
   ['127.0.0.1', 'ip_only_cert', 'other_ca', false],
   ['localhost', 'dns_only_cert', 'ca', true],
   ['localhost', 'dns_only_cert', 'other_ca', false],
+  ['[::1]', 'ip_only_cert', 'ca', true],
+  ['[::1]', 'ip_only_cert', 'other_ca', false],
 ] as const)(
   'explicit verify-full host %s with %s and %s ignores insecure ambient defaults', async (host, certificate, trust, accepted) => {
     vi.stubEnv('NODE_TLS_REJECT_UNAUTHORIZED', '0')
-    const server = await endpoint(certificate)
+    const server = await endpoint(certificate, host === '[::1]' ? '::1' : host)
     const engine = new PostgresEngine(`postgresql://tls_probe:synthetic@${host}:${server.port}/tls_probe?sslmode=verify-full&sslrootcert=${encodeURIComponent(material[trust]!)}&connect_timeout=2`)
     try { await expect(engine.connect()).rejects.toThrow() }
     finally {
@@ -180,3 +208,61 @@ it.each([
     expect(server.observed.sslRequests).toBe(1)
     expect(server.observed.startup.length).toBe(accepted ? 1 : 0)
   })
+
+
+it.each(['127.0.0.1', '[::1]'])('preserves an explicit peer checker on real TLS for %s', async (host) => {
+  const server = await endpoint('ip_only_cert', host === '[::1]' ? '::1' : host)
+  const checker = vi.fn(() => new Error('caller rejected peer'))
+  class ConfiguredClient extends Client {
+    constructor(config: Record<string, unknown>) {
+      super({ ...config, ssl: { ca: readFileSync(material.ca!), checkServerIdentity: checker } })
+    }
+  }
+  const engine = new PostgresEngine(`postgresql://tls_probe:synthetic@${host}:${server.port}/tls_probe?connect_timeout=2`,
+    { driver: { Client: ConfiguredClient } })
+  try { await expect(engine.connect()).rejects.toThrow('caller rejected peer') }
+  finally { await engine.close(); await server.close() }
+  expect(checker).toHaveBeenCalledTimes(1)
+  expect(server.observed.sslRequests).toBe(1)
+  expect(server.observed.startup).toHaveLength(0)
+})
+
+it('does not install an IP checker for explicit no-verify options', async () => {
+  let selected: unknown
+  class InspectClient extends Client {
+    constructor(config: Record<string, unknown>) { super({ ...config, ssl: { rejectUnauthorized: false } }) }
+    override async connect(): Promise<Client> {
+      selected = (this as unknown as { connection: { ssl: unknown } }).connection.ssl
+      throw new Error('stop before native I/O')
+    }
+  }
+  const engine = new PostgresEngine('postgresql://tls_probe:synthetic@[::1]:1/tls_probe',
+    { driver: { Client: InspectClient } })
+  try { await expect(engine.connect()).rejects.toThrow('stop before native I/O') }
+  finally { await engine.close() }
+  expect(selected).toEqual({ host: '::1', rejectUnauthorized: false })
+})
+
+it('preserves explicit no-verify with a mismatched IPv6 certificate', async () => {
+  const server = await endpoint('dns_only_cert', '::1')
+  const engine = new PostgresEngine(`postgresql://tls_probe:synthetic@[::1]:${server.port}/tls_probe?sslmode=no-verify&connect_timeout=2`)
+  try { await expect(engine.connect()).rejects.toThrow() }
+  finally { await engine.close(); await server.close() }
+  expect(server.observed.sslRequests).toBe(1)
+  expect(server.observed.startup).toHaveLength(1)
+})
+
+
+it('serves the DNS TLS fixture on both loopback addresses on one port', async () => {
+  const server = await endpoint('server_cert', 'localhost')
+  try {
+    for (const host of ['127.0.0.1', '[::1]']) {
+      const engine = new PostgresEngine(`postgresql://tls_probe:synthetic@${host}:${server.port}/tls_probe?sslmode=verify-full&sslrootcert=${encodeURIComponent(material.ca!)}&connect_timeout=2`)
+      try { await expect(engine.connect()).rejects.toThrow() }
+      finally { await engine.close() }
+    }
+  } finally { await server.close() }
+  expect(server.observed.tcp).toBe(2)
+  expect(server.observed.sslRequests).toBe(2)
+  expect(server.observed.startup).toHaveLength(2)
+})

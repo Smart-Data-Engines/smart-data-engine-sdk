@@ -43,3 +43,16 @@ is stored in this repository. Customer endpoint/CA deployment, role grants and w
 are separate from this synthetic native transport qualification.
 
 Local results: **1643 Python tests passed**, with only ten optional orderbook skips; **761 TypeScript tests passed**, without skips. The installed Python wheel on clickhouse-connect 1.7.2 passed **127 TLS/transport tests**. All **18 final mutations** were detected, with positive controls and exact restoration. [Machine-readable acceptance](acceptance.json) records artifact digests and native cases; [mutation reports](mutations.json) retain the tested source digests.
+
+
+CI exposed three additional boundaries after the first local acceptance. Node 22.23.2's native
+identity checker rejected valid IPv6 certificates after DNS ASCII conversion; the shared IP
+checker now uses native X509 `checkIP`, with independent malformed-certificate and mismatch cases.
+The local DNS fixture now listens on both IPv4 and IPv6 loopback at one port, preserving the
+assertion that the client actually reached TLS regardless of the runner's localhost resolution.
+Python 3.13 rejected the original ephemeral certificates under its stricter defaults because the
+issuer key identifier was absent. Generated CA/leaf certificates now carry SKI, AKI and KeyUsage;
+the native readiness probe enforces strict verification on all Python versions and reports a
+certificate error immediately. The verification flags were not relaxed. The documented
+[Python default-context change](https://docs.python.org/3.13/library/ssl.html#ssl.create_default_context)
+was reproduced locally by applying the same OpenSSL flags.

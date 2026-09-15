@@ -30,6 +30,7 @@
  */
 
 import { isIP } from 'node:net'
+import type { PeerCertificate } from 'node:tls'
 
 import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
@@ -43,6 +44,7 @@ import { keyColumns, sameWidth } from '../migration.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
 import { PostgresFences, fenceIO } from './_write-fences.js'
+import { verifyPeerIdentity } from './_tls-peer-identity.js'
 
 // Bound from the one definition in schema.ts, so that DDL and DML cannot disagree about how an
 // identifier is escaped.
@@ -183,6 +185,13 @@ function configureTlsVerification(client: ClientLike): void {
     if (isIP(candidate) !== 0) {
       ip = candidate
       descriptors.host = { value: ip, enumerable: true, configurable: true, writable: true }
+      const options = selected as { rejectUnauthorized?: unknown; checkServerIdentity?: unknown }
+      if (options.rejectUnauthorized !== false && options.checkServerIdentity === undefined) {
+        descriptors.checkServerIdentity = {
+          value: (_hostname: string, certificate: PeerCertificate) => verifyPeerIdentity(candidate, certificate),
+          enumerable: true, configurable: true, writable: true,
+        }
+      }
     }
   }
   const ssl = Object.create(selected === true ? Object.prototype : Object.getPrototypeOf(selected),

@@ -124,3 +124,15 @@ TypeScript dependencies first. `TLS_SCRATCH` must not exist. Native TLS runs in 
 CI matrix job, and also against the supported Python ClickHouse driver floor. This is automated
 engineering evidence; the customer's certificates, network path, effective grants and workload
 remain part of pilot qualification.
+
+
+### IPv6 across Node versions
+
+Node 22.23.2 applies DNS ASCII conversion before classifying an IP inside its default identity
+checker; a bare IPv6 address becomes empty and a matching IP certificate is rejected. This was
+reproduced both with the native function alone and with actual ClickHouse/PostgreSQL TLS sockets.
+The SDK uses native [`X509Certificate.checkIP`](https://nodejs.org/download/release/v22.23.2/docs/api/crypto.html#x509checkipip)
+for literal IP identities and the standard DNS checker for names. `checkIP` checks the signed DER
+certificate's IP SANs; no textual SAN parser or Common Name fallback is added. TLS still validates
+the certificate chain before the identity callback. Explicit PostgreSQL callbacks retain their
+meaning. Missing or malformed peer certificate bytes cause refusal.
