@@ -115,7 +115,7 @@ jobs:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
-          for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_*_live.py; do
+          for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_demo_resources.py tests/test_*_live.py; do
             pytest "$slice" -q --junitxml="$RUNNER_TEMP/sde-integration.xml"
             python ../tools/check_junit.py "$RUNNER_TEMP/sde-integration.xml"
           done
@@ -203,6 +203,7 @@ jobs:
         working-directory: typescript
         run: |
           npx tsc --noEmit
+          npm run build
           npx tsc --noEmit --allowJs --checkJs --strictNullChecks --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/weather-worker.mjs
 
       - name: the same vectors Python runs, and both engine slices

@@ -103,6 +103,9 @@ The opt-in [workload qualification](docs/cutover-qualification.md) runs installe
 artifacts under mixed traffic and checks scheduled latency, native recovery and acknowledged values.
 [Session lifetime](docs/session-lifecycle.md) defines borrowed/owned connections and transaction
 ownership for concurrent applications.
+The [Weather starter](docs/weather-starter.md) provides a local setup, restricted runtime clients in
+Python/TypeScript, measured telemetry, operator handoffs and an ownership-checked reset. It is
+unreleased; the runbook uses built artifacts and distinguishes this demo from production qualification.
 
 
 What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
