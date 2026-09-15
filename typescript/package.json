@@ -69,7 +69,8 @@
     "@types/pg": "^8.23.1",
     "pg": "^8.23.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
   },
   "peerDependencies": {
     "pg": ">=8"

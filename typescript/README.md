@@ -143,3 +143,9 @@ including portable keyset pages, typed values and explicit failure semantics.
 The unreleased [Weather starter](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/weather-starter.md)
 installs from reviewed artifacts and exercises logical operations with restricted runtime credentials.
 It includes local setup, telemetry, operator handoffs and an ownership-checked reset.
+
+## Test-tool dependencies
+
+The Node 18/20/22 matrix uses the tool versions and supported invocation described in
+[the test-toolchain record](../docs/test-toolchain.md). That record distinguishes the SDK runtime
+from development dependencies and documents the remaining development-server advisory.
