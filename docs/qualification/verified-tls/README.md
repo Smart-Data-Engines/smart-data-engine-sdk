@@ -42,7 +42,7 @@ Certificates and private keys are generated under the runner's private scratch d
 is stored in this repository. Customer endpoint/CA deployment, role grants and workload acceptance
 are separate from this synthetic native transport qualification.
 
-Local results: **1643 Python tests passed**, with only ten optional orderbook skips; **761 TypeScript tests passed**, without skips. The installed Python wheel on clickhouse-connect 1.7.2 passed **127 TLS/transport tests**. All **18 final mutations** were detected, with positive controls and exact restoration. [Machine-readable acceptance](acceptance.json) records artifact digests and native cases; [mutation reports](mutations.json) retain the tested source digests.
+Local results: **1643 Python tests passed**, with only ten optional orderbook skips; **789 TypeScript tests passed on each of Node 18 and Node 22**, without skips. The installed Python wheel on clickhouse-connect 1.7.2 passed **127 TLS/transport tests**. All **22 final mutations** were detected, with positive controls and exact restoration. [Machine-readable acceptance](acceptance.json) records artifact digests and native cases; [mutation reports](mutations.json) retain the tested source digests.
 
 
 CI exposed three additional boundaries after the first local acceptance. Node 22.23.2's native

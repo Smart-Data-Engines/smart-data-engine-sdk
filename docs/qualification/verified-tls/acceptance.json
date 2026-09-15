@@ -1,6 +1,6 @@
 {
   "date": "2026-09-15",
-  "source_commit": "15e68d0becc73c3f8451ab35d25a2acd11f5dea2",
+  "source_commit": "cae879708ff994ebcbcfc5f7de6679d11453e936",
   "python": {
     "passed": 1643,
     "skipped": 10,
@@ -8,9 +8,14 @@
     "seconds": 425.85
   },
   "typescript": {
-    "passed": 761,
-    "skipped": 0,
-    "seconds": 84.89
+    "18": {
+      "passed": 789,
+      "skipped": 0
+    },
+    "22": {
+      "passed": 789,
+      "skipped": 0
+    }
   },
   "shared_dsn_cases": 80,
   "floor_installed_tests": {
@@ -22,14 +27,17 @@
   "postgres_driver_python": "3.3.5",
   "postgres_driver_typescript": "8.23.0",
   "local_python": "3.12.3",
-  "local_node": "18.19.1",
+  "local_node": [
+    "18.19.1",
+    "22.23.2"
+  ],
   "engines": [
     "postgres:15-alpine",
     "clickhouse/clickhouse-server:24.8-alpine"
   ],
   "artifacts": {
     "smart_data_engine_sdk-0.1.0.dev0-py3-none-any.whl": "ed9e37c05c14df1b30d9a12da21182e369c1f7e5575dcfa5258fb4adcfdeef2a",
-    "smart-data-engines-sde-0.1.0-dev.0.tgz": "1b6ab4cc8cf3ee2a74112115f9f17d16e1250e2826be05e3db8fc1aa0838c247"
+    "smart-data-engines-sde-0.1.0-dev.0.tgz": "db113d0b13df6df008d6f3510b55f203681362d375bb1897617902d695f38a67"
   },
   "installed_native_cases": [
     {
@@ -117,8 +125,10 @@
       "wrong_ca_refused": true
     }
   ],
-  "mutations": 18,
+  "mutations": 22,
   "private_keys_committed": false,
   "release_tags_created": false,
-  "production_deployment_qualified": false
+  "production_deployment_qualified": false,
+  "installed_node": "22.23.2",
+  "strict_pki_probe": true
 }
