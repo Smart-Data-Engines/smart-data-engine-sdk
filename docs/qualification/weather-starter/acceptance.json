@@ -1,0 +1,376 @@
+{
+  "protocol": 1,
+  "profile": "local synthetic Weather starter",
+  "implementation_commit": "0e85f9b54b6a2d2be216d1443b159af0ee9be278",
+  "additional_regressions_commit": "06676a4fd4624e2a4766849e9017929a29495c4c",
+  "bootstrap_provenance": "synthetic fixture signer, not a model response",
+  "suites": {
+    "python_at_implementation": {
+      "passed": 1421,
+      "skipped_optional_orderbook": 10,
+      "failed": 0
+    },
+    "typescript_at_implementation": {
+      "passed": 642,
+      "skipped": 0,
+      "failed": 0
+    },
+    "additional_current_focused_python": 22,
+    "additional_current_focused_typescript": 9
+  },
+  "artifact_sha256": {
+    "smart_data_engine_sdk-0.1.0.dev0-py3-none-any.whl": "04058ef1f40fac54660a26b81ace6760fa7f95d5f58b22d049489a2a036cb5ef",
+    "smart-data-engines-sde-0.1.0-dev.0.tgz": "849eb54d67a201511b4c6bbaaa187c84741407505b8eb06e312ed0d6433aa411"
+  },
+  "installed_cases": [
+    {
+      "source": "postgres",
+      "doctor": {
+        "engines": {
+          "clickhouse": {
+            "connection_tls": false,
+            "dialect": "clickhouse",
+            "native_identity": "matched",
+            "runtime_privileges": "qualified",
+            "version": "24.8.14.39"
+          },
+          "postgres": {
+            "connection_tls": false,
+            "dialect": "postgres",
+            "native_identity": "matched",
+            "runtime_privileges": "qualified",
+            "version": "15.19"
+          }
+        },
+        "map_version": 1,
+        "model_version": "794ff972d69c52e5",
+        "production_qualification": "not_performed",
+        "project_id": "4c24f831a8fe455788f26410ad05984e",
+        "protocol": 1,
+        "python_version": "3.12.3",
+        "scope": "local-weather-demo",
+        "sdk_version": "0.1.0.dev0",
+        "signature": "verified",
+        "status": "ready"
+      },
+      "workers": [
+        {
+          "language": "python",
+          "status": "complete",
+          "acknowledged_rows": 21,
+          "verified_after_uncertain_rows": 0,
+          "verified_rows": 21,
+          "map_versions": [
+            1
+          ],
+          "read_retries": 0
+        },
+        {
+          "language": "typescript",
+          "status": "complete",
+          "acknowledged_rows": 21,
+          "verified_after_uncertain_rows": 0,
+          "verified_rows": 21,
+          "map_versions": [
+            1
+          ],
+          "read_retries": 0
+        }
+      ],
+      "installed_imports_verified": true,
+      "status_without_credential_files": true,
+      "setup_retry": true,
+      "double_reset": true,
+      "credentials_removed": true
+    },
+    {
+      "source": "clickhouse",
+      "doctor": {
+        "engines": {
+          "clickhouse": {
+            "connection_tls": false,
+            "dialect": "clickhouse",
+            "native_identity": "matched",
+            "runtime_privileges": "qualified",
+            "version": "24.8.14.39"
+          },
+          "postgres": {
+            "connection_tls": false,
+            "dialect": "postgres",
+            "native_identity": "matched",
+            "runtime_privileges": "qualified",
+            "version": "15.19"
+          }
+        },
+        "map_version": 1,
+        "model_version": "794ff972d69c52e5",
+        "production_qualification": "not_performed",
+        "project_id": "4c990efa14824a32876a4609da685c84",
+        "protocol": 1,
+        "python_version": "3.12.3",
+        "scope": "local-weather-demo",
+        "sdk_version": "0.1.0.dev0",
+        "signature": "verified",
+        "status": "ready"
+      },
+      "workers": [
+        {
+          "language": "python",
+          "status": "complete",
+          "acknowledged_rows": 21,
+          "verified_after_uncertain_rows": 0,
+          "verified_rows": 21,
+          "map_versions": [
+            1
+          ],
+          "read_retries": 0
+        },
+        {
+          "language": "typescript",
+          "status": "complete",
+          "acknowledged_rows": 21,
+          "verified_after_uncertain_rows": 0,
+          "verified_rows": 21,
+          "map_versions": [
+            1
+          ],
+          "read_retries": 0
+        }
+      ],
+      "installed_imports_verified": true,
+      "status_without_credential_files": true,
+      "setup_retry": true,
+      "double_reset": true,
+      "credentials_removed": true
+    }
+  ],
+  "unsigned_refused_before_allocation": "MapError",
+  "native_ownership_cases": 64,
+  "native_sigkill_boundaries": 3,
+  "enrollment_regressions_failed_before_fix": 3,
+  "mutation_controls": {
+    "detected": 21,
+    "positive_controls": 42,
+    "sources_restored": true
+  },
+  "mutations": [
+    {
+      "name": "namespace_identity",
+      "source": "python/src/sde_demo/resources.py",
+      "test": "python/tests/test_demo_resources.py::test_replaced_namespace_with_the_same_marker_is_not_ours[postgres]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "namespace_marker",
+      "source": "python/src/sde_demo/resources.py",
+      "test": "python/tests/test_demo_resources.py::test_changed_namespace_marker_refuses_before_any_grant_or_reset[postgres]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "runtime_identity",
+      "source": "python/src/sde_demo/resources.py",
+      "test": "python/tests/test_demo_resources.py::test_replaced_runtime_with_our_password_is_not_our_recorded_identity[postgres]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "runtime_credential_hash",
+      "source": "python/src/sde_demo/resources.py",
+      "test": "python/tests/test_demo_resources.py::test_verify_refuses_changed_saved_credentials[runtime-postgres]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "clickhouse_negative_password_control",
+      "source": "python/src/sde_demo/resources.py",
+      "test": "python/tests/test_demo_resources.py::test_unrecorded_clickhouse_user_must_prove_the_exact_saved_secret[no_password-clickhouse]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "ready_regrants_revoked_access",
+      "source": "python/src/sde_demo/resources.py",
+      "test": "python/tests/test_demo_resources.py::test_ready_allocate_does_not_restore_revoked_table_grants[postgres]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "enrollment_directory_confirmation",
+      "source": "python/src/sde/_cutover_project.py",
+      "test": "python/tests/test_enrollment_durability.py::test_enrollment_retry_does_not_acknowledge_unconfirmed_publication",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_signature",
+      "source": "python/src/sde_demo/project.py",
+      "test": "test_bootstrap_refuses_changed_input_before_allocation[signature]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_credentials",
+      "source": "python/src/sde_demo/project.py",
+      "test": "test_runtime_credentials_require_the_ready_pinned_file[hash]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_completed_fsync",
+      "source": "python/src/sde_demo/project.py",
+      "test": "test_completed_setup_reconfirms_local_state_durability",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_source_evidence",
+      "source": "python/src/sde_demo/runtime.py",
+      "test": "test_uncertain_batch_is_never_replayed_or_reported_complete[copy_only]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_no_replay",
+      "source": "python/src/sde_demo/runtime.py",
+      "test": "test_uncertain_batch_is_never_replayed_or_reported_complete[absent]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_pending",
+      "source": "python/src/sde_demo/runtime.py",
+      "test": "test_uncertain_batch_is_never_replayed_or_reported_complete[absent]",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_active_bindings",
+      "source": "python/src/sde_demo/runtime.py",
+      "test": "test_runtime_does_not_open_unused_engine_bindings",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "python_previous_close",
+      "source": "python/src/sde_demo/runtime.py",
+      "test": "test_map_refresh_closes_the_previous_owned_session",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "typescript_source_evidence",
+      "source": "typescript/src/demo/weather.ts",
+      "test": "does not replay or complete an uncertain copy_only batch",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "typescript_credentials",
+      "source": "typescript/src/demo/project.ts",
+      "test": "needs no operator credentials and refuses a changed runtime file",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "typescript_no_replay",
+      "source": "typescript/src/demo/weather.ts",
+      "test": "does not replay or complete an uncertain absent batch",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "typescript_pending",
+      "source": "typescript/src/demo/weather.ts",
+      "test": "does not replay or complete an uncertain absent batch",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "typescript_previous_close",
+      "source": "typescript/src/demo/weather.ts",
+      "test": "closes the prior owned session when the local map changes",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "typescript_active_bindings",
+      "source": "typescript/src/demo/weather.ts",
+      "test": "runs Weather from a restricted postgres source",
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    }
+  ],
+  "limits": [
+    "No production deployment qualification or SLA.",
+    "No controller/AI composition proof: the artifact trial uses a fixture signer.",
+    "Local loopback PostgreSQL/ClickHouse; no concurrent external DDL/access administration.",
+    "Stop applications and operator before reset.",
+    "Operator credentials retain administrator rights; runtime credentials are restricted.",
+    "The published Python development package predates the starter; npm remains unpublished."
+  ]
+}

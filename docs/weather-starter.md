@@ -130,3 +130,5 @@ It does not use `DROP OWNED` or remove dependencies from other namespaces. A res
 workloads in this directory. Keep the local reports/manifests for diagnosis; the next demo uses a
 **new directory**, so its map enrollment and native watermark cannot collide with the previous run.
 Do not transfer the credential files, operator state or full directory to the controller/support.
+
+Measured scope and test evidence: [local starter acceptance](qualification/weather-starter/README.md).
