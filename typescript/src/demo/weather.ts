@@ -10,7 +10,7 @@ import { ClickHouseEngine } from '../engines/clickhouse.js'
 import { Session } from '../session.js'
 import type { ManagedEngine, Row } from '../session.js'
 import { Recorder, windowRecord } from '../telemetry.js'
-import { baseTime, reading } from './model.js'
+import { baseTime, generatorId, reading } from './model.js'
 import { DemoRefused, project, write } from './project.js'
 
 export interface RunOptions {
@@ -18,7 +18,7 @@ export interface RunOptions {
   workload?: 'mixed' | 'point' | 'analytics'
 }
 export interface RunReport {
-  protocol: 1; run_id: string; language: 'typescript'; status: 'running' | 'complete' | 'incomplete'
+  protocol: 2; generator_id: string; run_id: string; language: 'typescript'; status: 'running' | 'complete' | 'incomplete'
   workload: string; sdk_version: string; sdk_module: string; project_id: string; model_version: string
   acknowledged_rows: number; verified_after_uncertain_rows: number; verified_rows: number
   pending: { first: number; count: number } | null; map_versions: number[]; read_retries: number
@@ -43,7 +43,7 @@ export async function runWeather(root: string, options: RunOptions = {}): Promis
   const runId = randomUUID().replaceAll('-', ''), directory = join(root, 'runs', runId)
   const recorder = new Recorder(model.version)
   let session: Session | undefined, fingerprint: string | undefined
-  const report: RunReport = { protocol: 1, run_id: runId, language: 'typescript', status: 'running', workload,
+  const report: RunReport = { protocol: 2, generator_id: generatorId, run_id: runId, language: 'typescript', status: 'running', workload,
     sdk_version: String(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version),
     sdk_module: new URL('../index.js', import.meta.url).href, project_id: projectId, model_version: model.version,
     acknowledged_rows: 0, verified_after_uncertain_rows: 0, verified_rows: 0, pending: null,
