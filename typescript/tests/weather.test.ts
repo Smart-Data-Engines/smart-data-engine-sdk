@@ -4,6 +4,7 @@ import { createHash, generateKeyPairSync, sign as edSign } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { canonicalBytes, digest16 } from '../src/canonical.js'
 import { neutralDeclaration } from '../src/model.js'
 import { Session } from '../src/session.js'
@@ -41,24 +42,27 @@ function fixture() {
   return { root, current, signed }
 }
 function workload(mode = 'ok', afterSave = () => {}) {
-  const rows: Row[] = [], sessions: { closed: boolean }[] = []
+  const rows: Row[] = [], copyRows: Row[] = [], sessions: { closed: boolean }[] = []
   let saves = 0
   vi.spyOn(Session, 'connect').mockImplementation(async () => {
     const client = { closed: false,
       async close() { client.closed = true },
       async saveMany(_entity: string, batch: Row[]) {
         saves++
-        if (mode !== 'absent') rows.push(...(mode === 'partial' ? batch.slice(0, 1) : batch))
+        if (mode === 'copy_only') copyRows.push(...batch)
+        else if (mode !== 'absent') rows.push(...(mode === 'partial' ? batch.slice(0, 1) : batch))
         afterSave()
         if (mode !== 'ok') throw new EngineError('driver may echo runtime-secret-marker')
       },
-      async get(_entity: string, key: Row) { return rows.find(row => row.station === key.station && row.at === key.at) ??
-        rows.find(row => row.station === key.station && String(row.at) === String(key.at)) ?? null },
-      async scan(_entity: string, options: { limit: number }) { return { rows: rows.slice(0, options.limit), nextAfter: null } },
-      async count() { return BigInt(rows.length) },
+      async get(_entity: string, key: Row, options: { fresh?: boolean } = {}) {
+        const visible = options.fresh ? rows : [...rows, ...copyRows]
+        return visible.find(row => row.station === key.station && isDeepStrictEqual(row.at, key.at)) ?? null
+      },
+      async scan(_entity: string, options: { limit: number }) { return { rows: [...rows, ...copyRows].slice(0, options.limit), nextAfter: null } },
+      async count() { return BigInt(rows.length + copyRows.length) },
       async summarize() {
-        const cents = rows.reduce((total, row) => total + BigInt(String(row.celsius).replace('.', '')), 0n)
-        return { count: BigInt(rows.length), total: `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` }
+        const cents = [...rows, ...copyRows].reduce((total, row) => total + BigInt(String(row.celsius).replace('.', '')), 0n)
+        return { count: BigInt(rows.length + copyRows.length), total: `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` }
       },
     }
     sessions.push(client)
@@ -66,7 +70,7 @@ function workload(mode = 'ok', afterSave = () => {}) {
   })
   return { rows, sessions, saves: () => saves }
 }
-for (const mode of ['absent', 'partial']) it(`does not replay or complete an uncertain ${mode} batch`, async () => {
+for (const mode of ['absent', 'partial', 'copy_only']) it(`does not replay or complete an uncertain ${mode} batch`, async () => {
   const { root } = fixture(), fake = workload(mode)
   await expect(runWeather(root, { iterations: 1, batchSize: 2, recoveryMs: 0 })).rejects.toThrow('uncertain')
   expect(fake.saves()).toBe(1); expect(fake.rows).toHaveLength(mode === 'partial' ? 1 : 0)

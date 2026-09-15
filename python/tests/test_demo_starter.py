@@ -97,6 +97,7 @@ def test_runtime_credentials_require_the_ready_pinned_file(tmp_path: Path, chang
 class Workload:
     def __init__(self, monkeypatch: pytest.MonkeyPatch, mode: str = "ok") -> None:
         self.rows: list[dict[str, Any]] = []
+        self.copy_rows: list[dict[str, Any]] = []
         self.sessions: list[Any] = []
         self.saves = 0
         self.bindings: list[set[str]] = []
@@ -114,7 +115,9 @@ class Workload:
 
             def save_many(self, entity: str, rows: list[dict[str, Any]]) -> None:
                 harness.saves += 1
-                if harness.mode != "absent":
+                if harness.mode == "copy_only":
+                    harness.copy_rows.extend(rows)
+                elif harness.mode != "absent":
                     harness.rows.extend(rows[:1] if harness.mode == "partial" else rows)
                 harness.after_save()
                 if harness.mode != "ok":
@@ -123,21 +126,23 @@ class Workload:
             def get(
                 self, entity: str, key: dict[str, Any], **options: Any
             ) -> dict[str, Any] | None:
+                visible = harness.rows if options.get("fresh") else harness.rows + harness.copy_rows
                 return next(
-                    (row for row in harness.rows if all(row[k] == v for k, v in key.items())), None
+                    (row for row in visible if all(row[k] == v for k, v in key.items())), None
                 )
 
             def scan(self, entity: str, **options: Any) -> sde.ScanPage:
-                return sde.ScanPage(tuple(harness.rows[: options["limit"]]), None)
+                return sde.ScanPage(
+                    tuple((harness.rows + harness.copy_rows)[: options["limit"]]), None
+                )
 
             def count(self, entity: str, **options: Any) -> int:
-                return len(harness.rows)
+                return len(harness.rows + harness.copy_rows)
 
             def summarize(self, entity: str, field: str, **options: Any) -> sde.NumericSummary:
-                total = sum((row[field] for row in harness.rows), Decimal(0))
-                return sde.NumericSummary(
-                    len(harness.rows), len(harness.rows), None, None, total, None
-                )
+                visible = harness.rows + harness.copy_rows
+                total = sum((row[field] for row in visible), Decimal(0))
+                return sde.NumericSummary(len(visible), len(visible), None, None, total, None)
 
         def connect(_model: Any, _placement: Any, factories: Any, **options: Any) -> Client:
             harness.bindings.append(set(factories))
@@ -146,7 +151,7 @@ class Workload:
         monkeypatch.setattr(sde.Session, "connect", connect)
 
 
-@pytest.mark.parametrize("mode", ["absent", "partial"])
+@pytest.mark.parametrize("mode", ["absent", "partial", "copy_only"])
 def test_uncertain_batch_is_never_replayed_or_reported_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
@@ -258,3 +263,36 @@ def test_operator_checks_reset_after_acquiring_the_lock(
     monkeypatch.setattr(cli, "transaction", reset_won)
     with pytest.raises(project.DemoRefused, match="Reset"):
         cli.operator(tmp_path, "resume", None)
+
+
+def test_completed_setup_reconfirms_local_state_durability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sde import _local_state
+    from sde._cutover_project import ProjectState
+    from sde_demo import resources
+
+    bundle, _ = local(tmp_path)
+    _local_state.write_bytes(
+        tmp_path / "state" / "active-map.json", sde.canonical_bytes(bundle["current_map"])
+    )
+    store = ProjectState(tmp_path / "state", bundle["project_id"], model().version)
+    store.enroll(bundle["current_map"], sde.canonical_bytes(bundle["current_map"]))
+    monkeypatch.setattr(resources, "allocate", lambda *args: {})
+    before = {
+        path: (path.read_bytes(), path.stat().st_ino) for path in (store.path, store.map_path)
+    }
+    assert project.setup(tmp_path, bundle, {}) == {"status": "ready", "map_version": 1}
+    sync = _local_state.sync_directory
+
+    def fail_state(directory: Path) -> None:
+        if directory == tmp_path / "state":
+            raise OSError("controlled state fsync failure")
+        sync(directory)
+
+    with monkeypatch.context() as changed:
+        changed.setattr(_local_state, "sync_directory", fail_state)
+        with pytest.raises(OSError, match="fsync"):
+            project.setup(tmp_path, bundle, {})
+    assert {path: (path.read_bytes(), path.stat().st_ino) for path in before} == before
+    assert project.setup(tmp_path, bundle, {}) == {"status": "ready", "map_version": 1}
