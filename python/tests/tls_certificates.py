@@ -31,6 +31,26 @@ def create_material(directory: Path) -> dict[str, Path]:
             .not_valid_before(now - timedelta(days=3))
             .not_valid_after(now + timedelta(days=30))
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), critical=False
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=None,
+                    decipher_only=None,
+                ),
+                critical=True,
+            )
             .sign(key, hashes.SHA256())
         )
         return key, cert
@@ -51,6 +71,27 @@ def create_material(directory: Path) -> dict[str, Path]:
             .not_valid_before(now - timedelta(days=2))
             .not_valid_after(now - timedelta(days=1) if expired else now + timedelta(days=7))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()), critical=False
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=True,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    encipher_only=None,
+                    decipher_only=None,
+                ),
+                critical=True,
+            )
             .add_extension(x509.SubjectAlternativeName(names), critical=False)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
             .sign(ca_key, hashes.SHA256())

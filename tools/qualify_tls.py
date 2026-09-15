@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import runpy
+import socket
 import ssl
 import subprocess
 import sys
@@ -147,6 +148,8 @@ def main() -> None:
             os.chmod(manifest, 0o600)
             json.dump(record, output)
         context = ssl.create_default_context(cafile=str(material["ca"]))
+        # Qualify the generated PKI against the stricter Python 3.13 defaults on every runtime.
+        context.verify_flags |= ssl.VERIFY_X509_STRICT | ssl.VERIFY_X509_PARTIAL_CHAIN
         deadline = time.monotonic() + 60
         while True:
             pg_ok = (
@@ -155,13 +158,24 @@ def main() -> None:
                 ).returncode
                 == 0
             )
+            if pg_ok:
+                try:
+                    with socket.create_connection(("127.0.0.1", pg_port), timeout=1):
+                        pass
+                except OSError:
+                    pg_ok = False  # The entrypoint's temporary Unix-only server is not ready.
             try:
                 # This is the same verified HTTPS host/port the SDK will use.
                 with urllib.request.urlopen(
                     f"https://127.0.0.1:{ch_port}/ping", context=context, timeout=2
                 ) as response:
                     ch_ok = response.status == 200
-            except (OSError, urllib.error.URLError):
+            except (OSError, urllib.error.URLError) as error:
+                reason = getattr(error, "reason", error)
+                if isinstance(reason, ssl.SSLCertVerificationError):
+                    raise RuntimeError(
+                        f"TLS readiness certificate verification failed: {reason}"
+                    ) from error
                 ch_ok = False
             if pg_ok and ch_ok:
                 break
