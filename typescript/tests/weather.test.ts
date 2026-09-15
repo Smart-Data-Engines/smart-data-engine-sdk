@@ -123,3 +123,18 @@ it('matches the shared neutral model and exact cross-language generator fixture'
   const row = reading(sample.run_id, sample.worker, sample.sequence)
   expect({ ...row, at: row.at.toISOString(), humidity: String(row.humidity) }).toEqual(sample.reading)
 })
+
+it('pins the generator descriptor and every supported sequence to the shared baseline', async () => {
+  const { generatorId, generatorSpec } = await import('../src/demo/model.js')
+  const fixture = JSON.parse(readFileSync(new URL('../../examples/weather/generator.json', import.meta.url), 'utf8'))
+  expect(generatorId).toBe(fixture.generator_id)
+  expect(generatorSpec).toEqual(fixture.generator_spec)
+  const digest = createHash('sha256')
+  for (const runId of fixture.domain.run_ids) {
+    for (let sequence = fixture.domain.first_sequence; sequence <= fixture.domain.last_sequence; sequence++) {
+      const row = reading(runId, fixture.domain.worker, sequence)
+      digest.update(canonicalBytes({ ...row, at: row.at.toISOString(), humidity: String(row.humidity) }))
+    }
+  }
+  expect(digest.digest('hex')).toBe(fixture.domain.sha256)
+})

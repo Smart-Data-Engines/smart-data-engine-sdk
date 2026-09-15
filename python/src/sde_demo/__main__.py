@@ -81,6 +81,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     workload.add_argument("--interval-ms", type=int, default=100)
     workload.add_argument("--recovery-ms", type=int, default=10000)
     workload.add_argument("--workload", choices=("mixed", "point", "analytics"), default="mixed")
+    verify = commands.add_parser(
+        "verify-runs", help="verify earlier completed Python/TypeScript runs"
+    )
+    verify.add_argument("--run-id", action="append", required=True)
+    query = commands.add_parser(
+        "query-count", help="execute the current approved Weather COUNT locally"
+    )
+    query.add_argument("--record", type=Path, required=True)
     op = commands.add_parser("operator", help="use the existing local staging/cutover executor")
     op.add_argument("action", choices=("status", "stage", "execute", "resume"))
     op.add_argument("--plan", type=Path)
@@ -120,6 +128,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = doctor(root)
             elif args.command == "operator":
                 result = operator(root, args.action, args.plan)
+            elif args.command == "verify-runs":
+                from .verification import verify_runs
+
+                result = verify_runs(root, args.run_id)
+            elif args.command == "query-count":
+                from .query_count import run_count_query
+
+                result = run_count_query(root, read(args.record))
             else:
                 from .runtime import run
 

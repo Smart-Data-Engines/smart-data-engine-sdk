@@ -296,3 +296,22 @@ def test_completed_setup_reconfirms_local_state_durability(
             project.setup(tmp_path, bundle, {})
     assert {path: (path.read_bytes(), path.stat().st_ino) for path in before} == before
     assert project.setup(tmp_path, bundle, {}) == {"status": "ready", "map_version": 1}
+
+
+def test_generator_identity_and_supported_sequence_domain_are_frozen() -> None:
+    from sde_demo.model import GENERATOR_ID, GENERATOR_SPEC
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[2] / "examples/weather/generator.json").read_bytes()
+    )
+    assert fixture["generator_id"] == GENERATOR_ID
+    assert fixture["generator_spec"] == GENERATOR_SPEC
+    domain = fixture["domain"]
+    digest = hashlib.sha256()
+    for identity in domain["run_ids"]:
+        for sequence in range(domain["first_sequence"], domain["last_sequence"] + 1):
+            row = reading(identity, domain["worker"], sequence)
+            encoded = {key: str(value) for key, value in row.items()}
+            encoded["at"] = row["at"].isoformat(timespec="microseconds").replace("+00:00", "Z")
+            digest.update(sde.canonical_bytes(encoded))
+    assert digest.hexdigest() == domain["sha256"]

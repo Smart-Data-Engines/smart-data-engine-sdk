@@ -9,5 +9,31 @@
     "humidity": "49",
     "id": "e62e91a8-327d-4efd-96af-0f7f2b7237a3",
     "station": "weather-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0"
+  },
+  "generator_id": "weather-v1:7d96fd24f99fdd07baab5611844f00154b88c605dcf0beabf312dbd86fed4990",
+  "generator_spec": {
+    "kind": "sde-weather-generator",
+    "version": 1,
+    "worker": 0,
+    "station_template": "weather-{run_id}-{worker}",
+    "seed_template": "sde-weather-v1:{run_id}:{worker}:{sequence}",
+    "base_time": "2026-01-01T00:00:00.000000Z",
+    "timestamp_step_microseconds": 1,
+    "celsius_base_cents": 1525,
+    "celsius_modulus": 1000,
+    "humidity_base": 30,
+    "humidity_modulus": 70,
+    "id": "first 16 bytes of SHA256(UTF8(seed)), RFC4122 UUID version bits",
+    "uuid_version": 4
+  },
+  "domain": {
+    "run_ids": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "worker": 0,
+    "first_sequence": 1,
+    "last_sequence": 10000,
+    "sha256": "f456e7434a05a77652f2ec42f12ca6d5a5be2c4b53afc9f6722ce0dd573105b6"
   }
 }

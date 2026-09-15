@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import sde
 
-from .model import BASE_TIME, model, reading
+from .model import BASE_TIME, GENERATOR_ID, model, reading
 from .project import DemoRefused, config, credentials, engine, public_keys, write
 
 T = TypeVar("T")
@@ -58,7 +58,8 @@ def run(
     session: sde.Session | None = None
     fingerprint: str | None = None
     report: dict[str, Any] = {
-        "protocol": 1,
+        "protocol": 2,
+        "generator_id": GENERATOR_ID,
         "run_id": run_id,
         "language": "python",
         "status": "running",

@@ -99,6 +99,56 @@ A refreshed map replaces and closes the previous owned session. Partial startup 
 exit close owned connections. Read retries are bounded. A bad signature, mismatched value or
 unresolved write stops the workload with a nonzero status.
 
+## Verify earlier runs after a transition
+
+A new successful workload does not establish that the previous data survived. Keep the completed
+run IDs from both languages and verify them against the current source:
+
+```sh
+.venv/bin/sde-weather --directory ./weather-demo verify-runs --run-id FIRST_RUN_ID --run-id SECOND_RUN_ID
+```
+
+This Python command checks both Python and TypeScript runs. It reads each run's entire station
+namespace through fresh source pages, compares every exact generated value and refuses missing or
+extra rows. The logical map and the original report hashes must remain unchanged through cleanup.
+Limits are 32 runs, 10000 rows per run and 100000 total per invocation.
+
+New reports have protocol 2 and `generator_id`, a digest of the shared generator description.
+The generated values remain identical to v1, including microseconds and UUIDs; the shared fixture
+pins all 10000 supported sequences for two independent run IDs. Old protocol-1 reports lack the
+generator identity and this verifier refuses them. Use a new demo with the current artifact; do
+not rewrite an old report to make it look verified. Interrupted/incomplete reports also refuse.
+Verification returns IDs, counts and fingerprints, never the regenerated or observed row values.
+
+## Execute the approved Weather count locally
+
+The controller operator supplies the current approved count-query packet over the authenticated
+metadata channel. It has kind `sde-weather-count-query`, protocol 1, project/query/revision/map
+identity, the complete approved query record and a digest. The pure SDK `make_count_request`
+constructor creates this metadata; it does not open connections. The digest detects changed bytes,
+while trust in who supplied the file comes from the authenticated handoff.
+
+```sh
+.venv/bin/sde-weather --directory ./weather-demo query-count --record ./weather-count.json
+```
+
+This is the Weather demo's bounded count oracle. It accepts only
+`SELECT COUNT(*) [AS alias] FROM exact_source_table`, with `FINAL` required on ClickHouse. It
+refuses filters, joins, arbitrary expressions/functions, settings, comments and additional
+statements. Names and the query stamp must match the current signed source-only map; execute it
+before staging or after controller completion. A general analyst SQL/code API remains separate.
+
+The command verifies all completed local runs, plans and executes the exact admitted SQL using
+runtime credentials, and compares its count to the locally expected total. The query has a
+server-side execution limit; PostgreSQL additionally uses a read-only transaction. A changed map,
+changed run catalog, unresolved run or unexpected data refuses a successful receipt.
+
+Only a metadata observation is printed: query/revision/digest, project/map, run IDs and the local
+verification outcome. The business value stays in
+`query-results/EXECUTION_ID/result.json` with mode 0600; `receipt.json` contains only the observation.
+Show the result locally during the demo. Send the receipt, not the result or full query-results
+directory, to the controller. This is the customer's observation, not a controller-side data read.
+
 ## Use the existing operator
 
 An operator supplies reviewed signed staging and cutover authorizations. Execute them locally:
