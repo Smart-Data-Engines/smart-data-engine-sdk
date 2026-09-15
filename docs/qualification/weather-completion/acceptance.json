@@ -1,0 +1,226 @@
+{
+  "protocol": 1,
+  "implementation_commit": "8e8d78339bdb087ffc8056ffafc7999d5be7c85c",
+  "suites": {
+    "python_passed": 1527,
+    "python_optional_orderbook_skips": 10,
+    "typescript_passed": 644,
+    "typescript_skips": 0
+  },
+  "verifier_cases": 48,
+  "count_cases": 55,
+  "unicode_regressions_red_before_fix": 6,
+  "artifact_sha256": {
+    "smart_data_engine_sdk-0.1.0.dev0-py3-none-any.whl": "61d6941afc3371fb2901fad0d56d40c4a1c76859373de4b315073a9d975c855b",
+    "smart-data-engines-sde-0.1.0-dev.0.tgz": "76fa04c74b425ba8da7c3f0fc5ea738ec81ffea6dea4c812521f8a244a78bb49"
+  },
+  "artifact_bootstrap_provenance": "synthetic fixture signer, not a model response",
+  "installed_cases": [
+    {
+      "source": "postgres",
+      "languages": [
+        "python",
+        "typescript"
+      ],
+      "verified_prior_rows": 42,
+      "generator_id": "weather-v1:7d96fd24f99fdd07baab5611844f00154b88c605dcf0beabf312dbd86fed4990",
+      "query_verified": true,
+      "query_revision": 1,
+      "business_result_local_only": true,
+      "stale_stamp_refused": true,
+      "double_reset": true
+    },
+    {
+      "source": "clickhouse",
+      "languages": [
+        "python",
+        "typescript"
+      ],
+      "verified_prior_rows": 42,
+      "generator_id": "weather-v1:7d96fd24f99fdd07baab5611844f00154b88c605dcf0beabf312dbd86fed4990",
+      "query_verified": true,
+      "query_revision": 1,
+      "business_result_local_only": true,
+      "stale_stamp_refused": true,
+      "double_reset": true
+    }
+  ],
+  "mutations_detected": 14,
+  "positive_control_phases": 28,
+  "positive_witness_cases": 34,
+  "mutations": [
+    {
+      "name": "report_contract_binding",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_invalid_or_incomplete_reports_refuse_before_opening_engines[protocol-1]",
+        "python/tests/test_demo_verification.py::test_absent_required_descriptor_never_guesses_a_default[generator_id]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "fresh_source",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_exact_source_mismatch_refuses_and_always_closes[wrong_value]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "exact_values",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_exact_source_mismatch_refuses_and_always_closes[wrong_value]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "missing_source_row",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_exact_source_mismatch_refuses_and_always_closes[missing]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "additional_source_row",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_exact_source_mismatch_refuses_and_always_closes[extra_late]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "context_recheck_too_early",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_map_change_after_scan_or_during_cleanup_refuses",
+        "python/tests/test_demo_verification.py::test_report_change_during_verification_refuses"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "unowned_partial_startup",
+      "source": "python/src/sde_demo/verification.py",
+      "witnesses": [
+        "python/tests/test_demo_verification.py::test_partial_owned_startup_closes_every_created_adapter"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "ascii_source",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_postgres_homograph_cannot_count_another_accessible_table"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "logical_final",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_missing_final_is_not_accepted_on_clickhouse"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "stamp_model",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_changed_handoff_never_becomes_a_count_request[stamp_model]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "source_engine",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_changed_handoff_never_becomes_a_count_request[engine]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "expected_count",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_actual_count_and_business_result_stay_in_the_customer_directory[postgres]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "post_execution_context",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_no_query_receipt_survives_a_context_change_during_execution[map-postgres]",
+        "test_no_query_receipt_survives_a_context_change_during_execution[report-postgres]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "business_value_in_receipt",
+      "source": "python/src/sde_demo/query_count.py",
+      "witnesses": [
+        "test_actual_count_and_business_result_stay_in_the_customer_directory[postgres]"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        0
+      ]
+    }
+  ],
+  "all_sources_restored": true,
+  "scope": "Synthetic Weather, completed report protocol2, exact source COUNT only; full controller/AI composition is a separate acceptance."
+}

@@ -182,3 +182,5 @@ workloads in this directory. Keep the local reports/manifests for diagnosis; the
 Do not transfer the credential files, operator state or full directory to the controller/support.
 
 Measured scope and test evidence: [local starter acceptance](qualification/weather-starter/README.md).
+
+Prior-run/COUNT evidence: [completion acceptance](qualification/weather-completion/README.md).
