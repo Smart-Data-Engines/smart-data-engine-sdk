@@ -41,3 +41,5 @@ from an untested redirect boundary. The recorded final outcomes must be read wit
 Certificates and private keys are generated under the runner's private scratch directory. None
 is stored in this repository. Customer endpoint/CA deployment, role grants and workload acceptance
 are separate from this synthetic native transport qualification.
+
+Local results: **1643 Python tests passed**, with only ten optional orderbook skips; **761 TypeScript tests passed**, without skips. The installed Python wheel on clickhouse-connect 1.7.2 passed **127 TLS/transport tests**. All **18 final mutations** were detected, with positive controls and exact restoration. [Machine-readable acceptance](acceptance.json) records artifact digests and native cases; [mutation reports](mutations.json) retain the tested source digests.

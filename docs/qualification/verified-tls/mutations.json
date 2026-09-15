@@ -1,0 +1,154 @@
+{
+  "runs": [
+    {
+      "source_commit": "57cc11201edc13d75f4027af91c70c308a25f0e2",
+      "source_sha256": {
+        "python/src/sde/engines/clickhouse.py": "35ff9224855a33b083f0562bb5d55826dfbc970d179dc6420944be94559c9a60",
+        "python/src/sde/engines/_clickhouse_connection.py": "f0fcb4f093c194ac7d76963a541b840fb645cff41a4892c53d70e8c4991882c8"
+      },
+      "results": [
+        {
+          "case": "positive-before-py",
+          "exit_code": 0,
+          "seconds": 7.455
+        },
+        {
+          "case": "py-transport",
+          "exit_code": 1,
+          "seconds": 7.002
+        },
+        {
+          "case": "py-first-replay",
+          "exit_code": 1,
+          "seconds": 7.855
+        },
+        {
+          "case": "py-first-redirect",
+          "exit_code": 1,
+          "seconds": 7.608
+        },
+        {
+          "case": "py-urllib3-redirect-and-retry",
+          "exit_code": 1,
+          "seconds": 8.157
+        },
+        {
+          "case": "py-verify-typo",
+          "exit_code": 1,
+          "seconds": 11.279
+        },
+        {
+          "case": "py-https-port",
+          "exit_code": 1,
+          "seconds": 7.92
+        },
+        {
+          "case": "py-ca-pinning",
+          "exit_code": 1,
+          "seconds": 7.653
+        },
+        {
+          "case": "positive-after-py",
+          "exit_code": 0,
+          "seconds": 8.404
+        }
+      ],
+      "restored_exactly": true
+    },
+    {
+      "source_commit": "57cc11201edc13d75f4027af91c70c308a25f0e2",
+      "source_sha256": {
+        "typescript/src/engines/_clickhouse-connection.ts": "07062ba837bd5ad07def540369da0256b6c7fc4e2cbcd42f801513244c24ecac",
+        "typescript/src/engines/clickhouse.ts": "b2135a30ad5dce892c0f551d30a2f367b2c644107e4aeae17a9f04118d71239b"
+      },
+      "results": [
+        {
+          "case": "positive-before-ts",
+          "exit_code": 0,
+          "seconds": 6.367
+        },
+        {
+          "case": "ts-secure-query",
+          "exit_code": 1,
+          "seconds": 6.315
+        },
+        {
+          "case": "ts-host-identity",
+          "exit_code": 1,
+          "seconds": 5.816
+        },
+        {
+          "case": "ts-verify-typo",
+          "exit_code": 1,
+          "seconds": 5.699
+        },
+        {
+          "case": "ts-https-port",
+          "exit_code": 1,
+          "seconds": 6.007
+        },
+        {
+          "case": "ts-unicode",
+          "exit_code": 1,
+          "seconds": 6.311
+        },
+        {
+          "case": "ts-ca-selection",
+          "exit_code": 1,
+          "seconds": 6.214
+        },
+        {
+          "case": "positive-after-ts",
+          "exit_code": 0,
+          "seconds": 6.053
+        }
+      ],
+      "restored_exactly": true
+    },
+    {
+      "source_commit": "96845d0d71e47f023319864e4bd3c3ab9f84136d",
+      "source_sha256": {
+        "typescript/src/engines/postgres.ts": "28eb451fa6869000453225a042916833b2592ca8c2fd79672afdd61c40cb1fb7"
+      },
+      "results": [
+        {
+          "case": "positive-before-ts",
+          "exit_code": 0,
+          "seconds": 6.259
+        },
+        {
+          "case": "ts-pg-entry",
+          "exit_code": 1,
+          "seconds": 6.056
+        },
+        {
+          "case": "ts-pg-ip-identity",
+          "exit_code": 1,
+          "seconds": 6.061
+        },
+        {
+          "case": "ts-pg-verify-default",
+          "exit_code": 1,
+          "seconds": 5.869
+        },
+        {
+          "case": "ts-pg-shared-options",
+          "exit_code": 1,
+          "seconds": 5.855
+        },
+        {
+          "case": "ts-pg-ipv6-address",
+          "exit_code": 1,
+          "seconds": 5.975
+        },
+        {
+          "case": "positive-after-ts",
+          "exit_code": 0,
+          "seconds": 5.963
+        }
+      ],
+      "restored_exactly": true
+    }
+  ],
+  "detected_mutations": 18
+}
