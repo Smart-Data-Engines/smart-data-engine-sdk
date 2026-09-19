@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-19",
+  "runtime_source_commit": "740b737320064b455bb937fa461643ebf5ee584a",
+  "typescript_artifact": {
+    "source_commit": "740b737320064b455bb937fa461643ebf5ee584a",
+    "artifact_sha256": "bcb1bae9d3c45c4bd28280aa6005d03edfe1dabeb62463f502403487a62b113e",
+    "runtime_module_sha256": "dc248f51aaeebe92940e50d334811a44b526d319c830227cc63d8e2f800d9949",
+    "compiled_module_matches": true
+  },
+  "native_servers": [
+    "24.8.14.39",
+    "26.8.2.7"
+  ],
+  "native_after": {
+    "python_exact_oracle": true,
+    "typescript_decimal_exact": true,
+    "typescript_int64_exact": true,
+    "decimal_scale_preserved": true
+  },
+  "sample": {
+    "decimal": "12345678901234567890.123456789012345678",
+    "int64": "9007199254740993",
+    "scale": "23.60"
+  },
+  "before": {
+    "typescript_decimal": "12345678901234567000",
+    "typescript_int64_on_26_8": "9007199254740992",
+    "python_exact": true
+  },
+  "focused_tests": 12,
+  "mutations_detected": 5,
+  "mutation_controls_passed": [
+    12,
+    12
+  ],
+  "scope": "ClickHouse JSON scalar transport and decoder; ordinary point/range/migration-key reads. No performance or production qualification claim.",
+  "full_checks": {
+    "python_passed": 1643,
+    "python_optional_orderbook_skips": 10,
+    "typescript_passed": 801,
+    "ruff": "passed",
+    "mypy": "passed",
+    "typescript_build": "passed"
+  }
+}

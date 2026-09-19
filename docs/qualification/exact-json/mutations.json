@@ -1,0 +1,72 @@
+{
+  "source_commit": "740b737320064b455bb937fa461643ebf5ee584a",
+  "source_sha256": "170a292284f63ea143c27a47539b540596fcf118a0fca5df217f47c058468b84",
+  "complete": true,
+  "controls": [
+    {
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0
+    }
+  ],
+  "mutations": [
+    {
+      "name": "wide_integer_transport",
+      "mutated_sha256": "e21837598f9d75fa0ede2a1ae56407c4eeacf929f061fc81a00513cfa4b1e83e",
+      "exit_code": 1,
+      "failed": 2,
+      "assertions": [
+        "exact ClickHouse JSON pins exact integer, decimal and decimal-scale settings on every JSON exchange",
+        "native exact JSON numbers preserves exact data or refuses incompatible locked defaults (2/false)"
+      ]
+    },
+    {
+      "name": "decimal_transport",
+      "mutated_sha256": "bd31466fa3f7c8a5d727e23563b481d11e883b5fe340ee117a619648bde4058d",
+      "exit_code": 1,
+      "failed": 3,
+      "assertions": [
+        "exact ClickHouse JSON pins exact integer, decimal and decimal-scale settings on every JSON exchange",
+        "native exact JSON numbers keeps independently written numbers and scale in point, range and migration-key reads",
+        "native exact JSON numbers preserves exact data or refuses incompatible locked defaults (2/false)"
+      ]
+    },
+    {
+      "name": "decimal_scale",
+      "mutated_sha256": "03ee3661766138df6b4d76e58e188c2897724250f59b1dab6be5bb627bbde4c5",
+      "exit_code": 1,
+      "failed": 2,
+      "assertions": [
+        "exact ClickHouse JSON pins exact integer, decimal and decimal-scale settings on every JSON exchange",
+        "native exact JSON numbers keeps independently written numbers and scale in point, range and migration-key reads"
+      ]
+    },
+    {
+      "name": "integer_decode_guard",
+      "mutated_sha256": "5fd4d45c3febf0b1a435264e3d8b586e9c9ff80257c601857c85fb74fe88d80e",
+      "exit_code": 1,
+      "failed": 3,
+      "assertions": [
+        "exact ClickHouse JSON refuses unquoted Int64 rather than converting a rounded number back to text",
+        "exact ClickHouse JSON refuses unquoted UInt64 rather than converting a rounded number back to text",
+        "exact ClickHouse JSON refuses unquoted Int128 rather than converting a rounded number back to text"
+      ]
+    },
+    {
+      "name": "decimal_decode_guard",
+      "mutated_sha256": "d0b4fa59110b5768dc4f568306d45ded1cf75494e4c871d8191c443a05c63a30",
+      "exit_code": 1,
+      "failed": 3,
+      "assertions": [
+        "exact ClickHouse JSON refuses unquoted Decimal(38, 18) rather than converting a rounded number back to text",
+        "exact ClickHouse JSON refuses unquoted Decimal(8, 2) rather than converting a rounded number back to text",
+        "exact ClickHouse JSON refuses unquoted Nullable(Decimal(8, 2)) rather than converting a rounded number back to text"
+      ]
+    }
+  ]
+}
