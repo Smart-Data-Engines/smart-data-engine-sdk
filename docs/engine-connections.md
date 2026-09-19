@@ -136,3 +136,25 @@ for literal IP identities and the standard DNS checker for names. `checkIP` chec
 certificate's IP SANs; no textual SAN parser or Common Name fallback is added. TLS still validates
 the certificate chain before the identity callback. Explicit PostgreSQL callbacks retain their
 meaning. Missing or malformed peer certificate bytes cause refusal.
+
+
+## Exact TypeScript numbers over ClickHouse JSON
+
+Every TypeScript JSON request explicitly selects quoted wide integers, quoted decimals and
+preserved decimal scale. Server defaults changed for integers in newer ClickHouse versions;
+converting a JSON number back to text after `JSON.parse` cannot restore lost digits.
+The decoder refuses unquoted Int64/UInt64/wider integers and decimals rather than returning
+rounded data. The setting applies to this request, without changing the server or other clients.
+
+The account must permit these output-format settings or already have all three set to `1`.
+A `readonly=1` profile locking incompatible defaults is refused. The owner can configure these
+exact defaults while keeping `readonly=1`, or use `readonly=2` with SELECT-only grants, permitting
+output settings while refusing modifying queries. Do not grant write privileges just to address
+a format refusal. The existing read-only EXPLAIN scope is checked
+separately. Runtime roles that need signed-map bookkeeping retain their documented grants.
+
+The change covers ordinary point/range reads, migration key reads and numeric metadata;
+logical scan and summarize already use explicit text projections. Stored values, placement-map
+bytes and signatures are unchanged. Before this correction, an independently verified
+`12345678901234567890.123456789012345678` was returned by TypeScript as
+`12345678901234567000`; do not use results from that path as a benchmark correctness oracle.
