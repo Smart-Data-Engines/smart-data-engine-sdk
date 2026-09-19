@@ -21,7 +21,23 @@ from .weather_worker import reading
 SDK = Path(__file__).resolve().parents[3]
 
 
+def workers(per_language: int) -> tuple[tuple[int, str, int], ...]:
+    """Keep the default stale/refresh split while scaling independent connections."""
+    if type(per_language) is not int or not 1 <= per_language <= 16:
+        raise ValueError("use 1-16 workers per language; worker 99 belongs to the seed oracle")
+    return tuple(
+        (
+            index,
+            "python" if index <= per_language else "typescript",
+            500 if (index - 1) % per_language < (per_language + 1) // 2 else 0,
+        )
+        for index in range(1, per_language * 2 + 1)
+    )
+
+
 def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
+    configured_workers = workers(getattr(args, "workers_per_language", 2))
+    total_workers = len(configured_workers)
     processes: list[subprocess.Popen[str]] = []
     error_logs = []
     with project(args.scratch / source, source) as configured:
@@ -41,8 +57,7 @@ def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
                             for sequence in range(begin, min(begin + 1000, args.seed_rows + 1))
                         ],
                     )
-            for worker in range(1, 5):
-                language = "python" if worker <= 2 else "typescript"
+            for worker, language, refresh_period in configured_workers:
                 command = (
                     [str(args.python), str(Path(__file__).with_name("weather_worker.py"))]
                     if language == "python"
@@ -66,7 +81,7 @@ def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
                         "--worker",
                         str(worker),
                         "--refresh-period-ms",
-                        "500" if worker in (1, 3) else "0",
+                        str(refresh_period),
                     ]
                 )
                 errors = (directory / f"worker-{worker}.stderr").open("w")
@@ -95,7 +110,11 @@ def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
                     }
                 )
             )
-            print(f"START {source}: 2 Python + 2 TypeScript, {args.rate * 4} writes/s", flush=True)
+            print(
+                f"START {source}: {total_workers // 2} Python + "
+                f"{total_workers // 2} TypeScript, {args.rate * total_workers} writes/s",
+                flush=True,
+            )
             transition = Transition(args, configured, origin, environment)
             deadline = origin + (args.seconds + 60) * 1_000_000_000
             while any(process.poll() is None for process in processes):
@@ -111,7 +130,7 @@ def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
                 raise AssertionError("traffic stopped before the required cutover completed")
             reports = [
                 json.loads((directory / f"worker-{worker}.json").read_bytes())
-                for worker in range(1, 5)
+                for worker, _language, _refresh in configured_workers
             ]
             expected = args.seconds * args.rate
             session = sde.Session(
@@ -135,7 +154,7 @@ def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
                     or report["scheduled_writes"] != expected
                 ):
                     raise AssertionError("a workload process did not complete its fixed schedule")
-                if worker <= 2:
+                if worker <= total_workers // 2:
                     if not Path(report["sdk_module"]).is_relative_to(args.python.parent.parent):
                         raise AssertionError("the Python worker did not import the installed wheel")
                 elif Path(report["sdk_module"]) != args.npm:
@@ -208,10 +227,11 @@ def baseline(args: argparse.Namespace, source: str) -> dict[str, Any]:
                 "source": source,
                 "passed": True,
                 "seconds": args.seconds,
-                "writes_per_second": args.rate * 4,
+                "writes_per_second": args.rate * total_workers,
+                "workers_per_language": total_workers // 2,
                 "mode": args.mode,
                 "events": transition.events,
-                "all_acknowledged_values_checked": expected * 4,
+                "all_acknowledged_values_checked": expected * total_workers,
                 "preloaded_values_checked": args.seed_rows,
                 "workers": summaries,
             }
@@ -244,12 +264,17 @@ def main() -> int:
         default="baseline",
     )
     parser.add_argument("--source", choices=("both", "postgres", "clickhouse"), default="both")
+    parser.add_argument("--workers-per-language", type=int, default=2)
     parser.add_argument("--seed-rows", type=int, default=0)
     parser.add_argument("--seconds", type=int, default=30)
     parser.add_argument(
         "--rate", type=int, default=10, help="scheduled writes per worker per second"
     )
     args = parser.parse_args()
+    try:
+        workers(args.workers_per_language)
+    except ValueError as error:
+        parser.error(str(error))
     args.scratch, args.python, args.npm = (
         args.scratch.resolve(),
         # Keep the venv executable path: resolving its symlink would select system Python.

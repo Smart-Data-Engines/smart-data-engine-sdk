@@ -42,6 +42,11 @@ rows are inserted by the operator before measured application traffic and are va
 `--source postgres` or `--source clickhouse` selects one initial source for an independent
 capacity trial. The default `--source both` retains the original two-source qualification;
 `requested_sources` records which cases the invocation must complete.
+`--workers-per-language` defaults to2 (four total). Values1–16 select independent Python and
+TypeScript connections for a separate concurrency experiment. The original qualification remains
+two workers per language; a changed concurrency is recorded explicitly and needs its own acceptance.
+Keep aggregate rate constant when investigating client concurrency: four workers/language at
+100 writes/s per worker and two/language at200 both offer800 writes/s.
 
 Modes are `baseline`, `success`, `before_decision` and `after_decision`. Transition modes stage a
 fresh copy after ten seconds and start cutover after twenty-five seconds. The crash modes stop the
