@@ -61,10 +61,10 @@ result as an isolated backend capacity number. Use scoped, reviewed evidence whe
 never bundle runtime credentials or raw engine state into the measurement attachment.
 
 
-Fixture destruction uses a separate administrative connection with at least300 seconds of
+Fixture destruction uses a separate administrative connection with at least 300 seconds of
 receive-inactivity allowance (or the caller's already longer value). Large ClickHouse runs can
-leave many physical parts for synchronous removal; a measured100k-row run passed its exact oracle
-but its former15-second DROP timeout correctly prevented acceptance. This cleanup allowance does
+leave many physical parts for synchronous removal; a measured 100k-row run passed its exact oracle
+but its former 15-second DROP timeout correctly prevented acceptance. This cleanup allowance does
 not change the application's DSN, measured calls, absence-of-replay policy or workload criteria.
 Cleanup failure still makes the run fail. Preserve and inspect that result, then use a fresh case
 identity; do not relabel the original failed trial as accepted.
