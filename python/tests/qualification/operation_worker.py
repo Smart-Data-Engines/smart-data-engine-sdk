@@ -18,7 +18,7 @@ from sde.engines.clickhouse import ClickHouseEngine
 from sde.engines.postgres import PostgresEngine
 from sde.testing.loader import model_from_neutral
 
-from qualification.weather_worker import BASE_TIME, reading
+from .weather_worker import BASE_TIME, reading
 
 
 def main() -> int:
