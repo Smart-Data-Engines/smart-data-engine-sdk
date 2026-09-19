@@ -109,12 +109,14 @@ function convert(value: unknown, type: string): unknown {
   if (/^U?Int(64|128|256)/.test(bare)) {
     // A string in ClickHouse's JSON, because a JSON number cannot hold an int64 - and a `number`
     // here would lose precision above 2^53, which is not exotic for an identifier column.
-    return BigInt(String(value))
+    if (typeof value !== 'string') throw new Error('ClickHouse returned an unquoted exact integer')
+    return BigInt(value)
   }
   if (bare.startsWith('Decimal')) {
     // No exact decimal in this runtime, and turning `12.34` into a float is the one conversion this
     // library must never do quietly: the value comes back changed and nothing raises.
-    return String(value)
+    if (typeof value !== 'string') throw new Error('ClickHouse returned an unquoted exact decimal')
+    return value
   }
   if (bare.startsWith('DateTime')) {
     // `2026-08-27 12:00:00.000`, with no zone in the text. Read as local time it is a different
@@ -214,6 +216,13 @@ export class ClickHouseEngine {
     return this.usage.operation(async () => {
       const query = options.format === undefined ? sql : `${sql} FORMAT ${options.format}`
       const search = new URLSearchParams({ database: this.target.database })
+      if (options.format === 'JSON') {
+        // JSON.parse would round native numeric tokens before convert() can inspect their type.
+        // Pin the wire contract per request, independently of server/version/profile defaults.
+        search.set('output_format_json_quote_64bit_integers', '1')
+        search.set('output_format_json_quote_decimals', '1')
+        search.set('output_format_decimal_trailing_zeros', '1')
+      }
       if (options.body === undefined) search.set('query', query)
       else search.set('query', query)
       const path = `/?${search.toString()}`
