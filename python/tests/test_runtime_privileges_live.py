@@ -281,3 +281,17 @@ def test_unmapped_supplied_engine_gets_runtime_bookkeeping_too(roles: Roles) -> 
         assert session.get("Event", {"id": 1}) == {"id": 1}
         assert session.rollback_protection.participating == ("db", "spare")
         assert spare.metadata_rows() == [(7,)]
+
+
+def test_runtime_connections_keep_the_callers_budget_during_long_cleanup() -> None:
+    from sde.engines._clickhouse_connection import parse_dsn
+
+    original_dsn = os.environ.get("SDE_CLICKHOUSE_DSN")
+    if not original_dsn:
+        pytest.skip("clickhouse is required for cleanup isolation")
+    expected = parse_dsn(original_dsn).send_receive_timeout
+    with runtime_roles("clickhouse") as roles:
+        assert roles.operator._cx.timeout.read_timeout == expected
+        assert roles.runtime._cx.timeout.read_timeout == expected
+        assert parse_dsn(roles.operator._dsn).send_receive_timeout == expected
+        assert parse_dsn(roles.runtime._dsn).send_receive_timeout == expected
