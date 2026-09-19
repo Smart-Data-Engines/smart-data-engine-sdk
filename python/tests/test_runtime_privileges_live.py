@@ -295,3 +295,72 @@ def test_runtime_connections_keep_the_callers_budget_during_long_cleanup() -> No
         assert roles.runtime._cx.timeout.read_timeout == expected
         assert parse_dsn(roles.operator._dsn).send_receive_timeout == expected
         assert parse_dsn(roles.runtime._dsn).send_receive_timeout == expected
+
+
+def test_cleanup_waits_for_a_real_reader_without_extending_runtime_timeouts() -> None:
+    """Atomic DROP SYNC can outlive the data-path inactivity default."""
+    import threading
+    import time
+
+    finished = threading.Event()
+    failures: list[BaseException] = []
+    reader: threading.Thread | None = None
+    began_cleanup = 0.0
+    try:
+        with runtime_roles("clickhouse") as roles:
+            roles.command("CREATE TABLE cleanup_reader (id Int64) ENGINE=MergeTree ORDER BY id")
+            roles.command("INSERT INTO cleanup_reader SELECT number FROM numbers(200)")
+            roles.grant("cleanup_reader")
+            marker = "cleanup_reader_" + uuid4().hex
+            # This independent deliberately slow reader chooses its own explicit allowance.
+            # The actual fixture runtime below retains the caller's original15-second default.
+            parts = urlsplit(roles.runtime._dsn)
+            options = dict(parse_qsl(parts.query))
+            options["send_receive_timeout"] = "60"
+            runtime_dsn = urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, urlencode(options), parts.fragment)
+            )
+
+            def hold_reader() -> None:
+                try:
+                    with ClickHouseEngine(runtime_dsn) as client:
+                        result = client._cx.query(
+                            "SELECT sleepEachRow(0.1) FROM cleanup_reader /* " + marker + " */",
+                            settings={
+                                "max_block_size": 1,
+                                "max_execution_time": 25,
+                                "function_sleep_max_microseconds_per_block": 25000000,
+                            },
+                        )
+                        assert len(result.result_rows) == 200
+                except BaseException as error:
+                    failures.append(error)
+                finally:
+                    finished.set()
+
+            reader = threading.Thread(target=hold_reader, daemon=True)
+            reader.start()
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                active = roles.operator._cx.query(
+                    "SELECT count() FROM system.processes WHERE "
+                    "startsWith(query, 'SELECT sleepEachRow') "
+                    "AND position(query, {marker:String}) > 0",
+                    parameters={"marker": marker},
+                ).result_rows[0][0]
+                if active:
+                    break
+                time.sleep(0.02)
+            else:
+                if failures:
+                    raise failures[0]
+                raise AssertionError("the independent native reader never acquired its table")
+            assert roles.runtime._cx.timeout.read_timeout == 15
+            began_cleanup = time.monotonic()
+        assert time.monotonic() - began_cleanup > 15
+        assert finished.wait(5)
+        assert not failures
+    finally:
+        if reader is not None:
+            reader.join(timeout=35)
+            assert not reader.is_alive(), "the bounded native reader did not finish"
