@@ -243,6 +243,7 @@ def main() -> int:
         choices=("baseline", "success", "before_decision", "after_decision"),
         default="baseline",
     )
+    parser.add_argument("--source", choices=("both", "postgres", "clickhouse"), default="both")
     parser.add_argument("--seed-rows", type=int, default=0)
     parser.add_argument("--seconds", type=int, default=30)
     parser.add_argument(
@@ -275,8 +276,10 @@ def main() -> int:
         "initial_load": os.getloadavg(),
         "cases": [],
     }
+    sources = ("postgres", "clickhouse") if args.source == "both" else (args.source,)
+    result["requested_sources"] = list(sources)
     try:
-        for source in ("postgres", "clickhouse"):
+        for source in sources:
             result["cases"].append(baseline(args, source))
             (args.scratch / "report.json").write_text(json.dumps(result, indent=2))
             print(f"CHECKED {source}: every acknowledged value matched", flush=True)

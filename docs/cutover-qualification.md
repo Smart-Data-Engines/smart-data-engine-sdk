@@ -39,6 +39,10 @@ Each run directory must be new and outside the SDK repository. Set `TMPDIR` to t
 root as well. `--rate` is writes per worker per second, so 10 means 40 aggregate writes/s. The seed
 rows are inserted by the operator before measured application traffic and are validated separately.
 
+`--source postgres` or `--source clickhouse` selects one initial source for an independent
+capacity trial. The default `--source both` retains the original two-source qualification;
+`requested_sources` records which cases the invocation must complete.
+
 Modes are `baseline`, `success`, `before_decision` and `after_decision`. Transition modes stage a
 fresh copy after ten seconds and start cutover after twenty-five seconds. The crash modes stop the
 operator at `repair:intent` or `decision:success`, then kill that process with SIGKILL after one
