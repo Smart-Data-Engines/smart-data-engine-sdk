@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
@@ -64,6 +64,15 @@ class Roles:
                 is not None
             )
         return bool(self.operator._cx.query(f"EXISTS TABLE `{WATERMARK_TABLE}`").result_rows[0][0])
+
+
+def cleanup_dsn(dsn: str) -> str:
+    """Give fixture destruction its own finite budget; never change the measured runtime."""
+    parts = urlsplit(dsn)
+    options = dict(parse_qsl(parts.query, keep_blank_values=True))
+    timeout = max(300.0, float(options.get("send_receive_timeout", "0")))
+    options["send_receive_timeout"] = str(timeout)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(options), parts.fragment))
 
 
 @contextmanager
@@ -140,9 +149,12 @@ def runtime_roles(dialect: str) -> Iterator[Roles]:
             finally:
                 if runtime:
                     runtime.close()
-                root._cx.command(f"DROP DATABASE IF EXISTS {name} SYNC")
-                if created:
-                    root._cx.command(f"DROP USER {username}")
+                # A large run can leave many physical parts to delete. This is outside the
+                # workload, and a short runtime receive timeout must not become its cleanup SLA.
+                with ClickHouseEngine(cleanup_dsn(dsn)) as cleanup:
+                    cleanup._cx.command(f"DROP DATABASE IF EXISTS {name} SYNC")
+                    if created:
+                        cleanup._cx.command(f"DROP USER {username}")
 
 
 @pytest.fixture(params=["postgres", "clickhouse"])
