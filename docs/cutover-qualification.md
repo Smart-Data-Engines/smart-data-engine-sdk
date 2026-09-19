@@ -100,3 +100,7 @@ new operations, topology, network failure modes and production workload need the
 It does not qualify arbitrary ambiguous-write retries or certify the full product as enterprise-ready.
 Fifteen fast acceptance tests and nine detected mutations check that the report cannot pass by
 ignoring invalid timings, scheduling debt, telemetry loss, late responses, gaps or slow reads.
+
+For finite batch-write and logical-read comparisons, use the separate
+[operation benchmark](operation-benchmarks.md). It measures SDK/driver/engine calls and checks
+all values, but does not replace this fixed-schedule or cutover qualification.

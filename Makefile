@@ -45,7 +45,7 @@ ts-check: ts-types ts-test
 ts-types:
 	cd typescript && npx tsc --noEmit
 	cd typescript && npm run build
-	cd typescript && npx tsc --noEmit --allowJs --checkJs --strictNullChecks --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/weather-worker.mjs
+	cd typescript && npx tsc --noEmit --allowJs --checkJs --strictNullChecks --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/weather-worker.mjs tests/qualification/operation-worker.mjs
 	cd typescript && npx tsc --noEmit --allowJs --checkJs --strict --target ES2022 --module NodeNext --types node --skipLibCheck tests/qualification/tls-worker.mjs
 
 ts-test:
