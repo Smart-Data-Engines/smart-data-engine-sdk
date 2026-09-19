@@ -39,6 +39,15 @@ Each run directory must be new and outside the SDK repository. Set `TMPDIR` to t
 root as well. `--rate` is writes per worker per second, so 10 means 40 aggregate writes/s. The seed
 rows are inserted by the operator before measured application traffic and are validated separately.
 
+`--source postgres` or `--source clickhouse` selects one initial source for an independent
+capacity trial. The default `--source both` retains the original two-source qualification;
+`requested_sources` records which cases the invocation must complete.
+`--workers-per-language` defaults to2 (four total). Values1–16 select independent Python and
+TypeScript connections for a separate concurrency experiment. The original qualification remains
+two workers per language; a changed concurrency is recorded explicitly and needs its own acceptance.
+Keep aggregate rate constant when investigating client concurrency: four workers/language at
+100 writes/s per worker and two/language at200 both offer800 writes/s.
+
 Modes are `baseline`, `success`, `before_decision` and `after_decision`. Transition modes stage a
 fresh copy after ten seconds and start cutover after twenty-five seconds. The crash modes stop the
 operator at `repair:intent` or `decision:success`, then kill that process with SIGKILL after one
@@ -100,3 +109,7 @@ new operations, topology, network failure modes and production workload need the
 It does not qualify arbitrary ambiguous-write retries or certify the full product as enterprise-ready.
 Fifteen fast acceptance tests and nine detected mutations check that the report cannot pass by
 ignoring invalid timings, scheduling debt, telemetry loss, late responses, gaps or slow reads.
+
+For finite batch-write and logical-read comparisons, use the separate
+[operation benchmark](operation-benchmarks.md). It measures SDK/driver/engine calls and checks
+all values, but does not replace this fixed-schedule or cutover qualification.
