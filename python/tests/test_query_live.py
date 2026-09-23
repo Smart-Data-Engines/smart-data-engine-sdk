@@ -143,7 +143,33 @@ def test_half_open_time_range_with_equality_and_microsecond_ties(dialect: str) -
         window = recorder.roll()
         assert window is not None
         assert {stat.kind for stat in window.shapes} == {"range_read", "aggregate"}
-        assert next(stat for stat in window.shapes if stat.kind == "aggregate").rows == 1
+        aggregate = next(stat for stat in window.shapes if stat.kind == "aggregate")
+        assert aggregate.rows == 1
+        # What each read filtered on, by name: the equality field and the bounded one.
+        assert aggregate.filtered == {(("label",), "at"): 1}
+        ranged = next(stat for stat in window.shapes if stat.kind == "range_read")
+        assert ranged.filtered == {(("label",), "at"): ranged.calls}
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+def test_filters_are_recorded_in_the_models_vocabulary_when_names_are_hashed(dialect: str) -> None:
+    with fixture(dialect, hashed=True) as (session, _role, _rows, recorder):
+        bounds = sde.Range("at", BASE, BASE + timedelta(microseconds=3))
+        session.count("Event", where={"label": "a"}, bounds=bounds)
+        session.scan("Event", where={"label": "a"}, limit=2)
+        window = recorder.roll()
+        assert window is not None
+        declared = {field.name for field in session._model.entities[0].fields}
+        recorded = {
+            name
+            for stat in window.shapes
+            for (equal, bounded), _calls in stat.filtered.items()
+            for name in (*equal, bounded)
+            if name
+        }
+        assert len(recorded) == 2
+        assert recorded <= declared
+        assert not recorded & {"label", "at"}
 
 
 @pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])

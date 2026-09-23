@@ -147,6 +147,7 @@ export type {
   FanOutOptions,
   FeatureOptions,
   GroupFeatures,
+  ReadPredicates,
   RecordOptions,
   Window,
 } from './telemetry.js'

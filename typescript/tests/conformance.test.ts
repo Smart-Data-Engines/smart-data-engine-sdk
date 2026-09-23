@@ -635,6 +635,8 @@ describe('schema vectors', () => {
 
 interface Operation {
   readonly shape: string
+  readonly equal?: readonly string[]
+  readonly range?: string
   readonly ns: number
   readonly rows?: number
   readonly failed?: boolean
@@ -672,6 +674,7 @@ function recorded(model: LogicalModel, operations: readonly Operation[], dir: st
       nanoseconds: operation.ns,
       rows: operation.rows ?? 0,
       failed: operation.failed === true,
+      ...(operation.equal === undefined ? {} : { equal: operation.equal, ranged: operation.range ?? null }),
     })
   }
   const fanOutFile = join(dir, 'fan_out.json')

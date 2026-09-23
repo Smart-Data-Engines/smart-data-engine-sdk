@@ -543,3 +543,47 @@ def test_a_group_listed_for_its_copies_alone_carries_no_shapes_section() -> None
     record = window.as_record(model)["groups"][group]
     assert "shapes" not in record
     assert record["copies"][0]["writes"] == 1
+
+
+def test_a_read_records_what_it_filtered_on_by_name_and_a_write_records_nothing() -> None:
+    """Equality fields and the bounded field per call, never a value; absent for writes."""
+    model = _reading_model()
+    shapes = {(s.kind, s.fields): s for s in sde.enumerate_shapes(model)}
+    ranged, write = shapes[("range_read", ("at",))], shapes[("write", ())]
+    recorder = Recorder(model.version)
+
+    def read(**filters: Any) -> None:
+        recorder.record(
+            shape_id=ranged.id, group=ranged.group, entity="Reading", kind="range_read",
+            nanoseconds=2_000, rows=3, **filters,
+        )
+
+    read(equal=["station"], ranged="at")
+    read(equal=["station", "station"], ranged="at")  # a set, not a list of mentions
+    read(equal=[], ranged="at")
+    recorder.record(
+        shape_id=write.id, group=write.group, entity="Reading", kind="write", nanoseconds=900,
+        rows=1,
+    )
+    window = recorder.roll()
+    assert window is not None
+    entries = {e["kind"]: e for e in window.as_record(model)["groups"][ranged.group]["shapes"]}
+    assert entries["range_read"]["filtered_on"] == [
+        {"equal": [], "range": "at", "calls": 1},
+        {"equal": ["station"], "range": "at", "calls": 2},
+    ]
+    assert "filtered_on" not in entries["write"]
+
+
+def test_a_read_that_filtered_on_nothing_says_so_rather_than_saying_nothing() -> None:
+    model = _reading_model()
+    scan = next(s for s in sde.enumerate_shapes(model) if s.kind == "full_scan")
+    recorder = Recorder(model.version)
+    recorder.record(
+        shape_id=scan.id, group=scan.group, entity="Reading", kind="full_scan",
+        nanoseconds=9_000, rows=40, equal=[],
+    )
+    window = recorder.roll()
+    assert window is not None
+    (entry,) = window.as_record(model)["groups"][scan.group]["shapes"]
+    assert entry["filtered_on"] == [{"equal": [], "calls": 1}]

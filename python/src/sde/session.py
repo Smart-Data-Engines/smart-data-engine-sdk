@@ -737,7 +737,7 @@ class Session:
             failed = True
             raise
         finally:
-            self._observe(shape, started, rows=returned, failed=failed)
+            self._observe(shape, started, rows=returned, failed=failed, plan=plan)
 
     @session_call
     def count(
@@ -763,7 +763,7 @@ class Session:
             failed = True
             raise
         finally:
-            self._observe(shape, started, rows=0 if failed else 1, failed=failed)
+            self._observe(shape, started, rows=0 if failed else 1, failed=failed, plan=plan)
 
     @session_call
     def summarize(
@@ -801,9 +801,17 @@ class Session:
             failed = True
             raise
         finally:
-            self._observe(shape, started, rows=0 if failed else 1, failed=failed)
+            self._observe(shape, started, rows=0 if failed else 1, failed=failed, plan=plan)
 
-    def _observe(self, shape: OperationShape, started: int, *, rows: int, failed: bool) -> None:
+    def _observe(
+        self,
+        shape: OperationShape,
+        started: int,
+        *,
+        rows: int,
+        failed: bool,
+        plan: ReadPlan | None = None,
+    ) -> None:
         """Hand one observation to the recorder, if there is one.
 
         The timing call is skipped entirely when telemetry is off, which is why `started` is
@@ -820,6 +828,7 @@ class Session:
             nanoseconds=perf_counter_ns() - started,
             rows=rows,
             failed=failed,
+            **({} if plan is None else _predicates(plan)),
         )
 
     # --- transactions ----------------------------------------------------------------------
@@ -887,3 +896,14 @@ class Session:
                     pass
                 else:
                     self._deferred.extend(pending)
+
+
+def _predicates(plan: ReadPlan) -> dict[str, Any]:
+    """What a read filtered on, for telemetry: field names only, never a value.
+
+    The names are the model's own - digests when the client hashes them, like the shape's fields.
+    """
+    equal = sorted({item.column.name for item in plan.filters if item.operation == "eq"})
+    bounded = sorted({item.column.name for item in plan.filters if item.operation != "eq"})
+    return {"equal": equal, "ranged": bounded[0] if bounded else None}
+

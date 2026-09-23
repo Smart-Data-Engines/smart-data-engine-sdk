@@ -94,8 +94,26 @@ for (const dialect of ['postgres', 'clickhouse'] as const) {
       expect(await pages(session, { where: { label: 'a' }, bounds, orderBy: 'at', limit: 1 })).toEqual(expected)
       expect(await session.count('Event', { where: { label: 'a' }, bounds })).toBe(BigInt(expected.length))
       const window = recorder.roll()!
-      expect(window.shapes.find(shape => shape.kind === 'aggregate')?.rows).toBe(1)
+      const aggregate = window.shapes.find(shape => shape.kind === 'aggregate')!
+      expect(aggregate.rows).toBe(1)
+      // What each read filtered on, by name: the equality field and the bounded one.
+      expect([...aggregate.filtered.values()]).toEqual([{ predicates: { equal: ['label'], ranged: 'at' }, calls: 1 }])
+      const ranged = window.shapes.find(shape => shape.kind === 'range_read')!
+      expect([...ranged.filtered.values()]).toEqual([{ predicates: { equal: ['label'], ranged: 'at' }, calls: ranged.calls }])
     })
+  }, 20000)
+
+  it.skipIf(!enabled)(dialect + ' records filters in the model vocabulary when names are hashed', async () => {
+    await fixture(dialect, async (session, _rows, recorder) => {
+      const bounds = { field: 'at', low: base, high: Timestamp.fromEpochMicroseconds(base.epochMicroseconds + 3n) }
+      await session.count('Event', { where: { label: 'a' }, bounds })
+      await session.scan('Event', { where: { label: 'a' }, limit: 2 })
+      const window = recorder.roll()!
+      const recorded = new Set(window.shapes.flatMap(shape => [...shape.filtered.values()]
+        .flatMap(({ predicates }) => [...predicates.equal, predicates.ranged]).filter(name => name !== '')))
+      expect(recorded.size).toBe(2)
+      expect(recorded.has('label') || recorded.has('at')).toBe(false)
+    }, true)
   }, 20000)
 
   it.skipIf(!enabled)(dialect + ' keeps decimal bounds finer than the stored scale', async () => {
