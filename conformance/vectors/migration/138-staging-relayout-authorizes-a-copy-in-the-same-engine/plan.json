@@ -1,6 +1,6 @@
 {
   "kind": "sde-stage",
-  "protocol": 3,
+  "protocol": 2,
   "stage_id": "55555555555555555555555555555555",
   "project_id": "11111111111111111111111111111111",
   "group": "Event",
@@ -97,7 +97,7 @@
         },
         "derived": [
           {
-            "engine": "ch-1",
+            "engine": "pg-main",
             "id": "Event@ch",
             "lag_budget_ms": 30000,
             "layout": {
@@ -106,9 +106,9 @@
               },
               "columns": {
                 "Event": {
-                  "at": "DateTime64(6, 'UTC')",
-                  "id": "UUID",
-                  "name": "String"
+                  "at": "timestamptz",
+                  "id": "uuid",
+                  "name": "text"
                 }
               }
             }
@@ -157,12 +157,12 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "staging",
-      "value": "EqCtUXFrq9vCVkvQFyp+TkRXM1LISLvnQbeLzRZtdRyzSveO1MmARIkCXTebm9GsfiExhB+4ua2HodM1yl9SCA=="
+      "value": "F3Br8iAsOd64fWgEvV2IUBY9qR9ecm/d8CJVmq9cdQQuA6d8hjzcwSlhNnkqqbVJcioEj30rRoaAzbVoZBPgBw=="
     }
   },
   "signature": {
     "alg": "ed25519",
     "key_id": "staging",
-    "value": "IR6En3t6/H6gMQX5rUBDc/J5IpjZtVTsyvPafOZh379KEg9bp/Wcaxli8SjYjxKJi9RYhRa+bNApXwi05GjzAA=="
+    "value": "AhuU5lYOXkYWcl33IEiILMjPpz9BsmJiCM2YdDRarg64UYhD7IUmxpe53WXr3oowZGGjTt9sM8r8WBOjgbLhAg=="
   }
 }

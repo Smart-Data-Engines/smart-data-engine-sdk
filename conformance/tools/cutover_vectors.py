@@ -190,7 +190,8 @@ def main() -> None:
     )
     case(
         "092-cutover-refuses-unknown-protocol",
-        lambda p: p.update(protocol=2),
+        # 3, not 2: protocol 2 is the relayout, and a vector about an unknown number must name one.
+        lambda p: p.update(protocol=3),
         "unsupported cutover plan protocol",
     )
 
@@ -232,6 +233,42 @@ def main() -> None:
         p["before"]["groups"]["Event"]["derived"].append(copy_)
 
     case("098-cutover-refuses-additional-group-copies", extra_copy, "exactly one derived copy")
+
+    def relayout(p: dict[str, Any]) -> None:
+        """The same group, a copy in the source's own engine under a fresh name: protocol 2."""
+        source = p["before"]["groups"]["Event"]["source"]
+        copy_ = {
+            "engine": source["engine"],
+            "id": "Event@pg-relayout",
+            "lag_budget_ms": 30000,
+            "layout": {
+                "tables": {"Event": "event_relayout"},
+                "columns": copy.deepcopy(source["layout"]["columns"]),
+            },
+        }
+        p["before"]["groups"]["Event"].update(derived=[copy_], also_write=[copy_["id"]])
+        target = {key: value for key, value in copy_.items() if key != "lag_budget_ms"}
+        target["id"] = "source@pg-relayout"
+        p["success"]["groups"]["Event"]["source"] = target
+        p["protocol"] = 2
+        p["_verification_targets"] = [{"engine": copy_["engine"], "id": copy_["id"]}]
+
+    case("140-cutover-relayout-activates-a-copy-in-the-same-engine", relayout)
+    case(
+        "141-cutover-relayout-needs-the-same-binding",
+        lambda p: p.update(protocol=2),
+        "own engine binding",
+    )
+
+    def move_in_one_engine(p: dict[str, Any]) -> None:
+        relayout(p)
+        p["protocol"] = 1
+
+    case(
+        "142-cutover-move-still-needs-another-binding",
+        move_in_one_engine,
+        "different engine bindings",
+    )
     with tempfile.TemporaryDirectory(prefix="sde-cutover-packets-", dir=scratch) as tmp:
         work = Path(tmp)
         private, public = work / "key.pem", work / "public.pem"
@@ -279,6 +316,7 @@ def main() -> None:
             weak_request = plan.pop("weak_request", False)
             bad_envelope = plan.pop("bad_envelope", False)
             bad_candidate = plan.pop("bad_candidate", False)
+            targets = plan.pop("_verification_targets", [{"engine": "ch-1", "id": "Event@ch"}])
             for candidate in ("before", "success", "abort"):
                 sign(plan[candidate])
             if bad_candidate:
@@ -294,7 +332,7 @@ def main() -> None:
                 else hashlib.sha256(payload(plan["before"])).hexdigest(),
                 "group": "Event",
                 "source": {"engine": "pg-main", "id": "Event@pg"},
-                "targets": [{"engine": "ch-1", "id": "Event@ch"}],
+                "targets": targets,
                 "requested_at": "2026-09-13T18:00:00Z",
                 "requires_signature": not weak_request,
             }

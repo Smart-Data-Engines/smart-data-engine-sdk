@@ -19,6 +19,16 @@ from .model import LogicalModel
 from .placement import PlacementMap, _verify_signature, load_map
 
 STAGING_PROTOCOL = 1
+"""A move: the fresh copy is prepared in another engine binding than the source."""
+STAGING_RELAYOUT_PROTOCOL = 2
+"""A relayout: the fresh copy is prepared in the source's own engine binding, under fresh table
+names, so a new physical design takes over by the same staging and cutover as a move.
+
+A protocol of its own rather than protocol 1 with a refusal lifted, because lifting a refusal is a
+change of format: a packet a released library refuses would become one a newer library executes,
+under the same number. Here an older operator refuses a relayout by its protocol, by name, and both
+protocols stay strict - protocol 1 still refuses a copy in the source's binding, protocol 2 refuses
+one anywhere else."""
 _FIELDS = {
     "kind",
     "protocol",
@@ -98,10 +108,11 @@ def _load(
         raise MigrationRefused("staging authorization has missing or unknown fields")
     if (
         type(body["protocol"]) is not int
-        or body["protocol"] != STAGING_PROTOCOL
+        or body["protocol"] not in (STAGING_PROTOCOL, STAGING_RELAYOUT_PROTOCOL)
         or body["kind"] != "sde-stage"
     ):
         raise MigrationRefused("unsupported staging authorization kind or protocol")
+    protocol: int = body["protocol"]
     identity = _hex(body["stage_id"], 32, "stage_id")
     local = _hex(body["project_id"], 32, "project_id")
     if local != project_id:
@@ -131,7 +142,7 @@ def _load(
         # and keeps them. Anything a newer library would read is refused by load_map already.
         if parsed.contract < GENERATIONS_SINCE:
             raise MigrationRefused(
-                f"staging protocol 1 requires map contract {GENERATIONS_SINCE} or later"
+                f"staging protocol {protocol} requires map contract {GENERATIONS_SINCE} or later"
             )
         check_map_project(parsed, project_id)
         for placement in parsed.groups.values():
@@ -161,8 +172,15 @@ def _load(
         raise MigrationRefused(
             "staging retains the source generation and needs two spare generations"
         )
-    if new.derived[0].engine == old.source.engine:
+    same = new.derived[0].engine == old.source.engine
+    if protocol == STAGING_PROTOCOL and same:
         raise MigrationRefused("staging target must use another engine binding")
+    if protocol == STAGING_RELAYOUT_PROTOCOL and not same:
+        # The copy's tables are fresh stage names, and the map refuses a copy in the source's
+        # engine that reuses a source table - so a relayout cannot be the source under a new name.
+        raise MigrationRefused(
+            "a relayout (staging protocol 2) prepares its copy in the source's own engine binding"
+        )
     current_raw, prepared_raw = body["current"], body["prepared"]
     old_group, new_group = current_raw["groups"][group], prepared_raw["groups"][group]
     if set(old_group) != {"source", "write_epoch"} or set(new_group) != {

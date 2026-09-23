@@ -1562,20 +1562,23 @@ describes the upgrade boundary.
 
 ## 7g. Signed local cutover packet
 
-[The cutover packet protocol](cutover-packets.md) defines the exact version-1 envelope, signed map
-candidates, verification binding, scope checks and E/E+1/E+2 generation schedule. Its loader is a
-pure authorization boundary; it does not reserve versions, execute a migration or activate a map.
-`migration/079`–`098` pin the shared packet acceptance/refusal rules. Copying a parsed object does
+[The cutover packet protocol](cutover-packets.md) defines the exact envelope, signed map
+candidates, verification binding, scope checks and E/E+1/E+2 generation schedule. Protocol 1 moves
+a group to another engine binding; protocol 2 relayouts it within its own binding, and each refuses
+the other's shape. Its loader is a pure authorization boundary; it does not reserve versions,
+execute a migration or activate a map. `migration/079`–`098` and `140`–`142` pin the shared packet
+acceptance/refusal rules. Copying a parsed object does
 not copy loader provenance, and the current-map check includes signed admission mode as well as
 the canonical payload fingerprint.
 
 
 ## 7h. Signed materialization staging packet
 
-[Staging protocol 1](staging.md) authorizes one fresh maintained copy while retaining the exact
-source, write generation and routing. Both SDKs validate the signed packet, map binding and
-portable physical names. `migration/099`–`121` pin these shared rules; the Python local operator
-executes creation and recovery. Loading an authorization does not activate its prepared map.
+[Staging protocols 1 and 2](staging.md) authorize one fresh maintained copy while retaining the
+exact source, write generation and routing - in another engine binding (protocol 1, a move) or in
+the source's own (protocol 2, a relayout). Both SDKs validate the signed packet, map binding and
+portable physical names. `migration/099`–`121`, `138` and `139` pin these shared rules; the Python
+local operator executes creation and recovery. Loading an authorization does not activate its prepared map.
 
 
 ## 7i. Physical design (map contract 5)

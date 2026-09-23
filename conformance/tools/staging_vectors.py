@@ -117,7 +117,8 @@ def main() -> None:
     case("113-staging-model-is-bound", lambda p: p["prepared"].update(model_version="0" * 16))
     case("114-staging-verifies-envelope", lambda p: p.update(bad_envelope=True))
     case("115-staging-verifies-both-maps", lambda p: p.update(bad_map=True))
-    case("116-staging-refuses-unknown-protocol", lambda p: p.update(protocol=2))
+    # 3, not 2: protocol 2 is the relayout, and a vector about an unknown number must name one.
+    case("116-staging-refuses-unknown-protocol", lambda p: p.update(protocol=3))
     case("117-staging-group-must-exist", lambda p: p.update(group="Missing"))
 
     def exhausted(p: dict[str, Any]) -> None:
@@ -156,6 +157,17 @@ def main() -> None:
         p["prepared"]["groups"]["Order"].update(derived=[copy_], also_write=["Order@ch"])
 
     case("121-staging-names-colocated-entities-in-order", three_entities, False)
+
+    def relayout(p: dict[str, Any]) -> None:
+        """A fresh copy in the source's own engine, under the stage's name: protocol 2."""
+        source = p["current"]["groups"]["Event"]["source"]
+        target = p["prepared"]["groups"]["Event"]["derived"][0]
+        target["engine"] = source["engine"]
+        target["layout"]["columns"] = copy.deepcopy(source["layout"]["columns"])
+        p["protocol"] = 2
+
+    case("138-staging-relayout-authorizes-a-copy-in-the-same-engine", relayout, False)
+    case("139-staging-relayout-needs-the-same-binding", lambda p: p.update(protocol=2))
     with tempfile.TemporaryDirectory(prefix="sde-staging-vectors-", dir=scratch) as tmp:
         work = Path(tmp)
         private, public = work / "key.pem", work / "public.pem"

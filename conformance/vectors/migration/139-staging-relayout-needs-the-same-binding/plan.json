@@ -1,6 +1,6 @@
 {
   "kind": "sde-stage",
-  "protocol": 3,
+  "protocol": 2,
   "stage_id": "55555555555555555555555555555555",
   "project_id": "11111111111111111111111111111111",
   "group": "Event",
@@ -163,6 +163,6 @@
   "signature": {
     "alg": "ed25519",
     "key_id": "staging",
-    "value": "IR6En3t6/H6gMQX5rUBDc/J5IpjZtVTsyvPafOZh379KEg9bp/Wcaxli8SjYjxKJi9RYhRa+bNApXwi05GjzAA=="
+    "value": "sJE56B7QspFvyjbE6tz3hQDTKkDWKM005VcZrTODKSIFmWzJu4HykoeHatUVMw0QiwkDQuRlovhSIjF/tosKDg=="
   }
 }

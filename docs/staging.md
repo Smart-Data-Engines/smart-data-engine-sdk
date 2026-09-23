@@ -7,9 +7,19 @@ unchanged and authoritative; existing source-only sessions can continue writing.
 not backfill data or switch reads. The subsequent [local cutover](local-cutover.md) repairs missing
 fan-out, compares frozen data and activates one of its separately authorized outcomes.
 
-## Signed packet protocol 1
+## Signed packet protocols 1 and 2
 
-The exact envelope fields are `kind: "sde-stage"`, `protocol: 1`, `stage_id`, `project_id`, `group`,
+Protocol 1 prepares the copy in **another engine binding** - a move. Protocol 2 prepares it in the
+**source's own binding**, under fresh table names - a relayout: a new physical design (key order,
+partition, indexes) in the engine the group is already in, taken over by the same cutover as a
+move. The two are otherwise identical, and each is strict: protocol 1 refuses a copy in the
+source's binding (`migration/109`), protocol 2 refuses one anywhere else (`migration/139`). A
+separate number rather than a lifted refusal, because lifting a refusal changes a format: a packet
+a released library refuses would become one a newer library executes, under the same number. An
+older operator refuses protocol 2 by name. The map itself already refuses a copy in the source's
+engine that reuses a source table, so a relayout copy cannot be the source under a second name.
+
+The exact envelope fields are `kind: "sde-stage"`, `protocol` (1 or 2), `stage_id`, `project_id`, `group`,
 `current`, `prepared`, and `signature`. The ids are 32 lowercase hexadecimal digits. The signature
 is Ed25519 over the canonical envelope without its top-level signature; its encoding and trusted
 key selection follow [cutover packets](cutover-packets.md). Each nested map also has its own valid
@@ -24,7 +34,8 @@ Signing or decoding a packet does not make its prepared map active.
 Only the selected group changes: the current group contains exactly `source` and `write_epoch`;
 the prepared group adds exactly one `derived` materialization and its id in `also_write`. Source,
 write epoch, other groups, routing and other map attributes stay unchanged. Two spare generations
-must remain for a future cutover. The new copy uses another binding; its layout and the source
+must remain for a future cutover. The new copy uses another binding under protocol 1 and the
+source's binding under protocol 2; its layout and the source
 layout cover exactly the group's entities and logical column names. Type feasibility is checked
 using the connected engines and the controller's schema qualification.
 
@@ -38,8 +49,8 @@ Load with `load_staging_plan(raw, model=..., project_id=..., public_key=...)` in
 `loadStagingPlan(raw, { model, projectId, publicKey })` in TypeScript. `StagingPlan` retains immutable
 verified provenance, exposes `as_record()` / `asRecord()`, `prepared_payload()` / `preparedPayload()`,
 and checks the signed current map with `check_current()` / `checkCurrent()`. Copying a parsed
-object does not transfer that provenance. `migration/099`–`121` are shared fixtures, independently
-encoded and signed with OpenSSL rather than either implementation.
+object does not transfer that provenance. `migration/099`–`121`, `138` and `139` are shared
+fixtures, independently encoded and signed with OpenSSL rather than either implementation.
 
 ## Local execution and recovery
 

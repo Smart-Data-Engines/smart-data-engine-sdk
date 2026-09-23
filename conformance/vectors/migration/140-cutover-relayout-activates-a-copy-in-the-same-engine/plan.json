@@ -1,6 +1,6 @@
 {
   "kind": "sde-cutover",
-  "protocol": 3,
+  "protocol": 2,
   "plan_id": "33333333333333333333333333333333",
   "project_id": "11111111111111111111111111111111",
   "group": "Event",
@@ -32,25 +32,25 @@
         },
         "derived": [
           {
-            "engine": "ch-1",
-            "id": "Event@ch",
+            "engine": "pg-main",
+            "id": "Event@pg-relayout",
             "lag_budget_ms": 30000,
             "layout": {
               "tables": {
-                "Event": "event_copy"
+                "Event": "event_relayout"
               },
               "columns": {
                 "Event": {
-                  "at": "DateTime64(6, 'UTC')",
-                  "id": "UUID",
-                  "name": "String"
+                  "at": "timestamptz",
+                  "id": "uuid",
+                  "name": "text"
                 }
               }
             }
           }
         ],
         "also_write": [
-          "Event@ch"
+          "Event@pg-relayout"
         ]
       },
       "Order": {
@@ -92,7 +92,7 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "cutover",
-      "value": "U4uU3VGC4mw0HznoSlTzy/XI9mXBl5T17s5Go7f8wJMplpxvZUjbbPWQ0bEXBtOt7oRWTii1dcAhYiLsFn1wAQ=="
+      "value": "IoPRqOiYkGWO0/lcPM40t9RKkN37/9CrAW/Cs7IfdyqrQah7FG/6CXjI+lFRAj9e5Or6KbN+l7Lz6F8L8pTIDw=="
     }
   },
   "success": {
@@ -104,17 +104,17 @@
       "Event": {
         "write_epoch": 3,
         "source": {
-          "engine": "ch-1",
-          "id": "source@ch-1",
+          "engine": "pg-main",
+          "id": "source@pg-relayout",
           "layout": {
             "tables": {
-              "Event": "event_copy"
+              "Event": "event_relayout"
             },
             "columns": {
               "Event": {
-                "at": "DateTime64(6, 'UTC')",
-                "id": "UUID",
-                "name": "String"
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
               }
             }
           }
@@ -158,7 +158,7 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "cutover",
-      "value": "bW8C+iyRWTgzuhHuG6P5Xb/UH9q2JSOEJP6jAmMyz4VlSBjy5WiOB2L5hK7HAKD8eioedOyW2pjgKx/EnumCAw=="
+      "value": "b0reSfLnAaUX8U+DYR6WEHRlouqGVXqYnw8RBStSMTbD2laquAJyurArFG9+022OGQAPfvQT3+lqZVPdH0LFCw=="
     }
   },
   "abort": {
@@ -233,7 +233,7 @@
     "project_id": "11111111111111111111111111111111",
     "model_version": "59a263d15793fb78",
     "map_version": 1,
-    "map_fingerprint": "5821fb01d4b40bb9bd7f957befc82e2dade04806e61be520a44b5af554f514cd",
+    "map_fingerprint": "1641b35f50671d2aa2b27f0f559680403c5465fe50e17b9384cb839bdb117fbe",
     "group": "Event",
     "source": {
       "engine": "pg-main",
@@ -241,8 +241,8 @@
     },
     "targets": [
       {
-        "engine": "ch-1",
-        "id": "Event@ch"
+        "engine": "pg-main",
+        "id": "Event@pg-relayout"
       }
     ],
     "requested_at": "2026-09-13T18:00:00Z",
@@ -251,6 +251,6 @@
   "signature": {
     "alg": "ed25519",
     "key_id": "cutover",
-    "value": "16Gkfr7JfOFhnV+xX3wMEQjZs03+fGlchV9yxvXdhEODv9f0c4ajOAC9L901H6qs50JGpwhMa7rAtxT8QbT0BA=="
+    "value": "tdsq/pe76LHS2khQIEGHpqdhy3Gt+3IEZaHrfY6b7tOEFMw+KVRhm5nixldbB7HMT+bFvYH27j3/4xCR4d2wCQ=="
   }
 }

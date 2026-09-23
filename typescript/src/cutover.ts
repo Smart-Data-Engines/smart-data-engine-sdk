@@ -8,7 +8,10 @@ import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type Plac
 import { enumerateShapes, shapeId } from './shapes.js'
 import { VerificationRequest } from './verification.js'
 
+/** A move: the maintained copy that takes over is in another engine binding than the source. */
 export const CUTOVER_PROTOCOL = 1
+/** A relayout: the copy that takes over is in the source's own engine binding, under fresh names. */
+export const CUTOVER_RELAYOUT_PROTOCOL = 2
 const FIELDS = ['kind', 'protocol', 'plan_id', 'project_id', 'group', 'pause_budget_ms',
   'query_impact_digest', 'verification', 'before', 'success', 'abort', 'signature'].sort(compareCodePoints)
 type Outcome = 'success' | 'abort'
@@ -91,9 +94,10 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   if (!equal(Object.keys(body).sort(compareCodePoints), FIELDS)) {
     throw new MigrationRefused('cutover plan has missing or unknown fields')
   }
-  if (typeof body['protocol'] !== 'number' || body['protocol'] !== CUTOVER_PROTOCOL) {
+  if (typeof body['protocol'] !== 'number' || ![CUTOVER_PROTOCOL, CUTOVER_RELAYOUT_PROTOCOL].includes(body['protocol'])) {
     throw new MigrationRefused('unsupported cutover plan protocol')
   }
+  const protocol = body['protocol']
   if (body['kind'] !== 'sde-cutover') throw new MigrationRefused('unsupported cutover document kind')
   const identity = hex(body['plan_id'], 32, 'plan_id'), local = hex(body['project_id'], 32, 'project_id')
   if (local !== projectId) throw new MigrationRefused('cutover plan belongs to another locally configured project')
@@ -119,7 +123,7 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     // Generations arrived in contract 4 and contract 5 keeps them. The three candidates share every
     // top-level attribute, contract included, which the comparison below enforces.
     if (parsed.contract < GENERATIONS_SINCE) {
-      throw new MigrationRefused(`cutover protocol 1 requires placement map contract ${GENERATIONS_SINCE} or later`)
+      throw new MigrationRefused(`cutover protocol ${protocol} requires placement map contract ${GENERATIONS_SINCE} or later`)
     }
     checkMapProject(parsed, projectId)
     positive(parsed.mapVersion, 'map_version')
@@ -137,7 +141,11 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     throw new MigrationRefused('cutover requires exactly one derived copy maintained by fan-out')
   }
   const source = spot.source, target = spot.derived[0]!, epoch = spot.writeEpoch as number
-  if (source.engine === target.engine) throw new MigrationRefused('cutover source and target must use different engine bindings')
+  const same = source.engine === target.engine
+  if (protocol === CUTOVER_PROTOCOL && same) throw new MigrationRefused('cutover source and target must use different engine bindings')
+  if (protocol === CUTOVER_RELAYOUT_PROTOCOL && !same) {
+    throw new MigrationRefused("a relayout (cutover protocol 2) activates a copy in the source's own engine binding")
+  }
   if (epoch > MAX_EPOCH - 2) throw new MigrationRefused('cutover needs two available write generations')
   const affected = new Set(enumerateShapes(model).filter(shape => shape.group === group).map(shapeId))
   if ([...affected].some(shape => (before.routing[shape] ?? source.id) !== source.id)) {

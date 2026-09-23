@@ -1,6 +1,6 @@
 {
   "kind": "sde-cutover",
-  "protocol": 3,
+  "protocol": 2,
   "plan_id": "33333333333333333333333333333333",
   "project_id": "11111111111111111111111111111111",
   "group": "Event",
@@ -251,6 +251,6 @@
   "signature": {
     "alg": "ed25519",
     "key_id": "cutover",
-    "value": "16Gkfr7JfOFhnV+xX3wMEQjZs03+fGlchV9yxvXdhEODv9f0c4ajOAC9L901H6qs50JGpwhMa7rAtxT8QbT0BA=="
+    "value": "njrWnAhT/S2CE0v+Vj2MvTJTAIjIky3wacDR+JvZUKY3mHJ7JaIDbR53inSKp6AAbFCAjdH+vui5vvuF3rJnBQ=="
   }
 }
