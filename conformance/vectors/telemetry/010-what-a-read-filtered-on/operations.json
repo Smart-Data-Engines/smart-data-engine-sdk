@@ -44,6 +44,15 @@
   },
   {
     "shape": "d85fcc17f5c6d0ee",
+    "equal": [
+      "temperature"
+    ],
+    "range": "at",
+    "ns": 7000,
+    "rows": 1
+  },
+  {
+    "shape": "d85fcc17f5c6d0ee",
     "equal": [],
     "range": "at",
     "ns": 60000,
@@ -54,7 +63,14 @@
     "equal": [
       "station"
     ],
+    "range": "at",
     "ns": 8000,
+    "rows": 1
+  },
+  {
+    "shape": "d85fcc17f5c6d0ee",
+    "equal": [],
+    "ns": 250000,
     "rows": 1
   },
   {

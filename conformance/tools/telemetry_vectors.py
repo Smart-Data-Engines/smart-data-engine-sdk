@@ -578,8 +578,12 @@ def _ten() -> None:
             for _ in range(4)
         ],
         {"shape": ranged, "equal": [], "range": "at", "ns": 90_000, "rows": 900},
+        # Recorded out of order on purpose: the entries sort by the equality fields' contents,
+        # then by the bounded field, and a field set recorded first does not come first.
+        {"shape": aggregate, "equal": ["temperature"], "range": "at", "ns": 7_000, "rows": 1},
         {"shape": aggregate, "equal": [], "range": "at", "ns": 60_000, "rows": 1},
-        {"shape": aggregate, "equal": ["station"], "ns": 8_000, "rows": 1},
+        {"shape": aggregate, "equal": ["station"], "range": "at", "ns": 8_000, "rows": 1},
+        {"shape": aggregate, "equal": [], "ns": 250_000, "rows": 1},
         {"shape": scan, "equal": [], "ns": 400_000, "rows": 5000},
         # A write takes no filter and reports none.
         {"shape": shapes[("write", ())].id, "ns": 2_000, "rows": 1},
@@ -596,8 +600,12 @@ def _ten() -> None:
                     "entry per combination of equality fields (`equal`, sorted) and bounded field "
                     "(`range`, absent when the call bounded nothing), with the number of calls, in "
                     "code point order. Four range reads over `at` also fixed `station` and one did "
-                    "not; an aggregate over a time range and one fixing `station` are one shape "
-                    "with two entries; a full scan that filtered on nothing says so with an empty "
+                    "not; four aggregates - over the whole table, over a time range, and over a "
+                    "time range fixing `station` or `temperature` - are one shape with four "
+                    "entries, "
+                    "sorted by the equality fields' contents and then by the bounded field rather "
+                    "than in the order they were recorded; a full scan that filtered on nothing "
+                    "says so with an empty "
                     "`equal`. Names only, never a value. A write takes no filter and has no "
                     "`filtered_on` at all - absent, not empty, because it was never asked."
                 )
