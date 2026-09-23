@@ -36,7 +36,7 @@ from __future__ import annotations
 from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .capabilities import members_of, satisfies
-from .cutover import CUTOVER_PROTOCOL, CutoverPlan, load_cutover_plan
+from .cutover import CUTOVER_PROTOCOL, CUTOVER_RELAYOUT_PROTOCOL, CutoverPlan, load_cutover_plan
 from .entity import Ref, clear_registry, entity, registry
 from .errors import (
     BulkWriteRefused,
@@ -116,6 +116,7 @@ from .session import Engine, ManagedEngine, Session
 from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .staging import (
     STAGING_PROTOCOL,
+    STAGING_RELAYOUT_PROTOCOL,
     StagingPlan,
     StagingReceipt,
     load_staging_plan,
@@ -151,6 +152,7 @@ __all__ = [
     "CHUNK_ROWS",
     "CONTRACT",
     "CUTOVER_PROTOCOL",
+    "CUTOVER_RELAYOUT_PROTOCOL",
     "DIALECTS",
     "DIALECT_PRECISION",
     "FIXED_SCHEMA",
@@ -168,6 +170,7 @@ __all__ = [
     "RESERVED_TABLES",
     "SHAPE_KINDS",
     "STAGING_PROTOCOL",
+    "STAGING_RELAYOUT_PROTOCOL",
     "WATERMARK_TABLE",
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",

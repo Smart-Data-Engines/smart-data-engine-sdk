@@ -20,6 +20,11 @@ from .shapes import enumerate_shapes
 from .verification import VerificationRequest
 
 CUTOVER_PROTOCOL = 1
+"""A move: the maintained copy that takes over is in another engine binding than the source."""
+CUTOVER_RELAYOUT_PROTOCOL = 2
+"""A relayout: the copy that takes over is in the source's own engine binding, under fresh names -
+the cutover that follows a staging protocol 2 preparation. Separate for the reason given there:
+each protocol stays strict, and an older operator refuses a relayout by its number."""
 _FIELDS = {
     "kind",
     "protocol",
@@ -133,8 +138,12 @@ def _load(
     body = _record(json_numbers(deepcopy(raw)), "plan")
     if set(body) != _FIELDS:
         raise MigrationRefused("cutover plan has missing or unknown fields")
-    if type(body["protocol"]) is not int or body["protocol"] != CUTOVER_PROTOCOL:
+    if type(body["protocol"]) is not int or body["protocol"] not in (
+        CUTOVER_PROTOCOL,
+        CUTOVER_RELAYOUT_PROTOCOL,
+    ):
         raise MigrationRefused("unsupported cutover plan protocol")
+    protocol: int = body["protocol"]
     if body["kind"] != "sde-cutover":
         raise MigrationRefused("unsupported cutover document kind")
     identity = _hex(body["plan_id"], 32, "plan_id")
@@ -167,7 +176,8 @@ def _load(
         # every top-level attribute, contract included, which the comparison below enforces.
         if parsed.contract < GENERATIONS_SINCE:
             raise MigrationRefused(
-                f"cutover protocol 1 requires placement map contract {GENERATIONS_SINCE} or later"
+                f"cutover protocol {protocol} requires placement map contract "
+                f"{GENERATIONS_SINCE} or later"
             )
         check_map_project(parsed, project_id)
         _positive(parsed.map_version, "map_version")
@@ -183,8 +193,13 @@ def _load(
     if len(spot.derived) != 1 or spot.also_write != spot.derived:
         raise MigrationRefused("cutover requires exactly one derived copy maintained by fan-out")
     source, target = spot.source, spot.derived[0]
-    if source.engine == target.engine:
+    same = source.engine == target.engine
+    if protocol == CUTOVER_PROTOCOL and same:
         raise MigrationRefused("cutover source and target must use different engine bindings")
+    if protocol == CUTOVER_RELAYOUT_PROTOCOL and not same:
+        raise MigrationRefused(
+            "a relayout (cutover protocol 2) activates a copy in the source's own engine binding"
+        )
     epoch = spot.write_epoch
     assert epoch is not None
     if epoch > MAX_EPOCH - 2:

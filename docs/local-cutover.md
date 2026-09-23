@@ -1,7 +1,9 @@
 # Local durable cutover operator
 
 The Python SDK provides `LocalCutover` and the `sde-operator` command for executing one signed
-[cutover packet](cutover-packets.md) in the customer's environment. The operator repairs the copy,
+[cutover packet](cutover-packets.md) in the customer's environment - a move to another engine
+binding (protocol 1) or a relayout within the source's own binding (protocol 2), by the same steps
+on distinct physical tables. The operator repairs the copy,
 compares frozen data, persists its decision, activates the authorized map and can recover after a
 process crash. It serves applications using either SDK; the TypeScript interoperability test uses
 an independent Python operator while a TypeScript application's fan-out is suspended.

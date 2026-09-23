@@ -299,14 +299,17 @@ variants retain the exact signed payload of the positive case. `errors/050`–`0
 Unicode surrogates at map load. `tools/nfc_map_vectors.py` uses its own fixture-scoped encoder and
 OpenSSL; regeneration requires an explicit scratch directory outside the repository.
 
-`migration/079`–`098` carry `plan.json` and `cutover.json` for signed local cutover authorization.
+`migration/079`–`098` and `140`–`142` carry `plan.json` and `cutover.json` for signed local cutover
+authorization - `140`–`142` for protocol 2, the relayout within one engine binding, and for
+protocol 1 still refusing that shape.
 They are decoded before any engine fixture is constructed. `tools/cutover_vectors.py` builds the
 explicit maps, request and digests independently, signs them with OpenSSL, and requires a caller's
 scratch directory outside the repository. Packet validation does not claim executor or controller
 reservation support.
 
 
-`migration/099`–`121` carry `plan.json` and `staging.json` for signed fresh-copy preparation.
+`migration/099`–`121`, `138` and `139` carry `plan.json` and `staging.json` for signed fresh-copy
+preparation; `138` and `139` are staging protocol 2, a copy in the source's own engine binding.
 Both map signatures, exact unchanged source/routing, portable names and envelope provenance are
 validated without constructing engines. `tools/staging_vectors.py` uses the independent fixture
 encoder and OpenSSL. Native creation and crash recovery have separate live tests.

@@ -187,6 +187,6 @@ export { prepareSchema } from './provisioning.js'
 export { InspectionContext } from './inspection.js'
 export { verifyFrozen, frozenVerifyRecord, type FrozenVerifyReport, type FrozenTable } from './frozen-verification.js'
 
-export { CUTOVER_PROTOCOL, CutoverPlan, loadCutoverPlan } from './cutover.js'
+export { CUTOVER_PROTOCOL, CUTOVER_RELAYOUT_PROTOCOL, CutoverPlan, loadCutoverPlan } from './cutover.js'
 
-export { STAGING_PROTOCOL, StagingPlan, loadStagingPlan, stagingTableName } from './staging.js'
+export { STAGING_PROTOCOL, STAGING_RELAYOUT_PROTOCOL, StagingPlan, loadStagingPlan, stagingTableName } from './staging.js'

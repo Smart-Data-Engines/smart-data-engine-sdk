@@ -41,8 +41,12 @@ from missing data. No arbitrary SQL, database endpoint or credential field is pa
 
 ## Scope and generations
 
-Protocol 1 accepts placement map contract 4 with explicit physical layouts. The migrating group
-has one source and one maintained derived copy on different engine bindings. Before-map reads
+Protocols 1 and 2 accept placement map contract 4 or later with explicit physical layouts. The
+migrating group has one source and one maintained derived copy - on different engine bindings under
+protocol 1 (a move), on the source's own binding under protocol 2 (a relayout that follows a staging
+protocol 2 preparation). Each protocol refuses the other's shape (`migration/141`, `142`); the
+relayout's copy is a different physical table, which the map and the executor's native identity
+qualification both require. Before-map reads
 still use the source. A terminal map contains only the authorized physical copy as its source;
 its materialization id can change when derived becomes source, while its engine and layout cannot.
 All other groups, generations, routing entries and map attributes are preserved. The migrating

@@ -8,7 +8,11 @@ import { groupColumns } from './layout.js'
 import type { LogicalModel } from './model.js'
 import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type PlacementMap } from './placement.js'
 
+/** A move: the fresh copy is prepared in another engine binding than the source. */
 export const STAGING_PROTOCOL = 1
+/** A relayout: the fresh copy is prepared in the source's own engine binding, under fresh table
+ * names. A protocol of its own, so an older operator refuses it by number and both stay strict. */
+export const STAGING_RELAYOUT_PROTOCOL = 2
 const FIELDS = ['kind', 'protocol', 'stage_id', 'project_id', 'group', 'current', 'prepared', 'signature'].sort(compareCodePoints)
 type PublicKeys = NonNullable<LoadOptions['publicKey']>
 const provenance = new WeakMap<StagingPlan, { document: string; fingerprint: string }>()
@@ -82,9 +86,10 @@ export class StagingPlan {
 function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: PublicKeys): StagingPlan {
   const body = record(structuredClone(raw), 'authorization')
   if (!equal(Object.keys(body).sort(compareCodePoints), FIELDS)) throw new MigrationRefused('staging authorization has missing or unknown fields')
-  if (typeof body['protocol'] !== 'number' || body['protocol'] !== STAGING_PROTOCOL || body['kind'] !== 'sde-stage') {
+  if (typeof body['protocol'] !== 'number' || ![STAGING_PROTOCOL, STAGING_RELAYOUT_PROTOCOL].includes(body['protocol']) || body['kind'] !== 'sde-stage') {
     throw new MigrationRefused('unsupported staging authorization kind or protocol')
   }
+  const protocol = body['protocol']
   const identity = hex(body['stage_id'], 32, 'stage_id'), local = hex(body['project_id'], 32, 'project_id')
   if (local !== projectId) throw new MigrationRefused('staging authorization belongs to another local project')
   const group = body['group']
@@ -107,7 +112,7 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     // Contract 4 introduced the generations this protocol rests on; 5 adds physical design and
     // keeps them. Anything newer is refused by loadMap already.
     if (parsed.contract < GENERATIONS_SINCE) {
-      throw new MigrationRefused(`staging protocol 1 requires map contract ${GENERATIONS_SINCE} or later`)
+      throw new MigrationRefused(`staging protocol ${protocol} requires map contract ${GENERATIONS_SINCE} or later`)
     }
     checkMapProject(parsed, projectId)
     for (const placed of Object.values(parsed.groups)) {
@@ -135,7 +140,11 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   }
   const epoch = old.writeEpoch as number
   if (epoch > MAX_EPOCH - 2 || next.writeEpoch !== epoch) throw new MigrationRefused('staging retains the source generation and needs two spare generations')
-  if (next.derived[0]!.engine === old.source.engine) throw new MigrationRefused('staging target must use another engine binding')
+  const same = next.derived[0]!.engine === old.source.engine
+  if (protocol === STAGING_PROTOCOL && same) throw new MigrationRefused('staging target must use another engine binding')
+  if (protocol === STAGING_RELAYOUT_PROTOCOL && !same) {
+    throw new MigrationRefused("a relayout (staging protocol 2) prepares its copy in the source's own engine binding")
+  }
   const currentRaw = record(body['current'], 'current'), preparedRaw = record(body['prepared'], 'prepared')
   const oldGroups = record(currentRaw['groups'], 'groups'), newGroups = record(preparedRaw['groups'], 'groups')
   const oldGroup = record(oldGroups[group], 'group'), newGroup = record(newGroups[group], 'group')

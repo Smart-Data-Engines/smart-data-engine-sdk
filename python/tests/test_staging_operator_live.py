@@ -20,12 +20,26 @@ PROJECT = "1" * 32
 
 
 @contextmanager
-def initial(source: str, root: Path) -> Iterator[tuple[Any, ...]]:
+def initial(
+    source: str,
+    root: Path,
+    *,
+    target: str | None = None,
+    indexes: list[dict[str, Any]] | None = None,
+) -> Iterator[tuple[Any, ...]]:
+    """A source-only map, an old session on it, an operator, and a staging packet for one copy.
+
+    ``target`` defaults to the other engine - a move, staging protocol 1. Naming the source's own
+    engine prepares a relayout under staging protocol 2, and ``indexes`` gives the copy a physical
+    design the source does not have, which is what a relayout is for.
+    """
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     with runtime_roles("postgres") as pg, runtime_roles("clickhouse") as ch:
         roles = {"postgres": pg, "clickhouse": ch}
-        target = "clickhouse" if source == "postgres" else "postgres"
+        if target is None:
+            target = "clickhouse" if source == "postgres" else "postgres"
+        protocol = 2 if target == source else 1
         sde.clear_registry()
 
         @sde.entity
@@ -100,13 +114,16 @@ def initial(source: str, root: Path) -> Iterator[tuple[Any, ...]]:
             **material(target, sde.staging_table_name(stage_id, 1), "copy"),
             "lag_budget_ms": 30000,
         }
+        if indexes:
+            copy["layout"]["indexes"] = indexes
+            prepared["contract"] = 5  # a physical design first appears in the fresh copy
         prepared["groups"]["Event"].update(derived=[copy], also_write=["copy"])
         prepared = signed(prepared)
         stage = sde.load_staging_plan(
             signed(
                 {
                     "kind": "sde-stage",
-                    "protocol": 1,
+                    "protocol": protocol,
                     "stage_id": stage_id,
                     "project_id": PROJECT,
                     "group": "Event",
@@ -122,6 +139,8 @@ def initial(source: str, root: Path) -> Iterator[tuple[Any, ...]]:
 
 
 def cutover(stage: Any, signed: Any, model: Any, public: bytes) -> Any:
+    """The cutover that follows ``stage``: protocol 2 when the staging was a relayout."""
+    protocol = stage.as_record()["protocol"]
     before = stage.as_record()["prepared"]
     source = before["groups"]["Event"]["source"]
     target = deepcopy(before["groups"]["Event"]["derived"][0])
@@ -145,7 +164,7 @@ def cutover(stage: Any, signed: Any, model: Any, public: bytes) -> Any:
         signed(
             {
                 "kind": "sde-cutover",
-                "protocol": 1,
+                "protocol": protocol,
                 "plan_id": uuid4().hex,
                 "project_id": PROJECT,
                 "group": "Event",
@@ -205,6 +224,82 @@ def test_stage_retains_old_source_and_then_cutover_repairs_its_missing_fanout(
         )
         for identity in (1, 2, 3):
             assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
+        with pytest.raises(sde.EngineError):
+            old.get("Event", {"id": 1})
+
+
+def _indexes(roles: Any, table: str) -> list[tuple[str, ...]]:
+    """What the engine's own catalogue says the table's indexes are - not what the map says."""
+    if roles.operator.dialect == "postgres":
+        return [
+            (str(name),)
+            for (name,) in roles.operator._cx.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname=%s AND tablename=%s "
+                "AND indexname NOT LIKE '%%_pkey' ORDER BY indexname",
+                (roles.namespace, table),
+            ).fetchall()
+        ]
+    return [
+        tuple(str(value) for value in row)
+        for row in roles.operator._cx.query(
+            "SELECT name, type, expr FROM system.data_skipping_indices "
+            "WHERE database={d:String} AND table={t:String} ORDER BY name",
+            parameters={"d": roles.namespace, "t": table},
+        ).result_rows
+    ]
+
+
+@pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
+def test_a_relayout_in_the_same_engine_stages_and_cuts_over_like_a_move(
+    engine: str, tmp_path: Path
+) -> None:
+    """A new physical design in the engine the group is already in, by the same two steps.
+
+    Staging protocol 2 prepares a copy in the source's own engine under fresh names and with the
+    design; cutover protocol 2 repairs what the old session wrote only to the source, activates the
+    copy and revokes the old tables. The design is read back from the engine's catalogue, and the
+    old session is refused - the same guarantees a move gives, in one engine.
+    """
+    index: dict[str, Any] = {"entity": "Event", "name": "sde_i_relayout_000001"}
+    index.update(
+        {"columns": ["value"]}
+        if engine == "postgres"
+        else {"columns": ["value"], "method": "minmax", "granularity": 4}
+    )
+    with initial(engine, tmp_path, target=engine, indexes=[index]) as (
+        operator,
+        stage,
+        old,
+        roles,
+        model,
+        public,
+        signed,
+        _,
+        _,
+        target,
+    ):
+        assert target == engine
+        assert stage.as_record()["protocol"] == 2
+        result = operator.stage(stage).as_record()
+        assert result["outcome"] == "prepared"
+        copy_table = stage.prepared.groups["Event"].derived[0].layout.tables["Event"]
+        assert copy_table != "initial_events"
+        expected = [("sde_i_relayout_000001",)] if engine == "postgres" else [
+            ("sde_i_relayout_000001", "minmax", "value")
+        ]
+        assert _indexes(roles[engine], copy_table) == expected
+        assert _indexes(roles[engine], "initial_events") == []
+        old.save("Event", {"id": 2, "value": 22})  # the source only: the copy misses it for now
+        runtime = {name: role.runtime for name, role in roles.items()}
+        active = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        active.save("Event", {"id": 3, "value": 33})
+        assert roles[engine].operator.get(copy_table, {"id": 3}) is not None
+        final = operator.execute(cutover(stage, signed, model, public)).as_record()
+        assert final["outcome"] == "success"
+        moved = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        for identity in (1, 2, 3):
+            assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
+        assert operator.active_map().groups["Event"].source.layout.tables["Event"] == copy_table
         with pytest.raises(sde.EngineError):
             old.get("Event", {"id": 1})
 
