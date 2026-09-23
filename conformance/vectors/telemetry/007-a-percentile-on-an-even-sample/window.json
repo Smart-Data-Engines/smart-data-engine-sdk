@@ -25,7 +25,33 @@
         "total_bytes",
         "write_burstiness"
       ],
-      "complete": true
+      "complete": true,
+      "shapes": [
+        {
+          "id": "aec2f5282c6c5833",
+          "entity": "Event",
+          "kind": "full_scan",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 300,
+          "latency_p50_ms": 0.008,
+          "latency_p99_ms": 0.008
+        },
+        {
+          "id": "834b905754a4f5db",
+          "entity": "Event",
+          "kind": "point_read",
+          "fields": [
+            "id"
+          ],
+          "calls": 1,
+          "errors": 0,
+          "rows": 3,
+          "latency_p50_ms": 0.002,
+          "latency_p99_ms": 0.002
+        }
+      ]
     }
   }
 }

@@ -30,7 +30,93 @@
         "total_bytes",
         "write_burstiness"
       ],
-      "complete": true
+      "complete": true,
+      "shapes": [
+        {
+          "id": "71edd166147626c2",
+          "entity": "Detail",
+          "kind": "relation_walk",
+          "fields": [
+            "event"
+          ],
+          "target": "Event",
+          "calls": 1,
+          "errors": 0,
+          "rows": 3,
+          "latency_p50_ms": 0.008,
+          "latency_p99_ms": 0.008
+        },
+        {
+          "id": "7bc5667d51bbe288",
+          "entity": "Event",
+          "kind": "aggregate",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.064,
+          "latency_p99_ms": 0.064
+        },
+        {
+          "id": "4771b57b43a61939",
+          "entity": "Event",
+          "kind": "bulk_write",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 500,
+          "latency_p50_ms": 0.256,
+          "latency_p99_ms": 0.256
+        },
+        {
+          "id": "aec2f5282c6c5833",
+          "entity": "Event",
+          "kind": "full_scan",
+          "fields": [],
+          "calls": 2,
+          "errors": 0,
+          "rows": 8200,
+          "latency_p50_ms": 1.024,
+          "latency_p99_ms": 2.048
+        },
+        {
+          "id": "834b905754a4f5db",
+          "entity": "Event",
+          "kind": "point_read",
+          "fields": [
+            "id"
+          ],
+          "calls": 6,
+          "errors": 1,
+          "rows": 5,
+          "latency_p50_ms": 0.002,
+          "latency_p99_ms": 0.064
+        },
+        {
+          "id": "763557f9f648dffc",
+          "entity": "Event",
+          "kind": "range_read",
+          "fields": [
+            "at"
+          ],
+          "calls": 1,
+          "errors": 0,
+          "rows": 12,
+          "latency_p50_ms": 0.016,
+          "latency_p99_ms": 0.016
+        },
+        {
+          "id": "7b991c0d77554480",
+          "entity": "Event",
+          "kind": "write",
+          "fields": [],
+          "calls": 3,
+          "errors": 0,
+          "rows": 3,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
     },
     "Label": {
       "calls": 1,
@@ -53,7 +139,22 @@
         "total_bytes",
         "write_burstiness"
       ],
-      "complete": true
+      "complete": true,
+      "shapes": [
+        {
+          "id": "c68be0a0fe85f296",
+          "entity": "Label",
+          "kind": "point_read",
+          "fields": [
+            "id"
+          ],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.001,
+          "latency_p99_ms": 0.001
+        }
+      ]
     }
   }
 }

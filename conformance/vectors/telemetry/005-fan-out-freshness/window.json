@@ -25,6 +25,19 @@
         "write_burstiness"
       ],
       "complete": true,
+      "shapes": [
+        {
+          "id": "7b991c0d77554480",
+          "entity": "Event",
+          "kind": "write",
+          "fields": [],
+          "calls": 4,
+          "errors": 0,
+          "rows": 4,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ],
       "copies": [
         {
           "group": "Detail",

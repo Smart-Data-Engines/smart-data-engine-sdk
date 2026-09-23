@@ -25,6 +25,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BUCKET_COUNT,
+  buildModel,
+  colocationGroups,
+  entity,
+  enumerateShapes,
   featuresRecord,
   guard,
   Histogram,
@@ -33,7 +37,10 @@ import {
   Recorder,
   resetInternalFailures,
   SHAPE_KINDS,
+  shapeId,
+  T,
   windowFeatures,
+  windowRecord,
   WRITE_KINDS,
 } from '../src/index.js'
 
@@ -199,5 +206,52 @@ describe('the feature vector', () => {
       expect(present, `${key}: present in the document and named as missing`).toBe(!named)
     }
     expect(features.missing.length).toBeGreaterThan(0)
+  })
+})
+
+describe('shapes in the window document', () => {
+  const model = buildModel([
+    entity('Reading', { fields: { at: T.timestamptz, station: T.string }, key: ['station', 'at'] }),
+  ])
+
+  it('describes a shape from the model and never from the recorder', () => {
+    const ranged = enumerateShapes(model).find((shape) => shape.kind === 'range_read')!
+    const recorder = new Recorder(model.version)
+    // Told the wrong entity and kind: the document still reports what the model enumerates.
+    recorder.record({
+      shapeId: shapeId(ranged), group: ranged.group, entity: 'Nope', kind: 'write',
+      nanoseconds: 3_000, rows: 7,
+    })
+    const document = windowRecord(recorder.roll()!, model) as {
+      groups: Record<string, { shapes: unknown[] }>
+    }
+    expect(document.groups[ranged.group]!.shapes).toEqual([
+      {
+        id: shapeId(ranged), entity: 'Reading', kind: 'range_read', fields: ['at'], calls: 1,
+        errors: 0, rows: 7, latency_p50_ms: 0.004, latency_p99_ms: 0.004,
+      },
+    ])
+  })
+
+  it('refuses a shape the model does not enumerate rather than describing it', () => {
+    const group = colocationGroups(model)[0]!.name
+    const recorder = new Recorder(model.version)
+    recorder.record({
+      shapeId: '0'.repeat(16), group, entity: 'Reading', kind: 'range_read',
+      nanoseconds: 1_000, rows: 1,
+    })
+    expect(() => windowRecord(recorder.roll()!, model)).toThrow(/does not enumerate/)
+  })
+
+  it('leaves the section out for a group listed for its copies alone', () => {
+    // Absent rather than empty: an empty list would claim shapes were looked for and found none.
+    const group = colocationGroups(model)[0]!.name
+    const recorder = new Recorder(model.version)
+    recorder.recordFanOut({ group, materialization: 'copy', nanoseconds: 2_000 })
+    const document = windowRecord(recorder.roll()!, model) as {
+      groups: Record<string, Record<string, unknown>>
+    }
+    expect('shapes' in document.groups[group]!).toBe(false)
+    expect((document.groups[group]!['copies'] as { writes: number }[])[0]!.writes).toBe(1)
   })
 })

@@ -1,0 +1,3 @@
+{
+  "why": "Per-shape measurements, in the model's enumeration order: identifier, entity, kind and fields from the model's own enumeration - never from what the recorder was told - and calls, errors, rows and the two latency edges from the recording. The group's features report one range-read share for two fields; only these entries say that six range reads went over `at` and one over `seq`, which is the fact a key order or a partition is chosen from. `rows` is the total the calls returned or wrote - a bulk write counts its rows - and a failed call is counted in `calls`, `errors` and the latency, as everywhere else. `target` appears on the relation walk only, absent rather than null elsewhere, for the reason `copies` is absent rather than empty."
+}

@@ -171,10 +171,7 @@ def _one() -> None:
     by_kind = _by_kind(model)
     operations = [
         # Six point reads, one of them failing, each returning one row.
-        *[
-            {"shape": by_kind[("Event", "point_read")].id, "ns": 1_200, "rows": 1}
-            for _ in range(5)
-        ],
+        *[{"shape": by_kind[("Event", "point_read")].id, "ns": 1_200, "rows": 1} for _ in range(5)],
         {"shape": by_kind[("Event", "point_read")].id, "ns": 40_000, "rows": 0, "failed": True},
         # Two full scans returning a lot, and one of each remaining read kind.
         {"shape": by_kind[("Event", "full_scan")].id, "ns": 900_000, "rows": 4_000},
@@ -404,6 +401,144 @@ def _six() -> None:
     )
 
 
+def _seven() -> None:
+    """Two samples at p50, where nearest-rank and the floor of ``p * n`` pick different rows."""
+    model = _shop()
+    by_kind = _by_kind(model)
+    operations = [
+        {"shape": by_kind[("Event", "point_read")].id, "ns": 1_200, "rows": 3},
+        {"shape": by_kind[("Event", "full_scan")].id, "ns": 5_000, "rows": 300},
+    ]
+    _write(
+        "007-a-percentile-on-an-even-sample",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "Which of two samples a percentile picks. Every other case in this family has "
+                    "an odd sample count or every sample in one bucket, so nearest-rank - the "
+                    "smallest value at least p of the data is below - and floor(p*n) choose the "
+                    "same row and the rule was undetermined: a third implementation swapped one "
+                    "for the other and the whole family stayed green. They differ exactly when p*n "
+                    "is an integer, which is what two samples at p50 is. Nearest-rank reports the "
+                    "lower of the two, 0.002 rather than 0.008, and the same rank rule picks 3 "
+                    "rather than 300 for the cardinality. Two libraries disagreeing here would "
+                    "report a different p50 for identical traffic, which is a number a placement "
+                    "decision is made on."
+                )
+            },
+        },
+    )
+
+
+def _eight() -> None:
+    """A failed read counts in the histogram and not in the result cardinality."""
+    model = _shop()
+    by_kind = _by_kind(model)
+    operations = [
+        {"shape": by_kind[("Event", "point_read")].id, "ns": 1_000, "rows": 10},
+        {"shape": by_kind[("Event", "point_read")].id, "ns": 1_000, "rows": 0, "failed": True},
+    ]
+    _write(
+        "008-a-failed-read-is-not-a-cardinality-measurement",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "A failed call counts in the latency histogram and not in the result "
+                    "cardinality, and the two answers have different reasons rather than one "
+                    "convention. A failure took time, so dropping it from the histogram would make "
+                    "a window look better precisely when the engine is in trouble - which is the "
+                    "rule 005 states for a failed fan-out. It returned no rows because it failed, "
+                    "not because the data is sparse, so averaging that zero in understates how "
+                    "many rows a read of this shape actually returns, and error_share already "
+                    "carries the failure. Ten, not five. Neither answer was pinned before: both "
+                    "passed every case in this family."
+                )
+            },
+        },
+    )
+
+
+def _nine() -> None:
+    """Which field a range read ranged over: the one fact only the ``shapes`` section carries.
+
+    Two ordered fields in one entity, ranged over at different rates. The group's features see one
+    number for both - ``shape_mix.range_read`` - so a key order or a partition chosen from them
+    would be chosen blind; the per-shape entries tell the two fields apart. The relation walk is
+    here for ``target``, which is emitted on that kind only.
+    """
+    sde.clear_registry()
+    model = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Reading",
+                    "fields": [
+                        {"name": "at", "type": "timestamptz"},
+                        {"name": "seq", "type": "int64"},
+                        {"name": "station", "type": "string"},
+                        {"name": "temperature", "type": "float64"},
+                    ],
+                    "key": ["station", "at"],
+                },
+                {
+                    "name": "Station",
+                    "fields": [
+                        {"name": "id", "type": "string"},
+                        {"name": "name", "type": "string"},
+                    ],
+                    "key": ["id"],
+                },
+            ],
+            "relations": [{"name": "station", "from": "Reading", "to": "Station"}],
+            "atomic": [],
+        }
+    )
+    shapes = {(s.entity, s.kind, s.fields): s for s in sde.enumerate_shapes(model)}
+
+    def on(entity: str, kind: str, *fields: str) -> str:
+        return shapes[(entity, kind, tuple(fields))].id
+
+    operations = [
+        *[{"shape": on("Reading", "range_read", "at"), "ns": 3_000, "rows": 40} for _ in range(5)],
+        {"shape": on("Reading", "range_read", "at"), "ns": 90_000, "rows": 0, "failed": True},
+        {"shape": on("Reading", "range_read", "seq"), "ns": 7_000, "rows": 2},
+        *[
+            {"shape": on("Reading", "point_read", "at", "station"), "ns": 900, "rows": 1}
+            for _ in range(3)
+        ],
+        {"shape": on("Reading", "relation_walk", "station"), "ns": 2_000, "rows": 1},
+        {"shape": on("Reading", "bulk_write"), "ns": 150_000, "rows": 250},
+    ]
+    _write(
+        "009-which-field-a-range-read-ranged-over",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "Per-shape measurements, in the model's enumeration order: identifier, entity, "
+                    "kind and fields from the model's own enumeration - never from what the "
+                    "recorder was told - and calls, errors, rows and the two latency edges from "
+                    "the recording. The group's features report one range-read share for two "
+                    "fields; only these entries say that six range reads went over `at` and one "
+                    "over `seq`, which is the fact a key order or a partition is chosen from. "
+                    "`rows` is the total the calls returned or wrote - a bulk write counts its "
+                    "rows - and a failed call is counted in `calls`, `errors` and the latency, as "
+                    "everywhere else. `target` appears on the relation walk only, absent rather "
+                    "than null elsewhere, for the reason `copies` is absent rather than empty."
+                )
+            },
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true")
@@ -420,6 +555,9 @@ def main() -> int:
     _four()
     _five()
     _six()
+    _seven()
+    _eight()
+    _nine()
     return 0
 
 

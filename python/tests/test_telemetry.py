@@ -144,9 +144,7 @@ def test_a_broken_recorder_does_not_break_the_caller() -> None:
     # Corrupt the internals in a way no sane code would, which is the point: a bug of ours here must
     # cost a counter, not somebody's request.
     recorder._current = None  # type: ignore[assignment]
-    recorder.record(
-        shape_id="s", group="g", entity="e", kind="write", nanoseconds=1, rows=0
-    )
+    recorder.record(shape_id="s", group="g", entity="e", kind="write", nanoseconds=1, rows=0)
     assert internal_failures().get("telemetry.record") == 1
 
 
@@ -228,8 +226,13 @@ def test_errors_are_counted_and_surface_as_a_share() -> None:
     recorder = Recorder("v1")
     for failed in (False, False, False, True):
         recorder.record(
-            shape_id="s", group="Order", entity="Order", kind="write",
-            nanoseconds=1000, rows=1, failed=failed,
+            shape_id="s",
+            group="Order",
+            entity="Order",
+            kind="write",
+            nanoseconds=1000,
+            rows=1,
+            failed=failed,
         )
     window = recorder.roll()
     assert window is not None
@@ -338,9 +341,7 @@ def test_the_marker_test_would_notice_a_leak() -> None:
     # Guards the test above. If the search were broken - wrong serialisation, wrong haystack - the
     # assertion would pass on anything, so here is the same search over a record that does contain a
     # marker, and it must fail.
-    stats = ShapeStats(
-        shape_id="s", group="g", entity="e", kind="write", call_site=MARKERS[0]
-    )
+    stats = ShapeStats(shape_id="s", group="g", entity="e", kind="write", call_site=MARKERS[0])
     serialised = json.dumps({"call_site": stats.call_site})
     assert MARKERS[0] in serialised
 
@@ -406,6 +407,7 @@ def test_a_date_counts_as_a_time_dimension() -> None:
     model = sde.build_model(Daily)
     assert sde.has_time_dimension(model, sde.colocation_groups(model)[0]) is True
 
+
 def test_the_bucket_index_never_reaches_for_a_logarithm() -> None:
     """A property no output can distinguish on the machines we have, so it is checked statically.
 
@@ -459,3 +461,85 @@ def test_the_write_kinds_are_shape_kinds_and_both_of_them() -> None:
     assert set(WRITE_KINDS) <= set(SHAPE_KINDS)
     assert sorted(WRITE_KINDS) == ["bulk_write", "write"]
 
+
+# --- shapes in the window document --------------------------------------------------------------
+
+
+def _reading_model() -> sde.LogicalModel:
+    from sde.testing.loader import model_from_neutral
+
+    return model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Reading",
+                    "fields": [
+                        {"name": "at", "type": "timestamptz"},
+                        {"name": "station", "type": "string"},
+                    ],
+                    "key": ["station", "at"],
+                }
+            ]
+        }
+    )
+
+
+def test_a_window_describes_a_shape_from_the_model_and_never_from_the_recorder() -> None:
+    """The recorder is handed an identifier; what that identifier *is* comes from the model."""
+    model = _reading_model()
+    ranged = next(s for s in sde.enumerate_shapes(model) if s.kind == "range_read")
+    recorder = Recorder(model.version)
+    # Told the wrong entity and kind: the document still reports what the model enumerates.
+    recorder.record(
+        shape_id=ranged.id,
+        group=ranged.group,
+        entity="Nope",
+        kind="write",
+        nanoseconds=3_000,
+        rows=7,
+    )
+    window = recorder.roll()
+    assert window is not None
+    (entry,) = window.as_record(model)["groups"][ranged.group]["shapes"]
+    assert entry == {
+        "id": ranged.id,
+        "entity": "Reading",
+        "kind": "range_read",
+        "fields": ["at"],
+        "calls": 1,
+        "errors": 0,
+        "rows": 7,
+        "latency_p50_ms": 0.004,
+        "latency_p99_ms": 0.004,
+    }
+
+
+def test_a_shape_the_model_does_not_enumerate_is_refused_rather_than_described() -> None:
+    model = _reading_model()
+    group = sde.colocation_groups(model)[0].name
+    recorder = Recorder(model.version)
+    recorder.record(
+        shape_id="0" * 16,
+        group=group,
+        entity="Reading",
+        kind="range_read",
+        nanoseconds=1_000,
+        rows=1,
+    )
+    window = recorder.roll()
+    assert window is not None
+    with pytest.raises(ValueError, match="does not enumerate"):
+        window.as_record(model)
+
+
+def test_a_group_listed_for_its_copies_alone_carries_no_shapes_section() -> None:
+    """Absent rather than empty: an empty list would claim shapes were looked for and found none."""
+    model = _reading_model()
+    group = sde.colocation_groups(model)[0].name
+    recorder = Recorder(model.version)
+    recorder.record_fan_out(group=group, materialization="copy", nanoseconds=2_000)
+    window = recorder.roll()
+    assert window is not None
+    record = window.as_record(model)["groups"][group]
+    assert "shapes" not in record
+    assert record["copies"][0]["writes"] == 1
