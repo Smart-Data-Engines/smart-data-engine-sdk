@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "has no table in this layout",
+  "stage": "map",
+  "why": "The layout places Reading. A key order for an entity it does not hold is either a mistake in the producer or a document assembled from two layouts, and neither should be applied."
+}

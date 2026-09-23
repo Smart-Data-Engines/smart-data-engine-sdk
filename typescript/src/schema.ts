@@ -22,6 +22,13 @@
 
 import { compareCodePoints } from './canonical.js'
 import { EngineError } from './errors.js'
+import {
+  CLICKHOUSE_METHODS,
+  POSTGRES_METHODS,
+  effectiveKey,
+  indexMethod,
+  partitionExpression,
+} from './physical.js'
 import type { PhysicalLayout } from './placement.js'
 
 /** Every dialect this library renders DDL for, sorted. */
@@ -120,22 +127,45 @@ function typeOf(layout: PhysicalLayout, entity: string, column: string): string 
   return declared
 }
 
+/** Indexes in code point order of their name (§7a), whatever order the document gave. */
+function sortedIndexes(layout: PhysicalLayout): Readonly<Record<string, unknown>>[] {
+  return [...layout.indexes].sort((a, b) => compareCodePoints(String(a['name']), String(b['name'])))
+}
+
 function postgresStatements(layout: PhysicalLayout, options: SchemaOptions): string[] {
+  const partitioned = sorted(Object.keys(layout.partitionBy))
+  if (partitioned.length > 0) {
+    throw new EngineError(
+      `the layout partitions ${JSON.stringify(partitioned)} and PostgreSQL partitioning is not ` +
+        'rendered by this library: every partition would have to exist before a row arrived, ' +
+        'which is a lifecycle this product does not manage. An unpartitioned table under a map ' +
+        'that says otherwise would be a silent drop, so this refuses.',
+    )
+  }
   const statements: string[] = []
   for (const [entity, table] of tablesInOrder(layout)) {
     const { columns, key } = columnsAndKey(layout, entity, options.keys)
+    const ordered = effectiveKey(`table '${table}'`, entity, key, layout.keyOrder ?? {}, EngineError)
     const defs = columns.map((c) => `${quoteAnsi(c)} ${typeOf(layout, entity, c)}`).join(', ')
-    const pk = key.map(quoteAnsi).join(', ')
+    const pk = ordered.map(quoteAnsi).join(', ')
     statements.push(
       `CREATE TABLE IF NOT EXISTS ${quoteAnsi(table)} (${defs}, PRIMARY KEY (${pk}))`,
     )
   }
 
-  for (const index of layout.indexes) {
+  for (const index of sortedIndexes(layout)) {
     const entity = String(index['entity'])
     const table = layout.tables[entity]
     if (table === undefined) continue
     const name = String(index['name'])
+    const method = indexMethod(index)
+    if (!(POSTGRES_METHODS as readonly string[]).includes(method)) {
+      throw new EngineError(
+        `index '${name}' is a ${method} index, which is a ClickHouse data-skipping index; ` +
+          `PostgreSQL has ${JSON.stringify(POSTGRES_METHODS)}. This map was designed for another ` +
+          'dialect.',
+      )
+    }
     const declared = index['columns']
     if (!Array.isArray(declared) || declared.length === 0) {
       throw new EngineError(
@@ -144,14 +174,31 @@ function postgresStatements(layout: PhysicalLayout, options: SchemaOptions): str
       )
     }
     const cols = declared.map((c) => quoteAnsi(String(c))).join(', ')
+    // A B-tree keeps the bytes every earlier map produced: no USING clause.
+    const using = method === 'btree' ? '' : `USING ${method} `
     statements.push(
-      `CREATE INDEX IF NOT EXISTS ${quoteAnsi(name)} ON ${quoteAnsi(table)} (${cols})`,
+      `CREATE INDEX IF NOT EXISTS ${quoteAnsi(name)} ON ${quoteAnsi(table)} ${using}(${cols})`,
     )
   }
   return statements
 }
 
+function skipIndexType(index: Readonly<Record<string, unknown>>): string {
+  const method = indexMethod(index)
+  return method === 'set' ? `set(${String(index['max_rows'])})` : method
+}
+
 function clickhouseStatements(layout: PhysicalLayout, options: SchemaOptions): string[] {
+  const legacy = layout.indexes.filter(
+    (index) => !(CLICKHOUSE_METHODS as readonly string[]).includes(indexMethod(index)),
+  )
+  if (legacy.length > 0) {
+    throw new EngineError(
+      `the layout carries ${legacy.length} index definitions and this engine has no ` +
+        `B-tree to put them in. A ClickHouse index is a data-skipping index with a type and a ` +
+        `granularity, so this map was built for another dialect.`,
+    )
+  }
   const statements: string[] = []
   for (const [entity, table] of tablesInOrder(layout)) {
     const { columns, key } = columnsAndKey(layout, entity, options.keys)
@@ -164,22 +211,35 @@ function clickhouseStatements(layout: PhysicalLayout, options: SchemaOptions): s
           `constraint.`,
       )
     }
-    const defs = columns.map((c) => `${quoteBacktick(c)} ${typeOf(layout, entity, c)}`).join(', ')
-    // ORDER BY is the declared key, in declared order. That order is positional and carries
-    // meaning: it decides which prefixes of the key can prune granules, so sorting it would change
-    // the physical performance of the table while leaving the map looking identical.
-    const order = key.map(quoteBacktick).join(', ')
+    const where = `table '${table}'`
+    // ORDER BY is the key, in declared order unless the layout gives a physical order. That order
+    // is positional and carries meaning: it decides which prefixes of the key can prune granules,
+    // so sorting it would change the table's performance behind an identical map.
+    const ordered = effectiveKey(where, entity, key, layout.keyOrder ?? {}, EngineError)
+    const spec = Object.hasOwn(layout.partitionBy, entity) ? layout.partitionBy[entity] : undefined
+    const partition = partitionExpression(where, entity, key, spec, EngineError)
+    const parts = columns.map((c) => `${quoteBacktick(c)} ${typeOf(layout, entity, c)}`)
+    // Indexes inline: `CREATE TABLE IF NOT EXISTS` never adds one to an existing table, and a
+    // separate ALTER would be a mutation over every existing part.
+    for (const index of sortedIndexes(layout)) {
+      if (String(index['entity']) !== entity) continue
+      const indexed = index['columns']
+      if (!Array.isArray(indexed) || indexed.length !== 1) {
+        throw new EngineError(
+          `the data-skipping index '${String(index['name'])}' must summarise exactly one column`,
+        )
+      }
+      parts.push(
+        `INDEX ${quoteBacktick(String(index['name']))} ${quoteBacktick(String(indexed[0]))} ` +
+          `TYPE ${skipIndexType(index)} GRANULARITY ${String(index['granularity'])}`,
+      )
+    }
+    const partitionClause =
+      partition === null ? '' : `PARTITION BY ${partition[0]}(${quoteBacktick(partition[1])}) `
+    const order = ordered.map(quoteBacktick).join(', ')
     statements.push(
-      `CREATE TABLE IF NOT EXISTS ${quoteBacktick(table)} (${defs}) ` +
-        `ENGINE = ReplacingMergeTree ORDER BY (${order})`,
-    )
-  }
-
-  if (layout.indexes.length > 0) {
-    throw new EngineError(
-      `the layout carries ${layout.indexes.length} index definitions and this engine has no ` +
-        `B-tree to put them in. A ClickHouse index is a data-skipping index with a type and a ` +
-        `granularity, so this map was built for another dialect.`,
+      `CREATE TABLE IF NOT EXISTS ${quoteBacktick(table)} (${parts.join(', ')}) ` +
+        `ENGINE = ReplacingMergeTree ${partitionClause}ORDER BY (${order})`,
     )
   }
   return statements
@@ -194,7 +254,18 @@ function clickhouseStatements(layout: PhysicalLayout, options: SchemaOptions): s
  * list loses is the *explanation*, and {@link schemaIsFixed} supplies that to anybody printing
  * one - "here is the schema we chose for you: (nothing)" needs a sentence after it.
  */
-function noStatements(): string[] {
+function noStatements(layout: PhysicalLayout): string[] {
+  if (
+    Object.keys(layout.keyOrder ?? {}).length > 0 ||
+    Object.keys(layout.partitionBy).length > 0 ||
+    layout.indexes.length > 0
+  ) {
+    throw new EngineError(
+      "this engine's schema is fixed in its own source, so a physical design - key order, " +
+        'partition or indexes - cannot be applied to it. A map that declared one and got the ' +
+        'fixed table anyway would be a storage decision silently dropped.',
+    )
+  }
   return []
 }
 

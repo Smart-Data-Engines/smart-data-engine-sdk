@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "does not have in this layout",
+  "stage": "map",
+  "why": "Checkable without the model, from the layout's own columns. Otherwise the engine refuses at CREATE INDEX, in the client's process, naming a column rather than the cause."
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "materialization": "Reading@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "PostgreSQL partitioning is not rendered",
+    "why": "PostgreSQL does not render partitioning in this version: every partition would have to exist before a row arrived, which is a lifecycle this product does not manage. An unpartitioned table under a map that says otherwise would be a silent drop."
+  },
+  {
+    "materialization": "Event@ob",
+    "dialect": "orderbook",
+    "fixed": true,
+    "error": "EngineError",
+    "match": "schema is fixed in its own source",
+    "why": "An engine whose schema is fixed in its own source renders nothing - and a physical design aimed at it is refused rather than dropped, because 'nothing' is only the right answer when nothing was asked for."
+  }
+]

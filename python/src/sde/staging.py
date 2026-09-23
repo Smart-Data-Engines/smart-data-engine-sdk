@@ -12,7 +12,7 @@ from typing import Any
 from .canonical import CanonicalError, canonical_bytes
 from .cutover import _hex, _record, _signature
 from .errors import MapError, MigrationRefused
-from .generation import MAX_EPOCH, check_map_project, json_numbers
+from .generation import GENERATIONS_SINCE, MAX_EPOCH, check_map_project, json_numbers
 from .groups import colocation_groups
 from .layout import group_columns
 from .model import LogicalModel
@@ -127,8 +127,12 @@ def _load(
                 if raw_layout.get("auto"):
                     raise MigrationRefused("staging maps need explicit physical layouts")
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
-        if parsed.contract != 4:
-            raise MigrationRefused("staging protocol 1 requires map contract 4")
+        # Contract 4 introduced the generations this protocol rests on; 5 adds physical design
+        # and keeps them. Anything a newer library would read is refused by load_map already.
+        if parsed.contract < GENERATIONS_SINCE:
+            raise MigrationRefused(
+                f"staging protocol 1 requires map contract {GENERATIONS_SINCE} or later"
+            )
         check_map_project(parsed, project_id)
         for placement in parsed.groups.values():
             for material in placement.all():
@@ -136,6 +140,12 @@ def _load(
                     raise MigrationRefused("staging maps need explicit physical layouts")
         maps.append(parsed)
     current, prepared = maps
+    # The prepared map may raise the contract, because the fresh copy is the one place a physical
+    # design can first appear - a ClickHouse copy partitioned by month under a contract-4 current
+    # map. It may not lower it: a lower number would tell an older library it may ignore keys that
+    # the current map already relies on.
+    if prepared.contract < current.contract:
+        raise MigrationRefused("staging cannot lower the placement map contract")
     if current.map_version >= prepared.map_version:
         raise MigrationRefused("staging must allocate a newer prepared map")
     if group not in current.groups or set(current.groups) != set(prepared.groups):
@@ -167,12 +177,12 @@ def _load(
     stable = {
         key: value
         for key, value in current_raw.items()
-        if key not in {"signature", "map_version", "groups"}
+        if key not in {"signature", "map_version", "groups", "contract"}
     }
     after = {
         key: value
         for key, value in prepared_raw.items()
-        if key not in {"signature", "map_version", "groups"}
+        if key not in {"signature", "map_version", "groups", "contract"}
     }
     if canonical_bytes(stable) != canonical_bytes(after) or dict(current.routing) != dict(
         prepared.routing

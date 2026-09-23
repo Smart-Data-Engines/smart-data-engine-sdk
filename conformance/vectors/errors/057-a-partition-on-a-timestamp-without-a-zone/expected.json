@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a time partition needs one of",
+  "stage": "map",
+  "why": "`seen` is in the key and is a time - and a timestamp without a zone is still refused. Its ClickHouse column (DateTime64(6)) carries no zone, so the month a value falls into follows the server's configured timezone, and a server reconfigured later would put the same key into another partition: two rows for ever, the outcome errors/055 exists to prevent, by another road. A session's session_timezone does not move it (measured, 24.8); the server's zone is documented to. date and timestamptz depend on nothing."
+}

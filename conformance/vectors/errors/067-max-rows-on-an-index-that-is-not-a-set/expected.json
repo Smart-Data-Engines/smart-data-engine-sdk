@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "max_rows belongs to set indexes",
+  "stage": "map",
+  "why": "Only set(N) has a size."
+}

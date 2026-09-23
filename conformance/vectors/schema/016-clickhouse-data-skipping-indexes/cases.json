@@ -1,0 +1,19 @@
+[
+  {
+    "materialization": "Reading@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `reading` (`at` DateTime64(6, 'UTC'), `humidity` Int32, `station` String, `temperature` Float64, INDEX `reading humidity` `humidity` TYPE set(100) GRANULARITY 2, INDEX `reading_bloom` `station` TYPE bloom_filter GRANULARITY 1, INDEX `reading_temperature` `temperature` TYPE minmax GRANULARITY 4) ENGINE = ReplacingMergeTree ORDER BY (`station`, `at`)"
+    ],
+    "why": "Data-skipping indexes inline in CREATE TABLE, because `CREATE TABLE IF NOT EXISTS` never adds one to an existing table and a separate ALTER would be a mutation over every part. Rendered in code point order of the index name whatever order the document gives - the document lists them out of order on purpose - and the name with a space is quoted by the same escaper as every other identifier. `set` carries its max_rows as set(N)."
+  },
+  {
+    "materialization": "Reading@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "ClickHouse data-skipping index",
+    "why": "The same layout through the PostgreSQL renderer is refused, and that is the point of pinning it: a map carries no dialect, so a ClickHouse design loads cleanly and the renderer is the first place that can say it was made for another engine."
+  }
+]

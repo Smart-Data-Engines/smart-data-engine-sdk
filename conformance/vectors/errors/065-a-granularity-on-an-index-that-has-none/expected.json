@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "granularity belongs to data-skipping indexes",
+  "stage": "map",
+  "why": "BRIN has pages_per_range, not a ClickHouse granularity. A key that means nothing for the method is refused rather than ignored."
+}

@@ -43,4 +43,5 @@ def bind_generation_metadata(
             return WriteFence(backends[table], table, project_id=project_id)
 
         engines[name].write_fence = factory
-        engines[name].validate_schema = lambda _layout: None
+        # The real adapters return physical findings; a fake with no catalogue has none.
+        engines[name].validate_schema = lambda _layout, keys=None: ()

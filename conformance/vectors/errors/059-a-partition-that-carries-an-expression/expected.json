@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "must be exactly",
+  "stage": "map",
+  "why": "Exactly two keys. Nothing in a map is pasted into DDL, and an extra key that one library ignored and another rendered would be two tables from one document."
+}

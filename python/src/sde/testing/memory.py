@@ -141,10 +141,11 @@ class MemoryEngine:
 
     # --- Engine ------------------------------------------------------------------------------
 
-    def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Any]) -> None:
+    def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Any]) -> tuple[Any, ...]:
         self.recorded.note(self.name, "ensure_schema", tables=sorted(layout.tables.values()))
         for table in layout.tables.values():
             self.tables.setdefault(table, [])
+        return ()
 
     def insert(self, table: str, values: Mapping[str, Any]) -> None:
         self.recorded.note(self.name, "insert", table=table)

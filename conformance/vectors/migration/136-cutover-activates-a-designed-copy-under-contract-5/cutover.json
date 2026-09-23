@@ -1,0 +1,13 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "plan_fingerprint": "74ff0b0ff56c403335c722b98bfb6650ed9fb97f1a67d9a2779b4d15a077c0a7",
+  "verified_with": "cutover",
+  "source_epoch": 1,
+  "maintenance_epoch": 2,
+  "activation_epoch": 3,
+  "candidate_fingerprints": {
+    "before": "ba3db67860dee5612d10e1ad0d2cb4e9ac21441dc8b878ecd27e37e71e41094a",
+    "success": "19a368e8992008c084f5608e3a3a2bba0f52d8af7a113d917e0e31fb8997b056",
+    "abort": "c883ae45a89f822ba847917079d9f217160cde7057832ce0d6d13adbea1f8a0c"
+  }
+}

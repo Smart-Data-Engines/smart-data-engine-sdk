@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "granularity belongs to data-skipping indexes",
+  "stage": "map",
+  "why": "Presence, not value. The first version of the reference asked `is not None`, which accepted this document, while TypeScript asked whether the key was there and refused it - one map, two answers. Found while porting, before anything was released."
+}

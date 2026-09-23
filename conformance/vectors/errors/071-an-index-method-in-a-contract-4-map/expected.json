@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "which placement map contract 5",
+  "stage": "map",
+  "why": "The loosening that bumped the contract. A contract-4 library ignores `method` and builds a B-tree from this document while a contract-5 one builds BRIN, so the key is refused in a document declaring 4 - the producer forgot to raise the number."
+}

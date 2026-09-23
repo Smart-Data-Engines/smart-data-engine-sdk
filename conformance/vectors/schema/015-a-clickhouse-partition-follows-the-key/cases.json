@@ -1,0 +1,29 @@
+[
+  {
+    "materialization": "Reading@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `reading` (`at` DateTime64(6, 'UTC'), `humidity` Int32, `station` String, `temperature` Float64) ENGINE = ReplacingMergeTree PARTITION BY toYYYYMM(`at`) ORDER BY (`at`, `station`)"
+    ],
+    "why": "PARTITION BY toYYYYMM of a key column, before ORDER BY - the order ClickHouse's grammar requires. The function names are the ones the catalogue reports back in `system.tables.partition_key`, which is what the adapters' verification parses."
+  },
+  {
+    "materialization": "Ledger@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `ledger` (`account` String, `amount` Int64, `memo` Nullable(String), `posted` Date32) ENGINE = ReplacingMergeTree PARTITION BY toDate(`posted`) ORDER BY (`account`, `posted`)"
+    ],
+    "why": "`day` is toDate. On a `date` field the column is Date32, and toDate of it is a partition value only: the stored date is untouched whatever range it is in."
+  },
+  {
+    "materialization": "Archive@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `archive` (`day` Date32, `sensor` String, `total` Int64) ENGINE = ReplacingMergeTree PARTITION BY toYear(`day`) ORDER BY (`sensor`, `day`)"
+    ],
+    "why": "`year` is toYear. Three granularities and no week, because toStartOfWeek has a mode and a closed vocabulary has none."
+  }
+]

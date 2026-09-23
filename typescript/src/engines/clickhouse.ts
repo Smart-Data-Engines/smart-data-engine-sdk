@@ -55,6 +55,8 @@ import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
 import { ClickHouseFences, fenceIO } from './_write-fences.js'
 import { keyColumns, sameWidth } from '../migration.js'
+import type { PhysicalFinding } from '../physical.js'
+import { declaredTables, parseIdentifierList, parsePartitionKey } from '../physical.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
 import { QUOTE, schemaStatements } from '../schema.js'
@@ -255,8 +257,15 @@ export class ClickHouseEngine {
               const status = response.statusCode ?? 0
               if (status >= 200 && status < 300) resolve(text)
               // ClickHouse puts its own message in the body, and it names the column or the setting.
-              // A summary of ours would lose exactly that.
-              else reject(new Error(`ClickHouse answered ${status}: ${text.trim()}`))
+              // A summary of ours would lose exactly that. The numeric code rides along for the one
+              // caller that has to tell a missing grant from every other failure.
+              else {
+                const header = response.headers['x-clickhouse-exception-code']
+                const code = typeof header === 'string' && /^\d+$/.test(header)
+                  ? Number(header) : Number(/^Code: (\d+)\./.exec(text.trim())?.[1] ?? Number.NaN)
+                reject(Object.assign(new Error(`ClickHouse answered ${status}: ${text.trim()}`),
+                  Number.isInteger(code) ? { clickhouseCode: code } : {}))
+              }
             })
           },
         )
@@ -321,7 +330,7 @@ export class ClickHouseEngine {
   async ensureSchema(
     layout: PhysicalLayout,
     options: { readonly keys: Readonly<Record<string, readonly string[]>> },
-  ): Promise<void> {
+  ): Promise<PhysicalFinding[]> {
     return this.usage.operation(async () => {
       const statements = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
       for (const statement of statements) {
@@ -332,7 +341,9 @@ export class ClickHouseEngine {
         }
       }
       await this.verifySchema(layout)
-
+      // Returned, not refused: whether a physical difference is a refusal (a person provisioning)
+      // or a report (a running session) is the caller's decision. Columns and types refuse above.
+      return this.physicalFindings(layout, options.keys)
     })
   }
 
@@ -349,12 +360,146 @@ export class ClickHouseEngine {
    * it is literal on purpose - a renderer that started emitting a different spelling of the same
    * type would fail this, which is the right way round for a document we sign.
    */
-  /** Check existing physical columns without issuing DDL. */
-  async validateSchema(layout: PhysicalLayout): Promise<void> {
+  /** Check existing physical columns without issuing DDL; report the physical design. */
+  async validateSchema(
+    layout: PhysicalLayout,
+    options: { readonly keys?: Readonly<Record<string, readonly string[]>> } = {},
+  ): Promise<PhysicalFinding[]> {
     return this.usage.operation(async () => {
       await this.verifySchema(layout)
-
+      return options.keys === undefined ? [] : this.physicalFindings(layout, options.keys)
     })
+  }
+
+  /**
+   * Sort key, partition and data-skipping indexes as the catalogue reports them.
+   *
+   * The catalogue formats expressions, so they are parsed into names (`parseIdentifierList`)
+   * rather than compared with a string we predict: 24.8 leaves `select` bare and quotes `null`, and
+   * a formatting rule that moved between releases would turn a correct table into a refusal. An
+   * expression the parser does not understand is reported as it stands.
+   *
+   * `system.tables` is filtered by the login's own table privileges, so a restricted runtime login
+   * reads it without a grant. `system.data_skipping_indices` needs an explicit one (measured, 24.8:
+   * code 497), so it is read only when a table declares an index, and a login without the grant
+   * gets "unverified" rather than a failed session - a check about performance must not become the
+   * outage requirement 3.6 forbids. Provisioning refuses on it, since "could not look" is not
+   * "looked and agreed".
+   */
+  private async physicalFindings(
+    layout: PhysicalLayout,
+    keys: Readonly<Record<string, readonly string[]>>,
+  ): Promise<PhysicalFinding[]> {
+    const declared = declaredTables(layout, keys)
+    if (declared.length === 0) return []
+    const tables = declared.map((entry) => literal(entry.table)).join(', ')
+    const described = await this.query(
+      'SELECT name, sorting_key, partition_key FROM system.tables ' +
+        `WHERE database = currentDatabase() AND name IN (${tables})`,
+    )
+    const keysFound = new Map<string, readonly [string, string]>()
+    for (const row of described) {
+      keysFound.set(String(row['name']), [String(row['sorting_key']), String(row['partition_key'])])
+    }
+    const present = new Map<string, Map<string, readonly [string, string, number]>>()
+    let unreadable = ''
+    const indexed = declared
+      .filter((entry) => entry.indexes.length > 0)
+      .map((entry) => entry.table)
+      .sort(compareCodePoints)
+    if (indexed.length > 0) {
+      let rows: Row[] = []
+      try {
+        rows = await this.query(
+          'SELECT table, name, type_full, expr, granularity FROM system.data_skipping_indices ' +
+            `WHERE database = currentDatabase() AND table IN (${indexed.map(literal).join(', ')})`,
+        )
+      } catch (error) {
+        if ((error as { clickhouseCode?: number }).clickhouseCode !== 497) throw error
+        unreadable =
+          'unverified: this login cannot read system.data_skipping_indices ' +
+          '(GRANT SELECT ON system.data_skipping_indices to verify it)'
+      }
+      for (const row of rows) {
+        const table = String(row['table'])
+        const byName = present.get(table) ?? new Map<string, readonly [string, string, number]>()
+        byName.set(String(row['name']), [String(row['type_full']), String(row['expr']), Number(row['granularity'])])
+        present.set(table, byName)
+      }
+    }
+    const same = (a: readonly string[], b: readonly string[]): boolean =>
+      a.length === b.length && a.every((value, position) => value === b[position])
+    const findings: PhysicalFinding[] = []
+    for (const entry of declared) {
+      const found = keysFound.get(entry.table)
+      if (found === undefined) continue // verifySchema has already refused a missing table
+      const [sorting, partition] = found
+      let foundKey: string[] | null
+      try {
+        foundKey = parseIdentifierList(sorting)
+      } catch {
+        foundKey = null
+      }
+      if (foundKey === null || !same(foundKey, entry.key)) {
+        findings.push({
+          table: entry.table,
+          aspect: 'sort key',
+          declared: JSON.stringify(entry.key),
+          found: foundKey === null ? JSON.stringify(sorting) : JSON.stringify(foundKey),
+        })
+      }
+      let foundPartition: readonly [string, string] | null | undefined
+      try {
+        foundPartition = parsePartitionKey(partition)
+      } catch {
+        foundPartition = undefined
+      }
+      const declaredPartition = entry.partition
+      const partitionMatches =
+        foundPartition !== undefined &&
+        (foundPartition === null
+          ? declaredPartition === null
+          : declaredPartition !== null &&
+            foundPartition[0] === declaredPartition[0] &&
+            foundPartition[1] === declaredPartition[1])
+      if (!partitionMatches) {
+        findings.push({
+          table: entry.table,
+          aspect: 'partition',
+          declared: JSON.stringify(declaredPartition),
+          found: foundPartition === undefined ? JSON.stringify(partition) : JSON.stringify(foundPartition),
+        })
+      }
+      for (const index of entry.indexes) {
+        const wanted = `${index.typeFull} on ${JSON.stringify(index.columns)} granularity ${String(index.granularity)}`
+        const got = present.get(entry.table)?.get(index.name)
+        if (got === undefined) {
+          findings.push({
+            table: entry.table,
+            aspect: `index ${index.name}`,
+            declared: wanted,
+            found: unreadable === '' ? 'absent' : unreadable,
+          })
+          continue
+        }
+        const [typeFull, expr, granularity] = got
+        let columns: string[] | null
+        try {
+          columns = parseIdentifierList(expr)
+        } catch {
+          columns = null
+        }
+        if (typeFull !== index.typeFull || columns === null || !same(columns, index.columns) || granularity !== index.granularity) {
+          findings.push({
+            table: entry.table,
+            aspect: `index ${index.name}`,
+            declared: wanted,
+            found: `${typeFull} on ${columns === null ? JSON.stringify(expr) : JSON.stringify(columns)} granularity ${granularity}`,
+          })
+        }
+      }
+    }
+    return findings
   }
 
   private async verifySchema(layout: PhysicalLayout): Promise<void> {

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "names a column twice",
+  "stage": "map",
+  "why": "Refused without the model, because no key has a column twice."
+}

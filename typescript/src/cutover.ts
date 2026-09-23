@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError, MigrationRefused } from './errors.js'
-import { checkMapProject, MAX_EPOCH } from './generation.js'
+import { checkMapProject, GENERATIONS_SINCE, MAX_EPOCH } from './generation.js'
 import type { LogicalModel } from './model.js'
 import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type PlacementMap } from './placement.js'
 import { enumerateShapes, shapeId } from './shapes.js'
@@ -116,7 +116,11 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
       }
     }
     const parsed = loadMap(document, { model, publicKey, requireSignature: true })
-    if (parsed.contract !== 4) throw new MigrationRefused('cutover protocol 1 requires placement map contract 4')
+    // Generations arrived in contract 4 and contract 5 keeps them. The three candidates share every
+    // top-level attribute, contract included, which the comparison below enforces.
+    if (parsed.contract < GENERATIONS_SINCE) {
+      throw new MigrationRefused(`cutover protocol 1 requires placement map contract ${GENERATIONS_SINCE} or later`)
+    }
     checkMapProject(parsed, projectId)
     positive(parsed.mapVersion, 'map_version')
     maps[name] = parsed

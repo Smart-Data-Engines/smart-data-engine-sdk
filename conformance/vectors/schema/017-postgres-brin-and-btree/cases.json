@@ -1,0 +1,22 @@
+[
+  {
+    "materialization": "Ledger@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"ledger\" (\"account\" text, \"amount\" bigint, \"memo\" text, \"posted\" date, PRIMARY KEY (\"account\", \"posted\"))",
+      "CREATE INDEX IF NOT EXISTS \"ledger_amount\" ON \"ledger\" (\"amount\")",
+      "CREATE INDEX IF NOT EXISTS \"ledger_memo\" ON \"ledger\" (\"memo\", \"amount\")",
+      "CREATE INDEX IF NOT EXISTS \"ledger_posted_brin\" ON \"ledger\" USING brin (\"posted\")"
+    ],
+    "why": "A B-tree renders exactly the bytes every earlier map produced, with no USING clause, whether the method is absent or written out; BRIN renders USING brin. Statements in code point order of the index name, and the document lists them out of order."
+  },
+  {
+    "materialization": "Ledger@pg",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "has no B-tree",
+    "why": "The same layout through the ClickHouse renderer is refused: it has no B-tree and no BRIN, and its primary index is ORDER BY."
+  }
+]

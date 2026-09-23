@@ -137,8 +137,9 @@ describe.skipIf(!LIVE)('frozen exact comparison', () => {
       const options = { request, holdId: HOLD, epochs: { source: 1, copy: 1 } }
       const actual = engines.clickhouse.validateSchema.bind(engines.clickhouse)
       engines.clickhouse.validateSchema = async (layout) => {
-        await actual(layout)
+        const findings = await actual(layout)
         options.request = replacement
+        return findings
       }
       try {
         const report = await verifyFrozen(context, 'Event', options)

@@ -575,7 +575,7 @@ key in a different document would give every client a new model version, invalid
 and re-bless every model vector. The evidence that the split is right is `model/001-single-entity`,
 the hand-written vector whose digest CI pins: adding `also_write` does not move it.
 
-A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 4.
+A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 5.
 Backwards compatible, forwards strict, and the asymmetry is knowledge rather than kindness: every
 contract-1 document is a valid contract-2 one with a key absent, which reads as "no dual write" -
 a complete meaning. What came *after* a library cannot be known, so a higher number is refused
@@ -931,8 +931,13 @@ fail that one, and it would be a second copy of the type mapping to keep in step
 |---|---|
 | tables | code point order of the **entity** name, not the document's key order (`schema/012`) |
 | columns | code point order of the column name (`schema/003`, `schema/009`) |
-| the key | **the order the model declared**, never sorted — `(tenant, id)` and `(id, tenant)` are different keys (§4) |
+| the key | **the order the model declared**, never sorted — `(tenant, id)` and `(id, tenant)` are different keys (§4) — or, from map contract 5, the layout's `key_order` for that entity, which is a permutation of the declared key (§7i) |
 | indexes | code point order of the index name; each index's columns in the order the layout gives |
+
+**The index row was written before any renderer obeyed it.** Both reference renderers emitted
+indexes in the document's order until 23 September 2026, and no vector carried two indexes, so the
+rule and the code disagreed with nothing to notice. `schema/016` and `schema/017` list their
+indexes out of order on purpose.
 
 Reading either order off the document is the mistake to avoid, and it is not hypothetical: the
 compatibility view below read its column order off the layout on the stated grounds that the
@@ -990,6 +995,35 @@ A missing column is refused. An **extra** column is not: a client may have added
 the map does not name it, and refusing would make the library an obstacle to work it has no opinion
 about.
 
+**The physical design is read back too, and whether a difference refuses depends on who asked.**
+`CREATE TABLE IF NOT EXISTS` keeps a table whatever its sort key or partition, and PostgreSQL's
+`CREATE INDEX IF NOT EXISTS ... USING brin` keeps an existing B-tree of that name - both measured. So
+a Tier 2 runtime reads the primary-key order and each declared index's method and columns
+(PostgreSQL, `pg_index`) or the sort key, partition key and declared data-skipping indexes
+(ClickHouse, `system.tables` and `system.data_skipping_indices`) and compares them with the layout.
+**Provisioning refuses a difference**, naming the table, the aspect and both values, because that is
+where a person can act. **A running session only reports it**, because the rows are the same rows
+whatever the design and a difference in performance must not become an outage. Two rules for an
+implementer:
+
+- **parse the catalogue, do not predict it.** ClickHouse 24.8 formats `sorting_key` with bare names
+  where they match `[A-Za-z_][A-Za-z0-9_]*` - including `select` and `order` - and backtick-quotes the
+  rest, `null` included, with `\` escaping `\` and `` ` ``. A string comparison against what the
+  renderer would have written turns a correct table into a refusal the day the server's formatting
+  changes; an expression the parser does not understand is reported as it stands, never as a match;
+- **do not make a runtime login need a new grant for a check about performance.** ClickHouse filters
+  `system.tables` and `system.columns` by the login's own table privileges, but
+  `system.data_skipping_indices` needs an explicit grant (code 497). Read it only when a table
+  declares an index, and report a declared index a login cannot read as *unverified*, not absent. The
+  first version read it unconditionally, and every restricted session of an existing deployment
+  would have stopped starting.
+
+And one about order: PostgreSQL indexes are built **after** the table's key is confirmed. A table
+whose primary key is not the declared one belongs to another design and its refusal is coming, and
+`CREATE INDEX` without `CONCURRENTLY` blocks the table's writes while it builds - so building first
+would be a refused operation that still stopped the client's writes. Measured on the first version,
+which did exactly that.
+
 ### Statements
 
 ```sql
@@ -1008,26 +1042,29 @@ PostgreSQL and a real ClickHouse **twice each** for that reason.
 
 Four things a renderer refuses rather than approximating:
 
-- **an index for ClickHouse.** It has no B-tree to put one in. A layout carrying an index is a valid
-  document that signs and loads correctly, and this is where it stops being applicable — which is
-  why the control plane asks a library rather than reimplementing the answer;
+- **an index whose method the dialect does not have.** ClickHouse has no B-tree and no BRIN — its
+  primary index is `ORDER BY` — so a `btree` or `brin` index (and every index written before map
+  contract 5, which means `btree`) is refused there, and PostgreSQL refuses the ClickHouse
+  data-skipping methods. A layout carrying such an index is a valid document that signs and loads
+  correctly, because a map carries no dialect; this is where it stops being applicable, which is why
+  the control plane asks a library rather than reimplementing the answer (`schema/016`, `schema/017`);
 - **a layout with no columns for an entity it names a table for** — there is nothing to create;
 - **a key naming a column the layout does not have** — the `PRIMARY KEY` or `ORDER BY` would name a
   column that is not in the table;
 - **no key for a table** — a table without one cannot be addressed, migrated or verified (§4a.5).
 
-And two things are not refusals:
+And two further cases:
 
-- **`partition_by` is refused too, and the refusal is why this bullet exists.** The key is parsed,
-  the control plane emits it when non-empty, and **no renderer has ever applied it**: a layout
-  declaring it produced an unpartitioned table and said nothing. Nothing populates it today, so no
-  issued map has ever carried one, but a hand-written map legally may — the no-account mode is a
-  documented mode — and silently ignoring a storage decision in a signed document is the worst of
-  the three available answers. Rendering it would mean designing two dialect-specific features with
-  no requirement behind them and interpolating a caller's SQL fragment into DDL. So it fails closed
-  until partitioning is implemented, at which point accepting it again is a *loosening* and
-  therefore a contract bump, which is the right price for the key starting to mean something.
-  A tightening under §11, so no bump now. `errors/037`;
+- **`partition_by` renders only in ClickHouse, and only from map contract 5.** Before contract 5 the
+  key was parsed, emitted by the control plane when non-empty, and applied by no renderer, so a
+  document declaring it below 5 is refused at load (`errors/037`) - a storage decision silently
+  dropped out of a signed document is the worst of the three available answers. From contract 5 it
+  is the closed `{field, granularity}` object of §7i, rendered as `PARTITION BY toDate|toYYYYMM|toYear`
+  of a key column. PostgreSQL refuses it by name: declarative partitioning there needs every
+  partition created before a row can arrive, a lifecycle this product does not manage
+  (`schema/018`). A fixed-schema engine refuses any physical design - key order, partition or
+  indexes - rather than rendering nothing for it, because "nothing" is only the right answer when
+  nothing was asked for;
 - **an engine whose schema is fixed in its own source renders no statements at all**, and "no
   statements" there means "nothing to run" rather than "no tables in this layout". The two answers
   are different questions and a library needs both, so they are separate calls: "render this
@@ -1216,9 +1253,15 @@ depends on how the caller's JSON parser preserves keys.
    whose origin cannot be established is not worth a detailed reading, and the refusal a client needs
    is the one about the key rather than the one about the seventh group;
 3. every group, **in name order**, and within a group: the source, then the derived copies in
-   document order (an array's order is the document's), then id uniqueness, then `also_write`;
+   document order (an array's order is the document's), then id uniqueness, then `also_write`.
+   Within one materialisation's layout: reserved table names, then - below contract 5 -
+   `partition_by` before `key_order`, and from contract 5 `key_order`, then `partition_by`, each
+   entity in name order, then `indexes` in document order (§7i);
 4. group coverage, both directions (§7);
-5. `routing`, entries **in shape-id order**.
+5. the physical design rules that need the model (§7i): groups in name order, materialisations in
+   document order within a group, entities in name order within a layout - the key permutation
+   before the partition rules for one entity;
+6. `routing`, entries **in shape-id order**.
 
 **The session stage** — Tier 2 only, and it exists because §7's fifth `also_write` refusal needs the
 adapters:
@@ -1419,6 +1462,11 @@ layout renders** moves neither — no stored artefact contains it, it is derived
 dialect at apply time, and what protects a client whose table was created by the older rendering is
 not a version number but the type check in §7a, which names the table and both types.
 
+Map contract 5 (23 September 2026) is the plain case of the rule: three keys that an earlier library
+would ignore - most sharply `"method": "brin"`, which a contract-4 library reads as a B-tree - so the
+same document would build different tables depending on which library applied it. The IR number did
+not move and no `model_version` changed.
+
 The one that is easy to get wrong: a change to what a library *does* with a map moves the map's
 number even when no key changes. Equalising the ClickHouse timestamp precision changed which
 `also_write` maps a library accepts — a contract-2 library refuses a fan-out a contract-3 one
@@ -1487,3 +1535,37 @@ the canonical payload fingerprint.
 source, write generation and routing. Both SDKs validate the signed packet, map binding and
 portable physical names. `migration/099`–`121` pin these shared rules; the Python local operator
 executes creation and recovery. Loading an authorization does not activate its prepared map.
+
+
+## 7i. Physical design (map contract 5)
+
+A layout may carry three keys beyond tables and column types. All are optional and absence means
+exactly what every earlier map meant; the full description, including what is deliberately outside
+the vocabulary and why, is [physical design](physical-design.md).
+
+| Key | Shape | Rules checkable from the document | Rules that need the model |
+|---|---|---|---|
+| `key_order` | entity -> non-empty list of distinct column names | the entity has a table in this layout | a **permutation** of the entity's declared key (`errors/052`-`054`) |
+| `partition_by` | entity -> exactly `{"field", "granularity"}`, granularity `day`, `month` or `year` | the entity has a table; no other keys (`errors/058`, `059`) | the field is **in the key** and is `date` or `timestamptz` (`errors/055`-`057`) |
+| `indexes[].method` | `btree`, `brin` (PostgreSQL); `minmax`, `set`, `bloom_filter` (ClickHouse); absent = `btree` | granularity 1-1024 for the three data-skipping methods and absent otherwise, one column each; `max_rows` 1-65536 for `set` and absent otherwise; columns exist in the layout; names unique; no other keys (`errors/060`-`070`) | - |
+
+The structural index rules apply to every map contract - an index without columns used to surface as
+a bare `KeyError` from a renderer, in the client's process - and are a tightening. The new keys in a
+document declaring contract 4 or less are refused rather than ignored (`errors/037`, `071`, `072`):
+a contract-4 library would build a B-tree where a contract-5 one builds BRIN, from one document.
+
+**Two rules here are about data, not performance, and both were measured before they were written.**
+A partition follows the key: `ReplacingMergeTree` collapses rows of one key only inside one
+partition, so partitioned on a column outside the key, two writes of one key stayed two rows after
+`OPTIMIZE ... FINAL` (ClickHouse 24.8; the suites re-measure it on every run). And `timestamp`
+without a zone is not a partition field: its ClickHouse column carries no zone, so the partition a
+value falls into follows the server's configured timezone, and a reconfigured server would put one
+key in two partitions - the same duplicate by another road. `date` and `timestamptz`
+(`DateTime64(6, 'UTC')`) depend on no configuration.
+
+A renderer without the model repeats the key half of both rules against the keys it is given, so a
+map loaded without its model still cannot render a key order that drops a column or a partition off
+the key. The DDL is pinned by `schema/014`-`018`. A staging packet's prepared map may raise the
+contract from 4 to 5 - the fresh copy is where a physical design first appears - and may not lower it
+(`migration/133`-`135`); a cutover packet's three candidates share one contract (`migration/136`,
+`137`).

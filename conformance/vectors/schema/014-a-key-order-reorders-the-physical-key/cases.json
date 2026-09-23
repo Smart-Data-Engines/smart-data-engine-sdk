@@ -1,0 +1,20 @@
+[
+  {
+    "materialization": "Ledger@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"ledger\" (\"account\" text, \"amount\" bigint, \"memo\" text, \"posted\" date, PRIMARY KEY (\"posted\", \"account\"))"
+    ],
+    "why": "PRIMARY KEY in the physical order the layout gives, not the declared one. The key is still the model's - the same two columns, so the same uniqueness and the same `get` - and only which prefix the index can seek by has moved."
+  },
+  {
+    "materialization": "Reading@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `reading` (`at` DateTime64(6, 'UTC'), `humidity` Int32, `station` String, `temperature` Float64) ENGINE = ReplacingMergeTree ORDER BY (`at`, `station`)"
+    ],
+    "why": "ORDER BY in the physical order the layout gives. In ClickHouse the key order decides which prefixes prune granules; `ReplacingMergeTree` deduplicates on the whole ORDER BY tuple, which is the same set of columns in either order, so the rows are the same rows."
+  }
+]

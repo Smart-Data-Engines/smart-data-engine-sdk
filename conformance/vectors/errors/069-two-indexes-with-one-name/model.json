@@ -1,0 +1,97 @@
+{
+  "entities": [
+    {
+      "name": "Archive",
+      "fields": [
+        {
+          "name": "day",
+          "type": "date"
+        },
+        {
+          "name": "sensor",
+          "type": "string"
+        },
+        {
+          "name": "total",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "sensor",
+        "day"
+      ]
+    },
+    {
+      "name": "Event",
+      "fields": [
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        },
+        {
+          "name": "seen",
+          "type": "timestamp"
+        }
+      ],
+      "key": [
+        "id",
+        "seen"
+      ]
+    },
+    {
+      "name": "Ledger",
+      "fields": [
+        {
+          "name": "account",
+          "type": "string"
+        },
+        {
+          "name": "amount",
+          "type": "int64"
+        },
+        {
+          "name": "memo",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "posted",
+          "type": "date"
+        }
+      ],
+      "key": [
+        "account",
+        "posted"
+      ]
+    },
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "humidity",
+          "type": "int32"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        },
+        {
+          "name": "temperature",
+          "type": "float64"
+        }
+      ],
+      "key": [
+        "station",
+        "at"
+      ]
+    }
+  ]
+}

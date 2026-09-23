@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
 from .._usage import UsageGate, guarded
@@ -32,6 +33,7 @@ from ..explain import (
 )
 from ..logging import log
 from ..migration import key_columns, same_width
+from ..physical import PhysicalFinding, declared_tables
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
@@ -154,7 +156,9 @@ class PostgresEngine:
     # --- schema ----------------------------------------------------------------------------
 
     @guarded
-    def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]) -> None:
+    def ensure_schema(
+        self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]
+    ) -> tuple[PhysicalFinding, ...]:
         """Create what is missing, change nothing that exists.
 
         Idempotent on purpose: an application restarting must not reapply DDL, and two instances
@@ -163,21 +167,123 @@ class PostgresEngine:
         classification. A library that quietly altered a live column would be doing the one thing
         this product promises never to do without a rollback path.
         """
-        statements = schema_statements(layout, keys=keys, dialect=self.dialect)
+        tables = [
+            statement
+            for statement in schema_statements(layout, keys=keys, dialect=self.dialect)
+            if statement.startswith("CREATE TABLE ")
+        ]
+        self._execute(tables)
+        self._verify_schema(layout)
+        # Indexes only on tables whose key is the declared one. A table with another primary key
+        # belongs to another design - an older map, or somebody else - and this map's refusal is
+        # coming. `CREATE INDEX` without CONCURRENTLY blocks that table's writes while it builds, so
+        # running it first would be a refused operation that still stopped the client's writes.
+        blocked = {
+            finding.table
+            for finding in self._physical_findings(layout, keys)
+            if finding.aspect == "primary key"
+        }
+        applicable = replace(
+            layout,
+            indexes=tuple(
+                index
+                for index in layout.indexes
+                if layout.tables.get(str(index["entity"])) not in blocked
+            ),
+        )
+        indexes = [
+            statement
+            for statement in schema_statements(applicable, keys=keys, dialect=self.dialect)
+            if statement.startswith("CREATE INDEX ")
+        ]
+        self._execute(indexes)
+        log("sde.schema.applied", engine=self.dialect, statements=len(tables) + len(indexes))
+        return self._physical_findings(layout, keys)
 
+    def _execute(self, statements: Sequence[str]) -> None:
         with self._cx.cursor() as cur:
             for statement in statements:
                 try:
                     cur.execute(statement)
                 except Exception as exc:
                     raise EngineError(f"schema statement failed: {statement}: {exc}") from exc
-        log("sde.schema.applied", engine=self.dialect, statements=len(statements))
-        self._verify_schema(layout)
 
     @guarded
-    def validate_schema(self, layout: PhysicalLayout) -> None:
-        """Check the existing physical columns without issuing DDL."""
+    def validate_schema(
+        self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]] | None = None
+    ) -> tuple[PhysicalFinding, ...]:
+        """Check the existing physical columns without issuing DDL; report the physical design."""
         self._verify_schema(layout)
+        return () if keys is None else self._physical_findings(layout, keys)
+
+    def _physical_findings(
+        self, layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]
+    ) -> tuple[PhysicalFinding, ...]:
+        """Primary key order and each declared index's method and columns, from ``pg_index``.
+
+        ``CREATE INDEX IF NOT EXISTS ... USING brin`` keeps an existing B-tree of that name -
+        measured - so the method is read back rather than assumed from the statement that ran.
+        An index with a predicate, an expression or INCLUDE columns is not the index a layout
+        declares, however its name reads.
+        """
+        declared = declared_tables(layout, keys)
+        if not declared:
+            return ()
+        tables = [entry.table for entry in declared]
+        with self._cx.cursor() as cur:
+            cur.execute(
+                "SELECT t.relname, ic.relname, i.indisprimary, am.amname, "
+                "ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY k(num, pos) "
+                "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.num "
+                "ORDER BY k.pos), "
+                "i.indpred IS NULL AND i.indexprs IS NULL AND i.indnkeyatts = i.indnatts "
+                "FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid "
+                "JOIN pg_class t ON t.oid = i.indrelid JOIN pg_am am ON am.oid = ic.relam "
+                "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                "WHERE n.nspname = current_schema() AND t.relname = ANY(%s)",
+                [tables],
+            )
+            rows = cur.fetchall()
+        primary: dict[str, tuple[str, ...]] = {}
+        indexes: dict[str, dict[str, tuple[str, tuple[str, ...], bool]]] = {}
+        for table, index, is_primary, method, columns, simple in rows:
+            names = tuple(str(column) for column in columns)
+            if is_primary:
+                primary[str(table)] = names
+            else:
+                indexes.setdefault(str(table), {})[str(index)] = (str(method), names, bool(simple))
+        findings: list[PhysicalFinding] = []
+        for entry in declared:
+            found_key = primary.get(entry.table)
+            if found_key != entry.key:
+                findings.append(
+                    PhysicalFinding(
+                        entry.table,
+                        "primary key",
+                        repr(list(entry.key)),
+                        "absent" if found_key is None else repr(list(found_key)),
+                    )
+                )
+            for index in entry.indexes:
+                wanted = f"{index.method} on {list(index.columns)}"
+                got = indexes.get(entry.table, {}).get(index.name)
+                if got is None:
+                    findings.append(
+                        PhysicalFinding(entry.table, f"index {index.name}", wanted, "absent")
+                    )
+                    continue
+                method, columns, simple = got
+                if method != index.method or columns != index.columns or not simple:
+                    shape = "" if simple else " with a predicate, expression or INCLUDE"
+                    findings.append(
+                        PhysicalFinding(
+                            entry.table,
+                            f"index {index.name}",
+                            wanted,
+                            f"{method} on {list(columns)}{shape}",
+                        )
+                    )
+        return tuple(findings)
 
     def _verify_schema(self, layout: PhysicalLayout) -> None:
         """Check that what exists is what the map describes, because IF NOT EXISTS does not.

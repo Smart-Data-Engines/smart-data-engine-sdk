@@ -161,7 +161,9 @@ class OrderbookEngine:
 
     # --- schema ----------------------------------------------------------------------------
 
-    def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]) -> None:
+    def ensure_schema(
+        self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]
+    ) -> tuple[Any, ...]:
         """Verify, because there is nothing to create.
 
         The storage exists the moment the engine opens its data directory. What can still be wrong
@@ -209,6 +211,7 @@ class OrderbookEngine:
                 f"symbol and the exchange are how a query reaches the data at all."
             )
         log("sde.schema.applied", engine=self.dialect, statements=0)
+        return ()
 
     # --- data ------------------------------------------------------------------------------
 

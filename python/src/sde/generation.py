@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .errors import MigrationRefused
 
 if TYPE_CHECKING:
     from .model import LogicalModel
+    from .physical import PhysicalFinding
     from .placement import PhysicalLayout, PlacementMap
     from .session import Engine
     from .write_fence import WriteFence
@@ -16,12 +17,16 @@ if TYPE_CHECKING:
 
 class Fencable(Protocol):
     def write_fence(self, table: str, *, project_id: str) -> WriteFence: ...
-    def validate_schema(self, layout: PhysicalLayout) -> None: ...
+    def validate_schema(
+        self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]] | None = None
+    ) -> tuple[PhysicalFinding, ...]: ...
 
 
 DRAIN_TABLE = "__sde_fence_drains"
 EPOCH_COLUMN = "__sde_write_epoch"
 MAX_EPOCH = 9_007_199_254_740_991
+GENERATIONS_SINCE = 4
+"""The placement map contract that introduced ``project_id`` and per-group ``write_epoch``."""
 
 
 def check_epoch(epoch: int) -> int:
@@ -65,9 +70,16 @@ def validate_generations(
     placement: PlacementMap,
     engines: Mapping[str, Engine],
     project_id: str | None,
-) -> None:
+) -> tuple[PhysicalFinding, ...]:
+    """Check generations and columns; return how tables differ from the declared physical design.
+
+    The physical design is reported rather than refused: a running application must not stop
+    because a table's sort key or index differs from the map (requirement 3.6). Columns, types
+    and generations still refuse.
+    """
     if placement.contract < 4:
-        return
+        return ()
+    findings: list[PhysicalFinding] = []
     local_project = check_map_project(placement, project_id)
     assert local_project is not None
     if model.version != placement.model_version:
@@ -82,7 +94,12 @@ def validate_generations(
                 raise MigrationRefused(
                     f"engine {material.engine} does not implement write generations"
                 )
-            cast(Fencable, engines[material.engine]).validate_schema(material.layout)
+            keys = {entity: model.entity(entity).key for entity in material.layout.tables}
+            findings.extend(
+                cast(Fencable, engines[material.engine]).validate_schema(
+                    material.layout, keys=keys
+                )
+            )
             for table in sorted(material.layout.tables.values()):
                 state = (
                     cast(Fencable, engines[material.engine])
@@ -94,6 +111,7 @@ def validate_generations(
                         f"the write generation for {name} is not active in {material.engine}; "
                         "provision the signed map or load the current map before opening a session"
                     )
+    return tuple(findings)
 
 
 def stamp_values(

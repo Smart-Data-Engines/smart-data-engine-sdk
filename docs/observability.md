@@ -59,6 +59,7 @@ one keeps working; the values are in `record.sde_fields` rather than interpolate
 - `sde.route.resolved`
 - `sde.schema.applied`
 - `sde.schema.extra_columns`
+- `sde.schema.physical_mismatch`
 - `sde.telemetry.dropped`
 - `sde.telemetry.window_closed`
 - `sde.write.failed`
@@ -73,6 +74,15 @@ buffered; `Recorder.pending()` hands you the aggregates and `Recorder.acknowledg
 once you have taken them. Whether they ever reach us is a decision made by your code, not by ours.
 The old name was renamed the day somebody read this vocabulary to find out whether the library
 phones home and found a line saying it had.
+
+`sde.schema.physical_mismatch` is a report, never a refusal. A running session emits it when an
+existing table's sort key, primary-key order, partition or index is not the physical design the
+placement map declares, and lists the tables in its fields; `Session.physical` holds the details.
+The rows are the same rows whatever the design, so an application keeps serving them: a difference
+in performance is not an outage this library is allowed to cause. `prepare_schema` refuses the same
+differences, because that is where a person can act on them. On ClickHouse a runtime login without
+`SELECT` on `system.data_skipping_indices` reports declared indexes as *unverified* rather than
+failing to start — see [runtime roles](runtime-roles.md).
 
 ## What is not here
 

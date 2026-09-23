@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "it is one of",
+  "stage": "map",
+  "why": "No week: toStartOfWeek depends on a mode (Sunday or Monday first) and a closed vocabulary has no modes. A week that meant two different things in two deployments is the ambiguity the list exists to remove."
+}

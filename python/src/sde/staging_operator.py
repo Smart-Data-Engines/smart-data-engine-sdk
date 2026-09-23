@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from .errors import MigrationRefused
 from .groups import colocation_groups
 from .local_cutover import CutoverRecoveryRequired
+from .physical import refuse_findings
 from .placement import WATERMARK_TABLE
 from .staging import StagingPlan, StagingReceipt, load_staging_plan
 
@@ -153,7 +154,11 @@ def _finish(
     operator._step(state, "stage_indexes", lambda: creator.create_indexes(target.layout))
 
     def qualify() -> None:
-        operator.engines[target.engine].validate_schema(target.layout)
+        # The fresh copy must be exactly the physical design its signed map authorized.
+        refuse_findings(
+            operator.engines[target.engine].validate_schema(target.layout, keys=keys),
+            MigrationRefused,
+        )
         native = operator.native[target.engine]
         native.qualify(
             sorted(target.layout.tables.values()),

@@ -18,13 +18,29 @@ import { DRAIN_TABLE, EPOCH_COLUMN } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
 import { CONTRACT, entityOf } from './model.js'
+import type { PartitionSpec } from './physical.js'
+import {
+  PHYSICAL_DESIGN_SINCE,
+  checkAgainstModel,
+  parseIndexes,
+  parseKeyOrder,
+  parsePartitionBy,
+} from './physical.js'
 import { enumerateShapes, shapeId } from './shapes.js'
 
 export interface PhysicalLayout {
   readonly tables: Readonly<Record<string, string>>
   readonly columns: Readonly<Record<string, Readonly<Record<string, string>>>>
   readonly indexes: readonly Readonly<Record<string, unknown>>[]
-  readonly partitionBy: Readonly<Record<string, string>>
+  /** Entity -> `{field, granularity}`, contract 5. See `physical.ts`. */
+  readonly partitionBy: Readonly<Record<string, PartitionSpec>>
+  /**
+   * Entity -> its key columns in physical order, contract 5. Absent: the declared order.
+   *
+   * Optional in the type because a layout written by hand before contract 5 has no reason to carry
+   * it, and absent means exactly what every earlier map meant.
+   */
+  readonly keyOrder?: Readonly<Record<string, readonly string[]>>
 }
 
 export interface Materialization {
@@ -90,9 +106,14 @@ export interface LoadOptions {
   readonly requireSignature?: boolean
 }
 
-export const MAP_CONTRACT = 4
+export const MAP_CONTRACT = 5
 /**
  * The placement map's format version, which is not the IR's - see `CONTRACT`.
+ *
+ * Five since 23 September 2026, for the physical design vocabulary (`physical.ts`): the order of a
+ * key, a time partition, and index methods. An earlier library would ignore `"method": "brin"` and
+ * build a B-tree from the same document, which is a loosening and therefore a bump. A contract-5
+ * library reads contracts 1 to 4 with their meaning unchanged, and refuses the new keys in them.
  *
  * Two because the map gained `also_write`, which a contract-1 library would ignore while a
  * contract-2 one honours it: the same document, two different sets of engines written to, and the
@@ -167,7 +188,7 @@ function asRecord(value: unknown, where: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function readLayout(raw: unknown, where: string): MaybeLayout {
+function readLayout(raw: unknown, where: string, contract: number): MaybeLayout {
   const body = asRecord(raw, `${where}: layout`)
   if (body['auto'] === true) {
     if (Object.keys(body).length !== 1) {
@@ -199,24 +220,43 @@ function readLayout(raw: unknown, where: string): MaybeLayout {
       )
     }
   }
-  // `partition_by` is refused rather than ignored: the key is parsed, the control plane emits it
-  // when non-empty, and **no renderer has ever applied it** - a layout declaring it produced an
-  // unpartitioned table and said nothing. Fails closed until partitioning exists. See §7a and
-  // `errors/037`; the reference's comment carries the whole argument.
-  if (Object.keys((body['partition_by'] ?? {}) as Record<string, unknown>).length > 0) {
-    throw new MapError(
-      `${where}: this layout declares partition_by, and no library renders it - the table would ` +
-        'be created unpartitioned and nothing would say so. A storage decision in a signed ' +
-        'document that is silently dropped is worse than a refusal, so this refuses until ' +
-        'partitioning is implemented. Remove the key to apply the rest of the layout.',
-    )
+  const columns = (body['columns'] ?? {}) as PhysicalLayout['columns']
+  let keyOrder: Record<string, readonly string[]> = {}
+  let partitionBy: Record<string, PartitionSpec> = {}
+  if (contract < PHYSICAL_DESIGN_SINCE) {
+    // Before contract 5 `partition_by` had no meaning, and the refusal is the whole point: the key
+    // was parsed, emitted by the control plane when non-empty, and no renderer ever applied it. A
+    // contract-4 document may not start meaning something by it now (`errors/037`).
+    if (Object.keys((body['partition_by'] ?? {}) as Record<string, unknown>).length > 0) {
+      throw new MapError(
+        `${where}: this layout declares partition_by in a document declaring map contract ` +
+          `${contract}, where no library renders it - the table would be created unpartitioned ` +
+          `and nothing would say so. Partitioning is map contract ${PHYSICAL_DESIGN_SINCE}; ` +
+          'remove the key or raise the contract.',
+      )
+    }
+    if ('key_order' in body) {
+      throw new MapError(
+        `${where}: key_order is map contract ${PHYSICAL_DESIGN_SINCE} and this document declares ` +
+          `${contract}. A library of that contract would ignore it and order the key as declared, ` +
+          'so one document would build two different tables.',
+      )
+    }
+  } else {
+    const named = tables as Record<string, string>
+    // Absent is "no design"; `null` is a key with a value that is not a design, refused as the
+    // reference refuses it. `?? {}` would read the two as one - the `or` against `??` divergence
+    // this suite has caught before, one key over.
+    keyOrder = parseKeyOrder(body['key_order'] === undefined ? {} : body['key_order'], where, named)
+    partitionBy = parsePartitionBy(body['partition_by'] === undefined ? {} : body['partition_by'], where, named)
   }
 
   return {
     tables: tables as Record<string, string>,
-    columns: (body['columns'] ?? {}) as PhysicalLayout['columns'],
-    indexes: (body['indexes'] ?? []) as PhysicalLayout['indexes'],
-    partitionBy: (body['partition_by'] ?? {}) as Record<string, string>,
+    columns,
+    indexes: parseIndexes(body['indexes'], where, tables as Record<string, string>, columns, contract),
+    partitionBy,
+    keyOrder,
   }
 }
 
@@ -295,6 +335,7 @@ function readMaterialization(
   raw: unknown,
   where: string,
   isSource: boolean,
+  contract: number,
 ): { readonly mat: Omit<Materialization, 'layout'>; readonly layout: MaybeLayout } {
   const body = asRecord(raw, where)
   for (const required of ['id', 'engine', 'layout']) {
@@ -319,7 +360,7 @@ function readMaterialization(
       engine: String(body['engine']),
       lagBudgetMs: isSource ? null : Number(lag),
     },
-    layout: readLayout(body['layout'], where),
+    layout: readLayout(body['layout'], where, contract),
   }
 }
 
@@ -339,7 +380,7 @@ function defaultLayout(model: LogicalModel, members: readonly string[]): Physica
       .replace(/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/g, '_')
       .toLowerCase()
   }
-  return { tables, columns: {}, indexes: [], partitionBy: {} }
+  return { tables, columns: {}, indexes: [], partitionBy: {}, keyOrder: {} }
 }
 
 /**
@@ -502,6 +543,42 @@ function checkRoutingTargets(
   }
 }
 
+/**
+ * The physical design rules that need the model: key permutations and partitions on the key.
+ *
+ * Materialisations in document order within the group, entities in name order within a layout -
+ * the ordering the reference gives it, so one document refuses the same way in both languages.
+ */
+function checkPhysical(placement: GroupPlacement, model: LogicalModel): void {
+  for (const material of [placement.source, ...placement.derived]) {
+    const layout = material.layout
+    const where = `group '${placement.group}': '${material.id}'`
+    const keyOrder = layout.keyOrder ?? {}
+    const entities = [...new Set([...Object.keys(keyOrder), ...Object.keys(layout.partitionBy)])].sort(
+      compareCodePoints,
+    )
+    for (const entity of entities) {
+      const spec = model.entities.find((candidate) => candidate.name === entity)
+      if (spec === undefined) {
+        throw new MapError(
+          `${where}: the physical design names '${entity}', which this model does not declare, so ` +
+            'there is no key to order or partition by.',
+        )
+      }
+      const fieldTypes: Record<string, string> = Object.create(null)
+      for (const field of spec.fields) fieldTypes[field.name] = field.type
+      checkAgainstModel(
+        where,
+        entity,
+        spec.key,
+        fieldTypes,
+        Object.hasOwn(keyOrder, entity) ? keyOrder[entity] : undefined,
+        Object.hasOwn(layout.partitionBy, entity) ? layout.partitionBy[entity] : undefined,
+      )
+    }
+  }
+}
+
 function requireCanonicalText(value: unknown): void {
   if (typeof value === 'string') {
     // With /u, a valid surrogate pair is one astral code point; only unpaired halves match.
@@ -635,7 +712,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     if (contract < 4 && 'write_epoch' in placement) {
       throw new MapError(`${where}: write_epoch requires placement map contract 4`)
     }
-    const sourceRead = readMaterialization(placement['source'], `${where}.source`, true)
+    const sourceRead = readMaterialization(placement['source'], `${where}.source`, true, contract)
     const source: Materialization = {
       ...sourceRead.mat,
       layout: resolve(sourceRead.layout, 'source'),
@@ -643,7 +720,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
 
     const derivedRaw = (placement['derived'] ?? []) as unknown[]
     const derived: Materialization[] = derivedRaw.map((entry, i) => {
-      const read = readMaterialization(entry, `${where}.derived[${i}]`, false)
+      const read = readMaterialization(entry, `${where}.derived[${i}]`, false, contract)
       return { ...read.mat, layout: resolve(read.layout, `derived[${i}]`) }
     })
 
@@ -706,6 +783,12 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
   const routingRaw = body['routing'] ?? {}
   if (typeof routingRaw !== 'object' || routingRaw === null) {
     throw new MapError("'routing' must be a mapping from shape id to materialisation id")
+  }
+
+  if (options.model) {
+    for (const name of Object.keys(groups).sort(compareCodePoints)) {
+      checkPhysical(groups[name]!, options.model)
+    }
   }
 
   checkRoutingTargets(routingRaw as Record<string, unknown>, groups, options.model)

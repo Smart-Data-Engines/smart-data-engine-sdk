@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "which is not in the key",
+  "stage": "map",
+  "why": "ReplacingMergeTree collapses rows of one key only inside one partition. Partitioned on a column outside the key, two writes of one key can land in two partitions and stay two rows physically for ever - measured on ClickHouse 24.8: FINAL hid the duplicate only because do_not_merge_across_partitions_select_final was 0, and after OPTIMIZE FINAL both rows remained. This is a data rule, not a performance one."
+}

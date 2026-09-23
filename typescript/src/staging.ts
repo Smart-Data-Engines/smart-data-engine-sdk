@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError, MigrationRefused } from './errors.js'
-import { checkMapProject, MAX_EPOCH } from './generation.js'
+import { checkMapProject, GENERATIONS_SINCE, MAX_EPOCH } from './generation.js'
 import { colocationGroups } from './groups.js'
 import { groupColumns } from './layout.js'
 import type { LogicalModel } from './model.js'
@@ -104,7 +104,11 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
       }
     }
     const parsed = loadMap(document, { model, publicKey, requireSignature: true })
-    if (parsed.contract !== 4) throw new MigrationRefused('staging protocol 1 requires map contract 4')
+    // Contract 4 introduced the generations this protocol rests on; 5 adds physical design and
+    // keeps them. Anything newer is refused by loadMap already.
+    if (parsed.contract < GENERATIONS_SINCE) {
+      throw new MigrationRefused(`staging protocol 1 requires map contract ${GENERATIONS_SINCE} or later`)
+    }
     checkMapProject(parsed, projectId)
     for (const placed of Object.values(parsed.groups)) {
       for (const material of [placed.source, ...placed.derived]) {
@@ -116,6 +120,10 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     maps.push(parsed)
   }
   const current = maps[0]!, prepared = maps[1]!
+  // The prepared map may raise the contract - the fresh copy is where a physical design can first
+  // appear - and may not lower it: a lower number tells an older library it may ignore keys the
+  // current map already relies on.
+  if (prepared.contract < current.contract) throw new MigrationRefused('staging cannot lower the placement map contract')
   if (current.mapVersion >= prepared.mapVersion) throw new MigrationRefused('staging must allocate a newer prepared map')
   if (!(group in current.groups) || !equal(Object.keys(current.groups).sort(compareCodePoints), Object.keys(prepared.groups).sort(compareCodePoints))) {
     throw new MigrationRefused('staging cannot add or remove colocation groups')
@@ -136,7 +144,7 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     throw new MigrationRefused('staging group shape is not source-only to one maintained copy')
   }
   if (!equal(oldGroup['source'], newGroup['source'])) throw new MigrationRefused('staging cannot change the existing source')
-  const ignored = ['signature', 'map_version', 'groups']
+  const ignored = ['signature', 'map_version', 'groups', 'contract']
   if (!equal(except(currentRaw, ignored), except(preparedRaw, ignored)) || !equal(current.routing, prepared.routing)) {
     throw new MigrationRefused('staging cannot change routing or other map attributes')
   }
