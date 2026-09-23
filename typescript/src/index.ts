@@ -165,6 +165,7 @@ export {
   windowCopies,
   windowFeatures,
   windowRecord,
+  windowShapes,
 } from './telemetry.js'
 export type { FieldType, NeutralType } from './types.js'
 export { checkType, NEUTRAL_TYPES, T } from './types.js'

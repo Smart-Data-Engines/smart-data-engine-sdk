@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "seq",
+          "type": "int64"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        },
+        {
+          "name": "temperature",
+          "type": "float64"
+        }
+      ],
+      "key": [
+        "station",
+        "at"
+      ]
+    },
+    {
+      "name": "Station",
+      "fields": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "station",
+      "from": "Reading",
+      "to": "Station"
+    }
+  ]
+}

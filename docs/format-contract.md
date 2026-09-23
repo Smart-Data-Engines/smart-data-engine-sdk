@@ -445,6 +445,10 @@ duration and both are declared unmeasurable instead.
       "error_share": 0.06666666666666667,
       "missing": ["total_bytes"],          // sorted; see below
       "complete": true,
+      "shapes": [                          // what each operation shape measured; see below
+        {"id": "834b905754a4f5db", "entity": "Event", "kind": "point_read", "fields": ["id"],
+         "calls": 6, "errors": 1, "rows": 5, "latency_p50_ms": 0.002, "latency_p99_ms": 0.064}
+      ],
       "copies": [                          // optional, absent when the group has no derived copy
         {"group": "Event", "materialization": "Event@ch", "writes": 3, "failures": 1,
          "lag_p50_ms": 0.008, "lag_p99_ms": 1.024, "complete": false}
@@ -478,6 +482,35 @@ infer absence from a null, and the planner treats unknown and zero as opposite e
 features are in it always, because no library can measure them from traffic: `daily_growth_bytes`,
 `index_to_table_ratio`, `time_filtered_share`, `total_bytes`, `write_burstiness`. A hand-written
 list of them was wrong by one the day a sixth field was added, which is why it is derived.
+
+### Shapes
+
+`shapes` says what each operation shape of the group measured, and it is the one place in this
+document that names **fields**: the group's features report that 62% of its calls were range reads,
+and only these entries say which field they ranged over - the fact a key order or a partition is
+chosen from. Still no values: a shape is the structure of a call (§6), and the fields are the
+model's own field names, digests when the client hashes them.
+
+| Field | How it is derived |
+|---|---|
+| `id` | the §6 shape identifier the operation was recorded under |
+| `entity`, `kind`, `fields` | **from the model's own enumeration** of that identifier, never from what the recorder was told |
+| `target` | the relation's target entity, on a `relation_walk` only; absent on every other kind rather than null |
+| `calls` | operations recorded for the shape, failures included |
+| `errors` | failed calls |
+| `rows` | the total the calls returned or wrote, as the recorder was given it: a bulk write counts its rows, a failed call counts none |
+| `latency_p50_ms`, `latency_p99_ms` | the shape's own histogram, by the rules below |
+
+Entries appear only for shapes with traffic, in the model's enumeration order - by entity, kind,
+fields and target, in code point order - and the section is absent rather than empty. **An
+identifier the model does not enumerate is refused**, not described: a window serialised against
+the model it measured cannot contain one, because the model version is a digest over the model, so
+the refusal only answers a recorder driven directly, which would otherwise describe a field nobody
+declared. `telemetry/009` pins a group with two ranged fields, a relation walk and a bulk write.
+
+A reader that predates this section ignores it, because the control plane discards unknown fields
+of a group, and a reader of this section treats its absence as "not reported", never as "no
+traffic by field". Neither direction changes the meaning of the rest of the document.
 
 ### The histogram
 

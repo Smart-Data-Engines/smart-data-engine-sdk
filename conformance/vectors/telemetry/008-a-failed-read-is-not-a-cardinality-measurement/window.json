@@ -24,7 +24,22 @@
         "total_bytes",
         "write_burstiness"
       ],
-      "complete": true
+      "complete": true,
+      "shapes": [
+        {
+          "id": "834b905754a4f5db",
+          "entity": "Event",
+          "kind": "point_read",
+          "fields": [
+            "id"
+          ],
+          "calls": 2,
+          "errors": 1,
+          "rows": 10,
+          "latency_p50_ms": 0.002,
+          "latency_p99_ms": 0.002
+        }
+      ]
     }
   }
 }

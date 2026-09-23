@@ -38,7 +38,7 @@ from .groups import Group, colocation_groups
 from .internal import guard
 from .logging import log
 from .model import LogicalModel
-from .shapes import WRITE_KINDS
+from .shapes import WRITE_KINDS, OperationShape, enumerate_shapes
 
 __all__ = [
     "MEASURED_FIELDS",
@@ -408,6 +408,45 @@ class Window:
 
 
 
+    def shape_records(self, model: LogicalModel, group: str) -> list[dict[str, Any]]:
+        """What each operation shape of one group measured, in the model's enumeration order.
+
+        The evidence a physical design can point at. A group's features say that 62% of its calls
+        were range reads; only this says *which field* they ranged over, which is the fact a key
+        order or a partition is chosen from. Still no values: a shape is the structure of a call,
+        and the fields it names are the model's field names (digests, when the client hashes them).
+
+        The descriptor - entity, kind, fields, target - is taken from the model's own enumeration
+        by identifier, never from the recorder: the recorder is given an identifier, and a document
+        restating a classification the library was told rather than one it derived would let two
+        libraries agree on a shape neither enumerates. ``target`` appears only on a relation walk,
+        for the reason ``copies`` is absent rather than empty.
+
+        Every number is an integer count or a bucket edge divided by a million, so this section is
+        comparable across languages on the same terms as the rest of the document.
+        """
+        recorded = {s.shape_id: s for s in self.shapes if s.group == group}
+        out: list[dict[str, Any]] = []
+        for shape in _enumerated(model, recorded):
+            stats = recorded[shape.id]
+            entry: dict[str, Any] = {
+                "id": shape.id,
+                "entity": shape.entity,
+                "kind": shape.kind,
+                "fields": list(shape.fields),
+            }
+            if shape.target is not None:
+                entry["target"] = shape.target
+            entry.update(
+                calls=stats.calls,
+                errors=stats.errors,
+                rows=stats.rows,
+                latency_p50_ms=stats.latency.percentile_ms(0.5),
+                latency_p99_ms=stats.latency.percentile_ms(0.99),
+            )
+            out.append(entry)
+        return out
+
     def as_record(self, model: LogicalModel) -> dict[str, Any]:
         """This window as the document the control plane reads. Numbers, never rows.
 
@@ -460,6 +499,11 @@ class Window:
             record = self.features(
                 name, has_time_dimension=has_time_dimension(model, by_name[name])
             ).as_record()
+            shapes = self.shape_records(model, name)
+            if shapes:
+                # Absent rather than empty, like `copies`: a group in this document saw traffic,
+                # so an empty list would only arise from a group listed for its copies alone.
+                record["shapes"] = shapes
             copies = [copy.as_record() for copy in self.copies(name)]
             if copies:
                 # Absent rather than empty when the group has no derived copy, for the reason
@@ -474,6 +518,27 @@ class Window:
             "dropped_windows": self.dropped_windows,
             "groups": groups,
         }
+
+
+def _enumerated(model: LogicalModel, recorded: Mapping[str, ShapeStats]) -> list[OperationShape]:
+    """The model's shapes that were recorded, in enumeration order - or a refusal naming the rest.
+
+    A recorder fed by a :class:`~sde.session.Session` only ever sees enumerated identifiers, and the
+    model version is a digest over the model, so a window serialised against the model it measured
+    cannot name a shape that model lacks. A recorder driven directly can, and a document describing
+    an identifier by guesswork would hand the planner a field nobody declared.
+    """
+    enumerated = [shape for shape in enumerate_shapes(model) if shape.id in recorded]
+    known = {shape.id for shape in enumerated}
+    unknown = sorted(identifier for identifier in recorded if identifier not in known)
+    if unknown:
+        raise ValueError(
+            f"this window has records for shapes this model does not enumerate: {unknown}. A shape "
+            f"is described from the model's own enumeration, never from what the recorder was "
+            f"told, so a record for an identifier the model does not produce has no fields to "
+            f"report."
+        )
+    return enumerated
 
 
 def _with_missing(

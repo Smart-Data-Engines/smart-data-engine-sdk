@@ -30,8 +30,8 @@ import type { Group } from './groups.js'
 import { colocationGroups } from './groups.js'
 import { guard } from './internal.js'
 import type { LogicalModel } from './model.js'
-import type { ShapeKind } from './shapes.js'
-import { WRITE_KINDS } from './shapes.js'
+import type { OperationShape, ShapeKind } from './shapes.js'
+import { WRITE_KINDS, enumerateShapes, shapeId } from './shapes.js'
 
 /** 1 microsecond to about 17 s, doubling. Enough to tell a cache hit from a full scan. */
 export const BUCKET_COUNT = 25
@@ -382,6 +382,57 @@ export function windowCopies(window: Window, group: string): CopyFreshness[] {
 }
 
 /**
+ * What each operation shape of one group measured, in the model's enumeration order.
+ *
+ * The evidence a physical design can point at. A group's features say that 62% of its calls were
+ * range reads; only this says *which field* they ranged over, which is the fact a key order or a
+ * partition is chosen from. Still no values: a shape is the structure of a call, and the fields it
+ * names are the model's field names (digests, when the client hashes them).
+ *
+ * The descriptor - entity, kind, fields, target - comes from the model's own enumeration by
+ * identifier, never from the recorder, and `target` appears only on a relation walk. A record for an
+ * identifier the model does not enumerate is refused rather than described by guesswork. Every
+ * number is an integer count or a bucket edge divided by a million, like the rest of the document.
+ */
+export function windowShapes(
+  window: Window,
+  model: LogicalModel,
+  group: string,
+): Record<string, unknown>[] {
+  const recorded = new Map(
+    window.shapes.filter((stats) => stats.group === group).map((stats) => [stats.shapeId, stats]),
+  )
+  const enumerated: OperationShape[] = enumerateShapes(model).filter((shape) =>
+    recorded.has(shapeId(shape)),
+  )
+  const known = new Set(enumerated.map((shape) => shapeId(shape)))
+  const unknown = [...recorded.keys()].filter((id) => !known.has(id)).sort(compareCodePoints)
+  if (unknown.length > 0) {
+    throw new Error(
+      `this window has records for shapes this model does not enumerate: [${unknown.join(', ')}]. ` +
+        `A shape is described from the model's own enumeration, never from what the recorder was ` +
+        `told, so a record for an identifier the model does not produce has no fields to report.`,
+    )
+  }
+  return enumerated.map((shape) => {
+    const stats = recorded.get(shapeId(shape)) as ShapeStats
+    const entry: Record<string, unknown> = {
+      id: shapeId(shape),
+      entity: shape.entity,
+      kind: shape.kind,
+      fields: [...shape.fields],
+    }
+    if (shape.target !== null) entry['target'] = shape.target
+    entry['calls'] = stats.calls
+    entry['errors'] = stats.errors
+    entry['rows'] = stats.rows
+    entry['latency_p50_ms'] = stats.latency.percentileMs(0.5)
+    entry['latency_p99_ms'] = stats.latency.percentileMs(0.99)
+    return entry
+  })
+}
+
+/**
  * Nearest-rank: the smallest sample at least `fraction` of the data is not above.
  *
  * **The same rank rule as `Histogram.percentileMs`, and it did not used to be.** This took the
@@ -528,6 +579,12 @@ export function windowRecord(window: Window, model: LogicalModel): Record<string
     const record = featuresRecord(
       windowFeatures(window, name, { hasTimeDimension: hasTimeDimension(model, group) }),
     )
+    const shapes = windowShapes(window, model, name)
+    if (shapes.length > 0) {
+      // Absent rather than empty, like `copies`: a group in this document saw traffic, so an empty
+      // list would only arise from a group listed for its copies alone.
+      record['shapes'] = shapes
+    }
     const copies = windowCopies(window, name).map(copyFreshnessRecord)
     if (copies.length > 0) {
       // Absent rather than empty when the group has no derived copy, for the reason `also_write` is
