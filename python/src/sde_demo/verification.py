@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import sde
-from sde.generation import check_map_project
+from sde.generation import GENERATIONS_SINCE, check_map_project
 
 from .model import GENERATOR_ID, model, reading
 from .project import DemoRefused, config, credentials, decode, engine, payload, public_keys
@@ -139,7 +139,7 @@ def _active_map(
         public_key=public_keys(settings["public_keys"]),
         require_signature=True,
     )
-    if placement.contract != 4:
+    if placement.contract < GENERATIONS_SINCE:
         raise DemoRefused("Run verification requires an active generation-bearing Weather map.")
     check_map_project(placement, settings["project_id"])
     return placement

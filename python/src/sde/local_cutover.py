@@ -16,7 +16,7 @@ from .canonical import canonical_bytes
 from .cutover import CutoverPlan, load_cutover_plan
 from .errors import EngineError, MigrationRefused
 from .frozen_verification import verify_frozen
-from .generation import EPOCH_COLUMN, check_map_project, json_numbers
+from .generation import EPOCH_COLUMN, GENERATIONS_SINCE, check_map_project, json_numbers
 from .groups import colocation_groups
 from .inspection import InspectionContext
 from .layout import group_columns
@@ -154,8 +154,12 @@ class LocalCutover:
         self._owner()
         document = json_numbers(deepcopy(dict(current)))
         parsed = load_map(document, model=self.model, public_key=self.keys, require_signature=True)
-        if parsed.contract != 4:
-            raise MigrationRefused("local cutover enrollment requires map contract 4")
+        # Generations arrived in contract 4; contract 5 adds a physical design and keeps them,
+        # and an AI-designed initial map is contract 5 from its first version.
+        if parsed.contract < GENERATIONS_SINCE:
+            raise MigrationRefused(
+                f"local cutover enrollment requires map contract {GENERATIONS_SINCE} or later"
+            )
         check_map_project(parsed, self.project_id)
         self.store.enroll(document, canonical_bytes(document))
 
