@@ -285,3 +285,60 @@ def test_findings_are_a_refusal_only_where_a_person_can_act() -> None:
     with pytest.raises(EngineError, match="reading: sort key") as caught:
         refuse_findings((finding,), EngineError)
     assert "IF NOT EXISTS" in str(caught.value)
+
+
+def test_a_loaded_layout_passed_back_as_a_document_loads_again() -> None:
+    """The controller builds the next map from the one in force, and a loaded map is frozen.
+
+    Its lists come back as tuples. Found by the controller's own suite on the day the structural
+    index rules arrived: the second automatic index was refused because the first one's columns
+    were a tuple, in a document that is valid JSON either way.
+    """
+    document = {
+        "contract": 5,
+        "project_id": "1" * 32,
+        "model_version": "0" * 16,
+        "map_version": 1,
+        "groups": {
+            "Reading": {
+                "write_epoch": 1,
+                "source": {
+                    "id": "r",
+                    "engine": "pg",
+                    "layout": {
+                        "tables": {"Reading": "reading"},
+                        "columns": {"Reading": {"station": "text", "at": "timestamptz"}},
+                        "key_order": {"Reading": ["at", "station"]},
+                        "indexes": [
+                            {
+                                "entity": "Reading",
+                                "name": "r_at",
+                                "columns": ["at"],
+                                "method": "brin",
+                            }
+                        ],
+                    },
+                },
+            }
+        },
+    }
+    layout = sde.load_map(document).groups["Reading"].source.layout
+    assert isinstance(layout.indexes[0]["columns"], tuple)
+    again = {**document, "map_version": 2}
+    again["groups"] = {
+        "Reading": {
+            "write_epoch": 1,
+            "source": {
+                "id": "r",
+                "engine": "pg",
+                "layout": {
+                    "tables": layout.tables,
+                    "columns": layout.columns,
+                    "key_order": layout.key_order,
+                    "indexes": layout.indexes,
+                },
+            },
+        }
+    }
+    reloaded = sde.load_map(again).groups["Reading"].source.layout
+    assert reloaded.key_order == layout.key_order and reloaded.indexes == layout.indexes

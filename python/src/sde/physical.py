@@ -127,8 +127,10 @@ def parse_key_order(
                 f"{where}: key_order names {entity!r}, which has no table in this layout. It has "
                 f"{sorted(tables)}."
             )
+        # A tuple is a JSON array too: a loaded layout is frozen into tuples, and a controller
+        # building the next map from the one in force passes them straight back.
         if (
-            not isinstance(columns, list)
+            not isinstance(columns, list | tuple)
             or not columns
             or not all(isinstance(column, str) and column for column in columns)
         ):
@@ -195,7 +197,7 @@ def parse_indexes(
     """
     if raw is None:
         return ()
-    if not isinstance(raw, list):
+    if not isinstance(raw, list | tuple):
         raise MapError(f"{where}: indexes is a list of index definitions")
     allowed = INDEX_KEYS if contract >= PHYSICAL_DESIGN_SINCE else LEGACY_INDEX_KEYS
     out: list[dict[str, Any]] = []
@@ -227,7 +229,7 @@ def parse_indexes(
             raise MapError(f"{at} reuses the index name {name!r}")
         names.add(name)
         if (
-            not isinstance(cols, list)
+            not isinstance(cols, list | tuple)
             or not cols
             or not all(isinstance(column, str) and column for column in cols)
             or len(set(cols)) != len(cols)
