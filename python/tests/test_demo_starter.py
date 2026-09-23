@@ -315,3 +315,20 @@ def test_generator_identity_and_supported_sequence_domain_are_frozen() -> None:
             encoded["at"] = row["at"].isoformat(timespec="microseconds").replace("+00:00", "Z")
             digest.update(sde.canonical_bytes(encoded))
     assert digest.hexdigest() == domain["sha256"]
+
+
+def test_a_designed_initial_map_bootstraps_the_starter() -> None:
+    """An AI-designed first map is placement map contract 5; the starter must take it.
+
+    It refused anything but contract 4 until the physical design arrived, so the Weather demo could
+    not start from the one kind of map the product now issues by default for a design.
+    """
+    bundle, sign = supplied()
+    current = deepcopy(bundle["current_map"])
+    current["contract"] = 5
+    (group,) = current["groups"].values()
+    entity = next(iter(group["source"]["layout"]["tables"]))
+    group["source"]["layout"]["key_order"] = {entity: ["at", "station"]}
+    bundle["current_map"] = sign(current)
+    config, _ = project.bootstrap(bundle)
+    assert config["project_id"] == bundle["project_id"]

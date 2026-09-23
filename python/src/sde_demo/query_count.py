@@ -17,7 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 import sde
-from sde.generation import check_map_project
+from sde.generation import GENERATIONS_SINCE, check_map_project
 from sde.schema import QUOTE
 
 from .model import model
@@ -54,7 +54,7 @@ def _digest(value: Mapping[str, Any]) -> str:
 def _source(placement: sde.PlacementMap, project_id: str) -> sde.Materialization:
     check_map_project(placement, project_id)
     if (
-        placement.contract != 4
+        placement.contract < GENERATIONS_SINCE
         or not placement.signed
         or placement.fingerprint is None
         or placement.model_version != model().version

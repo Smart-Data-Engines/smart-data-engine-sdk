@@ -8,6 +8,10 @@ the staging operator construct them.
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 import sde
@@ -342,3 +346,68 @@ def test_a_loaded_layout_passed_back_as_a_document_loads_again() -> None:
     }
     reloaded = sde.load_map(again).groups["Reading"].source.layout
     assert reloaded.key_order == layout.key_order and reloaded.indexes == layout.indexes
+
+
+def test_the_local_operator_enrolls_a_designed_initial_map(tmp_path: Path) -> None:
+    """An AI-designed first map is contract 5 from version 1; the operator must take it.
+
+    Enrollment only parses, verifies and stores, so no engine is needed to prove it. The operator
+    refused anything but contract 4 until the day this vocabulary arrived.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from sde.local_cutover import LocalCutover
+    from sde.testing.loader import model_from_neutral
+
+    model = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Reading",
+                    "fields": [
+                        {"name": "at", "type": "timestamptz"},
+                        {"name": "station", "type": "string"},
+                    ],
+                    "key": ["station", "at"],
+                }
+            ]
+        }
+    )
+    key = Ed25519PrivateKey.generate()
+    document: dict[str, Any] = {
+        "contract": 5,
+        "project_id": "1" * 32,
+        "model_version": model.version,
+        "map_version": 1,
+        "groups": {
+            "Reading": {
+                "write_epoch": 1,
+                "source": {
+                    "id": "r",
+                    "engine": "ch",
+                    "layout": {
+                        "tables": {"Reading": "reading"},
+                        "columns": {"Reading": {"at": "DateTime64(6, 'UTC')", "station": "String"}},
+                        "key_order": {"Reading": ["at", "station"]},
+                        "partition_by": {"Reading": {"field": "at", "granularity": "month"}},
+                    },
+                },
+            }
+        },
+    }
+    document["signature"] = {
+        "alg": "ed25519",
+        "value": base64.b64encode(key.sign(sde.canonical_bytes(document))).decode(),
+    }
+    local = LocalCutover(
+        tmp_path / "operator",
+        model=model,
+        project_id="1" * 32,
+        public_key=key.public_key().public_bytes_raw(),
+        operators={},
+        runtime={},
+    )
+    local.enroll(document)
+    active = local.active_map()
+    assert active.contract == 5
+    assert active.groups["Reading"].source.layout.key_order == {"Reading": ("at", "station")}

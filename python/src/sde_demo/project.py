@@ -13,7 +13,7 @@ from typing import Any
 
 import sde
 from sde._local_state import confirm_file, transaction, write_bytes
-from sde.generation import check_map_project
+from sde.generation import GENERATIONS_SINCE, check_map_project
 
 from .model import model
 
@@ -109,8 +109,10 @@ def bootstrap(value: dict[str, Any]) -> tuple[dict[str, Any], sde.PlacementMap]:
         value["current_map"], model=logical, public_key=keys, require_signature=True
     )
     check_map_project(placement, value["project_id"])
-    if placement.contract != 4 or placement.map_version != 1:
-        raise DemoRefused("A new demo must start from a signed contract-4 initial map (version 1).")
+    if placement.contract < GENERATIONS_SINCE or placement.map_version != 1:
+        raise DemoRefused(
+            "A new demo must start from a signed generation-bearing initial map (version 1)."
+        )
     for group in placement.groups.values():
         if len(group.all()) != 1 or group.source.engine not in engines:
             raise DemoRefused("Bootstrap must contain only bound initial source materializations.")
