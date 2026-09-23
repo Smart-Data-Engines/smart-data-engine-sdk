@@ -698,7 +698,7 @@ export class Session {
         failed = true
         throw error
       } finally {
-        this.observe(shape, started, returned, failed)
+        this.observe(shape, started, returned, failed, plan)
       }
     })
   }
@@ -722,7 +722,7 @@ export class Session {
         failed = true
         throw error
       } finally {
-        this.observe(shape, started, failed ? 0 : 1, failed)
+        this.observe(shape, started, failed ? 0 : 1, failed, plan)
       }
     })
   }
@@ -752,12 +752,14 @@ export class Session {
         failed = true
         throw error
       } finally {
-        this.observe(shape, started, failed ? 0 : 1, failed)
+        this.observe(shape, started, failed ? 0 : 1, failed, plan)
       }
     })
   }
 
-  private observe(shape: OperationShape, started: number, rows: number, failed: boolean): void {
+  private observe(
+    shape: OperationShape, started: number, rows: number, failed: boolean, plan?: ReadPlan,
+  ): void {
     const recorder = this.recorder
     if (recorder === undefined) return
     recorder.record({
@@ -768,6 +770,7 @@ export class Session {
       nanoseconds: now() - started,
       rows,
       failed,
+      ...(plan === undefined ? {} : readPredicates(plan)),
     })
   }
 
@@ -864,4 +867,14 @@ export function tableFor(layout: PhysicalLayout, entity: string): string {
     )
   }
   return table
+}
+
+/**
+ * What a read filtered on, for telemetry: field names only, never a value. The names are the
+ * model's own - digests when the client hashes them, like the shape's fields.
+ */
+function readPredicates(plan: ReadPlan): { equal: string[]; ranged: string | null } {
+  const equal = [...new Set(plan.filters.filter((item) => item.operation === 'eq').map((item) => item.column.name))]
+  const bounded = [...new Set(plan.filters.filter((item) => item.operation !== 'eq').map((item) => item.column.name))]
+  return { equal, ranged: bounded.sort(compareCodePoints)[0] ?? null }
 }

@@ -1,0 +1,25 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        },
+        {
+          "name": "temperature",
+          "type": "float64"
+        }
+      ],
+      "key": [
+        "station",
+        "at"
+      ]
+    }
+  ]
+}

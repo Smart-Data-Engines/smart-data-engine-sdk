@@ -500,6 +500,14 @@ model's own field names, digests when the client hashes them.
 | `errors` | failed calls |
 | `rows` | the total the calls returned or wrote, as the recorder was given it: a bulk write counts its rows, a failed call counts none |
 | `latency_p50_ms`, `latency_p99_ms` | the shape's own histogram, by the rules below |
+| `filtered_on` | for a read that takes a `where` - `range_read`, `full_scan`, `aggregate` - what its calls filtered on: one entry per combination of `equal` (the fields compared by equality, sorted) and `range` (the field a range bounded, **absent** when none), with its `calls`, in code point order of `equal` then `range`; the entries' calls add up to the shape's. Absent on a shape whose operations take no filter |
+
+`filtered_on` exists because one shape can want two layouts. A range read over `at` is the same
+shape whether or not the query also fixed `station` by equality - `(station, at)` serves the one and
+`(at, station)` the other - and an aggregate over a time range is the same shape as one over the
+whole table. An entry with an empty `equal` and no `range` is calls that filtered on nothing,
+which is a statement; an absent `filtered_on` means the operation cannot filter. Names only,
+never values. `telemetry/010`.
 
 Entries appear only for shapes with traffic, in the model's enumeration order - by entity, kind,
 fields and target, in code point order - and the section is absent rather than empty. **An

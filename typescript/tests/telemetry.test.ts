@@ -243,6 +243,48 @@ describe('shapes in the window document', () => {
     expect(() => windowRecord(recorder.roll()!, model)).toThrow(/does not enumerate/)
   })
 
+  it('records what a read filtered on by name, and nothing for a write', () => {
+    const ranged = enumerateShapes(model).find((shape) => shape.kind === 'range_read')!
+    const write = enumerateShapes(model).find((shape) => shape.kind === 'write')!
+    const recorder = new Recorder(model.version)
+    const read = (equal: string[]): void =>
+      recorder.record({
+        shapeId: shapeId(ranged), group: ranged.group, entity: 'Reading', kind: 'range_read',
+        nanoseconds: 2_000, rows: 3, equal, ranged: 'at',
+      })
+    read(['station'])
+    read(['station', 'station']) // a set, not a list of mentions
+    read([])
+    recorder.record({
+      shapeId: shapeId(write), group: write.group, entity: 'Reading', kind: 'write',
+      nanoseconds: 900, rows: 1,
+    })
+    const document = windowRecord(recorder.roll()!, model) as {
+      groups: Record<string, { shapes: Record<string, unknown>[] }>
+    }
+    const entries = Object.fromEntries(
+      document.groups[ranged.group]!.shapes.map((entry) => [entry['kind'] as string, entry]),
+    )
+    expect(entries['range_read']!['filtered_on']).toEqual([
+      { equal: [], range: 'at', calls: 1 },
+      { equal: ['station'], range: 'at', calls: 2 },
+    ])
+    expect('filtered_on' in entries['write']!).toBe(false)
+  })
+
+  it('says a read filtered on nothing rather than saying nothing', () => {
+    const scan = enumerateShapes(model).find((shape) => shape.kind === 'full_scan')!
+    const recorder = new Recorder(model.version)
+    recorder.record({
+      shapeId: shapeId(scan), group: scan.group, entity: 'Reading', kind: 'full_scan',
+      nanoseconds: 9_000, rows: 40, equal: [],
+    })
+    const document = windowRecord(recorder.roll()!, model) as {
+      groups: Record<string, { shapes: Record<string, unknown>[] }>
+    }
+    expect(document.groups[scan.group]!.shapes[0]!['filtered_on']).toEqual([{ equal: [], calls: 1 }])
+  })
+
   it('leaves the section out for a group listed for its copies alone', () => {
     // Absent rather than empty: an empty list would claim shapes were looked for and found none.
     const group = colocationGroups(model)[0]!.name

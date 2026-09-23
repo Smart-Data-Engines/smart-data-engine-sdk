@@ -106,12 +106,24 @@ export class Histogram {
   }
 }
 
+/** What a read filtered on: the fields compared by equality and the field a range bounded. */
+export interface ReadPredicates {
+  readonly equal: readonly string[]
+  readonly ranged: string
+}
+
 /** What was observed for one operation shape. No values, by construction. */
 export class ShapeStats {
   calls = 0
   rows = 0
   errors = 0
   readonly latency = new Histogram()
+  /**
+   * Calls by what they filtered on - equality fields and the bounded field (`''` for none) - names
+   * only, never values. Two reads of one shape can want different key orders; only an operation
+   * that takes a `where` reports this, so writes and point reads leave it empty.
+   */
+  readonly filtered = new Map<string, { predicates: ReadPredicates; calls: number }>()
 
   constructor(
     readonly shapeId: string,
@@ -120,12 +132,29 @@ export class ShapeStats {
     readonly kind: ShapeKind,
   ) {}
 
-  record(nanoseconds: number, rows: number, failed: boolean): void {
+  record(nanoseconds: number, rows: number, failed: boolean, predicates?: ReadPredicates): void {
     this.calls += 1
     this.rows += rows
     if (failed) this.errors += 1
     this.latency.record(nanoseconds)
+    if (predicates !== undefined) {
+      const key = JSON.stringify([predicates.equal, predicates.ranged])
+      const seen = this.filtered.get(key)
+      if (seen === undefined) this.filtered.set(key, { predicates, calls: 1 })
+      else seen.calls += 1
+    }
   }
+}
+
+/** Code point order of two predicate combinations: equality fields element by element, then range. */
+function comparePredicates(a: ReadPredicates, b: ReadPredicates): number {
+  const length = Math.min(a.equal.length, b.equal.length)
+  for (let index = 0; index < length; index += 1) {
+    const order = compareCodePoints(a.equal[index]!, b.equal[index]!)
+    if (order !== 0) return order
+  }
+  if (a.equal.length !== b.equal.length) return a.equal.length - b.equal.length
+  return compareCodePoints(a.ranged, b.ranged)
 }
 
 /**
@@ -428,6 +457,18 @@ export function windowShapes(
     entry['rows'] = stats.rows
     entry['latency_p50_ms'] = stats.latency.percentileMs(0.5)
     entry['latency_p99_ms'] = stats.latency.percentileMs(0.99)
+    if (stats.filtered.size > 0) {
+      // What the calls filtered on: one entry per combination of equality fields and bounded
+      // field, in code point order. No `equal` fields and no `range` is the calls that filtered
+      // on nothing.
+      entry['filtered_on'] = [...stats.filtered.values()]
+        .sort((a, b) => comparePredicates(a.predicates, b.predicates))
+        .map(({ predicates, calls }) => ({
+          equal: [...predicates.equal],
+          ...(predicates.ranged === '' ? {} : { range: predicates.ranged }),
+          calls,
+        }))
+    }
     return entry
   })
 }
@@ -632,6 +673,13 @@ export interface RecordOptions {
   readonly nanoseconds: number
   readonly rows?: number
   readonly failed?: boolean
+  /**
+   * For an operation that takes a `where`: the fields it compared by equality. Absent for one that
+   * does not filter at all, and then nothing about filters is recorded.
+   */
+  readonly equal?: readonly string[]
+  /** The field a range bounded, for a filtered read. */
+  readonly ranged?: string | null
 }
 
 export interface FanOutOptions {
@@ -670,7 +718,14 @@ export class Recorder {
         stats = new ShapeStats(options.shapeId, options.group, options.entity, options.kind)
         this.current.set(options.shapeId, stats)
       }
-      stats.record(options.nanoseconds, options.rows ?? 0, options.failed === true)
+      const predicates =
+        options.equal === undefined
+          ? undefined
+          : {
+              equal: [...new Set(options.equal)].sort(compareCodePoints),
+              ranged: options.ranged ?? '',
+            }
+      stats.record(options.nanoseconds, options.rows ?? 0, options.failed === true, predicates)
     })
   }
 

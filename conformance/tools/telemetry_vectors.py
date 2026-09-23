@@ -131,6 +131,8 @@ def _record(
             nanoseconds=int(operation["ns"]),
             rows=int(operation.get("rows", 0)),
             failed=bool(operation.get("failed", False)),
+            equal=operation.get("equal"),
+            ranged=operation.get("range"),
         )
     for entry in fan_out or ():
         recorder.record_fan_out(
@@ -539,6 +541,79 @@ def _nine() -> None:
     )
 
 
+def _ten() -> None:
+    """What a read filtered on, by name: the evidence a key order is chosen from.
+
+    One range read over ``at`` is the same shape whether or not the query also fixed ``station`` by
+    equality, and the two want different key orders - ``(station, at)`` serves the first and
+    ``(at, station)`` the second. An aggregate over a time range and one over the whole table are
+    one shape too. Each read now says what it filtered on - the equality fields and the bounded
+    field - so an agent can tell them apart instead of guessing.
+    """
+    sde.clear_registry()
+    model = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Reading",
+                    "fields": [
+                        {"name": "at", "type": "timestamptz"},
+                        {"name": "station", "type": "string"},
+                        {"name": "temperature", "type": "float64"},
+                    ],
+                    "key": ["station", "at"],
+                }
+            ],
+            "relations": [],
+            "atomic": [],
+        }
+    )
+    shapes = {(s.kind, s.fields): s for s in sde.enumerate_shapes(model)}
+    ranged = shapes[("range_read", ("at",))].id
+    aggregate = shapes[("aggregate", ())].id
+    scan = shapes[("full_scan", ())].id
+    operations = [
+        *[
+            {"shape": ranged, "equal": ["station"], "range": "at", "ns": 3_000, "rows": 12}
+            for _ in range(4)
+        ],
+        {"shape": ranged, "equal": [], "range": "at", "ns": 90_000, "rows": 900},
+        # Recorded out of order on purpose: the entries sort by the equality fields' contents,
+        # then by the bounded field, and a field set recorded first does not come first.
+        {"shape": aggregate, "equal": ["temperature"], "range": "at", "ns": 7_000, "rows": 1},
+        {"shape": aggregate, "equal": [], "range": "at", "ns": 60_000, "rows": 1},
+        {"shape": aggregate, "equal": ["station"], "range": "at", "ns": 8_000, "rows": 1},
+        {"shape": aggregate, "equal": [], "ns": 250_000, "rows": 1},
+        {"shape": scan, "equal": [], "ns": 400_000, "rows": 5000},
+        # A write takes no filter and reports none.
+        {"shape": shapes[("write", ())].id, "ns": 2_000, "rows": 1},
+    ]
+    _write(
+        "010-what-a-read-filtered-on",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "Each read shape reports what its calls filtered on: `filtered_on` has one "
+                    "entry per combination of equality fields (`equal`, sorted) and bounded field "
+                    "(`range`, absent when the call bounded nothing), with the number of calls, in "
+                    "code point order. Four range reads over `at` also fixed `station` and one did "
+                    "not; four aggregates - over the whole table, over a time range, and over a "
+                    "time range fixing `station` or `temperature` - are one shape with four "
+                    "entries, "
+                    "sorted by the equality fields' contents and then by the bounded field rather "
+                    "than in the order they were recorded; a full scan that filtered on nothing "
+                    "says so with an empty "
+                    "`equal`. Names only, never a value. A write takes no filter and has no "
+                    "`filtered_on` at all - absent, not empty, because it was never asked."
+                )
+            },
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true")
@@ -558,6 +633,7 @@ def main() -> int:
     _seven()
     _eight()
     _nine()
+    _ten()
     return 0
 
 

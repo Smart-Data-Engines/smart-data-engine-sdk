@@ -240,6 +240,8 @@ def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: P
             nanoseconds=int(operation["ns"]),
             rows=int(operation.get("rows", 0)),
             failed=bool(operation.get("failed", False)),
+            equal=operation.get("equal"),
+            ranged=operation.get("range"),
         )
     fan_out = case / "fan_out.json"
     if fan_out.is_file():

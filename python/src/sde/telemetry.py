@@ -136,13 +136,30 @@ class ShapeStats:
     errors: int = 0
     latency: Histogram = field(default_factory=Histogram)
     call_site: str | None = None
+    filtered: dict[tuple[tuple[str, ...], str], int] = field(default_factory=dict)
+    """Calls by what they filtered on - the fields compared by equality and the field a range
+    bounded (``""`` for none) - names only, never values.
 
-    def record(self, nanoseconds: int, rows: int, failed: bool) -> None:
+    A range read over ``at`` with ``where={"station": ...}`` and one without it are the same shape
+    (the shape is enumerated from the model and routed by identifier), and they want different key
+    orders; an aggregate over a time range and one over the whole table are the same shape too.
+    Only an operation that takes a ``where`` reports this, so writes and point reads leave it empty
+    rather than claiming they filtered on nothing."""
+
+    def record(
+        self,
+        nanoseconds: int,
+        rows: int,
+        failed: bool,
+        predicates: tuple[tuple[str, ...], str] | None = None,
+    ) -> None:
         self.calls += 1
         self.rows += rows
         if failed:
             self.errors += 1
         self.latency.record(nanoseconds)
+        if predicates is not None:
+            self.filtered[predicates] = self.filtered.get(predicates, 0) + 1
 
 
 @dataclass
@@ -444,6 +461,14 @@ class Window:
                 latency_p50_ms=stats.latency.percentile_ms(0.5),
                 latency_p99_ms=stats.latency.percentile_ms(0.99),
             )
+            if stats.filtered:
+                # What the calls filtered on: one entry per combination of equality fields and
+                # bounded field, in code point order. An entry with no `equal` fields and no
+                # `range` is the calls that filtered on nothing.
+                entry["filtered_on"] = [
+                    {"equal": list(equal), **({"range": ranged} if ranged else {}), "calls": calls}
+                    for (equal, ranged), calls in sorted(stats.filtered.items())
+                ]
             out.append(entry)
         return out
 
@@ -649,11 +674,27 @@ class Recorder:
         nanoseconds: int,
         rows: int = 0,
         failed: bool = False,
+        equal: Sequence[str] | None = None,
+        ranged: str | None = None,
     ) -> None:
-        """Record one operation. Never raises, never blocks on the common path."""
+        """Record one operation. Never raises, never blocks on the common path.
+
+        For an operation that takes a ``where``, ``equal`` names the fields it compared by
+        equality and ``ranged`` the field a range bounded; ``equal`` is ``None`` for an operation
+        that does not filter at all, and then nothing about filters is recorded.
+        """
         guard(
             "telemetry.record",
-            lambda: self._record(shape_id, group, entity, kind, nanoseconds, rows, failed),
+            lambda: self._record(
+                shape_id,
+                group,
+                entity,
+                kind,
+                nanoseconds,
+                rows,
+                failed,
+                None if equal is None else (tuple(sorted(set(equal))), ranged or ""),
+            ),
         )
 
     def _record(
@@ -665,6 +706,7 @@ class Recorder:
         nanoseconds: int,
         rows: int,
         failed: bool,
+        predicates: tuple[tuple[str, ...], str] | None = None,
     ) -> None:
         stats = self._current.get(shape_id)
         if stats is None:
@@ -676,7 +718,7 @@ class Recorder:
                         call_site=_call_site(),
                     )
                     self._current[shape_id] = stats
-        stats.record(nanoseconds, rows, failed)
+        stats.record(nanoseconds, rows, failed, predicates)
 
     def record_fan_out(
         self, *, group: str, materialization: str, nanoseconds: int, failed: bool = False

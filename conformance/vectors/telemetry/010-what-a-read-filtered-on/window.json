@@ -1,0 +1,126 @@
+{
+  "model_version": "329bd742defda99c",
+  "complete": true,
+  "dropped_windows": 0,
+  "groups": {
+    "Reading": {
+      "calls": 11,
+      "read_write_ratio": 10.0,
+      "shape_mix": {
+        "aggregate": 0.36363636363636365,
+        "full_scan": 0.09090909090909091,
+        "range_read": 0.45454545454545453,
+        "write": 0.09090909090909091
+      },
+      "latency_p50_ms": 0.008,
+      "latency_p99_ms": 0.512,
+      "result_cardinality_p50": 189.6,
+      "result_cardinality_p99": 5000.0,
+      "pk_access_share": 0.0,
+      "has_time_dimension": true,
+      "distinct_shapes": 4,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "time_filtered_share",
+        "total_bytes",
+        "write_burstiness"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "d85fcc17f5c6d0ee",
+          "entity": "Reading",
+          "kind": "aggregate",
+          "fields": [],
+          "calls": 4,
+          "errors": 0,
+          "rows": 4,
+          "latency_p50_ms": 0.016,
+          "latency_p99_ms": 0.256,
+          "filtered_on": [
+            {
+              "equal": [],
+              "calls": 1
+            },
+            {
+              "equal": [],
+              "range": "at",
+              "calls": 1
+            },
+            {
+              "equal": [
+                "station"
+              ],
+              "range": "at",
+              "calls": 1
+            },
+            {
+              "equal": [
+                "temperature"
+              ],
+              "range": "at",
+              "calls": 1
+            }
+          ]
+        },
+        {
+          "id": "c420c132d5534961",
+          "entity": "Reading",
+          "kind": "full_scan",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 5000,
+          "latency_p50_ms": 0.512,
+          "latency_p99_ms": 0.512,
+          "filtered_on": [
+            {
+              "equal": [],
+              "calls": 1
+            }
+          ]
+        },
+        {
+          "id": "f6628f3174c65623",
+          "entity": "Reading",
+          "kind": "range_read",
+          "fields": [
+            "at"
+          ],
+          "calls": 5,
+          "errors": 0,
+          "rows": 948,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.128,
+          "filtered_on": [
+            {
+              "equal": [],
+              "range": "at",
+              "calls": 1
+            },
+            {
+              "equal": [
+                "station"
+              ],
+              "range": "at",
+              "calls": 4
+            }
+          ]
+        },
+        {
+          "id": "13d528a6abccae16",
+          "entity": "Reading",
+          "kind": "write",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
+    }
+  }
+}
