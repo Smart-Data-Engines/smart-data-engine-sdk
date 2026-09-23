@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "needs an integer granularity from 1 to 1024",
+  "stage": "map",
+  "why": "A data-skipping index summarises a number of granules per entry and ClickHouse needs the number. No default: a default chosen by a library is a performance decision taken by whichever version happens to be installed."
+}

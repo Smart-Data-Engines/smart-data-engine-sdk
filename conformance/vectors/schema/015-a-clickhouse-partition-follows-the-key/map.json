@@ -1,0 +1,110 @@
+{
+  "contract": 5,
+  "model_version": "188335bb5d346bf9",
+  "map_version": 1,
+  "groups": {
+    "Archive": {
+      "source": {
+        "id": "Archive@ch",
+        "engine": "ch-1",
+        "layout": {
+          "tables": {
+            "Archive": "archive"
+          },
+          "columns": {
+            "Archive": {
+              "day": "Date32",
+              "sensor": "String",
+              "total": "Int64"
+            }
+          },
+          "partition_by": {
+            "Archive": {
+              "field": "day",
+              "granularity": "year"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    },
+    "Event": {
+      "source": {
+        "id": "Event@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Event": "event"
+          },
+          "columns": {
+            "Event": {
+              "id": "bigint",
+              "kind": "text",
+              "seen": "timestamp"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    },
+    "Ledger": {
+      "source": {
+        "id": "Ledger@ch",
+        "engine": "ch-1",
+        "layout": {
+          "tables": {
+            "Ledger": "ledger"
+          },
+          "columns": {
+            "Ledger": {
+              "account": "String",
+              "amount": "Int64",
+              "memo": "Nullable(String)",
+              "posted": "Date32"
+            }
+          },
+          "partition_by": {
+            "Ledger": {
+              "field": "posted",
+              "granularity": "day"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    },
+    "Reading": {
+      "source": {
+        "id": "Reading@ch",
+        "engine": "ch-1",
+        "layout": {
+          "tables": {
+            "Reading": "reading"
+          },
+          "columns": {
+            "Reading": {
+              "at": "DateTime64(6, 'UTC')",
+              "humidity": "Int32",
+              "station": "String",
+              "temperature": "Float64"
+            }
+          },
+          "key_order": {
+            "Reading": [
+              "at",
+              "station"
+            ]
+          },
+          "partition_by": {
+            "Reading": {
+              "field": "at",
+              "granularity": "month"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    }
+  },
+  "project_id": "55555555555555555555555555555555"
+}

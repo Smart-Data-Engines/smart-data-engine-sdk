@@ -65,6 +65,12 @@ export {
   neutralDeclaration,
   ref,
 } from './model.js'
+export type { DeclaredIndex, DeclaredTable, PartitionSpec, PhysicalFinding } from './physical.js'
+export {
+  PHYSICAL_DESIGN_SINCE,
+  capabilities as physicalCapabilities,
+  describeFinding,
+} from './physical.js'
 export type {
   GroupPlacement,
   LoadOptions,

@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..errors import EngineError, MigrationRefused
+from ..physical import POSTGRES_METHODS, index_method
 from ..placement import PhysicalLayout
 from ..schema import schema_statements
 from ._operator import NativeOperator, TableIdentity
@@ -75,12 +76,23 @@ class NativeStaging:
             if present[1] != marker:
                 raise MigrationRefused("staging refuses a table without its exact creation marker")
             return self.native.identity(table)
+        # The whole physical design of this one table: key order, partition and - in ClickHouse,
+        # where `CREATE TABLE` is the only moment an index can be declared without a mutation over
+        # every part - its data-skipping indexes. An earlier version passed the partition alone,
+        # so a staged copy would have silently lost the key order and the indexes its signed map
+        # authorized. PostgreSQL indexes follow separately in `create_indexes`.
         single = PhysicalLayout(
             tables={entity: table},
             columns={entity: layout.columns[entity]},
             partition_by={entity: layout.partition_by[entity]}
             if entity in layout.partition_by
             else {},
+            key_order={entity: layout.key_order[entity]} if entity in layout.key_order else {},
+            indexes=tuple(
+                index
+                for index in layout.indexes
+                if self.dialect == "clickhouse" and str(index["entity"]) == entity
+            ),
         )
         statements = schema_statements(single, keys=keys, dialect=self.dialect)
         if len(statements) != 1 or not statements[0].startswith("CREATE TABLE IF NOT EXISTS "):
@@ -111,18 +123,23 @@ class NativeStaging:
 
     def create_indexes(self, layout: PhysicalLayout) -> None:
         if self.dialect != "postgres":
-            if layout.indexes:
-                raise MigrationRefused("this staging target cannot create the requested indexes")
+            # ClickHouse data-skipping indexes were declared inside `CREATE TABLE`; qualification
+            # reads them back from `system.data_skipping_indices` before the stage is accepted.
             return
         for index in layout.indexes:
             name, entity = str(index["name"]), str(index["entity"])
+            declared_method = index_method(index)
+            if declared_method not in POSTGRES_METHODS:
+                raise MigrationRefused(f"PostgreSQL cannot create a {declared_method} index")
             table = self.native.identity(layout.tables[entity])
             columns = [str(column) for column in index["columns"]]
             rows = self._index(name)
             if not rows:
                 column_sql = ", ".join(self.quote(column) for column in columns)
+                using = "" if declared_method == "btree" else f"USING {declared_method} "
                 self.native.command(
-                    f"CREATE INDEX {self.quote(name)} ON {self.quote(table.name)} ({column_sql})"
+                    f"CREATE INDEX {self.quote(name)} ON {self.quote(table.name)} "
+                    f"{using}({column_sql})"
                 )
                 rows = self._index(name)
             if len(rows) != 1:
@@ -134,7 +151,7 @@ class NativeStaging:
                 or not valid
                 or not ready
                 or not simple
-                or method != "btree"
+                or method != declared_method
                 or list(actual) != columns
                 or any(options)
             ):

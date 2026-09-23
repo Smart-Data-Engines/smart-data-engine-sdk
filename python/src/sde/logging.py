@@ -47,6 +47,10 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # writes are unaffected - but logged, because the alternative to refusing is saying
         # nothing, and a schema that has quietly diverged is worth one line.
         "sde.schema.extra_columns",
+        # physical_mismatch fires when a session finds tables whose sort key, partition or
+        # indexes differ from the physical design the map declares. Reported, not refused: the
+        # rows are the same and a running application must not stop over performance.
+        "sde.schema.physical_mismatch",
         "sde.write.failed",
         # A dual-write fan-out did not reach a copy. Not an application failure: the row is in the
         # source, which is authoritative, and VERIFY is the gate that refuses to switch reads while

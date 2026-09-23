@@ -38,6 +38,7 @@ from .layout import group_columns
 from .logging import log
 from .migration import precision_refusal
 from .model import LogicalModel
+from .physical import PhysicalFinding
 from .placement import Materialization, PlacementMap
 from .query import (
     NumericSummary,
@@ -72,7 +73,7 @@ class Engine(Protocol):
 
     dialect: str
 
-    def ensure_schema(self, layout: Any, *, keys: Mapping[str, Any]) -> None: ...
+    def ensure_schema(self, layout: Any, *, keys: Mapping[str, Any]) -> Any: ...
     def insert(self, table: str, values: Mapping[str, Any]) -> None: ...
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None: ...
 
@@ -208,7 +209,8 @@ class Session:
         # the same place. It costs one statement per participating engine, once per process, and
         # nothing at all for an unsigned map.
         with session_owner(self):
-            validate_generations(model, placement, self._engines, project_id)
+            self._physical = validate_generations(model, placement, self._engines, project_id)
+            self._report_physical()
             self._forward_only = enforce_forward_only(placement, self._engines)
 
     @classmethod
@@ -314,6 +316,26 @@ class Session:
         return MappingProxyType(self._engines)
 
     @property
+    def physical(self) -> tuple[PhysicalFinding, ...]:
+        """How existing tables differ from the physical design the map declares, if at all.
+
+        Reported, never refused, because the difference is performance: a table whose sort key,
+        partition or index is not the one declared still stores and returns exactly the same rows,
+        and turning that into an outage would make this library the thing that broke production
+        (requirement 3.6). Provisioning refuses the same differences, which is where a person can
+        act on them. Empty until a check has run and when everything matches.
+        """
+        return self._physical
+
+    def _report_physical(self) -> None:
+        if self._physical:
+            log(
+                "sde.schema.physical_mismatch",
+                findings=len(self._physical),
+                tables=sorted({finding.table for finding in self._physical}),
+            )
+
+    @property
     def rollback_protection(self) -> WatermarkCheck:
         """Whether an older map could be loaded over this one, and why.
 
@@ -408,14 +430,21 @@ class Session:
     def ensure_schema(self) -> None:
         """Create what each engine is missing for the groups placed in it."""
         if self._placement.contract >= 4:
-            validate_generations(self._model, self._placement, self._engines, self._project_id)
+            self._physical = validate_generations(
+                self._model, self._placement, self._engines, self._project_id
+            )
+            self._report_physical()
             return
+        findings: list[PhysicalFinding] = []
         for group in self._groups:
             placement = self._placement.placement_of(group.name)
             keys = {name: self._model.entity(name).key for name in group.members}
             for materialization in placement.all():
                 engine = self._engines[materialization.engine]
-                engine.ensure_schema(materialization.layout, keys=keys)
+                # `or ()`: an adapter written before this returned findings returns None.
+                findings.extend(engine.ensure_schema(materialization.layout, keys=keys) or ())
+        self._physical = tuple(findings)
+        self._report_physical()
         log("sde.schema.applied", groups=len(self._groups))
 
     # --- data ------------------------------------------------------------------------------

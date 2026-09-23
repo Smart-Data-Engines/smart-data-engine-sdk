@@ -71,6 +71,12 @@ from ..explain import (
 )
 from ..logging import log
 from ..migration import key_columns, same_width
+from ..physical import (
+    PhysicalFinding,
+    declared_tables,
+    parse_identifier_list,
+    parse_partition_key,
+)
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
@@ -357,16 +363,21 @@ class ClickHouseEngine:
     # --- schema ----------------------------------------------------------------------------
 
     @guarded
-    def ensure_schema(self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]) -> None:
+    def ensure_schema(
+        self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]]
+    ) -> tuple[PhysicalFinding, ...]:
         """Create what is missing, change nothing that exists.
 
         `ORDER BY` is the declared key, in declared order. That order is positional and carries
         meaning: it decides which prefixes of the key can prune granules, so sorting it would
         change the physical performance of the table while leaving the map looking identical.
 
-        No indexes are created. `layout.indexes` is empty for this dialect by construction - see
-        `sde.layout` - because ClickHouse's `CREATE INDEX` builds a data-skipping index that needs
-        a type and a granularity, and choosing those is a planner decision with a cost attached.
+        Data-skipping indexes, when a layout declares them (map contract 5), are part of the
+        `CREATE TABLE` statement: `IF NOT EXISTS` never adds one to a table that already exists.
+
+        Returns how existing tables differ from the declared physical design - sort key, partition,
+        indexes - without refusing: the caller decides whether a difference is a refusal (a person
+        provisioning a map) or a report (a running session). Columns and types still refuse here.
         """
         statements = schema_statements(layout, keys=keys, dialect=self.dialect)
 
@@ -377,11 +388,122 @@ class ClickHouseEngine:
                 raise EngineError(f"schema statement failed: {statement}: {exc}") from exc
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
         self._verify_schema(layout)
+        return self._physical_findings(layout, keys)
 
     @guarded
-    def validate_schema(self, layout: PhysicalLayout) -> None:
-        """Check the existing physical columns without issuing DDL."""
+    def validate_schema(
+        self, layout: PhysicalLayout, *, keys: Mapping[str, Sequence[str]] | None = None
+    ) -> tuple[PhysicalFinding, ...]:
+        """Check the existing physical columns without issuing DDL; report the physical design."""
         self._verify_schema(layout)
+        return () if keys is None else self._physical_findings(layout, keys)
+
+    def _physical_findings(
+        self, layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]
+    ) -> tuple[PhysicalFinding, ...]:
+        """Sort key, partition and data-skipping indexes as the catalogue reports them.
+
+        The catalogue formats expressions, so they are parsed into names rather than compared as
+        strings we predict (:func:`sde.physical.parse_identifier_list`). A key or partition the
+        parser does not understand is reported as it stands - an expression we cannot read is not
+        evidence that the table matches.
+        """
+        declared = declared_tables(layout, keys)
+        if not declared:
+            return ()
+        tables = [entry.table for entry in declared]
+        described = self._cx.query(
+            "SELECT name, sorting_key, partition_key FROM system.tables "
+            "WHERE database = currentDatabase() AND name IN %(tables)s",
+            parameters={"tables": tables},
+        ).result_rows
+        keys_found = {str(name): (str(sort), str(part)) for name, sort, part in described}
+        present: dict[str, dict[str, tuple[str, str, int]]] = {}
+        unreadable = ""
+        indexed = sorted(entry.table for entry in declared if entry.indexes)
+        # Read only when something is declared. `system.tables` and `system.columns` are filtered
+        # by the login's own table privileges, so a restricted runtime login reads them without a
+        # grant; `system.data_skipping_indices` needs an explicit one (measured, 24.8: code 497).
+        # Reading it for every table would have made every session of an existing deployment
+        # fail to start after an upgrade, for a check about performance.
+        if indexed:
+            try:
+                index_rows = self._cx.query(
+                    "SELECT table, name, type_full, expr, granularity "
+                    "FROM system.data_skipping_indices "
+                    "WHERE database = currentDatabase() AND table IN %(tables)s",
+                    parameters={"tables": indexed},
+                ).result_rows
+            except Exception as exc:
+                if getattr(exc, "code", None) != 497:
+                    raise
+                # Unverified, not matching: a running session reports this and goes on; a person
+                # provisioning refuses on it, because "could not look" is not "looked and agreed".
+                unreadable = (
+                    "unverified: this login cannot read system.data_skipping_indices "
+                    "(GRANT SELECT ON system.data_skipping_indices to verify it)"
+                )
+                index_rows = []
+            for table_name, index_name, type_full, expr, granularity in index_rows:
+                present.setdefault(str(table_name), {})[str(index_name)] = (
+                    str(type_full),
+                    str(expr),
+                    int(granularity),
+                )
+        findings: list[PhysicalFinding] = []
+        for entry in declared:
+            if entry.table not in keys_found:
+                continue  # _verify_schema has already refused a missing table
+            sorting, partition = keys_found[entry.table]
+            try:
+                found_key: tuple[str, ...] | str = parse_identifier_list(sorting)
+            except ValueError:
+                found_key = repr(sorting)
+            if found_key != entry.key:
+                findings.append(
+                    PhysicalFinding(entry.table, "sort key", repr(list(entry.key)), str(found_key))
+                )
+            try:
+                found_partition: tuple[str, str] | str | None = parse_partition_key(partition)
+            except ValueError:
+                found_partition = repr(partition)
+            if found_partition != entry.partition:
+                findings.append(
+                    PhysicalFinding(
+                        entry.table, "partition", str(entry.partition), str(found_partition)
+                    )
+                )
+            for index in entry.indexes:
+                got = present.get(entry.table, {}).get(index.name)
+                wanted = (
+                    f"{index.type_full} on {list(index.columns)} granularity {index.granularity}"
+                )
+                if got is None:
+                    findings.append(
+                        PhysicalFinding(
+                            entry.table, f"index {index.name}", wanted, unreadable or "absent"
+                        )
+                    )
+                    continue
+                type_full, expr, granularity = got
+                try:
+                    columns: tuple[str, ...] | str = parse_identifier_list(expr)
+                except ValueError:
+                    columns = repr(expr)
+                if (
+                    type_full != index.type_full
+                    or columns != index.columns
+                    or granularity != index.granularity
+                ):
+                    findings.append(
+                        PhysicalFinding(
+                            entry.table,
+                            f"index {index.name}",
+                            wanted,
+                            f"{type_full} on {columns} granularity {granularity}",
+                        )
+                    )
+        return tuple(findings)
 
     def _verify_schema(self, layout: PhysicalLayout) -> None:
         """The same check as the PostgreSQL adapter, for the same reason.

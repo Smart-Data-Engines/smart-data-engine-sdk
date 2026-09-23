@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from .canonical import CanonicalError, canonical_bytes
 from .errors import MapError, MigrationRefused
-from .generation import MAX_EPOCH, check_map_project, json_numbers
+from .generation import GENERATIONS_SINCE, MAX_EPOCH, check_map_project, json_numbers
 from .model import LogicalModel
 from .placement import PlacementMap, _verify_signature, load_map
 from .shapes import enumerate_shapes
@@ -163,8 +163,12 @@ def _load(
                 if layout.get("auto"):
                     raise MigrationRefused("cutover maps require explicit physical layouts")
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
-        if parsed.contract != 4:
-            raise MigrationRefused("cutover protocol 1 requires placement map contract 4")
+        # Generations arrived in contract 4 and contract 5 keeps them. The three candidates share
+        # every top-level attribute, contract included, which the comparison below enforces.
+        if parsed.contract < GENERATIONS_SINCE:
+            raise MigrationRefused(
+                f"cutover protocol 1 requires placement map contract {GENERATIONS_SINCE} or later"
+            )
         check_map_project(parsed, project_id)
         _positive(parsed.map_version, "map_version")
         maps[name] = parsed

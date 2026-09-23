@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "needs an integer max_rows from 1 to 65536",
+  "stage": "map",
+  "why": "set(0) means unlimited in ClickHouse, which is an unbounded memory commitment per index entry, so zero is outside the range rather than a default."
+}

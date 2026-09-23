@@ -22,9 +22,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from .errors import EngineError
 from .layout import DIALECTS, FIXED_SCHEMA
+from .physical import (
+    CLICKHOUSE_METHODS,
+    POSTGRES_METHODS,
+    effective_key,
+    index_method,
+    partition_expression,
+)
 from .placement import PhysicalLayout
 
 
@@ -85,35 +93,75 @@ def _columns_and_key(
     return cols, key
 
 
+def _sorted_indexes(layout: PhysicalLayout) -> list[Mapping[str, Any]]:
+    """Indexes in code point order of their name (§7a), whatever order the document gave."""
+    return sorted(layout.indexes, key=lambda index: str(index["name"]))
+
+
 def _postgres_statements(
     layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]
 ) -> tuple[str, ...]:
+    if layout.partition_by:
+        raise EngineError(
+            f"the layout partitions {sorted(layout.partition_by)} and PostgreSQL partitioning is "
+            f"not rendered by this library: every partition would have to exist before a row "
+            f"arrived, which is a lifecycle this product does not manage. An unpartitioned table "
+            f"under a map that says otherwise would be a silent drop, so this refuses."
+        )
     statements: list[str] = []
     for entity, table in sorted(layout.tables.items()):
         cols, key = _columns_and_key(layout, entity, keys)
+        ordered = effective_key(
+            f"table {table!r}",
+            entity=entity,
+            key=key,
+            key_order=layout.key_order,
+            error=EngineError,
+        )
         defs = ", ".join(f"{_quote_ansi(c)} {t}" for c, t in sorted(cols.items()))
-        pk = ", ".join(_quote_ansi(c) for c in key)
+        pk = ", ".join(_quote_ansi(c) for c in ordered)
         statements.append(
             f"CREATE TABLE IF NOT EXISTS {_quote_ansi(table)} ({defs}, PRIMARY KEY ({pk}))"
         )
 
-    for index in layout.indexes:
+    for index in _sorted_indexes(layout):
         index_entity = str(index["entity"])
         index_table = layout.tables.get(index_entity)
         if index_table is None:
             continue
+        method = index_method(index)
+        if method not in POSTGRES_METHODS:
+            raise EngineError(
+                f"index {index['name']!r} is a {method} index, which is a ClickHouse data-skipping "
+                f"index; PostgreSQL has {list(POSTGRES_METHODS)}. This map was designed for "
+                f"another dialect."
+            )
         index_name = str(index["name"])
         index_cols = ", ".join(_quote_ansi(str(c)) for c in index["columns"])
+        # A B-tree keeps the bytes every earlier map produced: no USING clause.
+        using = "" if method == "btree" else f"USING {method} "
         statements.append(
             f"CREATE INDEX IF NOT EXISTS {_quote_ansi(index_name)} "
-            f"ON {_quote_ansi(index_table)} ({index_cols})"
+            f"ON {_quote_ansi(index_table)} {using}({index_cols})"
         )
     return tuple(statements)
+
+
+def _skip_index_type(index: Mapping[str, Any]) -> str:
+    method = index_method(index)
+    return f"set({index['max_rows']})" if method == "set" else method
 
 
 def _clickhouse_statements(
     layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]
 ) -> tuple[str, ...]:
+    legacy = [index for index in layout.indexes if index_method(index) not in CLICKHOUSE_METHODS]
+    if legacy:
+        raise EngineError(
+            f"the layout carries {len(legacy)} index definitions and this engine has no "
+            f"B-tree to put them in. A ClickHouse index is a data-skipping index with a type and a "
+            f"granularity, so this map was built for another dialect."
+        )
     statements: list[str] = []
     for entity, table in sorted(layout.tables.items()):
         cols, key = _columns_and_key(layout, entity, keys)
@@ -124,21 +172,45 @@ def _clickhouse_statements(
                 f"ClickHouse the key becomes ORDER BY, so this would produce a table that cannot "
                 f"be created rather than one with a missing constraint."
             )
-        defs = ", ".join(f"{_quote_backtick(c)} {t}" for c, t in sorted(cols.items()))
-        # ORDER BY is the declared key, in declared order. That order is positional and carries
-        # meaning: it decides which prefixes of the key can prune granules, so sorting it would
-        # change the physical performance of the table while leaving the map looking identical.
-        order = ", ".join(_quote_backtick(c) for c in key)
-        statements.append(
-            f"CREATE TABLE IF NOT EXISTS {_quote_backtick(table)} ({defs}) "
-            f"ENGINE = ReplacingMergeTree ORDER BY ({order})"
+        where = f"table {table!r}"
+        # ORDER BY is the key, in declared order unless the layout gives a physical order. That
+        # order is positional and carries meaning: it decides which prefixes of the key can prune
+        # granules, so sorting it would change the table's performance behind an identical map.
+        ordered = effective_key(
+            where, entity=entity, key=key, key_order=layout.key_order, error=EngineError
         )
-
-    if layout.indexes:
-        raise EngineError(
-            f"the layout carries {len(layout.indexes)} index definitions and this engine has no "
-            f"B-tree to put them in. A ClickHouse index is a data-skipping index with a type and a "
-            f"granularity, so this map was built for another dialect."
+        partition = partition_expression(
+            where,
+            entity=entity,
+            key=key,
+            partition=layout.partition_by.get(entity),
+            error=EngineError,
+        )
+        parts = [f"{_quote_backtick(c)} {t}" for c, t in sorted(cols.items())]
+        # Indexes inline: `CREATE TABLE IF NOT EXISTS` never adds one to an existing table, and a
+        # separate ALTER would be a mutation over every existing part.
+        for index in _sorted_indexes(layout):
+            if str(index["entity"]) != entity:
+                continue
+            indexed = list(index["columns"])
+            if len(indexed) != 1:
+                raise EngineError(
+                    f"the data-skipping index {index['name']!r} must summarise exactly one column"
+                )
+            (column,) = indexed
+            parts.append(
+                f"INDEX {_quote_backtick(str(index['name']))} {_quote_backtick(str(column))} "
+                f"TYPE {_skip_index_type(index)} GRANULARITY {index['granularity']}"
+            )
+        partition_clause = (
+            ""
+            if partition is None
+            else f"PARTITION BY {partition[0]}({_quote_backtick(partition[1])}) "
+        )
+        order = ", ".join(_quote_backtick(c) for c in ordered)
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {_quote_backtick(table)} ({', '.join(parts)}) "
+            f"ENGINE = ReplacingMergeTree {partition_clause}ORDER BY ({order})"
         )
     return tuple(statements)
 
@@ -156,6 +228,12 @@ def _no_statements(layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]) ->
     :func:`schema_is_fixed` supplies that to anybody printing one - the control plane's placement
     report does, because "here is the schema we chose for you: (nothing)" needs a sentence after it.
     """
+    if layout.key_order or layout.partition_by or layout.indexes:
+        raise EngineError(
+            "this engine's schema is fixed in its own source, so a physical design - key order, "
+            "partition or indexes - cannot be applied to it. A map that declared one and got the "
+            "fixed table anyway would be a storage decision silently dropped."
+        )
     return ()
 
 

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a time partition needs one of",
+  "stage": "map",
+  "why": "`station` is in the key, so duplicates are safe - and toYYYYMM of a string is not a time partition. The granularities only mean something for a date or a zoned timestamp."
+}

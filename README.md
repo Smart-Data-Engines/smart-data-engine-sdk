@@ -195,7 +195,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **258 of them, in ten families** — that every
+And [`conformance/`](conformance/) holds the vectors — **290 of them, in ten families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 
@@ -330,3 +330,8 @@ bounds, source/copy ordering and uncertain outcomes.
 including portable keyset pages, typed values and explicit failure semantics.
 
 Engine credentials and verified TLS configuration: [connection guide](docs/engine-connections.md).
+
+Physical design (placement map contract 5): [key order, ClickHouse partitions and index
+methods](docs/physical-design.md) - what a map can declare, how it renders, how the result is read
+back from each engine's catalogue, and why provisioning refuses a difference a running session only
+reports.

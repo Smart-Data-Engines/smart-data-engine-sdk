@@ -37,6 +37,13 @@ from .errors import MapError
 from .generation import DRAIN_TABLE, EPOCH_COLUMN, MAX_EPOCH, json_numbers
 from .logging import log
 from .model import LogicalModel
+from .physical import (
+    PHYSICAL_DESIGN_SINCE,
+    check_against_model,
+    parse_indexes,
+    parse_key_order,
+    parse_partition_by,
+)
 
 __all__ = [
     "BACKFILL_TABLE",
@@ -60,7 +67,10 @@ class PhysicalLayout:
     tables: Mapping[str, str]
     columns: Mapping[str, Mapping[str, str]]
     indexes: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
-    partition_by: Mapping[str, str] = field(default_factory=dict)
+    partition_by: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """Entity -> ``{"field", "granularity"}``, contract 5. See :mod:`sde.physical`."""
+    key_order: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    """Entity -> its key columns in physical order, contract 5. Absent: the declared order."""
 
     def table_for(self, entity: str) -> str:
         try:
@@ -158,8 +168,13 @@ class PlacementMap:
             ) from None
 
 
-MAP_CONTRACT = 4
+MAP_CONTRACT = 5
 """The placement map's format version, which is not the IR's - see :data:`sde.model.CONTRACT`.
+
+Five since 23 September 2026, for the physical design vocabulary (:mod:`sde.physical`): the order
+of a key, a time partition, and index methods. An earlier library would ignore ``"method": "brin"``
+and build a B-tree from the same document, which is a loosening and therefore a bump. A contract-5
+library reads contracts 1 to 4 with their meaning unchanged, and refuses the new keys in them.
 
 Two was for ``also_write``, which a contract-1 library would ignore while a contract-2 one honours
 it: the same document, two different sets of engines written to, and the difference decided by
@@ -238,7 +253,7 @@ their entity cannot have it.
 _AUTO = object()
 
 
-def _layout(raw: Mapping[str, Any], where: str) -> PhysicalLayout | object:
+def _layout(raw: Mapping[str, Any], where: str, *, contract: int) -> PhysicalLayout | object:
     """Parse a layout, or report that it asked to be derived.
 
     ``{"auto": true}`` is what makes a hand-written map a few lines rather than a full schema
@@ -281,25 +296,38 @@ def _layout(raw: Mapping[str, Any], where: str) -> PhysicalLayout | object:
                 f"would be read as bookkeeping and written to as bookkeeping. Rename the table; "
                 f"the name is yours to choose everywhere else."
             )
-    # `partition_by` is refused rather than ignored, and the refusal is the whole point: this key
-    # is parsed here, the control plane emits it when non-empty, and **no renderer has ever applied
-    # it** - a layout declaring it produced an unpartitioned table and said nothing. Nothing
-    # populates it today, so no issued map has carried one, but a hand-written map legally may and
-    # the no-account mode is a documented mode. Rendering it instead would mean designing two
-    # dialect-specific features with no requirement behind them and interpolating a caller's SQL
-    # fragment into DDL. Fails closed until partitioning exists; §7a and `errors/037`.
-    if raw.get("partition_by"):
-        raise MapError(
-            f"{where}: this layout declares partition_by, and no library renders it - the table "
-            f"would be created unpartitioned and nothing would say so. A storage decision in a "
-            f"signed document that is silently dropped is worse than a refusal, so this refuses "
-            f"until partitioning is implemented. Remove the key to apply the rest of the layout."
-        )
+    columns = {k: dict(v) for k, v in (raw.get("columns") or {}).items()}
+    if contract < PHYSICAL_DESIGN_SINCE:
+        # Before contract 5 `partition_by` had no meaning, and the refusal is the whole point: the
+        # key was parsed, emitted by the control plane when non-empty, and **no renderer ever
+        # applied it** - a layout declaring it produced an unpartitioned table and said nothing.
+        # A contract-4 document may not start meaning something by it now (`errors/037`).
+        if raw.get("partition_by"):
+            raise MapError(
+                f"{where}: this layout declares partition_by in a document declaring map contract "
+                f"{contract}, where no library renders it - the table would be created "
+                f"unpartitioned and nothing would say so. Partitioning is map contract "
+                f"{PHYSICAL_DESIGN_SINCE}; remove the key or raise the contract."
+            )
+        if "key_order" in raw:
+            raise MapError(
+                f"{where}: key_order is map contract {PHYSICAL_DESIGN_SINCE} and this document "
+                f"declares {contract}. A library of that contract would ignore it and order the "
+                f"key as declared, so one document would build two different tables."
+            )
+        key_order: dict[str, tuple[str, ...]] = {}
+        partition_by: dict[str, dict[str, str]] = {}
+    else:
+        key_order = parse_key_order(raw.get("key_order", {}), where, tables=tables)
+        partition_by = parse_partition_by(raw.get("partition_by", {}), where, tables=tables)
     return PhysicalLayout(
         tables=dict(tables),
-        columns={k: dict(v) for k, v in (raw.get("columns") or {}).items()},
-        indexes=tuple(raw.get("indexes") or ()),
-        partition_by=dict(raw.get("partition_by") or {}),
+        columns=columns,
+        indexes=parse_indexes(
+            raw.get("indexes"), where, tables=tables, columns=columns, contract=contract
+        ),
+        partition_by=partition_by,
+        key_order=key_order,
     )
 
 
@@ -365,7 +393,9 @@ def _also_write(
     return tuple(out)
 
 
-def _materialization(raw: Mapping[str, Any], where: str, *, source: bool) -> Materialization:
+def _materialization(
+    raw: Mapping[str, Any], where: str, *, source: bool, contract: int
+) -> Materialization:
     for required in ("id", "engine", "layout"):
         if required not in raw:
             raise MapError(f"{where}: materialisation is missing {required!r}")
@@ -380,7 +410,7 @@ def _materialization(raw: Mapping[str, Any], where: str, *, source: bool) -> Mat
             f"{where}: a derived materialisation needs lag_budget_ms. Without it nobody - not the "
             "client, not the monitoring - can tell whether it is healthy or hours behind."
         )
-    layout = _layout(raw["layout"], where)
+    layout = _layout(raw["layout"], where, contract=contract)
     return Materialization(
         id=str(raw["id"]),
         engine=str(raw["engine"]),
@@ -667,9 +697,9 @@ def _parse_map(
             raise MapError(f"{where}: contract 4 requires a positive safe write_epoch")
         if contract < 4 and "write_epoch" in body:
             raise MapError(f"{where}: write_epoch requires placement map contract 4")
-        source = _materialization(body["source"], f"{where}.source", source=True)
+        source = _materialization(body["source"], f"{where}.source", source=True, contract=contract)
         derived = tuple(
-            _materialization(d, f"{where}.derived[{i}]", source=False)
+            _materialization(d, f"{where}.derived[{i}]", source=False, contract=contract)
             for i, d in enumerate(body.get("derived") or ())
         )
         ids = [m.id for m in (source, *derived)]
@@ -718,6 +748,8 @@ def _parse_map(
         }
         for placement in groups.values():
             _refuse_shadowing(placement)
+        for name in sorted(groups):
+            _check_physical(groups[name], model)
         _check_routing_targets(routing, groups, model)
     elif any(m.layout is _AUTO for p in groups.values() for m in p.all()):
         raise MapError(
@@ -761,6 +793,35 @@ def _parse_map(
     )
     object.__setattr__(result, "fingerprint", fingerprint)
     return result
+
+
+def _check_physical(placement: GroupPlacement, model: LogicalModel) -> None:
+    """The physical design rules that need the model: key permutations and partitions on the key.
+
+    Materialisations in document order within the group, entities in name order within a layout -
+    the same ordering §8a gives every other refusal, so one document refuses the same way in every
+    language.
+    """
+    for material in placement.all():
+        layout = material.layout
+        where = f"group {placement.group!r}: {material.id!r}"
+        entities = sorted(set(layout.key_order) | set(layout.partition_by))
+        declared_entities = {spec.name for spec in model.entities}
+        for entity in entities:
+            if entity not in declared_entities:
+                raise MapError(
+                    f"{where}: the physical design names {entity!r}, which this model does not "
+                    f"declare, so there is no key to order or partition by."
+                )
+            spec = model.entity(entity)
+            check_against_model(
+                where,
+                entity=entity,
+                key=spec.key,
+                field_types={declared.name: declared.type for declared in spec.fields},
+                key_order=layout.key_order.get(entity),
+                partition=layout.partition_by.get(entity),
+            )
 
 
 def _refuse_shadowing(placement: GroupPlacement) -> None:
@@ -938,6 +999,7 @@ def _freeze_group(spot: GroupPlacement) -> GroupPlacement:
                 columns=_freeze(dict(layout.columns)),
                 indexes=_freeze(layout.indexes),
                 partition_by=_freeze(dict(layout.partition_by)),
+                key_order=_freeze(dict(layout.key_order)),
             ),
         )
     return replace(

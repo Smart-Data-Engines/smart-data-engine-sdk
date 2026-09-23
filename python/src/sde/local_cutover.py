@@ -22,6 +22,7 @@ from .inspection import InspectionContext
 from .layout import group_columns
 from .migration import CHUNK_ROWS, _plan, precision_refusal
 from .model import LogicalModel
+from .physical import refuse_findings
 from .placement import WATERMARK_TABLE, PlacementMap, load_map
 from .staging import StagingPlan, StagingReceipt
 
@@ -230,9 +231,15 @@ class LocalCutover:
         _plan(context, plan.group)  # Shape/key/copy capability refusals before any barrier.
         all_tables: dict[str, list[str]] = {name: [] for name in self.engines}
         identities: list[tuple[str, str, TableIdentity]] = []
+        target_id = plan.before.groups[plan.group].derived[0].id
         for group, placement in plan.before.groups.items():
             for material in placement.all():
-                self.engines[material.engine].validate_schema(material.layout)
+                keys = {entity: self.model.entity(entity).key for entity in material.layout.tables}
+                findings = self.engines[material.engine].validate_schema(material.layout, keys=keys)
+                # Only the fresh target must match its authorized design exactly; the current
+                # source's physical state is what the move may be correcting, not a reason to stop.
+                if group == plan.group and material.id == target_id:
+                    refuse_findings(findings, MigrationRefused)
                 for table in material.layout.tables.values():
                     all_tables[material.engine].append(table)
                     identity = self.native[material.engine].identity(table)

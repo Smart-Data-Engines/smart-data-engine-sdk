@@ -58,6 +58,26 @@ models. This SDK change permits restricted credentials; it does not yet audit th
 graph or implement cutover's grant revocation. Qualifying that configuration remains part of the
 local cutover executor's work.
 
+## Physical design checks and one optional grant
+
+Since placement map contract 5 a session also compares each table's physical design - primary key
+order, ClickHouse sort key and partition, declared indexes - with the map, and reports differences
+in `Session.physical` instead of refusing (see [physical design](physical-design.md)). PostgreSQL
+catalogues and ClickHouse's `system.tables` are readable by the grants above; nothing new is needed
+for them.
+
+ClickHouse's `system.data_skipping_indices` is the exception: it needs an explicit grant, measured
+on 24.8 as `ACCESS_DENIED` (code 497). It is read only when the map declares a data-skipping index
+on a table, so maps without one need nothing new. With such a map and without the grant, the
+session starts, serves rows, and reports each declared index as *unverified*. To verify them:
+
+```sql
+GRANT SELECT ON system.data_skipping_indices TO app_runtime;
+```
+
+Provisioning (`prepare_schema`) refuses an unverified index, because "could not look" is not
+"looked and agreed"; the provisioning login normally has this access already.
+
 ## Reading existing metadata and compatibility
 
 Both adapters check for an existing bookkeeping table through the native catalog before any

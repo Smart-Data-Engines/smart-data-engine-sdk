@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "cannot add, drop or replace a column",
+  "stage": "map",
+  "why": "A key order reorders the key and does nothing else. Dropping `station` here would leave ClickHouse deduplicating on `at` alone, so two stations reporting in the same microsecond would collapse into one row - a different identity from the model's, applied silently. Needs the model, so it is checked where the model is supplied."
+}

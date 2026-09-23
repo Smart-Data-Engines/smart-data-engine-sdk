@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "reuses the index name",
+  "stage": "map",
+  "why": "`CREATE INDEX IF NOT EXISTS` would keep the first and skip the second without a word."
+}

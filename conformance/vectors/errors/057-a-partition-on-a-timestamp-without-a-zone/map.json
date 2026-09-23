@@ -1,0 +1,92 @@
+{
+  "contract": 5,
+  "model_version": "188335bb5d346bf9",
+  "map_version": 1,
+  "groups": {
+    "Archive": {
+      "source": {
+        "id": "Archive@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Archive": "archive"
+          },
+          "columns": {
+            "Archive": {
+              "day": "date",
+              "sensor": "text",
+              "total": "bigint"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    },
+    "Event": {
+      "source": {
+        "id": "Event@ch",
+        "engine": "ch-1",
+        "layout": {
+          "tables": {
+            "Event": "event"
+          },
+          "columns": {
+            "Event": {
+              "id": "Int64",
+              "kind": "String",
+              "seen": "DateTime64(6)"
+            }
+          },
+          "partition_by": {
+            "Event": {
+              "field": "seen",
+              "granularity": "month"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    },
+    "Ledger": {
+      "source": {
+        "id": "Ledger@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Ledger": "ledger"
+          },
+          "columns": {
+            "Ledger": {
+              "account": "text",
+              "amount": "bigint",
+              "memo": "text",
+              "posted": "date"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    },
+    "Reading": {
+      "source": {
+        "id": "Reading@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading"
+          },
+          "columns": {
+            "Reading": {
+              "at": "timestamptz",
+              "humidity": "integer",
+              "station": "text",
+              "temperature": "double precision"
+            }
+          }
+        }
+      },
+      "write_epoch": 1
+    }
+  },
+  "project_id": "55555555555555555555555555555555"
+}

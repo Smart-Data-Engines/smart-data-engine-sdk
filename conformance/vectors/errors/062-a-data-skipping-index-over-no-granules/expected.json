@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "needs an integer granularity from 1 to 1024",
+  "stage": "map",
+  "why": "Zero granules per entry is not an index."
+}

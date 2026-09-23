@@ -88,6 +88,7 @@ from .migration import (
     verify,
 )
 from .model import CONTRACT, LogicalModel, build_model, neutral_declaration
+from .physical import PHYSICAL_DESIGN_SINCE, PhysicalFinding
 from .placement import (
     ALSO_WRITE_SINCE,
     MAP_CONTRACT,
@@ -162,6 +163,7 @@ __all__ = [
     "ORDERBOOK_KEY",
     "ORDERBOOK_SHAPE",
     "ORDERBOOK_TABLE",
+    "PHYSICAL_DESIGN_SINCE",
     "PRECISION_INDEPENDENT",
     "RESERVED_TABLES",
     "SHAPE_KINDS",
@@ -211,6 +213,7 @@ __all__ = [
     "Note",
     "NumericSummary",
     "OperationShape",
+    "PhysicalFinding",
     "PhysicalLayout",
     "PlacementMap",
     "PlanFinding",

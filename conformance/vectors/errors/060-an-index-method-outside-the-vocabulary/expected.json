@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "the methods are",
+  "stage": "map",
+  "why": "Five methods in two dialects. A method name no library renders would be ignored by one and refused by another."
+}

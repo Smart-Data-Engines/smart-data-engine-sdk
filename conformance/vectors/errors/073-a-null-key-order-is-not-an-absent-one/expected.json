@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "key_order maps an entity to a list of its key columns",
+  "stage": "map",
+  "why": "Absent means no design; `null` is a key whose value is not one. The first port read the key with `?? {}`, which treats the two alike, while the reference read it with `.get(key, {})`, which does not - one document accepted in one language and refused in the other, the `or` against `??` divergence this suite has caught before."
+}

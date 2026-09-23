@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "key_order is map contract 5",
+  "stage": "map",
+  "why": "A contract-4 library would order the key as declared and a contract-5 one as written here: one document, two tables."
+}

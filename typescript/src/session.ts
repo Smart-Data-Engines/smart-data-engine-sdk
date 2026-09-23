@@ -46,6 +46,7 @@ import type { Recorder } from './telemetry.js'
 import type { WatermarkCheck } from './watermark.js'
 import { checkProjectId } from './verification.js'
 import { logicalRow, stampValues, validateGenerations } from './generation.js'
+import type { PhysicalFinding } from './physical.js'
 import { enforceForwardOnly } from './watermark.js'
 
 export type Row = Record<string, unknown>
@@ -53,10 +54,14 @@ export type Row = Record<string, unknown>
 /** What an adapter has to offer for a session to route to it. */
 export interface Engine {
   readonly dialect: string
+  /**
+   * Create what is missing and return how existing tables differ from the declared physical
+   * design. `void` remains acceptable from an adapter written before findings existed.
+   */
   ensureSchema(
     layout: PhysicalLayout,
     options: { readonly keys: Readonly<Record<string, readonly string[]>> },
-  ): Promise<void>
+  ): Promise<readonly PhysicalFinding[] | void>
   insert(table: string, values: Readonly<Row>): Promise<void>
   get(table: string, key: Readonly<Row>): Promise<Row | null>
   /**
@@ -136,6 +141,7 @@ export class Session {
   private readonly usage = new SessionUsage(this)
   private ownedEngines: ManagedEngine[] = []
   private closing = false
+  private physicalFindings: readonly PhysicalFinding[] = []
 
   private constructor(
     readonly model: LogicalModel,
@@ -254,9 +260,9 @@ export class Session {
       // It costs one statement per participating engine, once per process, and nothing at all for an
       // unsigned map - which is checked inside rather than here, because gathering the watermarks
       // first and then noticing the map was unsigned is the right answer with the promise broken.
-      await validateGenerations(model, placement, engines, options.projectId)
+      const physical = await validateGenerations(model, placement, engines, options.projectId)
       const protection = await enforceForwardOnly(placement, engines)
-      return new Session(
+      const session = new Session(
         model,
         placement,
         engines,
@@ -265,6 +271,8 @@ export class Session {
         protection,
         options.projectId,
       )
+      session.physicalFindings = Object.freeze([...physical])
+      return session
 
     })
   }
@@ -404,13 +412,28 @@ export class Session {
 
   // --- schema ------------------------------------------------------------------------------
 
+  /**
+   * How existing tables differ from the physical design the map declares, if at all.
+   *
+   * Reported, never refused, because the difference is performance: a table whose sort key,
+   * partition or index is not the declared one still stores and returns exactly the same rows, and
+   * turning that into an outage would make this library the thing that broke production
+   * (requirement 3.6). `prepareSchema` refuses the same differences, which is where a person can
+   * act on them. This runtime has no log channel, so the property is the whole report.
+   */
+  get physical(): readonly PhysicalFinding[] {
+    return this.physicalFindings
+  }
+
   /** Create what each engine is missing for the groups placed in it. */
   async ensureSchema(): Promise<void> {
     return this.usage.operation(async () => {
       if (this.placement.contract >= 4) {
-        await validateGenerations(this.model, this.placement, this.engines, this.projectId)
+        const physical = await validateGenerations(this.model, this.placement, this.engines, this.projectId)
+        this.physicalFindings = Object.freeze([...physical])
         return
       }
+      const findings: PhysicalFinding[] = []
       for (const group of this.groups) {
         const body = placementOf(this.placement, group.name)
         const keys: Record<string, readonly string[]> = {}
@@ -420,9 +443,10 @@ export class Session {
         for (const materialization of [body.source, ...body.derived]) {
           const engine = this.engines[materialization.engine]
           if (engine === undefined) continue
-          await engine.ensureSchema(materialization.layout, { keys })
+          findings.push(...((await engine.ensureSchema(materialization.layout, { keys })) ?? []))
         }
       }
+      this.physicalFindings = Object.freeze(findings)
 
     })
   }

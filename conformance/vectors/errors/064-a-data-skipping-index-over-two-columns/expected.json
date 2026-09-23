@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "summarises exactly one column",
+  "stage": "map",
+  "why": "One column per data-skipping index in this vocabulary. A tuple expression would be an expression, and nothing in a map is an expression."
+}

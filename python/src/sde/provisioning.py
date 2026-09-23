@@ -6,10 +6,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from .capabilities import satisfies
-from .errors import MigrationRefused
+from .errors import EngineError, MigrationRefused
 from .generation import Fencable, check_map_project
 from .groups import colocation_groups
 from .model import LogicalModel
+from .physical import refuse_findings
 from .placement import PlacementMap
 from .watermark import WatermarkStore
 
@@ -46,7 +47,8 @@ def prepare_schema(
         keys = {name: model.entity(name).key for name in group.members}
         for material in spot.all():
             engine = engines[material.engine]
-            engine.ensure_schema(material.layout, keys=keys)
+            # Provisioning is where a person can act on a physical difference, so here it refuses.
+            refuse_findings(engine.ensure_schema(material.layout, keys=keys) or (), EngineError)
             if spot.write_epoch is not None:
                 for table in sorted(material.layout.tables.values()):
                     assert local_project is not None

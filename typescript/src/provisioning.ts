@@ -1,9 +1,10 @@
 /** Prepare client-owned physical schema before opening runtime connections. */
 import { compareCodePoints } from './canonical.js'
-import { MigrationRefused } from './errors.js'
+import { EngineError, MigrationRefused } from './errors.js'
 import { checkMapProject, type Fencable } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
+import { refuseFindings } from './physical.js'
 import type { PlacementMap } from './placement.js'
 import type { Engine } from './session.js'
 import type { WatermarkStore } from './watermark.js'
@@ -29,7 +30,8 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
     for (const name of group.members) keys[name] = model.entities.find((entity) => entity.name === name)!.key
     for (const material of [spot.source, ...spot.derived]) {
       const engine = engines[material.engine] as Engine & Fencable
-      await engine.ensureSchema(material.layout, { keys })
+      // Provisioning is where a person can act on a physical difference, so here it refuses.
+      refuseFindings((await engine.ensureSchema(material.layout, { keys })) ?? [], EngineError)
       if (spot.writeEpoch !== undefined) {
         for (const table of Object.values(material.layout.tables).sort()) {
           await engine.writeFence(table, { projectId: project as string }).prepare(spot.writeEpoch)

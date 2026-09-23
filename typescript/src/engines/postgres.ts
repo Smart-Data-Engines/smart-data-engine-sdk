@@ -36,6 +36,8 @@ import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
+import type { PhysicalFinding } from '../physical.js'
+import { declaredTables } from '../physical.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
 import { QUOTE, schemaStatements } from '../schema.js'
@@ -376,19 +378,46 @@ export class PostgresEngine {
   async ensureSchema(
     layout: PhysicalLayout,
     options: { readonly keys: Readonly<Record<string, readonly string[]>> },
-  ): Promise<void> {
+  ): Promise<PhysicalFinding[]> {
     return this.usage.operation(async () => {
-      const statements = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
-      for (const statement of statements) {
-        try {
-          await this.run(statement)
-        } catch (error) {
-          throw new EngineError(`schema statement failed: ${statement}: ${message(error)}`)
-        }
-      }
+      const tables = schemaStatements(layout, { keys: options.keys, dialect: this.dialect })
+        .filter((statement) => statement.startsWith('CREATE TABLE '))
+      await this.execute(tables)
       await this.verifySchema(layout)
-
+      // Indexes only on tables whose key is the declared one. A table with another primary key
+      // belongs to another design and this map's refusal is coming; `CREATE INDEX` without
+      // CONCURRENTLY blocks that table's writes while it builds, so running it first would be a
+      // refused operation that still stopped the client's writes.
+      const blocked = new Set(
+        (await this.physicalFindings(layout, options.keys))
+          .filter((finding) => finding.aspect === 'primary key')
+          .map((finding) => finding.table),
+      )
+      const applicable: PhysicalLayout = {
+        ...layout,
+        indexes: layout.indexes.filter((index) => {
+          const table = layout.tables[String(index['entity'])]
+          return table === undefined || !blocked.has(table)
+        }),
+      }
+      await this.execute(
+        schemaStatements(applicable, { keys: options.keys, dialect: this.dialect })
+          .filter((statement) => statement.startsWith('CREATE INDEX ')),
+      )
+      // Returned, not refused: whether a physical difference is a refusal (a person provisioning)
+      // or a report (a running session) is the caller's decision. Columns and types refuse above.
+      return this.physicalFindings(layout, options.keys)
     })
+  }
+
+  private async execute(statements: readonly string[]): Promise<void> {
+    for (const statement of statements) {
+      try {
+        await this.run(statement)
+      } catch (error) {
+        throw new EngineError(`schema statement failed: ${statement}: ${message(error)}`)
+      }
+    }
   }
 
   /**
@@ -411,12 +440,92 @@ export class PostgresEngine {
    * exact string we wrote. What that cost while it was names-only, measured: a table whose `at`
    * column is **`text`** where the map says `timestamptz` passed and was called a good schema.
    */
-  /** Check existing physical columns without issuing DDL. */
-  async validateSchema(layout: PhysicalLayout): Promise<void> {
+  /** Check existing physical columns without issuing DDL; report the physical design. */
+  async validateSchema(
+    layout: PhysicalLayout,
+    options: { readonly keys?: Readonly<Record<string, readonly string[]>> } = {},
+  ): Promise<PhysicalFinding[]> {
     return this.usage.operation(async () => {
       await this.verifySchema(layout)
-
+      return options.keys === undefined ? [] : this.physicalFindings(layout, options.keys)
     })
+  }
+
+  /**
+   * Primary key order and each declared index's method and columns, from `pg_index`.
+   *
+   * `CREATE INDEX IF NOT EXISTS ... USING brin` keeps an existing B-tree of that name - measured -
+   * so the method is read back rather than assumed from the statement that ran. An index with a
+   * predicate, an expression or INCLUDE columns is not the index a layout declares, however its
+   * name reads. The catalogues are readable by any login, so this needs no grant.
+   */
+  private async physicalFindings(
+    layout: PhysicalLayout,
+    keys: Readonly<Record<string, readonly string[]>>,
+  ): Promise<PhysicalFinding[]> {
+    const declared = declaredTables(layout, keys)
+    if (declared.length === 0) return []
+    const result = await this.run(
+      'SELECT t.relname AS table_name, ic.relname AS index_name, i.indisprimary AS is_primary, ' +
+        'am.amname AS method, ' +
+        'ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(num, pos) ' +
+        'JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.num ORDER BY k.pos) AS columns, ' +
+        'i.indpred IS NULL AND i.indexprs IS NULL AND i.indnkeyatts = i.indnatts AS simple ' +
+        'FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid ' +
+        'JOIN pg_class t ON t.oid = i.indrelid JOIN pg_am am ON am.oid = ic.relam ' +
+        'JOIN pg_namespace n ON n.oid = t.relnamespace ' +
+        'WHERE n.nspname = current_schema() AND t.relname = ANY($1)',
+      [declared.map((entry) => entry.table)],
+    )
+    const primary = new Map<string, string[]>()
+    const indexes = new Map<string, Map<string, { method: string; columns: string[]; simple: boolean }>>()
+    for (const row of result.rows) {
+      const table = String(row['table_name'])
+      const columns = (row['columns'] as unknown[]).map(String)
+      if (row['is_primary'] === true) {
+        primary.set(table, columns)
+      } else {
+        const byName = indexes.get(table) ?? new Map()
+        byName.set(String(row['index_name']), {
+          method: String(row['method']),
+          columns,
+          simple: row['simple'] === true,
+        })
+        indexes.set(table, byName)
+      }
+    }
+    const same = (a: readonly string[], b: readonly string[]): boolean =>
+      a.length === b.length && a.every((value, position) => value === b[position])
+    const findings: PhysicalFinding[] = []
+    for (const entry of declared) {
+      const foundKey = primary.get(entry.table)
+      if (foundKey === undefined || !same(foundKey, entry.key)) {
+        findings.push({
+          table: entry.table,
+          aspect: 'primary key',
+          declared: JSON.stringify(entry.key),
+          found: foundKey === undefined ? 'absent' : JSON.stringify(foundKey),
+        })
+      }
+      for (const index of entry.indexes) {
+        const wanted = `${index.method} on ${JSON.stringify(index.columns)}`
+        const got = indexes.get(entry.table)?.get(index.name)
+        if (got === undefined) {
+          findings.push({ table: entry.table, aspect: `index ${index.name}`, declared: wanted, found: 'absent' })
+          continue
+        }
+        if (got.method !== index.method || !same(got.columns, index.columns) || !got.simple) {
+          const shape = got.simple ? '' : ' with a predicate, expression or INCLUDE'
+          findings.push({
+            table: entry.table,
+            aspect: `index ${index.name}`,
+            declared: wanted,
+            found: `${got.method} on ${JSON.stringify(got.columns)}${shape}`,
+          })
+        }
+      }
+    }
+    return findings
   }
 
   private async verifySchema(layout: PhysicalLayout): Promise<void> {

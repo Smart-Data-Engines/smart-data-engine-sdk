@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "has keys this format does not define",
+  "stage": "map",
+  "why": "Closed vocabulary: an unknown key is refused, not ignored."
+}
