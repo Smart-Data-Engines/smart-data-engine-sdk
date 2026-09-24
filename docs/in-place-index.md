@@ -11,7 +11,9 @@ under new names ([staging](staging.md) protocol 2) and a [cutover](local-cutover
 compares every row while the source's writes are frozen. That pause grows with the table - measured
 at 22.5 s for 300 000 rows on PostgreSQL, and a table of about 400 000 rows passes the cutover's
 30 s budget and rolls back. The in-place build of the same index took 355 ms, and the longest gap
-between two writes during it was 16 ms. Measurements and scripts:
+between two writes during it was 16 ms. Measured again with the shipped operator: at 450 000 rows
+on PostgreSQL the copy path's cutover ran into the 30 s watchdog and was rolled back, while the
+in-place build was published in 618 ms. Measurements and scripts:
 [qualification/in-place-index](qualification/in-place-index/README.md).
 
 Only adding indexes can be done in place. A new key order, a partition, other tables or another

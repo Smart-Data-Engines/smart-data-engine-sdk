@@ -25,12 +25,36 @@ and `premise/premise-run.log` (100 000 and 300 000 rows).
 
 The pause through the copy is linear in the table - about 75 µs a row on PostgreSQL - because the
 cutover copies and compares every row while the source's writes are frozen. At about 400 000 rows
-it passes the cutover's 30 s budget, and the cutover rolls back: an "add an index" decision could
+on PostgreSQL it passes the cutover's 30 s budget, and the cutover rolls back: an "add an index" decision could
 not be carried out for a table of that size at all. The in-place build moves no row; the longest
 gap between two writes during it is of the order of the gaps without it. No write failed in any run.
 
 The script's usage lines were rewritten when it moved into this directory; its code is the code
 that produced these files. `premise/SHA256SUMS` covers every file here.
+
+## After: the shipped operator against the copy path
+
+`after/measure_after.py` runs what shipped in PR #83 (`f77bb7b`): `LocalCutover.index` on a signed
+`sde-index` authorization - snapshot, native build, qualification from the catalogue, watermark,
+atomic publication - against the copy path on the same table, with a process on the map in force
+writing a row every 5 ms throughout. Same laptop, same engines, load average 1.0-1.4 at the start
+and 2.6 at the end. Raw results: `after/after.json`, `after/after-run.log`.
+
+| engine | rows | in place: receipt / operator wall | longest gap between writes during the build (before it) | copy path: write pause | copy path: outcome |
+|---|---|---|---|---|---|
+| PostgreSQL | 100 000 | 346 ms / 482 ms | 13.8 ms (9.6) | 7 174 ms | success |
+| PostgreSQL | 450 000 | 618 ms / 764 ms | 80.2 ms (9.2) | interrupted by the operator's watchdog at 30 066 ms | recovery required; the resume aborted (`recovered_before_decision`), 257 ms |
+| ClickHouse | 100 000 | 657 ms / 885 ms | 20.0 ms (27.3) | 5 581 ms | success |
+| ClickHouse | 450 000 | 707 ms / 920 ms | 22.1 ms (21.2) | 27 843 ms | success, 2.2 s inside the 30 s budget |
+
+The table the copy path cannot finish is there: at 450 000 rows on PostgreSQL the cutover's pause
+ran into the operator's 30 s watchdog, the source stayed frozen until a recovery aborted the
+cutover, and the index the model decided was not in force - while the in-place build of the same
+index was built and published in 618 ms. On ClickHouse the same table still fitted, by 2.2 s. No
+write failed in any in-place build. The gap that stands out, 80 ms at 450 000 rows on PostgreSQL,
+is the longest interval between two successful writes during that build; the script records only
+the maximum, so how often a gap of that size occurred is not known, and this record does not
+explain it.
 
 ## Engine behaviours the rules are written against
 
