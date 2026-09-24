@@ -348,9 +348,16 @@ def test_a_recreated_table_with_the_same_marker_is_not_this_stagings(tmp_path: P
         assert exists(roles[target], table)  # another object carrying the marker: left alone
 
 
+@pytest.mark.parametrize("checkpoint", ["stage_prepared", "stage_grants:done"])
 @pytest.mark.parametrize("source", ["postgres", "clickhouse"])
-def test_after_an_abandonment_the_next_staging_prepares(source: str, tmp_path: Path) -> None:
-    """The customer is not stuck: a new authorization stages a new copy beside the history."""
+def test_after_an_abandonment_the_next_staging_prepares(
+    source: str, checkpoint: str, tmp_path: Path
+) -> None:
+    """The customer is not stuck: a new authorization stages a new copy beside the history.
+
+    Abandoned before its table existed, a staging's receipt names no identity - and the next
+    staging's check for reused names reads that history.
+    """
     from copy import deepcopy
     from uuid import uuid4
 
@@ -366,7 +373,7 @@ def test_after_an_abandonment_the_next_staging_prepares(source: str, tmp_path: P
         _source,
         target,
     ):
-        operator._after_step = crash_at("stage_grants:done")
+        operator._after_step = crash_at(checkpoint)
         with pytest.raises(Crash):
             operator.stage(stage)
         operator._after_step = quiet
