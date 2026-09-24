@@ -62,6 +62,17 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
                 status, reason = builder.inspect(identity, index)
                 if status == "foreign":
                     raise MigrationRefused(reason)
+        for index in plan.removed:
+            # Before any DDL, as for a build beside a table that differs from its map: removing
+            # an index the table does not hold as declared would publish a map about another table.
+            if index["entity"] == entity and builder.declared(identity, index) not in (
+                "ready",
+                "unfinished",
+            ):
+                raise MigrationRefused(
+                    "an index the map in force declares is not on its table as declared; "
+                    "inspect the table before changing its indexes"
+                )
     allowed: dict[str, set[str]] = {name: {WATERMARK_TABLE} for name in operator.engines}
     for placed in plan.current.groups.values():
         for material in placed.all():
@@ -93,6 +104,10 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
         "indexes": [
             {"entity": str(index["entity"]), "name": str(index["name"]), "index": dict(index)}
             for index in plan.added
+        ],
+        "removed": [
+            {"entity": str(index["entity"]), "name": str(index["name"]), "index": dict(index)}
+            for index in plan.removed
         ],
     }
 
@@ -187,6 +202,16 @@ def _finish(
             operator.store.publish(plan.prepared_payload())
 
         operator._step(state, "index_publish", publish)
+        # Removals follow the decision and the publication: each is a step of its own, resumed
+        # after a crash, and a process still on the map in force only reports a removed index
+        # missing. Before this point nothing of the map in force was touched.
+        for row in execution.get("removed", ()):
+            table = TableIdentity(**execution["tables"][row["entity"]])
+            operator._step(
+                state,
+                "index_remove_" + str(row["name"]),
+                partial(builder.remove, table, row["index"]),
+            )
         outcome, active = "built", plan.prepared
     else:
         for table, index in rows:
@@ -196,8 +221,8 @@ def _finish(
         if operator.active_map().fingerprint != plan.current.fingerprint:
             raise MigrationRefused("an abandoned index build found another active map")
         outcome, active = "abandoned", plan.current
-    receipt = {
-        "protocol": 1,
+    receipt: dict[str, Any] = {
+        "protocol": plan.protocol,
         "index_id": plan.index_id,
         "index_fingerprint": plan.fingerprint,
         "project_id": operator.project_id,
@@ -217,6 +242,18 @@ def _finish(
         "elapsed_ms": operator._elapsed(),
         "recovered": recovered,
     }
+    if plan.protocol == 2:
+        # Abandoned before its decision, a change removed nothing: the rows say what was removed.
+        receipt["removed"] = [
+            {
+                "engine": execution["engine"],
+                "entity": row["entity"],
+                "name": row["name"],
+                "table": execution["tables"][row["entity"]],
+            }
+            for row in execution.get("removed", ())
+            if outcome == "built"
+        ]
     state["indexes"][plan.index_id] = {
         "plan_fingerprint": plan.fingerprint,
         "plan": plan.as_record(),

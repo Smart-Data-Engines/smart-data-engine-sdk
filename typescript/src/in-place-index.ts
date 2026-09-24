@@ -7,6 +7,9 @@
  * pauses no write. This authorization binds that build: the exact map in force and the next map,
  * which differs from it only by indexes added to one group's source. The Python library executes
  * it; this loader holds both libraries to one reading of the packet.
+ *
+ * Protocol 2 also removes indexes the map in force declares: the removed ones leave the next map,
+ * the others keep their order, and the new ones follow. The operator removes them after its decision.
  */
 import { createHash } from 'node:crypto'
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
@@ -17,6 +20,8 @@ import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type Plac
 
 /** Indexes added to one group's source, built on the tables in force; no copy, no cutover. */
 export const INDEX_PROTOCOL = 1
+/** Indexes added to and removed from one group's source, in place; at least one removed. */
+export const INDEX_CHANGE_PROTOCOL = 2
 /** A day. The budget bounds a build on a server that stopped answering; nothing is paused while
  * it runs, so it is not a pause budget and it is deliberately far longer than a cutover's. */
 export const MAX_BUILD_BUDGET_MS = 86_400_000
@@ -96,7 +101,9 @@ export class IndexPlan {
   constructor(readonly indexId: string, readonly projectId: string, readonly group: string,
     readonly current: PlacementMap, readonly prepared: PlacementMap, readonly buildBudgetMs: number,
     /** The new index definitions, in position order, exactly as the prepared map carries them. */
-    readonly added: readonly Index[], readonly verifiedWith: string | null) {
+    readonly added: readonly Index[], readonly verifiedWith: string | null,
+    /** Protocol 2: the definitions in force the next map drops, in their order in force. */
+    readonly removed: readonly Index[] = []) {
     Object.freeze(this)
   }
   private loaded() {
@@ -105,6 +112,7 @@ export class IndexPlan {
     return saved
   }
   get fingerprint(): string | undefined { return provenance.get(this)?.fingerprint }
+  get protocol(): number { return this.asRecord()['protocol'] as number }
   asRecord(): Record<string, unknown> { return JSON.parse(this.loaded().document) as Record<string, unknown> }
   preparedPayload(): Uint8Array { return canonicalBytes(this.asRecord()['prepared']) }
   checkCurrent(current: PlacementMap): void {
@@ -119,9 +127,11 @@ export class IndexPlan {
 function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: PublicKeys): IndexPlan {
   const body = record(structuredClone(raw), 'authorization')
   if (!equal(sortedKeys(body), FIELDS)) throw new MigrationRefused('index build authorization has missing or unknown fields')
-  if (typeof body['protocol'] !== 'number' || body['protocol'] !== INDEX_PROTOCOL || body['kind'] !== 'sde-index') {
+  if (typeof body['protocol'] !== 'number' || ![INDEX_PROTOCOL, INDEX_CHANGE_PROTOCOL].includes(body['protocol']) ||
+      body['kind'] !== 'sde-index') {
     throw new MigrationRefused('unsupported index build authorization kind or protocol')
   }
+  const protocol = body['protocol']
   const identity = hex(body['index_id'], 32, 'index_id'), local = hex(body['project_id'], 32, 'project_id')
   if (local !== projectId) throw new MigrationRefused('index build authorization belongs to another local project')
   const group = body['group']
@@ -146,7 +156,7 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     }
     const parsed = loadMap(document, { model, publicKey, requireSignature: true })
     if (parsed.contract < GENERATIONS_SINCE) {
-      throw new MigrationRefused(`index build protocol ${INDEX_PROTOCOL} requires map contract ${GENERATIONS_SINCE} or later`)
+      throw new MigrationRefused(`index build protocol ${protocol} requires map contract ${GENERATIONS_SINCE} or later`)
     }
     checkMapProject(parsed, projectId)
     for (const placed of Object.values(parsed.groups)) {
@@ -184,9 +194,21 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     throw new MigrationRefused('an index build changes nothing about the source but its indexes; a new key order, ' +
       'partition, table or engine is a relayout or a move')
   }
-  const kept = indexesOf(oldSource), after = indexesOf(newSource)
-  if (after.length <= kept.length || !equal(after.slice(0, kept.length), kept)) {
-    throw new MigrationRefused('an index build keeps every index in force, in order, and adds at least one after them')
+  const inForce = indexesOf(oldSource), after = indexesOf(newSource)
+  const nameOf = (index: unknown) => String(record(index, 'index')['name'])
+  let kept = inForce, removed: unknown[] = []
+  if (protocol === INDEX_PROTOCOL) {
+    if (after.length <= kept.length || !equal(after.slice(0, kept.length), kept)) {
+      throw new MigrationRefused('an index build keeps every index in force, in order, and adds at least one after them')
+    }
+  } else {
+    const remaining = new Set(after.map(nameOf))
+    kept = inForce.filter(index => remaining.has(nameOf(index)))
+    removed = inForce.filter(index => !remaining.has(nameOf(index)))
+    if (removed.length === 0) throw new MigrationRefused('index build protocol 2 removes at least one index in force')
+    if (!equal(after.slice(0, kept.length), kept)) {
+      throw new MigrationRefused('an index change keeps the other indexes in force, in order, before the new ones')
+    }
   }
   const added = after.slice(kept.length)
   added.forEach((index, offset) => {
@@ -206,7 +228,9 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     if (other !== group && !equal(oldGroups[other], newGroups[other])) throw new MigrationRefused('an index build cannot change an unaffected group')
   }
   // From the loaded map, which freezes nested structures, not from the caller's objects.
-  const plan = new IndexPlan(identity, local, group, current, prepared, budget, next.source.layout.indexes.slice(kept.length), verified)
+  const gone = new Set(removed.map(nameOf))
+  const plan = new IndexPlan(identity, local, group, current, prepared, budget, next.source.layout.indexes.slice(kept.length),
+    verified, old.source.layout.indexes.filter(index => gone.has(String(index['name']))))
   provenance.set(plan, { document: canonicalBytes(body).toString('utf8'),
     fingerprint: createHash('sha256').update(canonicalBytes(except(body, ['signature']))).digest('hex') })
   return plan

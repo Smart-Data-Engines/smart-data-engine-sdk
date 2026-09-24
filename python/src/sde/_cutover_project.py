@@ -31,6 +31,25 @@ def _abandoned_stages(payload: Any) -> bool:
     )
 
 
+def _index_changes(payload: Any) -> bool:
+    """Whether an in-place index record - executing or kept - also removes indexes (protocol 2)."""
+    if not isinstance(payload, dict):
+        return False
+    records: list[Any] = []
+    history = payload.get("indexes")
+    if isinstance(history, dict):
+        records.extend(history.values())
+    execution = payload.get("execution")
+    if isinstance(execution, dict) and execution.get("kind") == "index":
+        records.append(execution)
+    return any(
+        isinstance(record, dict)
+        and isinstance(record.get("plan"), dict)
+        and record["plan"].get("protocol") == 2
+        for record in records
+    )
+
+
 class ProjectState:
     """One POSIX directory and lock, shared by all local executors for this project."""
 
@@ -55,7 +74,7 @@ class ProjectState:
                 raise ValueError("invalid state envelope")
             if type(envelope["storage_contract"]) is not int or envelope[
                 "storage_contract"
-            ] not in (1, 2, 3, 4):
+            ] not in (1, 2, 3, 4, 5):
                 raise ValueError("unsupported state storage contract")
             payload = envelope["payload"]
             if (
@@ -90,6 +109,10 @@ class ProjectState:
                 # Contract 4 is what makes an older operator refuse an abandoned staging's record
                 # instead of reading a receipt whose tables may name no identity.
                 raise ValueError("an abandoned staging needs state storage contract 4")
+            if envelope["storage_contract"] < 5 and _index_changes(payload):
+                # Contract 5 is what makes an older operator refuse a build that also removes
+                # indexes, instead of resuming it with no idea that removals follow the decision.
+                raise ValueError("an index change needs state storage contract 5")
             if set(payload) != fields:
                 raise ValueError("unknown or missing project state fields")
             return payload
@@ -108,7 +131,9 @@ class ProjectState:
     def write(self, payload: dict[str, Any]) -> None:
         body = encode(payload)
         envelope = {
-            "storage_contract": 4
+            "storage_contract": 5
+            if _index_changes(payload)
+            else 4
             if _abandoned_stages(payload)
             else 3
             if "indexes" in payload

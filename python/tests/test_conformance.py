@@ -1049,6 +1049,9 @@ def _drive_index_vector(case: Path, model: sde.LogicalModel) -> None:
         sde.index_build_name(plan.index_id, position)
         for position in range(1, len(wanted["added"]) + 1)
     ] == wanted["added"]
+    # Protocol 2 removes indexes in force; a vector that names none removes none.
+    assert plan.protocol == raw["protocol"]
+    assert [index["name"] for index in plan.removed] == wanted.get("removed", [])
     decoded = sde.load_map(
         json.loads(plan.prepared_payload()), model=model, public_key=keys, require_signature=True
     )

@@ -1,11 +1,11 @@
 {
   "kind": "sde-index",
-  "protocol": 3,
+  "protocol": 2,
   "index_id": "66666666666666666666666666666666",
   "project_id": "11111111111111111111111111111111",
   "group": "Event",
   "current": {
-    "contract": 4,
+    "contract": 5,
     "project_id": "11111111111111111111111111111111",
     "model_version": "59a263d15793fb78",
     "map_version": 1,
@@ -25,7 +25,17 @@
                 "id": "uuid",
                 "name": "text"
               }
-            }
+            },
+            "indexes": [
+              {
+                "entity": "Event",
+                "name": "event_name",
+                "columns": [
+                  "name"
+                ],
+                "method": "btree"
+              }
+            ]
           }
         }
       },
@@ -68,7 +78,7 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "index",
-      "value": "W1kR3q2Q5a4Ila6u5m3xUjal/TokoekT83uFEeoNrpOBcDaJk9eNUIDsXjGBQPDi2doa3WobndisMPIwiVVKDw=="
+      "value": "N2EoGzsTIgLLV8UqgOkHGnB9yLHsgSvZm6cp0+dQP9e+iGTUbu832YHlRAyAFwwfXhbYM9ET/q/tRyUP45WkAA=="
     }
   },
   "prepared": {
@@ -151,6 +161,6 @@
   "signature": {
     "alg": "ed25519",
     "key_id": "index",
-    "value": "ajO5x62pqzEdAdGAnJUmRsS5585bPCdROhBDs/6wn/aZw5kqck82DUqGssRtFPQEdHFaEI9HKrOpnrjxIxUNAA=="
+    "value": "cVpe6mzO/mdm1MzwIlnFIOZStB2BfaZmS4tYsMowgNML3CYq2jMa/b/ZOxR6tzFAK8FdxLYxr6bYoXgXWiJvAg=="
   }
 }

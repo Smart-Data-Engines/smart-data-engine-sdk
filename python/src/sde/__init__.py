@@ -55,6 +55,7 @@ from .frozen_verification import FrozenVerifyReport, verify_frozen
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
 from .index_build import (
+    INDEX_CHANGE_PROTOCOL,
     INDEX_PROTOCOL,
     IndexPlan,
     IndexReceipt,
@@ -163,6 +164,7 @@ __all__ = [
     "DIALECTS",
     "DIALECT_PRECISION",
     "FIXED_SCHEMA",
+    "INDEX_CHANGE_PROTOCOL",
     "INDEX_PROTOCOL",
     "MAP_CONTRACT",
     "MAP_CONTRACT_FLOOR",

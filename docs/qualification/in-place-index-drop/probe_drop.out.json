@@ -1,0 +1,60 @@
+{
+  "at": "2026-09-24T21:12:18Z",
+  "postgres": {
+    "server_version": "15.19",
+    "plain_drop": {
+      "rows": 100000,
+      "drop_ms": 6.3,
+      "longest_write_gap_ms_before": 10.2,
+      "longest_write_gap_ms_during": 7.9
+    },
+    "beside_an_old_snapshot_that_did_not_read_the_table": {
+      "finished_within_3_s": true,
+      "drop_ms": 6.5,
+      "index_after": "gone"
+    },
+    "held_by_a_transaction_that_read_the_table": {
+      "still_running_after_3_s": true,
+      "activity": [
+        "active",
+        "Lock",
+        "virtualxid"
+      ],
+      "index_while_waiting": {
+        "valid": false,
+        "ready": true
+      },
+      "longest_write_gap_ms_while_waiting": 14.4
+    },
+    "terminated_drop": {
+      "dropper_outcome": "AdminShutdown",
+      "index_left": {
+        "valid": false,
+        "ready": true
+      }
+    },
+    "second_drop": {
+      "drop_ms": 10.7,
+      "index_after": "gone"
+    },
+    "writer": {
+      "inserts": 634,
+      "failures": 0
+    }
+  },
+  "clickhouse": {
+    "server_version": "24.8.14.39",
+    "drop": {
+      "rows": 100000,
+      "alter_ms": 13.2,
+      "listed_in_the_catalogue_after": 0,
+      "a_read_the_index_served_answers": true,
+      "longest_write_gap_ms_before": 19.8,
+      "longest_write_gap_ms_during": 12.1
+    },
+    "writer": {
+      "inserts": 174,
+      "failures": 0
+    }
+  }
+}

@@ -192,3 +192,43 @@ def test_contract_four_still_carries_the_index_history(tmp_path: Path) -> None:
     _rewrite(store, 4, payload)  # no "indexes" field
     with pytest.raises(MigrationRefused, match="corrupt"):
         store.read()
+
+
+def _index_record(protocol: int) -> dict[str, Any]:
+    return {"plan_fingerprint": "f" * 64, "plan": {"protocol": protocol}, "receipt": {}}
+
+
+def test_an_index_change_raises_the_state_contract_to_five(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    state = store.read()
+    state["stages"], state["indexes"] = {}, {"a" * 32: _index_record(1)}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 3
+    state["indexes"]["b" * 32] = _index_record(2)
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 5
+    assert store.read()["indexes"]["b" * 32]["plan"]["protocol"] == 2
+    # An executing change is one too, before it has any history.
+    state["indexes"], state["execution"] = {}, {"kind": "index", "plan": {"protocol": 2}}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 5
+
+
+@pytest.mark.parametrize("where", ["history", "execution"])
+@pytest.mark.parametrize("contract", [3, 4])
+def test_an_index_change_needs_contract_five(tmp_path: Path, contract: int, where: str) -> None:
+    """What makes an operator that knows contracts 1 to 4 refuse, not resume, an index change."""
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"], payload["indexes"] = {}, {}
+    if where == "history":
+        payload["indexes"]["b" * 32] = _index_record(2)
+    else:
+        payload["execution"] = {"kind": "index", "plan": {"protocol": 2}}
+    _rewrite(store, contract, payload)
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()
+    _rewrite(store, 5, payload)
+    assert store.read()["stages"] == {}

@@ -11,6 +11,12 @@ This authorization binds that build: the exact map in force and the next map, wh
 only by indexes added to one group's source. Nothing else may change, because nothing else can
 change without a copy - and the tables, the write generation and every running process stay as they
 are, which is what lets the build run without a barrier.
+
+Protocol 2 also removes indexes the map in force declares, for a design that drops an index nobody
+reads or replaces one with another. The removed ones leave the next map, the others keep their
+order, and the new ones follow. The operator removes them only after its decision, one resumable
+step each: ``DROP INDEX CONCURRENTLY`` pauses no write (measured, like the build), and a process on
+the map in force that still declares a removed index reports it missing and keeps serving rows.
 """
 
 from __future__ import annotations
@@ -31,6 +37,11 @@ from .placement import PlacementMap, _verify_signature, load_map
 
 INDEX_PROTOCOL = 1
 """Indexes added to one group's source, built on the tables in force; no copy, no cutover."""
+
+INDEX_CHANGE_PROTOCOL = 2
+"""Indexes added to and removed from one group's source, in place; at least one removed."""
+
+_PROTOCOLS = (INDEX_PROTOCOL, INDEX_CHANGE_PROTOCOL)
 
 MAX_BUILD_BUDGET_MS = 86_400_000
 """A day. The budget bounds a build on a server that stopped answering; nothing is paused while it
@@ -71,6 +82,8 @@ class IndexPlan:
     added: tuple[Mapping[str, Any], ...]
     """The new index definitions, in position order, exactly as the prepared map carries them."""
     verified_with: str | None
+    removed: tuple[Mapping[str, Any], ...] = ()
+    """Protocol 2: the definitions in force the next map drops, in their order in force."""
     fingerprint: str | None = field(default=None, init=False)
     _document: bytes = field(default=b"", init=False, repr=False)
 
@@ -82,6 +95,10 @@ class IndexPlan:
         self._loaded()
         value: dict[str, Any] = json.loads(self._document)
         return value
+
+    @property
+    def protocol(self) -> int:
+        return int(self.as_record()["protocol"])
 
     def prepared_payload(self) -> bytes:
         return canonical_bytes(self.as_record()["prepared"])
@@ -133,10 +150,11 @@ def _load(
         raise MigrationRefused("index build authorization has missing or unknown fields")
     if (
         type(body["protocol"]) is not int
-        or body["protocol"] != INDEX_PROTOCOL
+        or body["protocol"] not in _PROTOCOLS
         or body["kind"] != "sde-index"
     ):
         raise MigrationRefused("unsupported index build authorization kind or protocol")
+    protocol = int(body["protocol"])
     identity = _hex(body["index_id"], 32, "index_id", _SUBJECT)
     local = _hex(body["project_id"], 32, "project_id", _SUBJECT)
     if local != project_id:
@@ -171,7 +189,7 @@ def _load(
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
         if parsed.contract < GENERATIONS_SINCE:
             raise MigrationRefused(
-                f"index build protocol {INDEX_PROTOCOL} requires map contract "
+                f"index build protocol {protocol} requires map contract "
                 f"{GENERATIONS_SINCE} or later"
             )
         check_map_project(parsed, project_id)
@@ -212,12 +230,25 @@ def _load(
             "an index build changes nothing about the source but its indexes; a new key order, "
             "partition, table or engine is a relayout or a move"
         )
-    kept = list(old_group["source"]["layout"].get("indexes", []) or [])
+    in_force = list(old_group["source"]["layout"].get("indexes", []) or [])
     after = list(new_group["source"]["layout"].get("indexes", []) or [])
-    if len(after) <= len(kept) or canonical_bytes(after[: len(kept)]) != canonical_bytes(kept):
-        raise MigrationRefused(
-            "an index build keeps every index in force, in order, and adds at least one after them"
-        )
+    if protocol == INDEX_PROTOCOL:
+        kept, removed = in_force, []
+        if len(after) <= len(kept) or canonical_bytes(after[: len(kept)]) != canonical_bytes(kept):
+            raise MigrationRefused(
+                "an index build keeps every index in force, in order, and adds at least one after "
+                "them"
+            )
+    else:
+        remaining = {str(index.get("name")) for index in after}
+        kept = [index for index in in_force if str(index.get("name")) in remaining]
+        removed = [index for index in in_force if str(index.get("name")) not in remaining]
+        if not removed:
+            raise MigrationRefused("index build protocol 2 removes at least one index in force")
+        if canonical_bytes(after[: len(kept)]) != canonical_bytes(kept):
+            raise MigrationRefused(
+                "an index change keeps the other indexes in force, in order, before the new ones"
+            )
     added = after[len(kept) :]
     for position, index in enumerate(added, start=1):
         if index.get("name") != index_build_name(identity, position):
@@ -245,6 +276,7 @@ def _load(
             prepared_raw["groups"][other]
         ):
             raise MigrationRefused("an index build cannot change an unaffected group")
+    gone = {str(index["name"]) for index in removed}
     plan = IndexPlan(
         identity,
         local,
@@ -252,9 +284,10 @@ def _load(
         current,
         prepared,
         budget,
-        # From the loaded map, which freezes nested structures, not from the caller's dictionaries.
+        # From the loaded maps, which freeze nested structures, not from the caller's dictionaries.
         tuple(new.source.layout.indexes[len(kept) :]),
         verified,
+        tuple(index for index in old.source.layout.indexes if str(index["name"]) in gone),
     )
     object.__setattr__(plan, "_document", canonical_bytes(body))
     object.__setattr__(

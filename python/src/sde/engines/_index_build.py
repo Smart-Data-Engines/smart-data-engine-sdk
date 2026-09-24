@@ -78,6 +78,50 @@ class NativeIndexBuild:
         if self.status(table, index) != "ready":
             raise MigrationRefused("the index build did not leave a ready index")
 
+    def declared(self, table: TableIdentity, index: Mapping[str, Any]) -> Status:
+        """Where an index the map in force declares stands on its table, whatever its name.
+
+        The indexes an index change removes were named by a design or by an earlier build, so the
+        bound-name rule of :meth:`inspect` does not apply; the table and the shape still do.
+        """
+        if self.native.identity(table.name).physical_key != table.physical_key:
+            raise MigrationRefused("the table an index change names was replaced")
+        name = str(index["name"])
+        if self.dialect == "postgres":
+            return self._pg_status(table, index, name)[0]
+        return self._ch_status(table, index, name)[0]
+
+    def remove(self, table: TableIdentity, index: Mapping[str, Any]) -> None:
+        """Remove an index the map in force declares; run after the decision, so resumably.
+
+        An index of the declared shape goes, finished or not - a PostgreSQL drop that was stopped
+        leaves it invalid yet still maintained (measured), and dropping again removes it. Absent,
+        or another object under the name, means ours is already gone; the other object stays.
+        """
+        status = self.declared(table, index)
+        if status in ("absent", "foreign"):
+            return
+        name = str(index["name"])
+        if self.dialect == "postgres":
+            # IF EXISTS only for an index that goes while this drop waits for its lock: an earlier
+            # drop whose client the budget closed runs on in the server until the transaction it
+            # waits for ends. What is left afterwards is read back below, as always.
+            self.native.command(f"DROP INDEX CONCURRENTLY IF EXISTS {self.quote(name)}")
+        else:
+            for mutation_id, is_done, _failure in self._ch_mutations(table, name):
+                if not is_done:
+                    self.native.command(
+                        "KILL MUTATION WHERE database = currentDatabase() "
+                        f"AND table = '{self._literal(table.name)}' "
+                        f"AND mutation_id = '{self._literal(mutation_id)}'"
+                    )
+            self.native.command(
+                f"ALTER TABLE {self.quote(table.name)} DROP INDEX {self.quote(name)} "
+                "SETTINGS alter_sync = 0"
+            )
+        if self.declared(table, index) in ("unfinished", "ready"):
+            raise MigrationRefused("a removed index is still in the catalogue")
+
     def drop(self, table: TableIdentity, index: Mapping[str, Any]) -> None:
         """Remove this build's own index, finished or not, and anything still materializing it.
 

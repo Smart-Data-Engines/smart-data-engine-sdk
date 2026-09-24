@@ -1,0 +1,16 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "index_fingerprint": "1a8abeac6a5c7589e2a984fb075cb134321871a42886fab2272eeb5ea9ec5d14",
+  "verified_with": "index",
+  "map_fingerprints": {
+    "current": "8e0a65adc4e36dd53fbda3183cb3650c8731e9511cc0eac2fd3a2439e54af2cd",
+    "prepared": "fb7f0d7a12683f2fa8a8a58bad979a7a3c41c5f79431da2443419502193eb8b6"
+  },
+  "added": [
+    "sde_i_66666666666666666666666666666666_000001"
+  ],
+  "build_budget_ms": 3600000,
+  "removed": [
+    "event_name"
+  ]
+}

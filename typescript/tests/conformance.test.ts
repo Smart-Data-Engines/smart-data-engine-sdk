@@ -1277,7 +1277,7 @@ function driveIndexVector(dir: string, model: LogicalModel): void {
   const raw = readJson<Record<string, unknown>>(join(dir, 'plan.json'))
   const wanted = readJson<{ project_id: string; error?: string; match?: string; index_fingerprint: string;
     verified_with: string; map_fingerprints: Record<'current' | 'prepared', string>; added: string[];
-    build_budget_ms: number }>(join(dir, 'index.json'))
+    removed?: string[]; build_budget_ms: number }>(join(dir, 'index.json'))
   const keys = readJson<Record<string, string>>(join(dir, 'keys.json'))
   const publicKey = Object.fromEntries(Object.entries(keys).map(([name, value]) => [name, Buffer.from(value, 'base64')]))
   const options = { model, projectId: wanted.project_id, publicKey }
@@ -1297,6 +1297,9 @@ function driveIndexVector(dir: string, model: LogicalModel): void {
   for (const name of ['current', 'prepared'] as const) expect(plan[name].fingerprint).toBe(wanted.map_fingerprints[name])
   expect(plan.added.map(index => index['name'])).toEqual(wanted.added)
   expect(wanted.added.map((_, offset) => indexBuildName(plan.indexId, offset + 1))).toEqual(wanted.added)
+  // Protocol 2 removes indexes in force; a vector that names none removes none.
+  expect(plan.protocol).toBe(raw['protocol'])
+  expect(plan.removed.map(index => index['name'])).toEqual(wanted.removed ?? [])
   const decoded = loadMap(JSON.parse(Buffer.from(plan.preparedPayload()).toString('utf8')), { model, publicKey, requireSignature: true })
   expect(decoded.fingerprint).toBe(wanted.map_fingerprints.prepared)
 }
