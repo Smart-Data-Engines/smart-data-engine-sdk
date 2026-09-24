@@ -77,7 +77,14 @@ need their own deployment-specific qualification. Both files stay customer-side.
 Both programs use logical batch writes, point reads, bounded pages, counts and exact decimal
 summaries. They compare the result to their own deterministic input. Each invocation has a random
 run namespace, so repeating it or running both languages does not reuse another writer's keys.
-`--workload point` adds point reads; `--workload analytics` keeps the scan/summary-heavy mix.
+`--workload point` adds point reads; `--workload analytics` keeps the scan/summary-heavy mix, and
+every read in both fixes one station. `--workload fleet` reads across stations instead: a bounded
+page, a count and an exact celsius summary over one time window, with no station fixed - the
+question a fleet dashboard asks, and the one the declared key (station, then time) does not serve.
+Every run in a directory writes the same timeline, so the window holds every run's rows, and the
+program checks them exactly against the local reports of the directory's earlier runs of this
+project. It therefore refuses to start while any of those runs is not complete: an interrupted run
+or an unresolved batch makes the expected answer unknowable, and it does not compare with a guess.
 Limits are 1-1000 iterations and rows per batch, at most 10000 rows per invocation, 0-1000 ms
 between batches and 0-30000 ms for bounded read/recovery attempts.
 

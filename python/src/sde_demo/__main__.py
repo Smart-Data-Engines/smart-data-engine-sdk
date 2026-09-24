@@ -13,7 +13,7 @@ from typing import Any
 import sde
 from sde._local_state import transaction
 
-from .model import model
+from .model import WORKLOADS, model
 from .project import DemoRefused, config, connections, public_keys, read, setup, write
 from .resources import ResourceRefused
 
@@ -80,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     workload.add_argument("--batch-size", type=int, default=10)
     workload.add_argument("--interval-ms", type=int, default=100)
     workload.add_argument("--recovery-ms", type=int, default=10000)
-    workload.add_argument("--workload", choices=("mixed", "point", "analytics"), default="mixed")
+    workload.add_argument("--workload", choices=WORKLOADS, default="mixed")
     verify = commands.add_parser(
         "verify-runs", help="verify earlier completed Python/TypeScript runs"
     )

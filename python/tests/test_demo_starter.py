@@ -332,3 +332,91 @@ def test_a_designed_initial_map_bootstraps_the_starter() -> None:
     bundle["current_map"] = sign(current)
     config, _ = project.bootstrap(bundle)
     assert config["project_id"] == bundle["project_id"]
+
+
+FLEET_RUNS = {"a" * 32: 7, "0" * 32: 3, "c" * 31 + "1": 12}
+
+
+def test_fleet_expectation_is_every_run_row_in_the_window() -> None:
+    """Checked against brute force: every row of every run, filtered to the window, in key order."""
+    through, limit = 5, 4
+    rows = [
+        reading(identity, 0, sequence)
+        for identity, written in FLEET_RUNS.items()
+        for sequence in range(1, written + 1)
+        if sequence <= through
+    ]
+    rows.sort(key=lambda row: (row["station"], row["at"]))
+    page, total, celsius = runtime.fleet_expected(FLEET_RUNS, through, limit)
+    assert page == rows[:limit]
+    assert total == len(rows) == 3 + 5 + 5
+    assert celsius == sum((row["celsius"] for row in rows), Decimal(0))
+    assert runtime.fleet_expected(FLEET_RUNS, through, 100)[0] == rows
+
+
+def _report(root: Path, identity: str, **fields: Any) -> None:
+    report = {
+        "protocol": 2,
+        "run_id": identity,
+        "project_id": "p" * 32,
+        "status": "complete",
+        "pending": None,
+        "generator_id": runtime.GENERATOR_ID,
+        "verified_rows": 4,
+        **fields,
+    }
+    project.write(root / "runs" / identity / "report.json", report)
+
+
+def test_fleet_reads_every_completed_run_of_this_project_and_only_those(tmp_path: Path) -> None:
+    _report(tmp_path, "a" * 32)
+    _report(tmp_path, "b" * 32, verified_rows=9)
+    _report(tmp_path, "c" * 32, project_id="q" * 32, status="running")  # another project: skipped
+    assert runtime.fleet_runs(tmp_path, project_id="p" * 32) == {"a" * 32: 4, "b" * 32: 9}
+    assert runtime.fleet_runs(tmp_path / "empty", project_id="p" * 32) == {}
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"status": "running"},
+        {"status": "incomplete"},
+        {"pending": {"first": 1, "count": 2}},
+        {"generator_id": "weather-v0:other"},
+        {"verified_rows": True},
+        {"verified_rows": -1},
+        {"verified_rows": 10001},
+        {"run_id": "b" * 32},
+    ],
+    ids=["running", "incomplete", "pending", "generator", "bool", "negative", "too-many", "moved"],
+)
+def test_fleet_refuses_when_an_earlier_run_of_this_project_is_not_complete(
+    tmp_path: Path, fields: dict[str, Any]
+) -> None:
+    _report(tmp_path, "a" * 32, **fields)
+    with pytest.raises(project.DemoRefused, match="every earlier run"):
+        runtime.fleet_runs(tmp_path, project_id="p" * 32)
+
+
+def test_fleet_refuses_a_report_without_its_pending_field(tmp_path: Path) -> None:
+    """Absent is not settled: a report that does not say its batch resolved did not say so."""
+    _report(tmp_path, "a" * 32)
+    path = tmp_path / "runs" / ("a" * 32) / "report.json"
+    report = project.read(path)
+    del report["pending"]
+    project.write(path, report)
+    with pytest.raises(project.DemoRefused, match="every earlier run"):
+        runtime.fleet_runs(tmp_path, project_id="p" * 32)
+
+
+def test_the_cli_and_the_runtime_offer_the_same_workloads(tmp_path: Path) -> None:
+    from sde_demo import __main__ as cli
+
+    assert cli.WORKLOADS is runtime.WORKLOADS  # one tuple, imported by both
+    # The parser accepts every workload the runtime runs (the missing setup refuses afterwards,
+    # which returns a status) and rejects anything else before the runtime is reached.
+    assert isinstance(cli.main(["--directory", str(tmp_path), "run", "--workload", "fleet"]), int)
+    with pytest.raises(SystemExit):
+        cli.main(["--directory", str(tmp_path), "run", "--workload", "bogus"])
+    with pytest.raises(project.DemoRefused, match="fleet"):
+        runtime.run(tmp_path, workload="bogus")

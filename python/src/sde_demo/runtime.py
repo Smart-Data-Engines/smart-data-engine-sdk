@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Mapping
 from decimal import Decimal
@@ -12,10 +13,74 @@ from uuid import uuid4
 
 import sde
 
-from .model import BASE_TIME, GENERATOR_ID, model, reading
-from .project import DemoRefused, config, credentials, engine, public_keys, write
+from .model import (
+    BASE_TIME,
+    CELSIUS_BASE_CENTS,
+    CELSIUS_MODULUS,
+    GENERATOR_ID,
+    WORKLOADS,
+    model,
+    reading,
+)
+from .project import DemoRefused, config, credentials, engine, public_keys, read, write
 
 T = TypeVar("T")
+FLEET_PAGE = 100
+MAX_RUN_ROWS = 10000
+"""The fleet checks one cross-station page exactly; its count and sum cover the whole window."""
+
+
+def fleet_runs(root: Path, *, project_id: str) -> dict[str, int]:
+    """Every earlier run of this project, by run ID, with the rows it verified.
+
+    Fleet analytics reads every station's rows in one time window, and every run in a directory
+    writes the same timeline, so the exact answer is a sum over the runs. It is known exactly:
+    generated values depend only on the sequence number, and each run's local report says how many
+    rows it verified. A run that did not complete - interrupted, or with an uncertain batch - makes
+    that sum unknowable, so the workload refuses instead of comparing a read with a guess.
+    """
+    runs: dict[str, int] = {}
+    for path in sorted((root / "runs").glob("*/report.json")):
+        report = read(path)
+        if report.get("project_id") != project_id:
+            continue
+        identity = report.get("run_id")
+        if (
+            not isinstance(identity, str)
+            or re.fullmatch(r"[0-9a-f]{32}", identity) is None
+            or path.parent.name != identity
+            or report.get("status") != "complete"
+            or report.get("pending", False) is not None
+            or report.get("generator_id") != GENERATOR_ID
+            or type(report.get("verified_rows")) is not int
+            or not 0 <= report["verified_rows"] <= MAX_RUN_ROWS
+        ):
+            raise DemoRefused(
+                "Fleet analytics reads every run's rows, so every earlier run of this project must "
+                "be complete; inspect the unfinished run first."
+            )
+        runs[identity] = report["verified_rows"]
+    return runs
+
+
+def fleet_expected(
+    runs: Mapping[str, int], through: int, limit: int
+) -> tuple[list[dict[str, Any]], int, Decimal]:
+    """The first page, row count and celsius total of the window holding sequences 1..through.
+
+    A page is in key order, station then time, and a station is its run's namespace, so the page
+    walks runs in the order of their stations and each run's rows in sequence order.
+    """
+    page: list[dict[str, Any]] = []
+    total, cents = 0, 0
+    for identity in sorted(runs, key=lambda item: reading(item, 0, 1)["station"]):
+        rows = min(through, runs[identity])
+        total += rows
+        for sequence in range(1, rows + 1):
+            cents += CELSIUS_BASE_CENTS + sequence % CELSIUS_MODULUS
+            if len(page) < limit:
+                page.append(reading(identity, 0, sequence))
+    return page, total, Decimal(f"{cents // 100}.{cents % 100:02d}")
 
 
 def limits(iterations: int, batch_size: int, interval_ms: int, recovery_ms: int) -> None:
@@ -23,7 +88,7 @@ def limits(iterations: int, batch_size: int, interval_ms: int, recovery_ms: int)
         any(type(value) is not int for value in (iterations, batch_size, interval_ms, recovery_ms))
         or not 1 <= iterations <= 1000
         or not 1 <= batch_size <= 1000
-        or iterations * batch_size > 10000
+        or iterations * batch_size > MAX_RUN_ROWS
         or not 0 <= interval_ms <= 1000
         or not 0 <= recovery_ms <= 30000
     ):
@@ -43,9 +108,11 @@ def run(
     workload: str = "mixed",
 ) -> dict[str, Any]:
     limits(iterations, batch_size, interval_ms, recovery_ms)
-    if workload not in ("mixed", "point", "analytics"):
-        raise DemoRefused("Choose the mixed, point or analytics workload.")
+    if workload not in WORKLOADS:
+        raise DemoRefused("Choose the mixed, point, analytics or fleet workload.")
     settings = config(root)
+    # Read before this run's own report exists; a run that starts later is not in the window.
+    earlier = fleet_runs(root, project_id=settings["project_id"]) if workload == "fleet" else {}
     logical, keys = model(), public_keys(settings["public_keys"])
     dsns = credentials(root, "runtime", settings["engines"])
     factories = {
@@ -138,11 +205,15 @@ def run(
     def point(current: sde.Session, row: dict[str, Any]) -> Any:
         return current.get("WeatherReading", {key: row[key] for key in ("station", "at")})
 
-    def counted(current: sde.Session, where: dict[str, Any]) -> int:
-        return current.count("WeatherReading", where=where)
+    def counted(
+        current: sde.Session, where: dict[str, Any], bounds: sde.Range | None = None
+    ) -> int:
+        return current.count("WeatherReading", where=where, bounds=bounds)
 
-    def summarized(current: sde.Session, where: dict[str, Any]) -> Any:
-        return current.summarize("WeatherReading", "celsius", where=where)
+    def summarized(
+        current: sde.Session, where: dict[str, Any], bounds: sde.Range | None = None
+    ) -> Any:
+        return current.summarize("WeatherReading", "celsius", where=where, bounds=bounds)
 
     checkpoint()
     began = time.monotonic_ns()
@@ -183,7 +254,34 @@ def run(
                 same(read_retry(partial(point, row=last)), last)
             count = first + batch_size - 1
             where = {"station": last["station"]}
-            if workload != "point" or iteration == iterations - 1:
+            if workload == "fleet":
+                # Every station, one time window: the traffic a time-first layout is for. The
+                # expected answer is exact, from this directory's run reports (``fleet_runs``).
+                fleet_page, fleet_rows, fleet_celsius = fleet_expected(
+                    {**earlier, run_id: count}, count, FLEET_PAGE
+                )
+                bounds = sde.Range(
+                    "at", low=reading(run_id, 0, 1)["at"], high=reading(run_id, 0, count + 1)["at"]
+                )
+
+                def check_fleet_page(
+                    current: sde.Session,
+                    bounds: sde.Range = bounds,
+                    expected: list[dict[str, Any]] = fleet_page,
+                ) -> None:
+                    page = current.scan("WeatherReading", bounds=bounds, limit=len(expected))
+                    if list(page.rows) != expected:
+                        raise DemoRefused("The fleet page did not match this directory's runs.")
+
+                read_retry(check_fleet_page)
+                if read_retry(partial(counted, where={}, bounds=bounds)) != fleet_rows:
+                    raise DemoRefused("The fleet count did not match this directory's runs.")
+                summary = read_retry(partial(summarized, where={}, bounds=bounds))
+                if summary.count != fleet_rows or summary.total != fleet_celsius:
+                    raise DemoRefused(
+                        "The exact fleet summary did not match this directory's runs."
+                    )
+            elif workload != "point" or iteration == iterations - 1:
 
                 def check_page(
                     current: sde.Session, where: dict[str, Any] = where, count: int = count

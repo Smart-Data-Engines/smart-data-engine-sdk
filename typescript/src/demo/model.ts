@@ -16,7 +16,8 @@ export function weatherModel() {
 }
 export const baseTime = Timestamp.from('2026-01-01T00:00:00.000000Z')
 const stationTemplate = 'weather-{run_id}-{worker}', seedTemplate = 'sde-weather-v1:{run_id}:{worker}:{sequence}'
-const celsiusBaseCents = 1525, celsiusModulus = 1000, humidityBase = 30, humidityModulus = 70, uuidVersion = 4
+export const celsiusBaseCents = 1525, celsiusModulus = 1000
+const humidityBase = 30, humidityModulus = 70, uuidVersion = 4
 export const generatorSpec = Object.freeze({
   kind: 'sde-weather-generator', version: 1, worker: 0,
   station_template: stationTemplate, seed_template: seedTemplate,

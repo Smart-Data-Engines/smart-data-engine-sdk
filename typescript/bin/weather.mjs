@@ -3,7 +3,7 @@
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { DemoRefused } from '../dist/demo/project.js'
-import { runWeather } from '../dist/demo/weather.js'
+import { runWeather, workloads } from '../dist/demo/weather.js'
 
 try {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
@@ -13,14 +13,15 @@ try {
     help: { type: 'boolean' },
   } })
   if (values.help) {
-    console.log('sde-weather-ts --directory DIR run [--iterations 10] [--batch-size 10] [--interval-ms 100] [--recovery-ms 10000] [--workload mixed|point|analytics]')
+    console.log(`sde-weather-ts --directory DIR run [--iterations 10] [--batch-size 10] [--interval-ms 100] [--recovery-ms 10000] [--workload ${workloads.join('|')}]`)
   } else {
+    const workload = workloads.find(item => item === (values.workload ?? 'mixed'))
     if (positionals.length !== 1 || positionals[0] !== 'run' || !values.directory ||
-        !['mixed', 'point', 'analytics'].includes(values.workload ?? 'mixed')) throw new DemoRefused('Use --help for the local runtime command.')
+        workload === undefined) throw new DemoRefused('Use --help for the local runtime command.')
     const result = await runWeather(resolve(values.directory), {
       iterations: Number(values.iterations), batchSize: Number(values['batch-size']),
       intervalMs: Number(values['interval-ms']), recoveryMs: Number(values['recovery-ms']),
-      workload: values.workload === 'point' ? 'point' : values.workload === 'analytics' ? 'analytics' : 'mixed',
+      workload,
     })
     console.log(JSON.stringify(result))
   }

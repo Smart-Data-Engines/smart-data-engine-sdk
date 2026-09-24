@@ -10,9 +10,9 @@ import { neutralDeclaration } from '../src/model.js'
 import { Session } from '../src/session.js'
 import type { Row } from '../src/session.js'
 import { EngineError } from '../src/errors.js'
-import { reading, weatherModel } from '../src/demo/model.js'
+import { generatorId, reading, weatherModel } from '../src/demo/model.js'
 import { project, read, write } from '../src/demo/project.js'
-import { runWeather } from '../src/demo/weather.js'
+import { fleetExpected, fleetRuns, runWeather, workloads } from '../src/demo/weather.js'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -137,4 +137,43 @@ it('pins the generator descriptor and every supported sequence to the shared bas
     }
   }
   expect(digest.digest('hex')).toBe(fixture.domain.sha256)
+})
+
+const fleet = new Map([['a'.repeat(32), 7], ['0'.repeat(32), 3], ['c'.repeat(31) + '1', 12]])
+it('expects every run row in the fleet window, in key order (brute force)', () => {
+  const through = 5, limit = 4
+  const rows = [...fleet].flatMap(([identity, written]) =>
+    Array.from({ length: Math.min(through, written) }, (_, index) => reading(identity, 0, index + 1)))
+  rows.sort((left, right) => left.station < right.station ? -1 : left.station > right.station ? 1
+    : left.at.epochMicroseconds < right.at.epochMicroseconds ? -1 : 1)
+  const [page, total, celsius] = fleetExpected(fleet, through, limit)
+  expect(page).toEqual(rows.slice(0, limit))
+  expect(total).toBe(rows.length); expect(total).toBe(3 + 5 + 5)
+  const cents = rows.reduce((sum, row) => sum + BigInt(row.celsius.replace('.', '')), 0n)
+  expect(celsius).toBe(`${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`)
+  expect(fleetExpected(fleet, through, 100)[0]).toEqual(rows)
+})
+function report(root: string, identity: string, fields: Record<string, unknown> = {}) {
+  write(join(root, 'runs', identity, 'report.json'), { protocol: 2, run_id: identity, project_id: 'p'.repeat(32),
+    status: 'complete', pending: null, generator_id: generatorId, verified_rows: 4, ...fields })
+}
+it('reads every completed run of this project for the fleet, and only those', () => {
+  const { root } = fixture()
+  report(root, 'a'.repeat(32)); report(root, 'b'.repeat(32), { verified_rows: 9 })
+  report(root, 'c'.repeat(32), { project_id: 'q'.repeat(32), status: 'running' })
+  expect(fleetRuns(root, 'p'.repeat(32))).toEqual(new Map([['a'.repeat(32), 4], ['b'.repeat(32), 9]]))
+  expect(fleetRuns(join(root, 'empty'), 'p'.repeat(32))).toEqual(new Map())
+})
+for (const [name, fields] of Object.entries({
+  running: { status: 'running' }, incomplete: { status: 'incomplete' }, pending: { pending: { first: 1, count: 2 } },
+  generator: { generator_id: 'weather-v0:other' }, bool: { verified_rows: true }, negative: { verified_rows: -1 },
+  'too-many': { verified_rows: 10001 }, moved: { run_id: 'b'.repeat(32) }, 'no-pending': { pending: undefined },
+})) it(`refuses the fleet when an earlier run is not complete (${name})`, () => {
+  const { root } = fixture()
+  report(root, 'a'.repeat(32), fields)
+  expect(() => fleetRuns(root, 'p'.repeat(32))).toThrow(/every earlier run/)
+})
+it('offers the fleet workload and refuses anything else before reading setup', async () => {
+  expect(workloads).toEqual(['mixed', 'point', 'analytics', 'fleet'])
+  await expect(runWeather('/nonexistent', { workload: 'bogus' as never })).rejects.toThrow(/Invalid bounded workload/)
 })

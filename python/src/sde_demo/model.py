@@ -36,6 +36,8 @@ SEED_TEMPLATE = "sde-weather-v1:{run_id}:{worker}:{sequence}"
 CELSIUS_BASE_CENTS, CELSIUS_MODULUS = 1525, 1000
 HUMIDITY_BASE, HUMIDITY_MODULUS = 30, 70
 UUID_VERSION = 4
+WORKLOADS = ("mixed", "point", "analytics", "fleet")
+"""What a run can drive. The CLI offers and the runtime accepts this one tuple."""
 GENERATOR_SPEC = {
     "kind": "sde-weather-generator",
     "version": 1,
