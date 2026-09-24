@@ -44,6 +44,14 @@ for (const source of ['postgres', 'clickhouse']) it.skipIf(!enabled)(`runs Weath
     const filters = Object.fromEntries(shapes.map((entry: { kind: string; filtered_on?: unknown }) => [entry.kind, entry.filtered_on]))
     expect(filters.range_read).toEqual([{ equal: [], range: 'at', calls: 2 }])
     expect(filters.aggregate).toEqual([{ equal: [], range: 'at', calls: 4 }])
+    // Alerts read one station's readings at or above a humidity: no alert in the first iteration
+    // (an empty page and a summary of nothing), five in the second.
+    const alerts = await runWeather(directory, { iterations: 2, batchSize: 40, intervalMs: 0, workload: 'alerts' })
+    expect(alerts.status).toBe('complete'); expect(alerts.verified_rows).toBe(80)
+    const alertShapes = JSON.parse(readFileSync(join(directory, 'runs', alerts.run_id, 'window.json'), 'utf8')).groups.WeatherReading.shapes
+    const alertFilters = Object.fromEntries(alertShapes.map((entry: { kind: string; filtered_on?: unknown }) => [entry.kind, entry.filtered_on]))
+    expect(alertFilters.range_read).toEqual([{ equal: ['station'], range: 'humidity', calls: 2 }])
+    expect(alertFilters.aggregate).toEqual([{ equal: ['station'], range: 'humidity', calls: 4 }])
     expect(JSON.parse(call('reset')).status).toBe('reset')
     expect(JSON.parse(call('reset')).status).toBe('reset')
   } finally {

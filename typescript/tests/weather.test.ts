@@ -12,7 +12,7 @@ import type { Row } from '../src/session.js'
 import { EngineError } from '../src/errors.js'
 import { generatorId, reading, weatherModel } from '../src/demo/model.js'
 import { project, read, write } from '../src/demo/project.js'
-import { fleetExpected, fleetRuns, runWeather, workloads } from '../src/demo/weather.js'
+import { alertExpected, alertHumidity, fleetExpected, fleetRuns, runWeather, workloads } from '../src/demo/weather.js'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -153,6 +153,70 @@ it('expects every run row in the fleet window, in key order (brute force)', () =
   expect(celsius).toBe(`${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`)
   expect(fleetExpected(fleet, through, 100)[0]).toEqual(rows)
 })
+for (const [through, limit, count] of [[150, 7, 10], [150, 100, 10], [64, 100, 0], [65, 1, 1]] as const) {
+  it(`expects every alert of the run in key order, ${through} rows by ${limit} (brute force)`, () => {
+    const rows = Array.from({ length: through }, (_, index) => reading('a'.repeat(32), 0, index + 1))
+      .filter(row => row.humidity >= BigInt(alertHumidity))
+    const [page, total, celsius] = alertExpected('a'.repeat(32), through, limit)
+    expect(page).toEqual(rows.slice(0, limit))
+    expect(total).toBe(rows.length); expect(total).toBe(count)
+    const cents = rows.reduce((sum, row) => sum + BigInt(row.celsius.replace('.', '')), 0n)
+    expect(celsius).toBe(rows.length ? `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` : null)
+  })
+}
+/** An in-memory session answering reads as an engine does; `defect` makes one answer wrong. */
+function engine(defect?: string) {
+  const rows: Row[] = []
+  type Bounds = { field: string; low?: bigint; high?: bigint }
+  const station = (row: Row) => row.station as string
+  const micros = (row: Row) => (row.at as { epochMicroseconds: bigint }).epochMicroseconds
+  function matching(where: Row = {}, bounds?: Bounds, ranged = true) {
+    return [...rows].sort((left, right) => station(left) < station(right) ? -1 : station(left) > station(right) ? 1
+      : micros(left) < micros(right) ? -1 : 1)
+      .filter(row => Object.entries(where).every(([name, value]) => row[name] === value))
+      .filter(row => {
+        if (!bounds || !ranged) return true
+        const value = row[bounds.field] as bigint
+        return (bounds.low === undefined || value >= bounds.low) && (bounds.high === undefined || value < bounds.high)
+      })
+  }
+  vi.spyOn(Session, 'connect').mockImplementation(async () => ({
+    async close() {},
+    async saveMany(_entity: string, batch: Row[]) { rows.push(...batch) },
+    async get(_entity: string, key: Row) {
+      return rows.find(row => row.station === key.station && isDeepStrictEqual(row.at, key.at)) ?? null
+    },
+    async scan(_entity: string, options: { where?: Row; bounds?: Bounds; limit: number }) {
+      return { rows: matching(options.where, options.bounds, defect !== 'page').slice(0, options.limit), nextAfter: null }
+    },
+    async count(_entity: string, options: { where?: Row; bounds?: Bounds }) {
+      return BigInt(matching(options.where, options.bounds, defect !== 'count').length)
+    },
+    async summarize(_entity: string, _field: string, options: { where?: Row; bounds?: Bounds }) {
+      const found = matching(options.where, options.bounds)
+      let cents = found.reduce((total, row) => total + BigInt(String(row.celsius).replace('.', '')), 0n)
+      if (defect === 'summary' && found.length) cents += 1n
+      const total = found.length || defect === 'empty_total'
+        ? `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` : null
+      return { count: BigInt(found.length), total }
+    },
+  }) as unknown as Session)
+  return rows
+}
+for (const [defect, refusal] of [[undefined, undefined], ['page', 'alert page'], ['count', 'alert count'],
+  ['summary', 'alert summary'], ['empty_total', 'alert summary']] as const) {
+  it(`checks every alerts answer exactly (${defect ?? 'faithful engine'})`, async () => {
+    // Two iterations of 40: none alerts in the first, five in the second.
+    const { root } = fixture(), rows = engine(defect)
+    const run = runWeather(root, { iterations: 2, batchSize: 40, intervalMs: 0, workload: 'alerts' })
+    if (refusal === undefined) {
+      const report = await run
+      expect(report.status).toBe('complete'); expect(report.verified_rows).toBe(80); expect(rows).toHaveLength(80)
+    } else {
+      await expect(run).rejects.toThrow(refusal)
+    }
+  })
+}
 function report(root: string, identity: string, fields: Record<string, unknown> = {}) {
   write(join(root, 'runs', identity, 'report.json'), { protocol: 2, run_id: identity, project_id: 'p'.repeat(32),
     status: 'complete', pending: null, generator_id: generatorId, verified_rows: 4, ...fields })
@@ -173,7 +237,7 @@ for (const [name, fields] of Object.entries({
   report(root, 'a'.repeat(32), fields)
   expect(() => fleetRuns(root, 'p'.repeat(32))).toThrow(/every earlier run/)
 })
-it('offers the fleet workload and refuses anything else before reading setup', async () => {
-  expect(workloads).toEqual(['mixed', 'point', 'analytics', 'fleet'])
+it('offers the fleet and alerts workloads and refuses anything else before reading setup', async () => {
+  expect(workloads).toEqual(['mixed', 'point', 'analytics', 'fleet', 'alerts'])
   await expect(runWeather('/nonexistent', { workload: 'bogus' as never })).rejects.toThrow(/Invalid bounded workload/)
 })

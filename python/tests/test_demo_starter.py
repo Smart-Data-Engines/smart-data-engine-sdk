@@ -401,6 +401,116 @@ def test_fleet_expectation_is_every_run_row_in_the_window() -> None:
     assert runtime.fleet_expected(FLEET_RUNS, through, 100)[0] == rows
 
 
+@pytest.mark.parametrize(("through", "limit"), [(150, 7), (150, 100), (64, 100), (65, 1)])
+def test_alert_expectation_is_every_alert_of_the_run(through: int, limit: int) -> None:
+    """Checked against brute force: every generated row at or above the threshold, in key order."""
+    rows = [
+        row
+        for row in (reading("a" * 32, 0, sequence) for sequence in range(1, through + 1))
+        if row["humidity"] >= runtime.ALERT_HUMIDITY
+    ]
+    rows.sort(key=lambda row: (row["station"], row["at"]))
+    page, total, celsius = runtime.alert_expected("a" * 32, through, limit)
+    assert page == rows[:limit]
+    assert total == len(rows)
+    assert celsius == (sum((row["celsius"] for row in rows), Decimal(0)) if rows else None)
+    # The threshold is a humidity the generator reaches and exceeds: five in every seventy.
+    assert total == {150: 10, 64: 0, 65: 1}[through]
+
+
+class Engine:
+    """An in-memory session answering reads as an engine does: equality, a range, key order.
+
+    ``defect`` makes one answer wrong in the way a broken adapter or layout could, so the alerts
+    workload's own comparison is what must refuse the run.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, defect: str | None = None) -> None:
+        self.rows: list[dict[str, Any]] = []
+        harness = self
+
+        class Client:
+            def close(self) -> None:
+                pass
+
+            def save_many(self, entity: str, rows: list[dict[str, Any]]) -> None:
+                harness.rows.extend(rows)
+
+            def get(
+                self, entity: str, key: dict[str, Any], **options: Any
+            ) -> dict[str, Any] | None:
+                return next(
+                    (row for row in harness.rows if all(row[k] == v for k, v in key.items())), None
+                )
+
+            def matching(
+                self, where: dict[str, Any] | None, bounds: sde.Range | None, ranged: bool = True
+            ) -> list[dict[str, Any]]:
+                found = []
+                for row in sorted(harness.rows, key=lambda row: (row["station"], row["at"])):
+                    if any(row[name] != value for name, value in (where or {}).items()):
+                        continue
+                    if bounds is not None and ranged:
+                        value = row[bounds.field]
+                        if (bounds.low is not None and value < bounds.low) or (
+                            bounds.high is not None and value >= bounds.high
+                        ):
+                            continue
+                    found.append(row)
+                return found
+
+            def scan(self, entity: str, **options: Any) -> sde.ScanPage:
+                rows = self.matching(
+                    options.get("where"), options.get("bounds"), ranged=defect != "page"
+                )
+                return sde.ScanPage(tuple(rows[: options["limit"]]), None)
+
+            def count(self, entity: str, **options: Any) -> int:
+                rows = self.matching(
+                    options.get("where"), options.get("bounds"), ranged=defect != "count"
+                )
+                return len(rows)
+
+            def summarize(self, entity: str, field: str, **options: Any) -> sde.NumericSummary:
+                rows = self.matching(options.get("where"), options.get("bounds"))
+                total = sum((row[field] for row in rows), Decimal(0)) if rows else None
+                if defect == "summary" and total is not None:
+                    total += Decimal("0.01")
+                if defect == "empty_total" and total is None:
+                    total = Decimal("0.00")
+                return sde.NumericSummary(len(rows), len(rows), None, None, total, None)
+
+        def connect(_model: Any, _placement: Any, factories: Any, **options: Any) -> Client:
+            return Client()
+
+        monkeypatch.setattr(sde.Session, "connect", connect)
+
+
+@pytest.mark.parametrize(
+    ("defect", "refusal"),
+    [
+        (None, None),
+        ("page", "alert page"),
+        ("count", "alert count"),
+        ("summary", "alert summary"),
+        ("empty_total", "alert summary"),
+    ],
+)
+def test_the_alerts_workload_checks_every_answer_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None, refusal: str | None
+) -> None:
+    """Two iterations of 40: none alerts in the first, five in the second."""
+    local(tmp_path)
+    Engine(monkeypatch, defect)
+    options: dict[str, Any] = {"iterations": 2, "batch_size": 40, "interval_ms": 0}
+    if refusal is None:
+        report = runtime.run(tmp_path, workload="alerts", **options)
+        assert report["status"] == "complete" and report["verified_rows"] == 80
+        return
+    with pytest.raises(project.DemoRefused, match=refusal):
+        runtime.run(tmp_path, workload="alerts", **options)
+
+
 def _report(root: Path, identity: str, **fields: Any) -> None:
     report = {
         "protocol": 2,
@@ -462,7 +572,10 @@ def test_the_cli_and_the_runtime_offer_the_same_workloads(tmp_path: Path) -> Non
     assert cli.WORKLOADS is runtime.WORKLOADS  # one tuple, imported by both
     # The parser accepts every workload the runtime runs (the missing setup refuses afterwards,
     # which returns a status) and rejects anything else before the runtime is reached.
-    assert isinstance(cli.main(["--directory", str(tmp_path), "run", "--workload", "fleet"]), int)
+    for workload in runtime.WORKLOADS:
+        assert isinstance(
+            cli.main(["--directory", str(tmp_path), "run", "--workload", workload]), int
+        )
     with pytest.raises(SystemExit):
         cli.main(["--directory", str(tmp_path), "run", "--workload", "bogus"])
     with pytest.raises(project.DemoRefused, match="fleet"):

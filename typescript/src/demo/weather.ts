@@ -10,15 +10,21 @@ import { ClickHouseEngine } from '../engines/clickhouse.js'
 import { Session } from '../session.js'
 import type { ManagedEngine, Row } from '../session.js'
 import { Recorder, windowRecord } from '../telemetry.js'
-import { baseTime, celsiusBaseCents, celsiusModulus, generatorId, reading } from './model.js'
+import { baseTime, celsiusBaseCents, celsiusModulus, generatorId, humidityBase, humidityModulus, reading } from './model.js'
 import { DemoRefused, project, read, write } from './project.js'
 
 /** What a run can drive. The CLI offers and the runtime accepts this one list. */
-export const workloads = ['mixed', 'point', 'analytics', 'fleet'] as const
+export const workloads = ['mixed', 'point', 'analytics', 'fleet', 'alerts'] as const
 export type Workload = typeof workloads[number]
 /** The fleet checks one cross-station page exactly; its count and sum cover the whole window. */
 const fleetPage = 100
 const maxRunRows = 10000
+/**
+ * The alert threshold. Humidity is 30 + sequence % 70, so a reading alerts when sequence % 70 is 65
+ * or more - five readings in seventy, known exactly from the sequence number.
+ */
+export const alertHumidity = 95
+export const alertPage = 100
 
 export interface RunOptions {
   iterations?: number; batchSize?: number; intervalMs?: number; recoveryMs?: number
@@ -87,6 +93,23 @@ export function fleetExpected(runs: Map<string, number>, through: number, limit:
     }
   }
   return [page, total, `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`]
+}
+/**
+ * The first page, count and celsius total of this run's alerts among sequences 1..through. One
+ * station, so key order - station, then time - is sequence order. With no alert yet the total is
+ * null, as the library reports a summary of no values on every engine. The same rules as the Python
+ * starter's alert_expected.
+ */
+export function alertExpected(runId: string, through: number, limit: number): [Row[], number, string | null] {
+  const page: Row[] = []
+  let total = 0, cents = 0n
+  for (let sequence = 1; sequence <= through; sequence++) {
+    if (humidityBase + sequence % humidityModulus < alertHumidity) continue
+    total++
+    cents += BigInt(celsiusBaseCents + sequence % celsiusModulus)
+    if (page.length < limit) page.push(reading(runId, 0, sequence))
+  }
+  return [page, total, total ? `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` : null]
 }
 export async function runWeather(root: string, options: RunOptions = {}): Promise<RunReport> {
   const { iterations = 10, batchSize = 10, intervalMs = 100, recoveryMs = 10000, workload = 'mixed' } = options
@@ -185,6 +208,21 @@ export async function runWeather(root: string, options: RunOptions = {}): Promis
         const summary = await readRetry(current => current.summarize('WeatherReading', 'celsius', { bounds }))
         if (summary.count !== BigInt(rows) || summary.total !== celsius) {
           throw new DemoRefused("The exact fleet summary did not match this directory's runs.")
+        }
+      } else if (workload === 'alerts') {
+        // One station's readings at or above the alert threshold: a range on humidity, a field
+        // outside the key, which the key cannot serve and an index can. Exact from the generator.
+        const [expected, alerts, celsius] = alertExpected(runId, count, alertPage)
+        const bounds = { field: 'humidity', low: BigInt(alertHumidity) }
+        const page = await readRetry(current => current.scan('WeatherReading', { where, bounds, limit: alertPage }))
+        if (page.rows.length !== expected.length) throw new DemoRefused('The alert page did not match this run.')
+        page.rows.forEach((row, index) => same(row, expected[index]!))
+        if (await readRetry(current => current.count('WeatherReading', { where, bounds })) !== BigInt(alerts)) {
+          throw new DemoRefused('The alert count did not match this run.')
+        }
+        const summary = await readRetry(current => current.summarize('WeatherReading', 'celsius', { where, bounds }))
+        if (summary.count !== BigInt(alerts) || summary.total !== celsius) {
+          throw new DemoRefused('The exact alert summary did not match this run.')
         }
       } else if (workload !== 'point' || iteration === iterations - 1) {
         const page = await readRetry(current => current.scan('WeatherReading', {
