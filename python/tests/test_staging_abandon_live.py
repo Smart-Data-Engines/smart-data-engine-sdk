@@ -328,3 +328,80 @@ def test_the_operator_cli_abandons_a_staging(tmp_path: Path) -> None:
             "message": "there is no unfinished index build or staging to abandon",
         }
         old.save("Event", {"id": 92, "value": 2})
+
+
+def test_a_recreated_table_with_the_same_marker_is_not_this_stagings(tmp_path: Path) -> None:
+    """Ours is the marker *and* the object that was recorded, not the marker alone."""
+    with initial("clickhouse", tmp_path) as (operator, stage, _old, roles, *_, target):
+        assert target == "postgres"
+        operator._after_step = crash_at("stage_create_Event:done")
+        with pytest.raises(Crash):
+            operator.stage(stage)
+        operator._after_step = quiet
+        (row,) = operator.store.read()["execution"]["tables"]
+        table, marker = copy_table(stage), row["marker"]
+        roles[target].command(f'DROP TABLE "{table}"')
+        roles[target].command(f'CREATE TABLE "{table}" (id bigint PRIMARY KEY)')
+        roles[target].command(f"COMMENT ON TABLE \"{table}\" IS '{marker}'")
+        receipt = operator.abandon().as_record()
+        assert receipt["tables"][0]["identity"] is None
+        assert exists(roles[target], table)  # another object carrying the marker: left alone
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_after_an_abandonment_the_next_staging_prepares(source: str, tmp_path: Path) -> None:
+    """The customer is not stuck: a new authorization stages a new copy beside the history."""
+    from copy import deepcopy
+    from uuid import uuid4
+
+    with initial(source, tmp_path) as (
+        operator,
+        stage,
+        old,
+        roles,
+        model,
+        public,
+        signed,
+        material,
+        _source,
+        target,
+    ):
+        operator._after_step = crash_at("stage_grants:done")
+        with pytest.raises(Crash):
+            operator.stage(stage)
+        operator._after_step = quiet
+        assert operator.abandon().as_record()["outcome"] == "abandoned"
+        current = operator.store.read()["active_map"]
+        identity = uuid4().hex
+        prepared = deepcopy(current)
+        prepared["map_version"] = stage.prepared.map_version + 1  # the abandoned one is burned
+        fresh = {
+            **material(target, sde.staging_table_name(identity, 1), "next-copy"),
+            "lag_budget_ms": 30000,
+        }
+        prepared["groups"]["Event"].update(derived=[fresh], also_write=["next-copy"])
+        next_stage = sde.load_staging_plan(
+            signed(
+                {
+                    "kind": "sde-stage",
+                    "protocol": 1,
+                    "stage_id": identity,
+                    "project_id": PROJECT,
+                    "group": "Event",
+                    "current": current,
+                    "prepared": signed(prepared),
+                }
+            ),
+            model=model,
+            project_id=PROJECT,
+            public_key=public,
+        )
+        receipt = operator.stage(next_stage).as_record()
+        assert receipt["outcome"] == "prepared"
+        assert exists(roles[target], sde.staging_table_name(identity, 1))
+        history = operator.store.read()["stages"]
+        assert {record["receipt"]["outcome"] for record in history.values()} == {
+            "abandoned",
+            "prepared",
+        }
+        old.save("Event", {"id": 93, "value": 3})
