@@ -1,0 +1,119 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "x86_64",
+    "python": "3.12.3"
+  },
+  "sde_version": "0.1.0.dev0",
+  "results": [
+    {
+      "path": "in_place",
+      "dialect": "postgres",
+      "rows": 100000,
+      "outcome": "built",
+      "receipt_elapsed_ms": 346,
+      "operator_wall_ms": 482,
+      "writer_max_gap_before_ms": 9.6,
+      "writer_max_gap_during_ms": 13.8,
+      "writer_errors": 0,
+      "index_in_force": true
+    },
+    {
+      "path": "copy",
+      "dialect": "postgres",
+      "rows": 100000,
+      "stage_ms": 401,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 7243,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "within_budget": true,
+      "pause_ms": 7174,
+      "recovery": null,
+      "index_in_force": true
+    },
+    {
+      "path": "in_place",
+      "dialect": "postgres",
+      "rows": 450000,
+      "outcome": "built",
+      "receipt_elapsed_ms": 618,
+      "operator_wall_ms": 764,
+      "writer_max_gap_before_ms": 9.2,
+      "writer_max_gap_during_ms": 80.2,
+      "writer_errors": 0,
+      "index_in_force": true
+    },
+    {
+      "path": "copy",
+      "dialect": "postgres",
+      "rows": 450000,
+      "stage_ms": 392,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 30397,
+      "cutover_outcome": "recovery_required",
+      "cutover_reason": "operator deadline interrupted an operation; reconnect dedicated adapters and inspect local status before resuming or retrying qualification",
+      "within_budget": null,
+      "pause_ms": null,
+      "recovery": {
+        "interrupted_after_ms": 30066,
+        "resume_ms": 257,
+        "resumed_outcome": "abort",
+        "resumed_reason": "recovered_before_decision"
+      },
+      "index_in_force": false
+    },
+    {
+      "path": "in_place",
+      "dialect": "clickhouse",
+      "rows": 100000,
+      "outcome": "built",
+      "receipt_elapsed_ms": 657,
+      "operator_wall_ms": 885,
+      "writer_max_gap_before_ms": 27.3,
+      "writer_max_gap_during_ms": 20.0,
+      "writer_errors": 0,
+      "index_in_force": true
+    },
+    {
+      "path": "copy",
+      "dialect": "clickhouse",
+      "rows": 100000,
+      "stage_ms": 641,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 5782,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "within_budget": true,
+      "pause_ms": 5581,
+      "recovery": null,
+      "index_in_force": true
+    },
+    {
+      "path": "in_place",
+      "dialect": "clickhouse",
+      "rows": 450000,
+      "outcome": "built",
+      "receipt_elapsed_ms": 707,
+      "operator_wall_ms": 920,
+      "writer_max_gap_before_ms": 21.2,
+      "writer_max_gap_during_ms": 22.1,
+      "writer_errors": 0,
+      "index_in_force": true
+    },
+    {
+      "path": "copy",
+      "dialect": "clickhouse",
+      "rows": 450000,
+      "stage_ms": 652,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 28054,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "within_budget": true,
+      "pause_ms": 27843,
+      "recovery": null,
+      "index_in_force": true
+    }
+  ]
+}
