@@ -1618,11 +1618,14 @@ contract from 4 to 5 - the fresh copy is where a physical design first appears -
 
 ## 7j. Signed in-place index build packet
 
-[In-place index builds, protocol 1](in-place-index.md) authorize indexes added to the tables a
+[In-place index builds](in-place-index.md) authorize a change to the indexes of the tables a
 group's source already uses, with no copy and no cutover: the exact signed map in force and a next
-map that differs from it only by new indexes after the ones in force, named
-`sde_i_<index_id>_<position>`, under the same write generation. The prepared map may raise the
-contract from 4 to 5 and may not lower it. Both SDKs load and validate the packet;
-`migration/143`-`179` pin its acceptances and one refusal per rule, each refusal with the message
-fragment both libraries give. The Python local operator executes the build, its recovery and its
+map that differs from it only by its indexes, under the same write generation. Protocol 1 keeps
+every index in force, in order, and adds at least one after them, named
+`sde_i_<index_id>_<position>`. Protocol 2 removes at least one index in force - each one whose name
+the next map no longer carries - keeps the others byte for byte in their order, and adds new ones
+after them under the same naming rule, possibly none. The prepared map may raise the contract from
+4 to 5 and may not lower it. Both SDKs load and validate the packet; `migration/143`-`187` pin its
+acceptances and one refusal per rule, each refusal with the message fragment both libraries give.
+The Python local operator executes the build, the removals after its decision, its recovery and its
 abandonment. Loading an authorization builds nothing and activates no map.

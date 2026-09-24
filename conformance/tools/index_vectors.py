@@ -155,6 +155,32 @@ def reused(plan: dict[str, Any]) -> None:
         document["groups"]["Order"]["source"]["layout"]["tables"]["Order"] = name(1)
 
 
+OTHER = {"entity": "Event", "name": "event_at", "columns": ["at"], "method": "brin"}
+BUILT = {"entity": "Event", "name": name(1, "7" * 32), "columns": ["id"]}
+"""An index a previous in-place build added: a bound name of another build id."""
+
+
+def change(*prepared: dict[str, Any], kept: tuple[dict[str, Any], ...] = (KEPT,)) -> Callable[
+    [dict[str, Any]], None
+]:
+    """Protocol 2: the map in force carries ``kept``; the next map carries ``prepared``.
+
+    With nothing left the next map has no ``indexes`` at all - the form a controller writes, for
+    which an empty list would claim that indexing was considered and none chosen.
+    """
+
+    def apply(plan: dict[str, Any]) -> None:
+        plan["protocol"] = 2
+        with_kept(plan, *kept)
+        layout = source(plan["prepared"])["layout"]
+        if prepared:
+            layout["indexes"] = copy.deepcopy(list(prepared))
+        else:
+            layout.pop("indexes", None)
+
+    return apply
+
+
 def cases() -> list[tuple[str, Callable[[dict[str, Any]], None] | None, str | None]]:
     out: list[tuple[str, Callable[[dict[str, Any]], None] | None, str | None]] = []
 
@@ -193,7 +219,7 @@ def cases() -> list[tuple[str, Callable[[dict[str, Any]], None] | None, str | No
     )
     case(
         "149-index-build-refuses-an-unknown-protocol",
-        at("protocol", 2),
+        at("protocol", 3),
         "unsupported index build authorization kind or protocol",
     )
     case(
@@ -311,6 +337,41 @@ def cases() -> list[tuple[str, Callable[[dict[str, Any]], None] | None, str | No
         REFUSED,
     )
     case("179-index-build-model-is-bound", at("prepared/model_version", "0" * 16), REFUSED)
+    # Protocol 2: indexes the map in force declares are removed as well as added.
+    new_btree = {"entity": "Event", "name": name(1), "columns": ["at"]}
+    case("180-index-change-removes-an-index-in-place", change(), None)
+    case("181-index-change-replaces-an-index", change(new_btree), None)
+    case(
+        "182-index-change-keeps-the-others-in-order",
+        change(copy.deepcopy(OTHER), new_btree, kept=(KEPT, OTHER, BUILT)),
+        None,
+    )
+    case(
+        "183-index-change-removes-an-index-a-build-added",
+        change(copy.deepcopy(KEPT), kept=(KEPT, BUILT)),
+        None,
+    )
+    case(
+        "184-index-change-removes-at-least-one",
+        change(copy.deepcopy(KEPT), new_btree),
+        "index build protocol 2 removes at least one index in force",
+    )
+    case(
+        "185-index-change-keeps-the-order-of-the-others",
+        change(copy.deepcopy(BUILT), copy.deepcopy(OTHER), kept=(KEPT, OTHER, BUILT)),
+        "an index change keeps the other indexes in force, in order, before the new ones",
+    )
+    case(
+        "186-index-change-names-bind-the-build-id",
+        change({**new_btree, "name": name(1, "9" * 32)}),
+        bound,
+    )
+
+    def moved_key(plan: dict[str, Any]) -> None:
+        change(new_btree)(plan)
+        source(plan["prepared"])["layout"]["key_order"] = {"Event": ["id"]}
+
+    case("187-index-change-keeps-the-key-order", moved_key, only_indexes)
     return out
 
 
@@ -318,6 +379,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
     parser.add_argument("--scratch-directory", type=Path, required=True)
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="write only these vectors (repeatable); every vector has its own key, so the others "
+        "stay byte for byte as they are",
+    )
     args = parser.parse_args()
     scratch = args.scratch_directory.resolve()
     if not scratch.is_dir() or scratch.is_relative_to(ROOT):
@@ -364,7 +432,10 @@ def main() -> None:
                 "value": base64.b64encode((work / "sig").read_bytes()).decode(),
             }
 
-        written = cases()
+        written = [entry for entry in cases() if not args.only or entry[0] in args.only]
+        unknown = set(args.only) - {entry[0] for entry in cases()}
+        if unknown:
+            parser.error(f"no such vector: {sorted(unknown)}")
         for label, change, match in written:
             plan = template()
             if change:
@@ -388,8 +459,10 @@ def main() -> None:
             if match is not None:
                 expected.update(error="MigrationRefused", match=match)
             else:
-                indexes = source(plan["prepared"])["layout"]["indexes"]
-                kept = source(plan["current"])["layout"].get("indexes", [])
+                indexes = source(plan["prepared"])["layout"].get("indexes", [])
+                remaining = {index["name"] for index in indexes}
+                in_force = source(plan["current"])["layout"].get("indexes", [])
+                kept = [index for index in in_force if index["name"] in remaining]
                 expected.update(
                     index_fingerprint=hashlib.sha256(payload(plan)).hexdigest(),
                     verified_with="index",
@@ -400,6 +473,10 @@ def main() -> None:
                     added=[index["name"] for index in indexes[len(kept) :]],
                     build_budget_ms=plan["build_budget_ms"],
                 )
+                if plan["protocol"] == 2:
+                    expected["removed"] = [
+                        index["name"] for index in in_force if index["name"] not in remaining
+                    ]
             directory = VECTORS / "migration" / label
             directory.mkdir(exist_ok=True)
             for filename, value in {

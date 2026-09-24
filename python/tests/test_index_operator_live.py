@@ -101,14 +101,22 @@ class Build:
 
 @contextmanager
 def initial(
-    engine: str, root: Path, *, kept: bool = False, added: int = 1, budget_ms: int = 60000
+    engine: str,
+    root: Path,
+    *,
+    kept: bool = False,
+    added: int = 1,
+    budget_ms: int = 60000,
+    remove: bool = False,
 ) -> Iterator[Build]:
     """A source-only map in force, a process writing on it, an operator, and a build authorization.
 
     ``kept`` gives the map in force a physical design of its own (contract 5), which the next map
     must carry unchanged; without it the next map raises the contract from 4 to 5, because the
-    first index is where a physical design first appears.
+    first index is where a physical design first appears. ``remove`` makes it an index change
+    (protocol 2): the next map drops that index in force and adds ``added`` new ones.
     """
+    assert kept or not remove, "only an index in force can be removed"
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     with runtime_roles("postgres") as pg, runtime_roles("clickhouse") as ch:
@@ -181,17 +189,19 @@ def initial(
         prepared["contract"], prepared["map_version"] = 5, 2
         design = prepared["groups"]["Event"]["source"]["layout"]
         design["indexes"] = [
-            *design.get("indexes", []),
+            *([] if remove else design.get("indexes", [])),
             *(
                 {"entity": "Event", "name": sde.index_build_name(identity, position), **shape}
                 for position, shape in enumerate(ADDED[engine][:added], start=1)
             ),
         ]
+        if not design["indexes"]:
+            del design["indexes"]  # absent, never empty, as a controller writes it
         plan = sde.load_index_plan(
             signed(
                 {
                     "kind": "sde-index",
-                    "protocol": 1,
+                    "protocol": 2 if remove else 1,
                     "index_id": identity,
                     "project_id": PROJECT,
                     "group": "Event",
@@ -416,7 +426,7 @@ class Crash(BaseException):
 def matches(step: str, checkpoint: str) -> bool:
     """``index_build:intent`` names the intent of every index's build step, whatever its name."""
     phase, _, suffix = checkpoint.partition(":")
-    if phase in ("index_build", "index_drop"):
+    if phase in ("index_build", "index_drop", "index_remove"):
         return step.startswith(phase + "_") and step.endswith(":" + suffix)
     return step == checkpoint
 
