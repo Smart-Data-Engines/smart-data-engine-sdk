@@ -314,6 +314,12 @@ Both map signatures, exact unchanged source/routing, portable names and envelope
 validated without constructing engines. `tools/staging_vectors.py` uses the independent fixture
 encoder and OpenSSL. Native creation and crash recovery have separate live tests.
 
+`migration/143`–`179` carry `plan.json` and `index.json` for signed in-place index builds: three
+acceptances (a B-tree under a raised contract, several indexes after the ones in force, ClickHouse
+data-skipping indexes) and one refusal per loader rule, each with the `match` fragment of the
+message both libraries must give. `tools/index_vectors.py` uses the independent fixture encoder and
+OpenSSL. The native build, its recovery and abandonment have separate live tests.
+
 `migration/122`–`132` carry `bulk.json`: application-batch operations, expected source/copy
 call order, transaction outcomes, capability/bound refusals and exact value-free metric bytes.
 The expected effects in `tools/bulk_vectors.py` are hand-specified; the generator does not execute

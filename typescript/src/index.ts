@@ -190,3 +190,4 @@ export { verifyFrozen, frozenVerifyRecord, type FrozenVerifyReport, type FrozenT
 export { CUTOVER_PROTOCOL, CUTOVER_RELAYOUT_PROTOCOL, CutoverPlan, loadCutoverPlan } from './cutover.js'
 
 export { STAGING_PROTOCOL, STAGING_RELAYOUT_PROTOCOL, StagingPlan, loadStagingPlan, stagingTableName } from './staging.js'
+export { INDEX_PROTOCOL, IndexPlan, indexBuildName, loadIndexPlan } from './in-place-index.js'

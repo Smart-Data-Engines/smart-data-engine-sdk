@@ -104,3 +104,50 @@ def test_file_sync_failure_does_not_publish_unconfirmed_state(
         store.write(state)
     assert store.path.read_bytes() == before
     assert store.read()["execution"] is None
+
+
+def _rewrite(store: ProjectState, contract: int, payload: dict[str, Any]) -> None:
+    """A well-formed envelope with a valid checksum: only the contract rule can refuse it."""
+    import hashlib
+
+    envelope = {
+        "storage_contract": contract,
+        "payload": payload,
+        "sha256": hashlib.sha256(encode(payload)).hexdigest(),
+    }
+    store.path.write_bytes(encode(envelope))
+
+
+def test_an_index_build_history_raises_the_state_contract_to_three(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    state = store.read()
+    state["stages"], state["indexes"] = {}, {"a" * 32: {"receipt": {"outcome": "built"}}}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 3
+    assert store.read()["indexes"] == {"a" * 32: {"receipt": {"outcome": "built"}}}
+
+
+@pytest.mark.parametrize(
+    ("contract", "drop", "history"),
+    [
+        (3, "indexes", None),  # contract 3 without its history
+        (3, None, []),  # a history that is not an object
+        (2, None, {}),  # an index history under a contract that does not know it
+        (1, None, {}),
+    ],
+)
+def test_the_index_build_history_belongs_to_contract_three_only(
+    tmp_path: Path, contract: int, drop: str | None, history: Any
+) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"], payload["indexes"] = {}, history
+    if drop is not None:
+        del payload[drop]
+    if contract == 1:
+        del payload["stages"]
+    _rewrite(store, contract, payload)
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()

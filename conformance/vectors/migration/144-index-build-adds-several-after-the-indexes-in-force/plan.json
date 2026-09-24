@@ -1,0 +1,183 @@
+{
+  "kind": "sde-index",
+  "protocol": 1,
+  "index_id": "66666666666666666666666666666666",
+  "project_id": "11111111111111111111111111111111",
+  "group": "Event",
+  "current": {
+    "contract": 5,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "groups": {
+      "Event": {
+        "write_epoch": 1,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            },
+            "indexes": [
+              {
+                "entity": "Event",
+                "name": "event_name",
+                "columns": [
+                  "name"
+                ],
+                "method": "btree"
+              }
+            ]
+          }
+        }
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "index",
+      "value": "8v4Dj6w+h/FdbUnQuExDTnt5Fy2m8LfLBQcAVaN3pR2qRVc/WdsPeRAloOzJ6JK3Kni/rZaTrBYTXjEnJ+9YCA=="
+    }
+  },
+  "prepared": {
+    "contract": 5,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 2,
+    "groups": {
+      "Event": {
+        "write_epoch": 1,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            },
+            "indexes": [
+              {
+                "entity": "Event",
+                "name": "event_name",
+                "columns": [
+                  "name"
+                ],
+                "method": "btree"
+              },
+              {
+                "entity": "Event",
+                "name": "sde_i_66666666666666666666666666666666_000001",
+                "columns": [
+                  "at"
+                ],
+                "method": "brin"
+              },
+              {
+                "entity": "Event",
+                "name": "sde_i_66666666666666666666666666666666_000002",
+                "columns": [
+                  "name",
+                  "id"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "index",
+      "value": "5K2Bqpkx51u2DNBylbsZifZkPDxS3vANtHLLJ4iVmys+7+XuzwlhhdSAO6l38Y9YJzB1y2E7m3OuCg2QOvsUBw=="
+    }
+  },
+  "build_budget_ms": 3600000,
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "index",
+    "value": "uW1gKL9rRl9N4vbfXDnvMw4OvdPmTS7ae6GslZSL7cjOeEo54MWAsCzwihy5rq3vm7MX3b5cjjquNRBHXCo2Dw=="
+  }
+}

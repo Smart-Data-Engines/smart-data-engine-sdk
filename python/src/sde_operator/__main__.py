@@ -42,12 +42,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.add_parser("status")
     commands.add_parser("current-map")
     commands.add_parser("resume")
+    commands.add_parser("abandon")
     enroll = commands.add_parser("enroll")
     enroll.add_argument("--map", type=Path, required=True)
     execute = commands.add_parser("execute")
     execute.add_argument("--plan", type=Path, required=True)
     stage = commands.add_parser("stage")
     stage.add_argument("--plan", type=Path, required=True)
+    index = commands.add_parser("index")
+    index.add_argument("--plan", type=Path, required=True)
     args = parser.parse_args(argv)
     adapters: list[Any] = []
     try:
@@ -129,6 +132,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 read(args.plan), model=model, project_id=project, public_key=keys
             )
             print(json.dumps(executor.stage(staging).as_record()))
+        elif args.command == "index":
+            from sde.index_build import load_index_plan
+
+            build = load_index_plan(
+                read(args.plan), model=model, project_id=project, public_key=keys
+            )
+            print(json.dumps(executor.index(build).as_record()))
+        elif args.command == "abandon":
+            print(json.dumps(executor.abandon().as_record()))
         elif args.command == "execute":
             plan = load_cutover_plan(
                 read(args.plan), model=model, project_id=project, public_key=keys
@@ -144,7 +156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "error": "recovery_required",
                     "message": (
                         "Inspect local status and resume with fresh connections; "
-                        "the durable decision must be preserved."
+                        "the durable decision must be preserved. An unfinished index build "
+                        "may be abandoned instead."
                     ),
                 }
             ),

@@ -1,0 +1,42 @@
+{
+ "pg_failed_build": "UniqueViolation",
+ "pg_leftover_valid_ready": [
+  false,
+  false
+ ],
+ "pg_if_not_exists_over_invalid": {
+  "notices": [
+   "relation \"leftover\" already exists, skipping"
+  ],
+  "valid_ready_unique_after": [
+   false,
+   false,
+   true
+  ]
+ },
+ "pg_after_drop": null,
+ "ch_index_after_add": [
+  [
+   "sde_i_abc_000001",
+   "minmax",
+   "value",
+   4
+  ]
+ ],
+ "ch_mutation_rows": [
+  [
+   "mutation_6.txt",
+   "MATERIALIZE INDEX sde_i_abc_000001",
+   "0",
+   "4",
+   ""
+  ]
+ ],
+ "ch_if_not_exists_other_shape": [
+  [
+   "sde_i_abc_000001",
+   "minmax",
+   4
+  ]
+ ]
+}

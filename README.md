@@ -99,6 +99,8 @@ The Python [local cutover operator](docs/local-cutover.md) adds durable executio
 for signed generation-bearing packets, including native access changes for existing Python and
 TypeScript processes. [Staging](docs/staging.md) creates successive fresh copies while preserving
 the source and local recovery history; controller handoff and workload qualification are separate.
+A design that only adds indexes is [built in place](docs/in-place-index.md), on the live tables and
+without pausing a write, instead of through a copy.
 The opt-in [workload qualification](docs/cutover-qualification.md) runs installed Python and npm
 artifacts under mixed traffic and checks scheduled latency, native recovery and acknowledged values.
 [Session lifetime](docs/session-lifecycle.md) defines borrowed/owned connections and transaction
@@ -195,7 +197,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **297 of them, in ten families** — that every
+And [`conformance/`](conformance/) holds the vectors — **334 of them, in ten families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 

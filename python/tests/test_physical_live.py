@@ -289,3 +289,61 @@ def test_the_partition_rule_still_holds_on_this_clickhouse() -> None:
             ch.command(f"OPTIMIZE TABLE {name} FINAL")
             rows[name] = int(ch.operator._cx.query(f"SELECT count() FROM {name}").result_rows[0][0])
         assert rows == {"on_key": 1, "off_key": 2}
+
+
+def test_a_unique_or_unfinished_index_is_not_the_declared_one() -> None:
+    """A leftover of an interrupted concurrent build is not the index a layout declares.
+
+    Measured on 15.19: a failed ``CREATE INDEX CONCURRENTLY`` leaves its index in the catalogue,
+    neither valid nor ready, and ``CREATE INDEX CONCURRENTLY IF NOT EXISTS`` succeeds over it with
+    only a notice. The verification read the name, method and columns alone and reported such a
+    leftover as the declared index; a unique index of the declared shape passed the same way,
+    although it refuses writes the layout never refuses.
+    """
+    import psycopg
+
+    with runtime_roles("postgres") as roles:
+        model, placement = _placement(roles, design=True)
+        sde.prepare_schema(model, placement, {"db": roles.operator}, project_id=PROJECT)
+        layout = placement.groups["Reading"].source.layout
+        keys = {"Reading": ["station", "at"]}
+        cx = roles.operator._cx
+
+        def found() -> dict[str, str]:
+            return {
+                finding.aspect: finding.found
+                for finding in roles.operator.validate_schema(layout, keys=keys)
+            }
+
+        assert found() == {}  # the declared index, valid and not unique: no finding
+        cx.execute("DROP INDEX reading_temperature")
+        cx.execute("CREATE UNIQUE INDEX reading_temperature ON readings (temperature)")
+        assert found() == {"index reading_temperature": "btree on ['temperature'], unique"}
+
+        cx.execute("DROP INDEX reading_temperature")
+        cx.execute(
+            "INSERT INTO readings (station, at, humidity, temperature, __sde_write_epoch) "
+            "VALUES ('a', now(), 1, 20.0, 1), ('b', now(), 1, 20.0, 1)"
+        )
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            cx.execute(
+                "CREATE UNIQUE INDEX CONCURRENTLY reading_temperature ON readings (temperature)"
+            )
+        assert found() == {
+            "index reading_temperature": (
+                "btree on ['temperature'], unique, not valid (an unfinished concurrent build)"
+            )
+        }
+
+        # Not unique, only not valid: the catalogue flag a cancelled build leaves, set directly.
+        cx.execute("DROP INDEX CONCURRENTLY reading_temperature")
+        cx.execute("CREATE INDEX reading_temperature ON readings (temperature)")
+        cx.execute(
+            "UPDATE pg_index SET indisvalid = false "
+            "WHERE indexrelid = 'reading_temperature'::regclass"
+        )
+        assert found() == {
+            "index reading_temperature": (
+                "btree on ['temperature'], not valid (an unfinished concurrent build)"
+            )
+        }

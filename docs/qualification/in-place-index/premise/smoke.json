@@ -1,0 +1,52 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "x86_64",
+    "python": "3.12.3"
+  },
+  "sde_version": "0.1.0.dev0",
+  "results": [
+    {
+      "path": "in_place",
+      "dialect": "postgres",
+      "rows": 10000,
+      "build_ms": 28,
+      "index_ready": true,
+      "writer_max_gap_before_ms": 10.5,
+      "writer_max_gap_during_ms": 12.4,
+      "writer_errors": 0
+    },
+    {
+      "path": "copy",
+      "dialect": "postgres",
+      "rows": 10000,
+      "stage_ms": 537,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 1444,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 1361
+    },
+    {
+      "path": "in_place",
+      "dialect": "clickhouse",
+      "rows": 10000,
+      "build_ms": 45,
+      "index_ready": true,
+      "writer_max_gap_before_ms": 42.0,
+      "writer_max_gap_during_ms": 29.5,
+      "writer_errors": 0
+    },
+    {
+      "path": "copy",
+      "dialect": "clickhouse",
+      "rows": 10000,
+      "stage_ms": 2273,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 3773,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 3109
+    }
+  ]
+}

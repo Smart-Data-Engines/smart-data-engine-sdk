@@ -42,9 +42,9 @@ _FIELDS = {
 Outcome = Literal["success", "abort"]
 
 
-def _hex(value: Any, width: int, name: str) -> str:
+def _hex(value: Any, width: int, name: str, subject: str = "cutover") -> str:
     if not isinstance(value, str) or re.fullmatch(f"[0-9a-f]{{{width}}}", value) is None:
-        raise MigrationRefused(f"cutover {name} must be {width} lowercase hexadecimal digits")
+        raise MigrationRefused(f"{subject} {name} must be {width} lowercase hexadecimal digits")
     return value
 
 
@@ -54,27 +54,28 @@ def _positive(value: Any, name: str) -> int:
     return value
 
 
-def _record(value: Any, name: str) -> dict[str, Any]:
+def _record(value: Any, name: str, subject: str = "cutover") -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise MigrationRefused(f"cutover {name} must be an object")
+        raise MigrationRefused(f"{subject} {name} must be an object")
     return value
 
 
-def _signature(record: dict[str, Any]) -> None:
-    signature = _record(record.get("signature"), "signature")
+def _signature(record: dict[str, Any], subject: str = "cutover") -> None:
+    signature = _record(record.get("signature"), "signature", subject)
     if set(signature) not in ({"alg", "value"}, {"alg", "value", "key_id"}):
-        raise MigrationRefused("cutover signatures have missing or unknown fields")
+        raise MigrationRefused(f"{subject} signatures have missing or unknown fields")
     value = signature.get("value")
+    malformed = f"{subject} signatures must use ed25519 and canonical base64"
     if signature.get("alg") != "ed25519" or not isinstance(value, str):
-        raise MigrationRefused("cutover signatures must use ed25519 and canonical base64")
+        raise MigrationRefused(malformed)
     try:
         decoded = base64.b64decode(value, validate=True)
     except ValueError as exc:
-        raise MigrationRefused("cutover signatures must use ed25519 and canonical base64") from exc
+        raise MigrationRefused(malformed) from exc
     if len(decoded) != 64 or base64.b64encode(decoded).decode() != value:
-        raise MigrationRefused("cutover signatures must use ed25519 and canonical base64")
+        raise MigrationRefused(malformed)
     if "key_id" in signature and not isinstance(signature["key_id"], str):
-        raise MigrationRefused("cutover signature key_id must be a string")
+        raise MigrationRefused(f"{subject} signature key_id must be a string")
 
 
 @dataclass(frozen=True)

@@ -125,31 +125,59 @@ def _postgres_statements(
         )
 
     for index in _sorted_indexes(layout):
-        index_entity = str(index["entity"])
-        index_table = layout.tables.get(index_entity)
+        index_table = layout.tables.get(str(index["entity"]))
         if index_table is None:
             continue
-        method = index_method(index)
-        if method not in POSTGRES_METHODS:
-            raise EngineError(
-                f"index {index['name']!r} is a {method} index, which is a ClickHouse data-skipping "
-                f"index; PostgreSQL has {list(POSTGRES_METHODS)}. This map was designed for "
-                f"another dialect."
-            )
-        index_name = str(index["name"])
-        index_cols = ", ".join(_quote_ansi(str(c)) for c in index["columns"])
-        # A B-tree keeps the bytes every earlier map produced: no USING clause.
-        using = "" if method == "btree" else f"USING {method} "
-        statements.append(
-            f"CREATE INDEX IF NOT EXISTS {_quote_ansi(index_name)} "
-            f"ON {_quote_ansi(index_table)} {using}({index_cols})"
-        )
+        statements.append(f"CREATE INDEX IF NOT EXISTS {postgres_index_target(index, index_table)}")
     return tuple(statements)
+
+
+def postgres_index_target(index: Mapping[str, Any], table: str) -> str:
+    """``<name> ON <table> [USING <method>] (<columns>)``: what every PostgreSQL index DDL shares.
+
+    One function for the index a new table gets and for the one an in-place build adds
+    concurrently, because two renderings of one index are how a build creates something other than
+    what its map declares.
+    """
+    method = index_method(index)
+    if method not in POSTGRES_METHODS:
+        raise EngineError(
+            f"index {index['name']!r} is a {method} index, which is a ClickHouse data-skipping "
+            f"index; PostgreSQL has {list(POSTGRES_METHODS)}. This map was designed for "
+            f"another dialect."
+        )
+    index_cols = ", ".join(_quote_ansi(str(c)) for c in index["columns"])
+    # A B-tree keeps the bytes every earlier map produced: no USING clause.
+    using = "" if method == "btree" else f"USING {method} "
+    return f"{_quote_ansi(str(index['name']))} ON {_quote_ansi(table)} {using}({index_cols})"
 
 
 def _skip_index_type(index: Mapping[str, Any]) -> str:
     method = index_method(index)
     return f"set({index['max_rows']})" if method == "set" else method
+
+
+def clickhouse_index_clause(index: Mapping[str, Any]) -> str:
+    """``INDEX <name> <column> TYPE <type> GRANULARITY <n>``, inside CREATE TABLE or after ADD.
+
+    ``CREATE TABLE`` declares an index with this clause and ``ALTER TABLE ... ADD`` takes the same
+    one, so an in-place build and a new table cannot disagree about what the index is.
+    """
+    if index_method(index) not in CLICKHOUSE_METHODS:
+        raise EngineError(
+            f"index {index['name']!r} is not a ClickHouse data-skipping index; this engine has "
+            f"{list(CLICKHOUSE_METHODS)}"
+        )
+    indexed = list(index["columns"])
+    if len(indexed) != 1:
+        raise EngineError(
+            f"the data-skipping index {index['name']!r} must summarise exactly one column"
+        )
+    (column,) = indexed
+    return (
+        f"INDEX {_quote_backtick(str(index['name']))} {_quote_backtick(str(column))} "
+        f"TYPE {_skip_index_type(index)} GRANULARITY {index['granularity']}"
+    )
 
 
 def _clickhouse_statements(
@@ -190,18 +218,8 @@ def _clickhouse_statements(
         # Indexes inline: `CREATE TABLE IF NOT EXISTS` never adds one to an existing table, and a
         # separate ALTER would be a mutation over every existing part.
         for index in _sorted_indexes(layout):
-            if str(index["entity"]) != entity:
-                continue
-            indexed = list(index["columns"])
-            if len(indexed) != 1:
-                raise EngineError(
-                    f"the data-skipping index {index['name']!r} must summarise exactly one column"
-                )
-            (column,) = indexed
-            parts.append(
-                f"INDEX {_quote_backtick(str(index['name']))} {_quote_backtick(str(column))} "
-                f"TYPE {_skip_index_type(index)} GRANULARITY {index['granularity']}"
-            )
+            if str(index["entity"]) == entity:
+                parts.append(clickhouse_index_clause(index))
         partition_clause = (
             ""
             if partition is None

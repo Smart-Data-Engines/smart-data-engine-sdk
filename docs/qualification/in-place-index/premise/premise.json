@@ -1,0 +1,94 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "x86_64",
+    "python": "3.12.3"
+  },
+  "sde_version": "0.1.0.dev0",
+  "results": [
+    {
+      "path": "in_place",
+      "dialect": "postgres",
+      "rows": 100000,
+      "build_ms": 157,
+      "index_ready": true,
+      "writer_max_gap_before_ms": 11.0,
+      "writer_max_gap_during_ms": 21.0,
+      "writer_errors": 0
+    },
+    {
+      "path": "copy",
+      "dialect": "postgres",
+      "rows": 100000,
+      "stage_ms": 525,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 9625,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 9504
+    },
+    {
+      "path": "in_place",
+      "dialect": "postgres",
+      "rows": 300000,
+      "build_ms": 355,
+      "index_ready": true,
+      "writer_max_gap_before_ms": 8.4,
+      "writer_max_gap_during_ms": 16.2,
+      "writer_errors": 0
+    },
+    {
+      "path": "copy",
+      "dialect": "postgres",
+      "rows": 300000,
+      "stage_ms": 372,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 22589,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 22523
+    },
+    {
+      "path": "in_place",
+      "dialect": "clickhouse",
+      "rows": 100000,
+      "build_ms": 59,
+      "index_ready": true,
+      "writer_max_gap_before_ms": 18.0,
+      "writer_max_gap_during_ms": 18.7,
+      "writer_errors": 0
+    },
+    {
+      "path": "copy",
+      "dialect": "clickhouse",
+      "rows": 100000,
+      "stage_ms": 753,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 5877,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 5664
+    },
+    {
+      "path": "in_place",
+      "dialect": "clickhouse",
+      "rows": 300000,
+      "build_ms": 125,
+      "index_ready": true,
+      "writer_max_gap_before_ms": 27.9,
+      "writer_max_gap_during_ms": 44.8,
+      "writer_errors": 0
+    },
+    {
+      "path": "copy",
+      "dialect": "clickhouse",
+      "rows": 300000,
+      "stage_ms": 690,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 24902,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 24685
+    }
+  ]
+}

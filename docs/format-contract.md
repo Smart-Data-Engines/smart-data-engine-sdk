@@ -1613,3 +1613,15 @@ the key. The DDL is pinned by `schema/014`-`018`. A staging packet's prepared ma
 contract from 4 to 5 - the fresh copy is where a physical design first appears - and may not lower it
 (`migration/133`-`135`); a cutover packet's three candidates share one contract (`migration/136`,
 `137`).
+
+
+## 7j. Signed in-place index build packet
+
+[In-place index builds, protocol 1](in-place-index.md) authorize indexes added to the tables a
+group's source already uses, with no copy and no cutover: the exact signed map in force and a next
+map that differs from it only by new indexes after the ones in force, named
+`sde_i_<index_id>_<position>`, under the same write generation. The prepared map may raise the
+contract from 4 to 5 and may not lower it. Both SDKs load and validate the packet;
+`migration/143`-`179` pin its acceptances and one refusal per rule, each refusal with the message
+fragment both libraries give. The Python local operator executes the build, its recovery and its
+abandonment. Loading an authorization builds nothing and activates no map.

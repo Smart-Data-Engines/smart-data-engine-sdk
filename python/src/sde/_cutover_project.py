@@ -43,7 +43,7 @@ class ProjectState:
                 raise ValueError("invalid state envelope")
             if type(envelope["storage_contract"]) is not int or envelope[
                 "storage_contract"
-            ] not in (1, 2):
+            ] not in (1, 2, 3):
                 raise ValueError("unsupported state storage contract")
             payload = envelope["payload"]
             if (
@@ -64,10 +64,16 @@ class ProjectState:
                 "completed",
                 "retired_names",
             }
-            if envelope["storage_contract"] == 2:
+            if envelope["storage_contract"] >= 2:
                 fields.add("stages")
                 if not isinstance(payload.get("stages"), dict):
                     raise ValueError("staging history must be an object")
+            if envelope["storage_contract"] == 3:
+                # In-place index builds: a reader of contracts 1 and 2 refuses this state rather
+                # than ignoring a history it would not know to keep.
+                fields.add("indexes")
+                if not isinstance(payload.get("indexes"), dict):
+                    raise ValueError("index build history must be an object")
             if set(payload) != fields:
                 raise ValueError("unknown or missing project state fields")
             return payload
@@ -86,7 +92,7 @@ class ProjectState:
     def write(self, payload: dict[str, Any]) -> None:
         body = encode(payload)
         envelope = {
-            "storage_contract": 2 if "stages" in payload else 1,
+            "storage_contract": 3 if "indexes" in payload else 2 if "stages" in payload else 1,
             "payload": payload,
             "sha256": hashlib.sha256(body).hexdigest(),
         }

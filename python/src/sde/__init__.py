@@ -54,6 +54,13 @@ from .explain import Cost, Explains, PlanFinding, QueryPlan, QueryPlanRefused, e
 from .frozen_verification import FrozenVerifyReport, verify_frozen
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
+from .index_build import (
+    INDEX_PROTOCOL,
+    IndexPlan,
+    IndexReceipt,
+    index_build_name,
+    load_index_plan,
+)
 from .infer import InferredModel, Note, infer_model, infer_models
 from .inspection import InspectionContext
 from .internal import internal_failures, reset_internal_failures
@@ -156,6 +163,7 @@ __all__ = [
     "DIALECTS",
     "DIALECT_PRECISION",
     "FIXED_SCHEMA",
+    "INDEX_PROTOCOL",
     "MAP_CONTRACT",
     "MAP_CONTRACT_FLOOR",
     "MAX_BATCH_ROWS",
@@ -199,6 +207,8 @@ __all__ = [
     "GroupFeatures",
     "GroupPlacement",
     "Histogram",
+    "IndexPlan",
+    "IndexReceipt",
     "InferredModel",
     "InspectionContext",
     "Int32",
@@ -266,10 +276,12 @@ __all__ = [
     "group_of",
     "has_time_dimension",
     "hash_identifiers",
+    "index_build_name",
     "infer_model",
     "infer_models",
     "internal_failures",
     "load_cutover_plan",
+    "load_index_plan",
     "load_local_map",
     "load_map",
     "load_or_create_salt",

@@ -32,10 +32,10 @@ python-check: python-lint python-types python-test
 # it is the last place that should be unchecked. `--config` is explicit so that a pyproject.toml
 # appearing at the repository root could not quietly change the rules for files outside `python/`.
 python-lint:
-	cd python && .venv/bin/ruff check --config pyproject.toml src tests ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py
+	cd python && .venv/bin/ruff check --config pyproject.toml src tests ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py
 
 python-types:
-	cd python && .venv/bin/mypy src tests/qualification ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py
+	cd python && .venv/bin/mypy src tests/qualification ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py
 
 python-test:
 	cd python && .venv/bin/python -m pytest

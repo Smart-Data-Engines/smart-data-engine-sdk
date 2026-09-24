@@ -1,0 +1,5 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "error": "MigrationRefused",
+  "match": "an index build cannot add or remove colocation groups"
+}
