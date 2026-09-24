@@ -145,7 +145,10 @@ reattached only with the matching stored UUID and native drain intent. Partial g
 are completed without lowering an epoch. A replaced table/login or another active map is refused.
 Repeated `execute` for an already completed identical packet returns its saved receipt. `resume`
 requires an unfinished execution; a response lost after completion can be recovered with `execute`.
-Do not drop retired tables or remove the state on the basis of a missing response.
+Do not drop retired tables or remove the state on the basis of a missing response. A cutover has no
+`abandon`: without a durable decision its recovery aborts it by itself. `abandon` ends an unfinished
+[staging](staging.md#abandoning-a-staging-that-cannot-finish) or
+[in-place index build](in-place-index.md#abandonment) instead.
 
 ## Pause budget and receipt
 

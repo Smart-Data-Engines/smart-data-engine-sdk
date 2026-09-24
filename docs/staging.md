@@ -84,14 +84,42 @@ connections and inspection of persisted state. It is not a workload latency guar
 
 Do not delete the project directory or manually replace `active-map.json` for the next migration.
 The same directory retains stage receipts, cutover decisions and retired names through subsequent
-successes and aborts. After the first staging intent, `project.json` uses storage contract 2; older
+successes and aborts. After the first staging intent, `project.json` uses storage contract 2; after
+an abandoned staging, storage contract 4, which operators that know contracts 1 to 3 refuse; older
 operators must refuse it. Completed retries reconfirm filesystem durability before returning the
 stored receipt, including a retry after an uncertain final directory fsync.
+
+## Abandoning a staging that cannot finish
+
+A staging can reach a state no resume repairs: another operation's barrier appeared on a source
+table, a runtime login or its grants changed, the target engine refuses the table or does not
+answer within the operator's watchdog, or somebody else's object took a copy's name. Before its
+decision `prepared`, such a staging is abandoned:
+
+```sh
+sde-operator --config local-operator.json --project-dir ./client-state abandon
+```
+
+`LocalCutover.abandon()` records the decision `abandoned` first, then removes **only this
+staging's own tables**: a table under a copy's name is removed when it carries this staging's exact
+creation marker and, once its identity was recorded, that native object - also a table created
+just before a crash, whose identity was never recorded. Anything else under the name is left
+alone. Indexes and generation constraints go with the table. On ClickHouse the runtime logins'
+grants on the copy are revoked as well: measured on 24.8.14.39, table grants outlive `DROP TABLE`
+(`qualification/staging-abandon/`). The map in force, the watermarks and every running process
+stay as they were. Abandonment needs only the same native database - not the runtime logins, not a
+source free of another barrier - which is what keeps it available when a staging cannot finish.
+An interrupted abandonment is finished by `resume` or by `abandon` again, and the authorization is
+spent: `stage` with the same packet returns the abandonment.
+
+After the decision `prepared` the next map is decided: `abandon` is refused, `resume` publishes the
+prepared map, and the copy leaves through its cutover's abort. The same command also abandons an
+unfinished [in-place index build](in-place-index.md).
 
 ## Receipt and limits
 
 The metadata-only receipt contains `protocol: 1`, `stage_id`, `stage_fingerprint`, `project_id`,
-`group`, `outcome: "prepared"`, `map_version`, `map_fingerprint`, `tables`, `elapsed_ms`, and
+`group`, `outcome` (`prepared`, or `abandoned`), `map_version`, `map_fingerprint`, `tables`, `elapsed_ms`, and
 `recovered`. Each table identifies its engine binding, logical entity and native `identity`
 (`dialect`, `server`, `database`, `namespace`, `object`, `name`). No rows or credentials are included.
 `StagingReceipt.as_record()` returns an independent snapshot. The controller must validate the

@@ -951,7 +951,10 @@ def test_a_killed_operator_between_watermark_and_publication_publishes_on_resume
 def test_the_build_budget_bounds_a_held_build_and_recovery_finishes_it(
     engine: str, tmp_path: Path
 ) -> None:
-    with initial(engine, tmp_path, budget_ms=2500) as build:
+    # The first build is held for good, so any budget ends it; the resume after the release has
+    # to fit a DROP and a CREATE INDEX CONCURRENTLY into the same signed budget, which 2.5 s did
+    # not always leave on a loaded two-core machine.
+    with initial(engine, tmp_path, budget_ms=6000) as build:
         with admin(build.role) as run, held(build, run) as release:
             started = time.monotonic()
             with pytest.raises(CutoverRecoveryRequired, match="build budget"):
@@ -1067,5 +1070,5 @@ def test_the_operator_cli_abandons_an_unfinished_build_once(tmp_path: Path) -> N
         code, refusal = run_cli([*base, "abandon"], environment)
         assert code == 2 and refusal == {
             "error": "refused",
-            "message": "there is no unfinished index build to abandon",
+            "message": "there is no unfinished index build or staging to abandon",
         }

@@ -121,6 +121,59 @@ class NativeStaging:
             raise MigrationRefused("staging creation marker was not established with the table")
         return self.native.identity(table)
 
+    def owned(
+        self, table: str, marker: str, identity: TableIdentity | None
+    ) -> TableIdentity | None:
+        """This staging's own table under ``table``, or ``None`` when it is absent or not ours.
+
+        Ours means the exact creation marker and, once the identity was recorded, that native
+        object. Anything else under the name - another marker, none, another object - belongs to
+        somebody else and is left alone by an abandonment.
+        """
+        present = self.marker(table)
+        if present is None or present[1] != marker:
+            return None
+        if identity is not None:
+            return identity if present[0] == identity.object else None
+        return self.native.identity(table)
+
+    def drop_owned(self, table: TableIdentity, marker: str) -> None:
+        """Drop this staging's own table; its indexes and generation constraints go with it."""
+        present = self.marker(table.name)
+        if present is None:
+            return  # dropped before a crash; nothing is left to remove
+        if present[1] != marker or present[0] != table.object:
+            raise MigrationRefused("the table to abandon is no longer this staging's own")
+        # SYNC: in an Atomic database a dropped table otherwise lingers until the server removes
+        # it, and its name and data with it.
+        suffix = " SYNC" if self.dialect == "clickhouse" else ""
+        self.native.command(f"DROP TABLE {self.quote(table.name)}{suffix}")
+        if self.marker(table.name) is not None:
+            raise MigrationRefused("an abandoned staging table is still in the catalogue")
+
+    def revoke_runtime(self, tables: Sequence[TableIdentity], principals: Sequence[str]) -> None:
+        """Take back the runtime grants on dropped tables; ClickHouse keeps them after DROP TABLE.
+
+        Measured on 24.8.14.39: ``system.grants`` still lists a table's grants once the table is
+        gone, and ``REVOKE`` on the dropped table is accepted and removes them. PostgreSQL removes a
+        table's privileges with the table, so there is nothing to take back there.
+        """
+        if self.dialect != "clickhouse":
+            return
+        for table in tables:
+            qualified = self.quote(table.namespace) + "." + self.quote(table.name)
+            for name in principals:
+                self.native.command(f"REVOKE SELECT, INSERT ON {qualified} FROM {self.quote(name)}")
+        for table in tables:
+            for name in principals:
+                rows = self.native.rows(
+                    "SELECT count() FROM system.grants WHERE user_name={user:String} "
+                    "AND database={database:String} AND table={table:String}",
+                    {"user": name, "database": table.namespace, "table": table.name},
+                )
+                if rows[0][0]:
+                    raise MigrationRefused("a runtime grant on an abandoned staging table remains")
+
     def create_indexes(self, layout: PhysicalLayout) -> None:
         if self.dialect != "postgres":
             # ClickHouse data-skipping indexes were declared inside `CREATE TABLE`; qualification

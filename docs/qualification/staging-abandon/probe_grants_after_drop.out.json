@@ -1,0 +1,28 @@
+{
+ "after_grant": [
+  [
+   "SELECT",
+   "probe_7e56929922a5",
+   "t"
+  ],
+  [
+   "INSERT",
+   "probe_7e56929922a5",
+   "t"
+  ]
+ ],
+ "after_drop_table": [
+  [
+   "SELECT",
+   "probe_7e56929922a5",
+   "t"
+  ],
+  [
+   "INSERT",
+   "probe_7e56929922a5",
+   "t"
+  ]
+ ],
+ "revoke_on_dropped_table": "accepted",
+ "after_revoke": []
+}

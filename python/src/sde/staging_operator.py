@@ -68,7 +68,11 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
     if any(row[-1] in table_names for row in state["retired_names"]):
         raise MigrationRefused("staging cannot reuse a retired physical name")
     for previous in state.get("stages", {}).values():
-        if any(row["identity"]["name"] in table_names for row in previous["receipt"]["tables"]):
+        # From the stored authorization, not the receipt: an abandoned staging's receipt names no
+        # identity for a table it never created, and its names are spent all the same.
+        record = previous["plan"]
+        used = record["prepared"]["groups"][record["group"]]["derived"][0]["layout"]["tables"]
+        if table_names & set(used.values()):
             raise MigrationRefused("staging cannot reuse a previously prepared physical name")
     return {
         "kind": "staging",
@@ -117,6 +121,8 @@ def _finish(
     from .engines._staging import NativeStaging
 
     execution = state["execution"]
+    if execution["decision"] == "abandoned":
+        return _abandon(operator, state, plan, recovered=recovered)
     target = plan.prepared.groups[plan.group].derived[0]
     epoch = plan.prepared.groups[plan.group].write_epoch
     assert epoch is not None
@@ -236,6 +242,111 @@ def _finish(
     operator.store.write(state)
     operator._after_step("stage_complete")
     return StagingReceipt(receipt)
+
+
+def _abandon(
+    operator: LocalCutover, state: dict[str, Any], plan: StagingPlan, *, recovered: bool
+) -> StagingReceipt:
+    """Remove this staging's own tables and keep the map in force; the authorization is spent.
+
+    It needs only the same native database: not the runtime logins, not a source free of another
+    barrier - the things whose absence is why a staging cannot finish - because it publishes
+    nothing. Anything under a staging name that is not this staging's is left where it is.
+    """
+    from .engines._operator import TableIdentity
+    from .engines._staging import NativeStaging
+
+    execution = state["execution"]
+    target = plan.prepared.groups[plan.group].derived[0]
+    binding = execution["bindings"][target.engine]
+    native = operator.native[target.engine]
+    if list(native.endpoint()) != binding["endpoint"]:
+        raise MigrationRefused("a staging binding names another native database")
+    creator = NativeStaging(native)
+    for row in execution["tables"]:
+
+        def drop(row: dict[str, Any] = row) -> None:
+            if "removed" not in row:
+                recorded = None if row["identity"] is None else TableIdentity(**row["identity"])
+                found = creator.owned(row["table"], row["marker"], recorded)
+                row["removed"] = None if found is None else found.as_record()
+                # Durable before the destructive statement: a crash after DROP must still know
+                # which object the receipt removed.
+                operator.store.write(state)
+            if row["removed"] is not None:
+                creator.drop_owned(TableIdentity(**row["removed"]), row["marker"])
+
+        operator._step(state, "stage_drop_" + row["entity"], drop)
+    removed = [
+        TableIdentity(**row["removed"]) for row in execution["tables"] if row["removed"] is not None
+    ]
+    if native.dialect == "clickhouse" and removed:
+        operator._step(
+            state,
+            "stage_revoke",
+            lambda: creator.revoke_runtime(removed, sorted(binding["principals"])),
+        )
+    if operator.active_map().fingerprint != plan.current.fingerprint:
+        raise MigrationRefused("an abandoned staging found another active map")
+    receipt = {
+        "protocol": 1,
+        "stage_id": plan.stage_id,
+        "stage_fingerprint": plan.fingerprint,
+        "project_id": operator.project_id,
+        "group": plan.group,
+        "outcome": "abandoned",
+        "map_version": plan.current.map_version,
+        "map_fingerprint": plan.current.fingerprint,
+        "tables": [
+            {"engine": row["engine"], "entity": row["entity"], "identity": row["removed"]}
+            for row in execution["tables"]
+        ],
+        "elapsed_ms": operator._elapsed(),
+        "recovered": recovered,
+    }
+    state["stages"][plan.stage_id] = {
+        "plan_fingerprint": plan.fingerprint,
+        "plan": plan.as_record(),
+        "receipt": receipt,
+    }
+    state.setdefault("indexes", {})  # an abandoned staging record is storage contract 4
+    state["execution"] = None
+    operator.store.write(state)
+    operator._after_step("stage_complete")
+    return StagingReceipt(receipt)
+
+
+def abandon_stage(operator: LocalCutover) -> StagingReceipt:
+    """Abandon the unfinished staging before its decision: its own tables go, the map stays."""
+    with operator.store.lock():
+        state = operator.store.read()
+        execution = state["execution"]
+        if execution is None or execution.get("kind") != "staging":
+            raise MigrationRefused("there is no unfinished staging to abandon")
+        if execution["decision"] == "prepared":
+            raise MigrationRefused(
+                "a prepared staging cannot be abandoned: its next map is decided; resume to "
+                "publish it, or abort its cutover"
+            )
+        plan = load_staging_plan(
+            execution["plan"],
+            model=operator.model,
+            project_id=operator.project_id,
+            public_key=operator.keys,
+        )
+        if plan.fingerprint != execution["plan_fingerprint"]:
+            raise MigrationRefused("staging recovery names another signed authorization")
+        if execution["decision"] is None:
+            execution["decision"] = "abandoned"
+            operator.store.write(state)
+            operator._after_step("stage_abandoned")
+        operator._started, operator._enforce_budget = monotonic_ns(), False
+        try:
+            return _finish(operator, state, plan, recovered=True)
+        except Exception as exc:
+            raise CutoverRecoveryRequired(
+                "abandoning the staging remains incomplete; preserve its state"
+            ) from exc
 
 
 def execute_stage(operator: LocalCutover, plan: StagingPlan) -> StagingReceipt:
