@@ -679,21 +679,34 @@ class LocalCutover:
         finally:
             self._alarm = None
 
-    def abandon(self) -> IndexReceipt:
-        """Abandon the unfinished index build: drop its own indexes, keep the map in force."""
+    def abandon(self) -> IndexReceipt | StagingReceipt:
+        """Abandon the unfinished index build or staging before its decision.
+
+        Only this operation's own objects are removed - the indexes a build created, the tables a
+        staging created - and the map in force stays. A cutover has no abandonment: without a
+        decision its recovery aborts it by itself.
+        """
         from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
         from .index_operator import abandon_index
+        from .staging_operator import abandon_stage
 
         self._owner()
         try:
             with OperatorDeadline() as deadline:
                 self._alarm = deadline
-                deadline.arm(30000)  # re-armed from the stored authorization's build budget
-                return abandon_index(self)
+                deadline.arm(30000)  # an index build re-arms from its signed build budget
+                with self.store.lock():
+                    execution = self.store.read()["execution"]
+                    kind = None if execution is None else execution.get("kind")
+                if kind == "index":
+                    return abandon_index(self)
+                if kind == "staging":
+                    return abandon_stage(self)
+                raise MigrationRefused("there is no unfinished index build or staging to abandon")
         except DeadlineInterrupt as exc:
             self._interrupted()
             raise CutoverRecoveryRequired(
-                "abandoning the index build was interrupted; reconnect and abandon again"
+                "abandoning was interrupted; reconnect and abandon again"
             ) from exc
         finally:
             self._alarm = None

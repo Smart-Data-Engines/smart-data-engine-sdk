@@ -157,7 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "message": (
                         "Inspect local status and resume with fresh connections; "
                         "the durable decision must be preserved. An unfinished index build "
-                        "may be abandoned instead."
+                        "or staging may be abandoned instead."
                     ),
                 }
             ),

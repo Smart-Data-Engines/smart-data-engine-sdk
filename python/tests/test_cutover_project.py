@@ -151,3 +151,44 @@ def test_the_index_build_history_belongs_to_contract_three_only(
     _rewrite(store, contract, payload)
     with pytest.raises(MigrationRefused, match="corrupt"):
         store.read()
+
+
+def _stage_record(outcome: str) -> dict[str, Any]:
+    return {"plan_fingerprint": "f" * 64, "plan": {}, "receipt": {"outcome": outcome}}
+
+
+def test_an_abandoned_staging_raises_the_state_contract_to_four(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    state = store.read()
+    state["stages"] = {"a" * 32: _stage_record("prepared")}
+    state["indexes"] = {}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 3
+    state["stages"]["b" * 32] = _stage_record("abandoned")
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 4
+    assert store.read()["stages"]["b" * 32]["receipt"]["outcome"] == "abandoned"
+
+
+@pytest.mark.parametrize("contract", [2, 3])
+def test_an_abandoned_staging_record_needs_contract_four(tmp_path: Path, contract: int) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"] = {"b" * 32: _stage_record("abandoned")}
+    if contract == 3:
+        payload["indexes"] = {}
+    _rewrite(store, contract, payload)
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()
+
+
+def test_contract_four_still_carries_the_index_history(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"] = {"b" * 32: _stage_record("abandoned")}
+    _rewrite(store, 4, payload)  # no "indexes" field
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()

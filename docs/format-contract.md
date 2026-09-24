@@ -1578,7 +1578,8 @@ the canonical payload fingerprint.
 exact source, write generation and routing - in another engine binding (protocol 1, a move) or in
 the source's own (protocol 2, a relayout). Both SDKs validate the signed packet, map binding and
 portable physical names. `migration/099`–`121`, `138` and `139` pin these shared rules; the Python
-local operator executes creation and recovery. Loading an authorization does not activate its prepared map.
+local operator executes creation, recovery and - before the decision `prepared` - abandonment.
+Loading an authorization does not activate its prepared map.
 
 
 ## 7i. Physical design (map contract 5)

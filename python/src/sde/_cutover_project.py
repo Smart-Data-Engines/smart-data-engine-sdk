@@ -19,6 +19,18 @@ def encode(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _abandoned_stages(payload: Any) -> bool:
+    stages = payload.get("stages") if isinstance(payload, dict) else None
+    if not isinstance(stages, dict):
+        return False
+    return any(
+        isinstance(record, dict)
+        and isinstance(record.get("receipt"), dict)
+        and record["receipt"].get("outcome") == "abandoned"
+        for record in stages.values()
+    )
+
+
 class ProjectState:
     """One POSIX directory and lock, shared by all local executors for this project."""
 
@@ -43,7 +55,7 @@ class ProjectState:
                 raise ValueError("invalid state envelope")
             if type(envelope["storage_contract"]) is not int or envelope[
                 "storage_contract"
-            ] not in (1, 2, 3):
+            ] not in (1, 2, 3, 4):
                 raise ValueError("unsupported state storage contract")
             payload = envelope["payload"]
             if (
@@ -68,12 +80,16 @@ class ProjectState:
                 fields.add("stages")
                 if not isinstance(payload.get("stages"), dict):
                     raise ValueError("staging history must be an object")
-            if envelope["storage_contract"] == 3:
+            if envelope["storage_contract"] >= 3:
                 # In-place index builds: a reader of contracts 1 and 2 refuses this state rather
                 # than ignoring a history it would not know to keep.
                 fields.add("indexes")
                 if not isinstance(payload.get("indexes"), dict):
                     raise ValueError("index build history must be an object")
+            if envelope["storage_contract"] < 4 and _abandoned_stages(payload):
+                # Contract 4 is what makes an older operator refuse an abandoned staging's record
+                # instead of reading a receipt whose tables may name no identity.
+                raise ValueError("an abandoned staging needs state storage contract 4")
             if set(payload) != fields:
                 raise ValueError("unknown or missing project state fields")
             return payload
@@ -92,7 +108,13 @@ class ProjectState:
     def write(self, payload: dict[str, Any]) -> None:
         body = encode(payload)
         envelope = {
-            "storage_contract": 3 if "indexes" in payload else 2 if "stages" in payload else 1,
+            "storage_contract": 4
+            if _abandoned_stages(payload)
+            else 3
+            if "indexes" in payload
+            else 2
+            if "stages" in payload
+            else 1,
             "payload": payload,
             "sha256": hashlib.sha256(body).hexdigest(),
         }
