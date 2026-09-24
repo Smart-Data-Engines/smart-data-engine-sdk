@@ -67,6 +67,16 @@ def test_local_weather_setup_run_doctor_retry_and_reset(
         filters = {entry["kind"]: entry.get("filtered_on") for entry in shapes}
         assert filters["range_read"] == [{"equal": [], "range": "at", "calls": 2}]
         assert filters["aggregate"] == [{"equal": [], "range": "at", "calls": 4}]
+        # Alerts read one station's readings at or above a humidity: the first iteration has no
+        # alert yet (an empty page and a summary of nothing), the second has five.
+        alerts = runtime.run(root, iterations=2, batch_size=40, interval_ms=0, workload="alerts")
+        assert alerts["status"] == "complete" and alerts["verified_rows"] == 80
+        shapes = project.read(root / "runs" / alerts["run_id"] / "window.json")["groups"][
+            "WeatherReading"
+        ]["shapes"]
+        filters = {entry["kind"]: entry.get("filtered_on") for entry in shapes}
+        assert filters["range_read"] == [{"equal": ["station"], "range": "humidity", "calls": 2}]
+        assert filters["aggregate"] == [{"equal": ["station"], "range": "humidity", "calls": 4}]
         before = (root / "state" / "active-map.json").read_bytes()
         assert project.setup(root, bundle, admin) == {"status": "ready", "map_version": 1}
         assert (root / "state" / "active-map.json").read_bytes() == before

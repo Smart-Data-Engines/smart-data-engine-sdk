@@ -18,6 +18,8 @@ from .model import (
     CELSIUS_BASE_CENTS,
     CELSIUS_MODULUS,
     GENERATOR_ID,
+    HUMIDITY_BASE,
+    HUMIDITY_MODULUS,
     WORKLOADS,
     model,
     reading,
@@ -28,6 +30,10 @@ T = TypeVar("T")
 FLEET_PAGE = 100
 MAX_RUN_ROWS = 10000
 """The fleet checks one cross-station page exactly; its count and sum cover the whole window."""
+ALERT_HUMIDITY = 95
+"""The alert threshold. Humidity is 30 + sequence % 70, so a reading alerts when sequence % 70 is
+65 or more - five readings in seventy, known exactly from the sequence number."""
+ALERT_PAGE = 100
 
 
 def fleet_runs(root: Path, *, project_id: str) -> dict[str, int]:
@@ -83,6 +89,26 @@ def fleet_expected(
     return page, total, Decimal(f"{cents // 100}.{cents % 100:02d}")
 
 
+def alert_expected(
+    run_id: str, through: int, limit: int
+) -> tuple[list[dict[str, Any]], int, Decimal | None]:
+    """The first page, count and celsius total of this run's alerts among sequences 1..through.
+
+    One station, so key order - station, then time - is sequence order. With no alert yet the total
+    is None, as the library reports a summary of no values on every engine.
+    """
+    page: list[dict[str, Any]] = []
+    total, cents = 0, 0
+    for sequence in range(1, through + 1):
+        if HUMIDITY_BASE + sequence % HUMIDITY_MODULUS < ALERT_HUMIDITY:
+            continue
+        total += 1
+        cents += CELSIUS_BASE_CENTS + sequence % CELSIUS_MODULUS
+        if len(page) < limit:
+            page.append(reading(run_id, 0, sequence))
+    return page, total, Decimal(f"{cents // 100}.{cents % 100:02d}") if total else None
+
+
 def limits(iterations: int, batch_size: int, interval_ms: int, recovery_ms: int) -> None:
     if (
         any(type(value) is not int for value in (iterations, batch_size, interval_ms, recovery_ms))
@@ -109,7 +135,7 @@ def run(
 ) -> dict[str, Any]:
     limits(iterations, batch_size, interval_ms, recovery_ms)
     if workload not in WORKLOADS:
-        raise DemoRefused("Choose the mixed, point, analytics or fleet workload.")
+        raise DemoRefused("Choose the mixed, point, analytics, fleet or alerts workload.")
     settings = config(root)
     # Read before this run's own report exists; a run that starts later is not in the window.
     earlier = fleet_runs(root, project_id=settings["project_id"]) if workload == "fleet" else {}
@@ -281,6 +307,31 @@ def run(
                     raise DemoRefused(
                         "The exact fleet summary did not match this directory's runs."
                     )
+            elif workload == "alerts":
+                # One station's readings at or above the alert threshold: a range on humidity, a
+                # field outside the key, which the key cannot serve and an index can. The expected
+                # answer is exact, from the generator (``alert_expected``).
+                alert_page, alert_rows, alert_celsius = alert_expected(run_id, count, ALERT_PAGE)
+                alert_bounds = sde.Range("humidity", low=ALERT_HUMIDITY)
+
+                def check_alert_page(
+                    current: sde.Session,
+                    where: dict[str, Any] = where,
+                    bounds: sde.Range = alert_bounds,
+                    expected: list[dict[str, Any]] = alert_page,
+                ) -> None:
+                    page = current.scan(
+                        "WeatherReading", where=where, bounds=bounds, limit=ALERT_PAGE
+                    )
+                    if list(page.rows) != expected:
+                        raise DemoRefused("The alert page did not match this run.")
+
+                read_retry(check_alert_page)
+                if read_retry(partial(counted, where=where, bounds=alert_bounds)) != alert_rows:
+                    raise DemoRefused("The alert count did not match this run.")
+                summary = read_retry(partial(summarized, where=where, bounds=alert_bounds))
+                if summary.count != alert_rows or summary.total != alert_celsius:
+                    raise DemoRefused("The exact alert summary did not match this run.")
             elif workload != "point" or iteration == iterations - 1:
 
                 def check_page(

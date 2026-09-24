@@ -85,7 +85,12 @@ Every run in a directory writes the same timeline, so the window holds every run
 program checks them exactly against the local reports of the directory's earlier runs of this
 project. It therefore refuses to start while any of those runs is not complete: an interrupted run
 or an unresolved batch makes the expected answer unknowable, and it does not compare with a guess.
-Limits are 1-1000 iterations and rows per batch, at most 10000 rows per invocation, 0-1000 ms
+`--workload alerts` reads one station's readings at or above 95% humidity - a bounded page, a count
+and an exact celsius summary. Humidity is not in the key, so the key narrows the read to the station
+and cannot serve the range: this is the traffic an added index is for, and the window's `filtered_on`
+says so (`equal: ["station"]`, `range: "humidity"`). The expected answer is exact from the generator:
+humidity is 30 + sequence mod 70, so five readings in every seventy alert, and before the first one a
+summary of no values has a null total. Limits are 1-1000 iterations and rows per batch, at most 10000 rows per invocation, 0-1000 ms
 between batches and 0-30000 ms for bounded read/recovery attempts.
 
 Each run writes `runs/RUN_ID/report.json` and a real SDK `window.json`. Reports contain counters,
