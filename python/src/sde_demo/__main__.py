@@ -42,8 +42,19 @@ def operator(root: Path, action: str, plan: Path | None) -> dict[str, Any]:
             )
             if action == "resume":
                 return local.resume().as_record()
+            if action == "abandon":
+                return local.abandon().as_record()
             if plan is None:
-                raise DemoRefused("Stage and execute require --plan from the controller.")
+                raise DemoRefused("Stage, index and execute require --plan from the controller.")
+            if action == "index":
+                return local.index(
+                    sde.load_index_plan(
+                        read(plan),
+                        model=logical,
+                        project_id=settings["project_id"],
+                        public_key=keys,
+                    )
+                ).as_record()
             if action == "stage":
                 return local.stage(
                     sde.load_staging_plan(
@@ -89,8 +100,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "query-count", help="execute the current approved Weather COUNT locally"
     )
     query.add_argument("--record", type=Path, required=True)
-    op = commands.add_parser("operator", help="use the existing local staging/cutover executor")
-    op.add_argument("action", choices=("status", "stage", "execute", "resume"))
+    op = commands.add_parser(
+        "operator", help="use the existing local staging/index/cutover executor"
+    )
+    op.add_argument("action", choices=("status", "stage", "index", "execute", "resume", "abandon"))
     op.add_argument("--plan", type=Path)
     args = parser.parse_args(argv)
     try:

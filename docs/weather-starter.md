@@ -158,18 +158,22 @@ directory, to the controller. This is the customer's observation, not a controll
 
 ## Use the existing operator
 
-An operator supplies reviewed signed staging and cutover authorizations. Execute them locally:
+An operator supplies reviewed signed staging, in-place index and cutover authorizations. Execute
+them locally:
 
 ```sh
 .venv/bin/sde-weather --directory ./weather-demo operator status
 .venv/bin/sde-weather --directory ./weather-demo operator stage --plan ./staging.json
 .venv/bin/sde-weather --directory ./weather-demo operator execute --plan ./cutover.json
+.venv/bin/sde-weather --directory ./weather-demo operator index --plan ./index.json
 .venv/bin/sde-weather --directory ./weather-demo operator resume
+.venv/bin/sde-weather --directory ./weather-demo operator abandon
 ```
 
-Follow [staging](staging.md) and [local cutover](local-cutover.md) for the authorization, receipt and
-controller-completion sequence. `resume` is for an interrupted existing operation. It does not
-invent a decision. Only metadata/receipts cross to the controller; no command above needs its
+Follow [staging](staging.md), [in-place index builds](in-place-index.md) and
+[local cutover](local-cutover.md) for the authorization, receipt and controller-completion
+sequence. `resume` is for an interrupted existing operation. It does not invent a decision.
+`abandon` ends an unfinished index build without publishing its map. Only metadata/receipts cross to the controller; no command above needs its
 network endpoint. The full assisted demo supplies the file handoffs in the appropriate order.
 
 ## Reset and repeat

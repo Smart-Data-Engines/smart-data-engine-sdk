@@ -105,7 +105,9 @@ What happens with a difference depends on who asked:
 
 - **`prepare_schema` / `prepareSchema` refuses it**, naming the table, the aspect and both values.
   That is where a person applying a map can act on it. A new layout belongs in fresh tables - the
-  staging protocol creates them under new names - not in the old ones under a new declaration.
+  staging protocol creates them under new names - not in the old ones under a new declaration. The
+  one exception is adding indexes, which a signed [in-place build](in-place-index.md) does on the
+  tables in force, without a copy.
   PostgreSQL indexes are built only after the table's key is confirmed, so a refused provisioning
   does not first build an index on the old table: `CREATE INDEX` without `CONCURRENTLY` blocks that
   table's writes while it builds.
@@ -132,8 +134,10 @@ a physical design first appears, and may not lower it. `migration/133`-`137` pin
 
 ## What this does not do
 
-- It does not change an existing table. A different design means a new table, created by staging and
-  switched to by cutover; this library never alters or drops a physical object in place.
+- It does not change an existing table's columns, key order or partition. A different design means a
+  new table, created by staging and switched to by cutover. The only object this library creates on
+  a table in force is an index a signed [in-place build](in-place-index.md) adds - and the only one
+  it drops is such an index of its own, when that build is abandoned.
 - It does not partition PostgreSQL, partition by week, partition on a non-key column or on a zoneless
   timestamp, or accept an expression anywhere.
 - It does not verify indexes a map does not declare. An extra index added outside SDE is left alone.

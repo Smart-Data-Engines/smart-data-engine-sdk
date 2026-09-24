@@ -1,4 +1,5 @@
 import { loadStagingPlan } from '../src/staging.js'
+import { indexBuildName, loadIndexPlan } from '../src/in-place-index.js'
 import { MigrationRefused as StagingRefused } from '../src/errors.js'
 import { loadCutoverPlan } from '../src/cutover.js'
 import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
@@ -834,6 +835,10 @@ describe('migration vectors', () => {
         driveStagingVector(dir, model)
         return
       }
+      if (existsSync(join(dir, 'index.json'))) {
+        driveIndexVector(dir, model)
+        return
+      }
       if (existsSync(join(dir, 'cutover.json'))) {
         driveCutoverVector(dir, model)
         return
@@ -1264,6 +1269,36 @@ function driveCutoverVector(dir: string, model: LogicalModel): void {
     const candidate = loadMap(JSON.parse(Buffer.from(plan.candidatePayload(outcome)).toString('utf8')), { model, publicKey, requireSignature: true })
     expect(candidate.fingerprint).toBe(wanted.candidate_fingerprints[outcome])
   }
+}
+
+
+/** An in-place index build authorization: accepted exactly, or refused for the named rule. */
+function driveIndexVector(dir: string, model: LogicalModel): void {
+  const raw = readJson<Record<string, unknown>>(join(dir, 'plan.json'))
+  const wanted = readJson<{ project_id: string; error?: string; match?: string; index_fingerprint: string;
+    verified_with: string; map_fingerprints: Record<'current' | 'prepared', string>; added: string[];
+    build_budget_ms: number }>(join(dir, 'index.json'))
+  const keys = readJson<Record<string, string>>(join(dir, 'keys.json'))
+  const publicKey = Object.fromEntries(Object.entries(keys).map(([name, value]) => [name, Buffer.from(value, 'base64')]))
+  const options = { model, projectId: wanted.project_id, publicKey }
+  if (wanted.error !== undefined) {
+    let refusal: unknown
+    try { loadIndexPlan(raw, options) } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(StagingRefused)
+    expect((refusal as Error).message).toContain(wanted.match)
+    return
+  }
+  const plan = loadIndexPlan(raw, options)
+  expect(plan.fingerprint).toBe(wanted.index_fingerprint)
+  expect(plan.verifiedWith).toBe(wanted.verified_with)
+  expect(plan.asRecord()).toEqual(raw)
+  expect(plan.buildBudgetMs).toBe(wanted.build_budget_ms)
+  plan.checkCurrent(plan.current)
+  for (const name of ['current', 'prepared'] as const) expect(plan[name].fingerprint).toBe(wanted.map_fingerprints[name])
+  expect(plan.added.map(index => index['name'])).toEqual(wanted.added)
+  expect(wanted.added.map((_, offset) => indexBuildName(plan.indexId, offset + 1))).toEqual(wanted.added)
+  const decoded = loadMap(JSON.parse(Buffer.from(plan.preparedPayload()).toString('utf8')), { model, publicKey, requireSignature: true })
+  expect(decoded.fingerprint).toBe(wanted.map_fingerprints.prepared)
 }
 
 

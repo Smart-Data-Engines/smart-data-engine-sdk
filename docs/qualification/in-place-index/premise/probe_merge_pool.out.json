@@ -1,0 +1,53 @@
+{
+ "1_mutations_while_merges_stopped_3s": [
+  [
+   "mutation_2.txt",
+   "MATERIALIZE INDEX sde_i_probe",
+   "0"
+  ]
+ ],
+ "1_rows_after_inserts_while_stopped": [
+  [
+   "5010"
+  ]
+ ],
+ "1_mutations_after_merges_start": [
+  [
+   "mutation_2.txt",
+   "MATERIALIZE INDEX sde_i_probe",
+   "1"
+  ]
+ ],
+ "1_mutations_after_kill_of_the_pending_one": [
+  [
+   "mutation_2.txt",
+   "MATERIALIZE INDEX sde_i_probe",
+   "1"
+  ]
+ ],
+ "2_drop_index_default_while_merges_stopped": "no answer after 8.0s (OperationalError)",
+ "2_drop_index_alter_sync_0_returned_after_s": 0.02,
+ "2_catalogue_right_after": [],
+ "2_mutations_right_after": [
+  [
+   "mutation_2.txt",
+   "MATERIALIZE INDEX sde_i_probe",
+   "1"
+  ],
+  [
+   "mutation_14.txt",
+   "DROP INDEX sde_i_other",
+   "1"
+  ],
+  [
+   "mutation_15.txt",
+   "MATERIALIZE INDEX sde_i_probe",
+   "1"
+  ],
+  [
+   "mutation_16.txt",
+   "DROP INDEX sde_i_probe",
+   "0"
+  ]
+ ]
+}

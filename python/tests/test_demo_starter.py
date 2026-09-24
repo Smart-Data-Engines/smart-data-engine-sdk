@@ -265,6 +265,53 @@ def test_operator_checks_reset_after_acquiring_the_lock(
         cli.operator(tmp_path, "resume", None)
 
 
+@pytest.mark.parametrize("action", ["index", "abandon"])
+def test_operator_passes_index_builds_and_abandonment_to_the_local_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from sde_demo import __main__ as cli
+    from sde_demo import resources
+
+    local(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    class Executor:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def index(self, plan: Any) -> Any:
+            calls.append(("index", plan.index_id))
+            return SimpleNamespace(as_record=lambda: {"outcome": "built"})
+
+        def abandon(self) -> Any:
+            calls.append(("abandon",))
+            return SimpleNamespace(as_record=lambda: {"outcome": "abandoned"})
+
+    @contextmanager
+    def no_connections(_root: Path, _settings: Any) -> Any:
+        yield {}, {}
+
+    monkeypatch.setattr(resources, "verify", lambda _root: None)
+    monkeypatch.setattr(cli, "connections", no_connections)
+    monkeypatch.setattr(cli.sde, "LocalCutover", Executor)
+    if action == "abandon":
+        assert cli.operator(tmp_path, "abandon", None) == {"outcome": "abandoned"}
+        assert calls == [("abandon",)]
+        return
+    with pytest.raises(project.DemoRefused, match="require --plan"):
+        cli.operator(tmp_path, "index", None)
+    monkeypatch.setattr(
+        cli.sde, "load_index_plan", lambda raw, **_: SimpleNamespace(index_id=raw["index_id"])
+    )
+    packet = tmp_path / "index.json"
+    packet.write_text(json.dumps({"index_id": "a" * 32}))
+    assert cli.operator(tmp_path, "index", packet) == {"outcome": "built"}
+    assert calls == [("index", "a" * 32)]
+
+
 def test_completed_setup_reconfirms_local_state_durability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

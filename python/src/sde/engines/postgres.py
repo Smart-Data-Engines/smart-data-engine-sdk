@@ -225,6 +225,13 @@ class PostgresEngine:
         measured - so the method is read back rather than assumed from the statement that ran.
         An index with a predicate, an expression or INCLUDE columns is not the index a layout
         declares, however its name reads.
+
+        Nor is a unique one, which refuses writes a layout never refuses, or one that is not valid
+        and ready. The last is what an interrupted ``CREATE INDEX CONCURRENTLY`` leaves behind -
+        measured, 15.19: the index stays in the catalogue with ``indisvalid`` and ``indisready``
+        false, the planner never uses it, and ``CREATE INDEX CONCURRENTLY IF NOT EXISTS`` over it
+        succeeds with only a notice. Reading the name, method and columns alone reported such a
+        leftover as the declared index.
         """
         declared = declared_tables(layout, keys)
         if not declared:
@@ -236,7 +243,8 @@ class PostgresEngine:
                 "ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY k(num, pos) "
                 "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.num "
                 "ORDER BY k.pos), "
-                "i.indpred IS NULL AND i.indexprs IS NULL AND i.indnkeyatts = i.indnatts "
+                "i.indpred IS NULL AND i.indexprs IS NULL AND i.indnkeyatts = i.indnatts, "
+                "i.indisunique, i.indisvalid AND i.indisready "
                 "FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid "
                 "JOIN pg_class t ON t.oid = i.indrelid JOIN pg_am am ON am.oid = ic.relam "
                 "JOIN pg_namespace n ON n.oid = t.relnamespace "
@@ -245,13 +253,19 @@ class PostgresEngine:
             )
             rows = cur.fetchall()
         primary: dict[str, tuple[str, ...]] = {}
-        indexes: dict[str, dict[str, tuple[str, tuple[str, ...], bool]]] = {}
-        for table, index, is_primary, method, columns, simple in rows:
+        indexes: dict[str, dict[str, tuple[str, tuple[str, ...], bool, bool, bool]]] = {}
+        for table, index, is_primary, method, columns, simple, unique, usable in rows:
             names = tuple(str(column) for column in columns)
             if is_primary:
                 primary[str(table)] = names
             else:
-                indexes.setdefault(str(table), {})[str(index)] = (str(method), names, bool(simple))
+                indexes.setdefault(str(table), {})[str(index)] = (
+                    str(method),
+                    names,
+                    bool(simple),
+                    bool(unique),
+                    bool(usable),
+                )
         findings: list[PhysicalFinding] = []
         for entry in declared:
             found_key = primary.get(entry.table)
@@ -272,9 +286,19 @@ class PostgresEngine:
                         PhysicalFinding(entry.table, f"index {index.name}", wanted, "absent")
                     )
                     continue
-                method, columns, simple = got
-                if method != index.method or columns != index.columns or not simple:
+                method, columns, simple, unique, usable = got
+                if (
+                    method != index.method
+                    or columns != index.columns
+                    or not simple
+                    or unique
+                    or not usable
+                ):
                     shape = "" if simple else " with a predicate, expression or INCLUDE"
+                    if unique:
+                        shape += ", unique"
+                    if not usable:
+                        shape += ", not valid (an unfinished concurrent build)"
                     findings.append(
                         PhysicalFinding(
                             entry.table,

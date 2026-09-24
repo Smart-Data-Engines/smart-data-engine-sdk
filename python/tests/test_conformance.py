@@ -435,6 +435,9 @@ def test_migration_vector(case: Path) -> None:
     if (case / "staging.json").is_file():
         _drive_staging_vector(case, model)
         return
+    if (case / "index.json").is_file():
+        _drive_index_vector(case, model)
+        return
     if (case / "cutover.json").is_file():
         _drive_cutover_vector(case, model)
         return
@@ -1022,6 +1025,34 @@ def _drive_cutover_vector(case: Path, model: sde.LogicalModel) -> None:
             require_signature=True,
         )
         assert decoded.fingerprint == wanted["candidate_fingerprints"][outcome]
+
+
+def _drive_index_vector(case: Path, model: sde.LogicalModel) -> None:
+    """An in-place index build authorization: accepted exactly, or refused for the named rule."""
+    raw = _read_json(case / "plan.json")
+    wanted = _read_json(case / "index.json")
+    keys = {name: b64decode(value) for name, value in _read_json(case / "keys.json").items()}
+    if "error" in wanted:
+        with pytest.raises(sde.MigrationRefused, match=re.escape(wanted["match"])):
+            sde.load_index_plan(raw, model=model, project_id=wanted["project_id"], public_key=keys)
+        return
+    plan = sde.load_index_plan(raw, model=model, project_id=wanted["project_id"], public_key=keys)
+    assert plan.fingerprint == wanted["index_fingerprint"]
+    assert plan.verified_with == wanted["verified_with"]
+    assert plan.as_record() == raw
+    assert plan.build_budget_ms == wanted["build_budget_ms"]
+    plan.check_current(plan.current)
+    for name in ("current", "prepared"):
+        assert getattr(plan, name).fingerprint == wanted["map_fingerprints"][name]
+    assert [index["name"] for index in plan.added] == wanted["added"]
+    assert [
+        sde.index_build_name(plan.index_id, position)
+        for position in range(1, len(wanted["added"]) + 1)
+    ] == wanted["added"]
+    decoded = sde.load_map(
+        json.loads(plan.prepared_payload()), model=model, public_key=keys, require_signature=True
+    )
+    assert decoded.fingerprint == wanted["map_fingerprints"]["prepared"]
 
 
 def _drive_staging_vector(case: Path, model: sde.LogicalModel) -> None:

@@ -18,6 +18,7 @@ from .errors import EngineError, MigrationRefused
 from .frozen_verification import verify_frozen
 from .generation import EPOCH_COLUMN, GENERATIONS_SINCE, check_map_project, json_numbers
 from .groups import colocation_groups
+from .index_build import IndexPlan, IndexReceipt
 from .inspection import InspectionContext
 from .layout import group_columns
 from .migration import CHUNK_ROWS, _plan, precision_refusal
@@ -654,7 +655,50 @@ class LocalCutover:
         finally:
             self._alarm = None
 
-    def resume(self) -> CutoverReceipt | StagingReceipt:
+    def index(self, plan: IndexPlan) -> IndexReceipt:
+        """Build the indexes ``plan`` adds on the tables in force, then publish its next map.
+
+        The deadline is the signed build budget, not a staging's 30 s: nothing is paused while an
+        index builds, so the budget only bounds a build on a server that stopped answering.
+        """
+        from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
+        from .index_operator import execute_index
+
+        self._owner()
+        try:
+            with OperatorDeadline() as deadline:
+                self._alarm = deadline
+                deadline.arm(plan.build_budget_ms)
+                return execute_index(self, plan)
+        except DeadlineInterrupt as exc:
+            self._interrupted()
+            raise CutoverRecoveryRequired(
+                f"the index build budget interrupted an operation ({exc}); reconnect, then resume "
+                "or abandon its state"
+            ) from exc
+        finally:
+            self._alarm = None
+
+    def abandon(self) -> IndexReceipt:
+        """Abandon the unfinished index build: drop its own indexes, keep the map in force."""
+        from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
+        from .index_operator import abandon_index
+
+        self._owner()
+        try:
+            with OperatorDeadline() as deadline:
+                self._alarm = deadline
+                deadline.arm(30000)  # re-armed from the stored authorization's build budget
+                return abandon_index(self)
+        except DeadlineInterrupt as exc:
+            self._interrupted()
+            raise CutoverRecoveryRequired(
+                "abandoning the index build was interrupted; reconnect and abandon again"
+            ) from exc
+        finally:
+            self._alarm = None
+
+    def resume(self) -> CutoverReceipt | StagingReceipt | IndexReceipt:
         from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
 
         self._owner()
@@ -671,7 +715,7 @@ class LocalCutover:
         finally:
             self._alarm = None
 
-    def _resume(self) -> CutoverReceipt | StagingReceipt:
+    def _resume(self) -> CutoverReceipt | StagingReceipt | IndexReceipt:
         self._owner()
         with self.store.lock():
             state = self.store.read()
@@ -682,6 +726,10 @@ class LocalCutover:
                 from .staging_operator import resume_stage
 
                 return resume_stage(self, state)
+            if execution.get("kind") == "index":
+                from .index_operator import resume_index
+
+                return resume_index(self, state)
             plan = load_cutover_plan(
                 execution["plan"],
                 model=self.model,
