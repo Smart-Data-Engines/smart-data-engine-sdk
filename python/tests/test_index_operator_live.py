@@ -907,11 +907,21 @@ def test_a_killed_operator_mid_build_resumes_the_same_build(engine: str, tmp_pat
                     )
             finally:
                 kill(worker)
-            release()
-        if engine == "postgres":
-            leftover = pg_indexes(build.role)[name]
-            assert leftover[0] is False
-        receipt = build.operator.resume().as_record()
+            if engine == "postgres":
+                release()
+                leftover = pg_indexes(build.role)[name]
+                assert leftover[0] is False
+            else:
+                # Resumed while the killed process's materialization is still held: recovery must
+                # find that mutation and wait for it - not start a second one, and not publish
+                # before it is done. The pool is released only once the build step is under way.
+                def release_during_the_build(step: str) -> None:
+                    if matches(step, "index_build:intent"):
+                        threading.Timer(1.0, release).start()
+
+                build.operator._after_step = release_during_the_build
+            receipt = build.operator.resume().as_record()
+            build.operator._after_step = quiet
         assert receipt["outcome"] == "built" and receipt["recovered"] is True
         assert_built(build)
         if leftover is not None:
