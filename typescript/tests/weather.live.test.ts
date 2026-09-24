@@ -34,6 +34,16 @@ for (const source of ['postgres', 'clickhouse']) it.skipIf(!enabled)(`runs Weath
     const window = readFileSync(join(directory, 'runs', first.run_id, 'window.json'), 'utf8')
     expect(window).toContain(first.model_version)
     expect(window).not.toContain('weather-' + first.run_id)
+    // A Python run in the same directory, then fleet analytics across every station: the exact
+    // expectation includes the other language's rows, read from its local report.
+    const written = JSON.parse(call('run'))
+    expect(written.status).toBe('complete'); expect(written.verified_rows).toBe(3)
+    const fleet = await runWeather(directory, { iterations: 2, batchSize: 4, intervalMs: 0, workload: 'fleet' })
+    expect(fleet.status).toBe('complete'); expect(fleet.verified_rows).toBe(8)
+    const shapes = JSON.parse(readFileSync(join(directory, 'runs', fleet.run_id, 'window.json'), 'utf8')).groups.WeatherReading.shapes
+    const filters = Object.fromEntries(shapes.map((entry: { kind: string; filtered_on?: unknown }) => [entry.kind, entry.filtered_on]))
+    expect(filters.range_read).toEqual([{ equal: [], range: 'at', calls: 2 }])
+    expect(filters.aggregate).toEqual([{ equal: [], range: 'at', calls: 4 }])
     expect(JSON.parse(call('reset')).status).toBe('reset')
     expect(JSON.parse(call('reset')).status).toBe('reset')
   } finally {

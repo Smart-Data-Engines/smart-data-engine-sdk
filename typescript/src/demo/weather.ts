@@ -1,7 +1,7 @@
 /** Bounded customer workload. Values and runtime credentials remain in this process. */
 import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
 import { EngineError, MapRolledBack, MigrationRefused } from '../errors.js'
@@ -10,12 +10,19 @@ import { ClickHouseEngine } from '../engines/clickhouse.js'
 import { Session } from '../session.js'
 import type { ManagedEngine, Row } from '../session.js'
 import { Recorder, windowRecord } from '../telemetry.js'
-import { baseTime, generatorId, reading } from './model.js'
-import { DemoRefused, project, write } from './project.js'
+import { baseTime, celsiusBaseCents, celsiusModulus, generatorId, reading } from './model.js'
+import { DemoRefused, project, read, write } from './project.js'
+
+/** What a run can drive. The CLI offers and the runtime accepts this one list. */
+export const workloads = ['mixed', 'point', 'analytics', 'fleet'] as const
+export type Workload = typeof workloads[number]
+/** The fleet checks one cross-station page exactly; its count and sum cover the whole window. */
+const fleetPage = 100
+const maxRunRows = 10000
 
 export interface RunOptions {
   iterations?: number; batchSize?: number; intervalMs?: number; recoveryMs?: number
-  workload?: 'mixed' | 'point' | 'analytics'
+  workload?: Workload
 }
 export interface RunReport {
   protocol: 2; generator_id: string; run_id: string; language: 'typescript'; status: 'running' | 'complete' | 'incomplete'
@@ -30,13 +37,66 @@ function recoverable(error: unknown) {
 function same(actual: Row | null, expected: Row) {
   if (!isDeepStrictEqual(actual, expected)) throw new DemoRefused('A logical read did not match this run.')
 }
+/**
+ * Every earlier run of this project, by run ID, with the rows it verified.
+ *
+ * Fleet analytics reads every station's rows in one time window, and every run in a directory writes
+ * the same timeline, so the exact answer is a sum over the runs - known exactly, because generated
+ * values depend only on the sequence number and each run's local report says how many rows it
+ * verified. A run that did not complete makes that sum unknowable, so the workload refuses instead
+ * of comparing a read with a guess. The same rules as the Python starter's fleet_runs.
+ */
+export function fleetRuns(root: string, projectId: string): Map<string, number> {
+  const runs = new Map<string, number>()
+  const directory = join(root, 'runs')
+  if (!existsSync(directory)) return runs
+  for (const name of readdirSync(directory).sort()) {
+    const path = join(directory, name, 'report.json')
+    if (!existsSync(path)) continue
+    const report = read(path).value
+    if (report.project_id !== projectId) continue
+    const identity = report.run_id, rows = report.verified_rows
+    if (typeof identity !== 'string' || !/^[0-9a-f]{32}$/.test(identity) || name !== identity ||
+        report.status !== 'complete' || report.pending !== null || report.generator_id !== generatorId ||
+        typeof rows !== 'number' || !Number.isSafeInteger(rows) || rows < 0 || rows > maxRunRows) {
+      throw new DemoRefused("Fleet analytics reads every run's rows, so every earlier run of this project must " +
+        'be complete; inspect the unfinished run first.')
+    }
+    runs.set(identity, rows)
+  }
+  return runs
+}
+/**
+ * The first page, row count and celsius total of the window holding sequences 1..through. A page is
+ * in key order, station then time; a station is its run's namespace and is ASCII, so the default
+ * string order is the engines' byte order.
+ */
+export function fleetExpected(runs: Map<string, number>, through: number, limit: number): [Row[], number, string] {
+  const page: Row[] = []
+  let total = 0, cents = 0n
+  const ordered = [...runs.keys()].sort((left, right) => {
+    const a = reading(left, 0, 1).station, b = reading(right, 0, 1).station
+    return a < b ? -1 : a > b ? 1 : 0
+  })
+  for (const identity of ordered) {
+    const rows = Math.min(through, runs.get(identity)!)
+    total += rows
+    for (let sequence = 1; sequence <= rows; sequence++) {
+      cents += BigInt(celsiusBaseCents + sequence % celsiusModulus)
+      if (page.length < limit) page.push(reading(identity, 0, sequence))
+    }
+  }
+  return [page, total, `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`]
+}
 export async function runWeather(root: string, options: RunOptions = {}): Promise<RunReport> {
   const { iterations = 10, batchSize = 10, intervalMs = 100, recoveryMs = 10000, workload = 'mixed' } = options
   if (![iterations, batchSize, intervalMs, recoveryMs].every(Number.isSafeInteger) ||
-      iterations < 1 || iterations > 1000 || batchSize < 1 || batchSize > 1000 || iterations * batchSize > 10000 ||
+      iterations < 1 || iterations > 1000 || batchSize < 1 || batchSize > 1000 || iterations * batchSize > maxRunRows ||
       intervalMs < 0 || intervalMs > 1000 || recoveryMs < 0 || recoveryMs > 30000 ||
-      !['mixed', 'point', 'analytics'].includes(workload)) throw new DemoRefused('Invalid bounded workload options.')
+      !(workloads as readonly string[]).includes(workload)) throw new DemoRefused('Invalid bounded workload options.')
   const { model, bindings, projectId, activeMap } = project(root)
+  // Read before this run's own report exists; a run that starts later is not in the window.
+  const earlier = workload === 'fleet' ? fleetRuns(root, projectId) : new Map<string, number>()
   const factories: Record<string, () => ManagedEngine> = {}
   for (const [name, binding] of Object.entries(bindings)) factories[name] = () =>
     binding.dialect === 'postgres' ? new PostgresEngine(binding.dsn) : new ClickHouseEngine(binding.dsn)
@@ -110,7 +170,23 @@ export async function runWeather(root: string, options: RunOptions = {}): Promis
       for (let index = 0; index < (workload === 'point' ? 20 : 1); index++) {
         same(await readRetry(current => current.get('WeatherReading', { station: last.station, at: last.at })), last)
       }
-      if (workload !== 'point' || iteration === iterations - 1) {
+      if (workload === 'fleet') {
+        // Every station, one time window: the traffic a time-first layout is for. The expected
+        // answer is exact, from this directory's run reports (fleetRuns).
+        const window = new Map(earlier).set(runId, count)
+        const [expected, rows, celsius] = fleetExpected(window, count, fleetPage)
+        const bounds = { field: 'at', low: reading(runId, 0, 1).at, high: reading(runId, 0, count + 1).at }
+        const page = await readRetry(current => current.scan('WeatherReading', { bounds, limit: expected.length }))
+        if (page.rows.length !== expected.length) throw new DemoRefused("The fleet page did not match this directory's runs.")
+        page.rows.forEach((row, index) => same(row, expected[index]!))
+        if (await readRetry(current => current.count('WeatherReading', { bounds })) !== BigInt(rows)) {
+          throw new DemoRefused("The fleet count did not match this directory's runs.")
+        }
+        const summary = await readRetry(current => current.summarize('WeatherReading', 'celsius', { bounds }))
+        if (summary.count !== BigInt(rows) || summary.total !== celsius) {
+          throw new DemoRefused("The exact fleet summary did not match this directory's runs.")
+        }
+      } else if (workload !== 'point' || iteration === iterations - 1) {
         const page = await readRetry(current => current.scan('WeatherReading', {
           where, bounds: { field: 'at', low: baseTime }, limit: Math.min(count, 1000),
         }))

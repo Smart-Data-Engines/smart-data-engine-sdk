@@ -57,6 +57,16 @@ def test_local_weather_setup_run_doctor_retry_and_reset(
         assert "weather-" + first["run_id"] not in encoded
         assert "runtime-credentials" not in encoded
         assert first["model_version"] in encoded
+        # Fleet analytics reads both earlier runs' rows in one time window, across stations, and
+        # expects the exact sum; the window says each read bounded `at` and fixed no station.
+        fleet = runtime.run(root, iterations=2, batch_size=4, interval_ms=0, workload="fleet")
+        assert fleet["status"] == "complete" and fleet["verified_rows"] == 8
+        shapes = project.read(root / "runs" / fleet["run_id"] / "window.json")["groups"][
+            "WeatherReading"
+        ]["shapes"]
+        filters = {entry["kind"]: entry.get("filtered_on") for entry in shapes}
+        assert filters["range_read"] == [{"equal": [], "range": "at", "calls": 2}]
+        assert filters["aggregate"] == [{"equal": [], "range": "at", "calls": 4}]
         before = (root / "state" / "active-map.json").read_bytes()
         assert project.setup(root, bundle, admin) == {"status": "ready", "map_version": 1}
         assert (root / "state" / "active-map.json").read_bytes() == before
