@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,10 +62,10 @@ def _source(placement: sde.PlacementMap, project_id: str) -> sde.Materialization
         or set(placement.groups) != {"WeatherReading"}
     ):
         raise DemoRefused("The count demo needs the loaded, signed Weather project map.")
-    group = placement.groups["WeatherReading"]
-    if len(group.all()) != 1:
-        raise DemoRefused("Execute the count demo before staging or after completed cutover.")
-    return group.source
+    # The source is the one authoritative copy, also while a staging maintains another: the count
+    # reads it and a query must name it. A query written for the copy stays refused until the
+    # cutover makes the copy the source.
+    return placement.groups["WeatherReading"].source
 
 
 def count_sql(sql: Any, *, table: str, dialect: str) -> str:
@@ -257,18 +258,21 @@ def run_count_query(root: Path, document: Mapping[str, Any]) -> dict[str, Any]:
     verify_runs(root, ids)
     if current().fingerprint != placement.fingerprint:
         raise DemoRefused("The local map changed during data verification; retry after cutover.")
+    # A staging's map also names the engine of the copy it maintains, and the session checks the
+    # map against every engine it names; the count itself runs on the source's adapter. Each has a
+    # local binding: the run verification above refused this map otherwise.
+    named = sorted({item.engine for group in placement.groups.values() for item in group.all()})
     dsns = credentials(root, "runtime", settings["engines"])
-    adapter = engine(request.dialect, dsns[request.engine])
-    try:
-        adapter.connect()
-        with sde.Session(
-            logical, placement, {request.engine: adapter}, project_id=settings["project_id"]
-        ):
-            total = _count(adapter, request.sql)
+    with ExitStack() as cleanup:  # every adapter is closed, even if an earlier one cannot close
+        adapters: dict[str, Any] = {}
+        for name in named:
+            adapters[name] = engine(settings["engines"][name]["dialect"], dsns[name])
+            cleanup.callback(adapters[name].close)
+            adapters[name].connect()
+        with sde.Session(logical, placement, adapters, project_id=settings["project_id"]):
+            total = _count(adapters[request.engine], request.sql)
         if total != sum(run.expected_rows for run in runs):
             raise DemoRefused("The local SQL result differs from the completed synthetic runs.")
-    finally:
-        adapter.close()
     if (
         current().fingerprint != placement.fingerprint
         or ids != sorted(path.name for path in (root / "runs").iterdir())

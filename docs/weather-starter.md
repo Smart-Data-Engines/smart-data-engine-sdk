@@ -147,11 +147,15 @@ while trust in who supplied the file comes from the authenticated handoff.
 This is the Weather demo's bounded count oracle. It accepts only
 `SELECT COUNT(*) [AS alias] FROM exact_source_table`, with `FINAL` required on ClickHouse. It
 refuses filters, joins, arbitrary expressions/functions, settings, comments and additional
-statements. Names and the query stamp must match the current signed source-only map; execute it
-before staging or after controller completion. A general analyst SQL/code API remains separate.
+statements. Names and the query stamp must match the current signed map and its source. While a
+staging maintains a copy the source stays authoritative, so the count reads the source then too; a
+query written for the copy is refused until the cutover makes the copy the source. A general analyst
+SQL/code API remains separate.
 
 The command verifies all completed local runs, plans and executes the exact admitted SQL using
-runtime credentials, and compares its count to the locally expected total. The query has a
+runtime credentials, and compares its count to the locally expected total. During a staging it
+connects to both engines, as the application does, because the local map names both; the count
+itself runs on the source. The query has a
 server-side execution limit; PostgreSQL additionally uses a read-only transaction. A changed map,
 changed run catalog, unresolved run or unexpected data refuses a successful receipt.
 
