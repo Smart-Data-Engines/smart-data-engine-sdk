@@ -8,6 +8,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from _weather_fixture import supplied
@@ -19,11 +20,12 @@ from sde_demo.model import model, reading
 
 
 def packet(
-    dialect: str = "postgres", bundle: dict[str, Any] | None = None
+    dialect: str = "postgres", bundle: dict[str, Any] | None = None, placement: Any = None
 ) -> tuple[dict[str, Any], Any, dict[str, Any]]:
     if bundle is None:
         bundle, _ = supplied(dialect)
-    _, placement = project.bootstrap(bundle)
+    if placement is None:
+        _, placement = project.bootstrap(bundle)
     source = placement.groups["WeatherReading"].source
     sql = "SELECT COUNT(*) AS total FROM " + QUOTE[dialect](
         source.layout.table_for("WeatherReading")
@@ -64,6 +66,82 @@ def test_request_binds_exact_query_to_source_and_map(dialect: str) -> None:
     document["query"]["sql"] = "untrusted later mutation"
     assert loaded.sql != document["query"]["sql"]
     assert loaded.map_fingerprint == placement.fingerprint
+
+
+def staging(bundle: dict[str, Any], sign: Any) -> dict[str, Any]:
+    """A signed staging packet: the source kept, a maintained copy in the other engine."""
+    group = sde.colocation_groups(model())[0]
+    source = bundle["current_map"]["groups"][group.name]["source"]["engine"]
+    target = "clickhouse" if source == "postgres" else "postgres"
+    layout = sde.default_layout(model(), group, dialect=target)
+    stage_id = uuid4().hex
+    prepared = deepcopy(bundle["current_map"])
+    prepared["map_version"] = 2
+    prepared["groups"][group.name].update(
+        derived=[
+            {
+                "id": "stage-copy",
+                "engine": target,
+                "lag_budget_ms": 30000,
+                "layout": {
+                    "tables": {name: sde.staging_table_name(stage_id, 1) for name in layout.tables},
+                    "columns": {name: dict(columns) for name, columns in layout.columns.items()},
+                },
+            }
+        ],
+        also_write=["stage-copy"],
+    )
+    return sign(
+        {
+            "kind": "sde-stage",
+            "protocol": 1,
+            "stage_id": stage_id,
+            "project_id": bundle["project_id"],
+            "group": group.name,
+            "current": bundle["current_map"],
+            "prepared": sign(prepared),
+        }
+    )
+
+
+def staged(dialect: str = "postgres") -> tuple[dict[str, Any], Any, dict[str, Any]]:
+    """The COUNT's packet on the map a staging publishes, loaded and verified from its packet."""
+    bundle, sign = supplied(dialect)
+    plan = sde.load_staging_plan(
+        staging(bundle, sign),
+        model=model(),
+        project_id=bundle["project_id"],
+        public_key=project.public_keys(bundle["public_keys"]),
+    )
+    return packet(dialect, bundle, plan.prepared)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+def test_a_count_reads_the_source_while_a_staging_maintains_a_copy(dialect: str) -> None:
+    """Saved queries stay current through a staging now, so their COUNT runs there too."""
+    document, placement, bundle = staged(dialect)
+    assert len(placement.groups["WeatherReading"].all()) == 2
+    loaded = query_count.load_count_request(
+        document, project_id=bundle["project_id"], placement=placement, dialects=bundle["engines"]
+    )
+    source = placement.groups["WeatherReading"].source
+    assert loaded.engine == source.engine
+    assert source.layout.table_for("WeatherReading") in loaded.sql
+
+
+def test_a_query_written_for_the_maintained_copy_is_refused() -> None:
+    document, placement, bundle = staged()
+    value = deepcopy(document)
+    copy = placement.groups["WeatherReading"].derived[0]
+    table = copy.layout.table_for("WeatherReading")
+    value["query"].update(engine=copy.engine, materialization=copy.id, dialect="clickhouse",
+                          sql=f"SELECT COUNT(*) FROM {table} FINAL")
+    value["query"]["stamp"]["materialization"] = copy.id
+    value["digest"] = query_count._digest(value)
+    with pytest.raises(project.DemoRefused, match="current source"):
+        query_count.load_count_request(
+            value, project_id=bundle["project_id"], placement=placement, dialects=bundle["engines"]
+        )
 
 
 @pytest.mark.parametrize(
@@ -285,6 +363,72 @@ def test_no_query_receipt_survives_a_context_change_during_execution(
         finally:
             path.write_bytes(original_bytes)
         assert query_count.run_count_query(root, document)["verified"] is True
+    finally:
+        if (root / "resources.json").exists():
+            resources.reset(root, admin)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+def test_the_count_runs_on_the_source_of_a_real_staging(
+    dialect: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The starter's operator stages a copy; the COUNT for the staging's map counts every row."""
+    from sde_demo.__main__ import operator
+
+    admin = {
+        name: os.environ.get(variable, "")
+        for name, variable in (
+            ("postgres", "SDE_POSTGRES_DSN"),
+            ("clickhouse", "SDE_CLICKHOUSE_DSN"),
+        )
+    }
+    if not all(admin.values()):
+        pytest.skip("both native engines are required for the Weather count demo")
+    root = tmp_path / "weather"
+    bundle, sign = supplied(dialect)
+    try:
+        project.setup(root, bundle, admin)
+        before = runtime.run(root, iterations=2, batch_size=3, interval_ms=0)
+        project.write(tmp_path / "stage.json", staging(bundle, sign))
+        assert operator(root, "stage", tmp_path / "stage.json")["outcome"] == "prepared"
+        during = runtime.run(root, iterations=1, batch_size=2, interval_ms=0)
+        settings = project.config(root)
+        placement = sde.load_local_map(
+            root / "state",
+            model=model(),
+            project_id=settings["project_id"],
+            public_key=project.public_keys(settings["public_keys"]),
+        )
+        assert placement.map_version == 2
+        assert len(placement.groups["WeatherReading"].all()) == 2
+        document, _, _ = packet(dialect, bundle, placement)
+        receipt = query_count.run_count_query(root, document)
+        assert receipt["verified"] is True
+        assert receipt["run_ids"] == sorted([before["run_id"], during["run_id"]])
+        result_file = root / "query-results" / receipt["execution_id"] / "result.json"
+        assert project.read(result_file)["count"] == 8
+
+        # Both engines are opened for the session, so both are closed - even when one cannot be.
+        closed: list[str] = []
+        opened = query_count.engine
+
+        def recorded(kind: str, dsn: str) -> Any:
+            adapter = opened(kind, dsn)
+            close = adapter.close
+
+            def closing() -> None:
+                close()
+                closed.append(kind)
+                if len(closed) == 1:
+                    raise RuntimeError("controlled close failure")
+
+            adapter.close = closing
+            return adapter
+
+        monkeypatch.setattr(query_count, "engine", recorded)
+        with pytest.raises(RuntimeError, match="controlled close failure"):
+            query_count.run_count_query(root, document)
+        assert sorted(closed) == ["clickhouse", "postgres"]
     finally:
         if (root / "resources.json").exists():
             resources.reset(root, admin)
