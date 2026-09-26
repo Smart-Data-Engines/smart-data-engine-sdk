@@ -9,7 +9,8 @@ with the grant the size is what the administrator reads.
 from __future__ import annotations
 
 import pytest
-from test_runtime_privileges_live import PROJECT, Roles, document, roles  # noqa: F401 - fixture
+from test_runtime_privileges_live import PROJECT, Roles, document
+from test_runtime_privileges_live import roles as roles
 
 import sde
 from sde.engines.clickhouse import STORAGE_COLUMNS

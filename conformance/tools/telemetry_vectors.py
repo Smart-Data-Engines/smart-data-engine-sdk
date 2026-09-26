@@ -707,7 +707,8 @@ def _eleven() -> None:
         {"shape": aggregate, "equal": ["station"], "ns": 5_000, "rows": 1},
         *[{"shape": by_number, "equal": [], "range": "temperature", "ns": 4_000, "rows": 7}] * 2,
         {"shape": _on(model, "Reading", "full_scan"), "equal": [], "ns": 90_000, "rows": 500},
-        *[{"shape": _on(model, "Reading", "point_read", "at", "station"), "ns": 900, "rows": 1}] * 2,
+        *[{"shape": _on(model, "Reading", "point_read", "at", "station"), "ns": 900, "rows": 1}]
+        * 2,
         *[{"shape": _on(model, "Reading", "write"), "ns": 2_000, "rows": 1}] * 2,
         {"shape": _on(model, "Station", "full_scan"), "equal": ["height"], "ns": 7_000, "rows": 3},
         {"shape": _on(model, "Station", "point_read", "code"), "ns": 800, "rows": 1},

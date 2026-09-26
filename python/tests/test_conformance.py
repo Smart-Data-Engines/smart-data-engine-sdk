@@ -242,7 +242,8 @@ def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: P
             )
             continue
         if event == "roll":
-            assert recorder.roll() is not None, f"{_ident(case)}: an earlier window recorded nothing"
+            closed = recorder.roll()
+            assert closed is not None, f"{_ident(case)}: an earlier window recorded nothing"
             continue
         shape = by_id.get(operation["shape"])
         assert shape is not None, (

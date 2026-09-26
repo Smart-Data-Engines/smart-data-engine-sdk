@@ -75,7 +75,8 @@ def two_groups(pg: Any, other: Any) -> sde.Session:
         "Detail": {"source": material("pg", events)},
         "Label": {"source": material("other", {"Label": "labels"})},
     })
-    return sde.Session(MODEL, placed, {"pg": pg, "other": other}, recorder=sde.Recorder(MODEL.version))
+    recorder = sde.Recorder(MODEL.version)
+    return sde.Session(MODEL, placed, {"pg": pg, "other": other}, recorder=recorder)
 
 
 def test_a_groups_size_is_the_sum_over_its_tables_and_reaches_the_window() -> None:
@@ -84,10 +85,8 @@ def test_a_groups_size_is_the_sum_over_its_tables_and_reaches_the_window() -> No
     session = two_groups(pg, other)
     measured = session.measure_storage()
     assert measured.unavailable == {}
-    assert [(s.group, s.engine, s.total_bytes, s.secondary_index_bytes) for s in measured.sizes] == [
-        ("Detail", "pg", 5_000, 1_000),
-        ("Label", "other", 500, 50),
-    ]
+    found = [(s.group, s.engine, s.total_bytes, s.secondary_index_bytes) for s in measured.sizes]
+    assert found == [("Detail", "pg", 5_000, 1_000), ("Label", "other", 500, 50)]
     assert pg.asked == [["details", "events"]], "one statement per engine, its tables only"
     session.save("Label", {"id": 1, "name": "x"})
     window = session._recorder.roll()  # type: ignore[union-attr]
@@ -124,7 +123,8 @@ def test_a_refused_or_failed_read_is_an_unknown_size_not_an_exception(
 
 
 def test_a_table_the_map_names_that_does_not_exist_is_missing_not_empty() -> None:
-    session = two_groups(Catalogued({"events": (10, 0)}), Catalogued({"labels": (9, 0)}, name="other"))
+    other = Catalogued({"labels": (9, 0)}, name="other")
+    session = two_groups(Catalogued({"events": (10, 0)}), other)
     assert session.measure_storage().unavailable == {"Detail": "missing_table"}
 
 
