@@ -43,10 +43,11 @@ function fixture() {
 }
 function workload(mode = 'ok', afterSave = () => {}) {
   const rows: Row[] = [], copyRows: Row[] = [], sessions: { closed: boolean }[] = []
-  let saves = 0
+  let saves = 0, measured = 0
   vi.spyOn(Session, 'connect').mockImplementation(async () => {
     const client = { closed: false,
       async close() { client.closed = true },
+      async measureStorage() { measured++; return { sizes: [], unavailable: {} } },
       async saveMany(_entity: string, batch: Row[]) {
         saves++
         if (mode === 'copy_only') copyRows.push(...batch)
@@ -68,7 +69,7 @@ function workload(mode = 'ok', afterSave = () => {}) {
     sessions.push(client)
     return client as unknown as Session
   })
-  return { rows, sessions, saves: () => saves }
+  return { rows, sessions, saves: () => saves, measured: () => measured }
 }
 for (const mode of ['absent', 'partial', 'copy_only']) it(`does not replay or complete an uncertain ${mode} batch`, async () => {
   const { root } = fixture(), fake = workload(mode)
@@ -86,6 +87,7 @@ it('resolves an exact visible batch without another write', async () => {
   expect(fake.saves()).toBe(1); expect(report.status).toBe('complete')
   expect(report.acknowledged_rows).toBe(0); expect(report.verified_after_uncertain_rows).toBe(2)
   expect(fake.sessions.every(client => client.closed)).toBe(true)
+  expect(fake.measured(), 'the size is measured at the start of the run and at its end').toBe(2)
 })
 it('closes the prior owned session when the local map changes', async () => {
   const { root, current, signed } = fixture()
@@ -182,6 +184,7 @@ function engine(defect?: string) {
   }
   vi.spyOn(Session, 'connect').mockImplementation(async () => ({
     async close() {},
+    async measureStorage() { return { sizes: [], unavailable: {} } },
     async saveMany(_entity: string, batch: Row[]) { rows.push(...batch) },
     async get(_entity: string, key: Row) {
       return rows.find(row => row.station === key.station && isDeepStrictEqual(row.at, key.at)) ?? null
