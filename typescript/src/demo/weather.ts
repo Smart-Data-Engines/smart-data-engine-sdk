@@ -44,13 +44,25 @@ function same(actual: Row | null, expected: Row) {
   if (!isDeepStrictEqual(actual, expected)) throw new DemoRefused('A logical read did not match this run.')
 }
 /**
+ * A run that stopped, failed, before it recorded its first write: it wrote no row. A run records the
+ * batch it is about to write before writing it, so no pending batch and no acknowledged or verified
+ * row means nothing reached the engine. Without this, a first run that could not open its session -
+ * a missing driver - stopped every later fleet run in that directory.
+ */
+function failedBeforeWriting(report: Record<string, unknown>): boolean {
+  return report.status === 'incomplete' && report.pending === null && report.generator_id === generatorId &&
+    (['acknowledged_rows', 'verified_after_uncertain_rows', 'verified_rows'] as const)
+      .every(field => report[field] === 0)
+}
+/**
  * Every earlier run of this project, by run ID, with the rows it verified.
  *
  * Fleet analytics reads every station's rows in one time window, and every run in a directory writes
  * the same timeline, so the exact answer is a sum over the runs - known exactly, because generated
  * values depend only on the sequence number and each run's local report says how many rows it
  * verified. A run that did not complete makes that sum unknowable, so the workload refuses instead
- * of comparing a read with a guess. The same rules as the Python starter's fleet_runs.
+ * of comparing a read with a guess - except a run that failed before its first write, which wrote no
+ * row (failedBeforeWriting). The same rules as the Python starter's fleet_runs.
  */
 export function fleetRuns(root: string, projectId: string): Map<string, number> {
   const runs = new Map<string, number>()
@@ -62,6 +74,7 @@ export function fleetRuns(root: string, projectId: string): Map<string, number> 
     const report = read(path).value
     if (report.project_id !== projectId) continue
     const identity = report.run_id, rows = report.verified_rows
+    if (failedBeforeWriting(report) && identity === name) continue
     if (typeof identity !== 'string' || !/^[0-9a-f]{32}$/.test(identity) || name !== identity ||
         report.status !== 'complete' || report.pending !== null || report.generator_id !== generatorId ||
         typeof rows !== 'number' || !Number.isSafeInteger(rows) || rows < 0 || rows > maxRunRows) {
@@ -111,6 +124,20 @@ export function alertExpected(runId: string, through: number, limit: number): [R
   }
   return [page, total, total ? `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` : null]
 }
+/**
+ * Refuse before a run's report exists when a binding's driver cannot be imported. Without this the
+ * first session open failed inside the run's retry loop: ten seconds of retries, a message that could
+ * only say the operation did not complete, and a report left `incomplete`. ClickHouse is spoken over
+ * fetch and needs no package. The import is the adapter's own, resolved from this package.
+ */
+export async function requireDrivers(
+  dialects: Iterable<string>, load: (name: string) => Promise<unknown> = name => import(name),
+): Promise<void> {
+  if (![...dialects].includes('postgres')) return
+  try { await load('pg') } catch {
+    throw new DemoRefused("The PostgreSQL binding needs the 'pg' package: npm install pg")
+  }
+}
 export async function runWeather(root: string, options: RunOptions = {}): Promise<RunReport> {
   const { iterations = 10, batchSize = 10, intervalMs = 100, recoveryMs = 10000, workload = 'mixed' } = options
   if (![iterations, batchSize, intervalMs, recoveryMs].every(Number.isSafeInteger) ||
@@ -118,6 +145,7 @@ export async function runWeather(root: string, options: RunOptions = {}): Promis
       intervalMs < 0 || intervalMs > 1000 || recoveryMs < 0 || recoveryMs > 30000 ||
       !(workloads as readonly string[]).includes(workload)) throw new DemoRefused('Invalid bounded workload options.')
   const { model, bindings, projectId, activeMap } = project(root)
+  await requireDrivers(Object.values(bindings).map(binding => binding.dialect))
   // Read before this run's own report exists; a run that starts later is not in the window.
   const earlier = workload === 'fleet' ? fleetRuns(root, projectId) : new Map<string, number>()
   const factories: Record<string, () => ManagedEngine> = {}

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
+import importlib
 import json
 import re
 import stat
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -72,7 +74,10 @@ def public_keys(value: Any) -> dict[str, bytes]:
     for name, encoded in value.items():
         if not isinstance(name, str) or not name or not isinstance(encoded, str):
             raise DemoRefused("Invalid public key configuration.")
-        decoded = base64.b64decode(encoded, validate=True)
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except binascii.Error:
+            raise DemoRefused("Invalid public key configuration.") from None
         if len(decoded) != 32:
             raise DemoRefused("Ed25519 public keys must contain 32 bytes.")
         result[name] = decoded
@@ -105,9 +110,14 @@ def bootstrap(value: dict[str, Any]) -> tuple[dict[str, Any], sde.PlacementMap]:
             "Weather demo needs one or two uniquely named PostgreSQL/ClickHouse bindings."
         )
     keys = public_keys(value["public_keys"])
-    placement = sde.load_map(
-        value["current_map"], model=logical, public_key=keys, require_signature=True
-    )
+    try:
+        placement = sde.load_map(
+            value["current_map"], model=logical, public_key=keys, require_signature=True
+        )
+    except sde.MapError as exc:
+        # Refused before setup writes anything, and the reason is about the map - a missing
+        # 'signed' extra, a bad signature - never about a credential, so it can be said in full.
+        raise DemoRefused(f"The bootstrap's map does not load: {exc}") from None
     check_map_project(placement, value["project_id"])
     if placement.contract < GENERATIONS_SINCE or placement.map_version != 1:
         raise DemoRefused(
@@ -170,6 +180,32 @@ def credentials(root: Path, purpose: str, bindings: Mapping[str, Any]) -> dict[s
     return value
 
 
+DRIVERS = {"postgres": ("psycopg", "postgres"), "clickhouse": ("clickhouse_connect", "clickhouse")}
+"""The driver module each binding's adapter imports, and the SDK extra that installs it."""
+
+
+def require_drivers(dialects: Iterable[str]) -> None:
+    """Refuse before anything is written when a binding's driver cannot be imported.
+
+    Without this the first session open failed inside a run's retry loop - ten seconds of retries,
+    a message that could only say "incomplete", and a report left `incomplete` for later fleet runs
+    to stop at. The import is the adapter's own, so a module that is present but cannot load counts
+    as missing too.
+    """
+    missing = []
+    for dialect in sorted(set(dialects)):
+        module, extra = DRIVERS[dialect]
+        try:
+            importlib.import_module(module)
+        except ImportError:
+            missing.append(extra)
+    if missing:
+        raise DemoRefused(
+            "Install the drivers for this demo's engines: "
+            f"pip install 'smart-data-engine-sdk[{','.join(missing)}]'"
+        )
+
+
 def engine(dialect: str, dsn: str) -> Any:
     if dialect == "postgres":
         from sde.engines.postgres import PostgresEngine
@@ -214,6 +250,7 @@ def setup(root: Path, supplied: dict[str, Any], admin_dsns: Mapping[str, str]) -
     from .resources import allocate, grant_tables
 
     settings, placement = bootstrap(supplied)
+    require_drivers(supplied["engines"].values())
     logical = model()
     with transaction(root):
         if (root / "reset-request.json").exists():

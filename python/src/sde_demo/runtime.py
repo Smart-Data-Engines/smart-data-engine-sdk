@@ -24,7 +24,16 @@ from .model import (
     model,
     reading,
 )
-from .project import DemoRefused, config, credentials, engine, public_keys, read, write
+from .project import (
+    DemoRefused,
+    config,
+    credentials,
+    engine,
+    public_keys,
+    read,
+    require_drivers,
+    write,
+)
 
 T = TypeVar("T")
 FLEET_PAGE = 100
@@ -36,6 +45,19 @@ ALERT_HUMIDITY = 95
 ALERT_PAGE = 100
 
 
+def _failed_before_writing(report: Mapping[str, Any]) -> bool:
+    """A run that stopped, failed, before it recorded its first write: it wrote no row."""
+    return (
+        report.get("status") == "incomplete"
+        and report.get("pending", False) is None
+        and report.get("generator_id") == GENERATOR_ID
+        and all(
+            type(report.get(field)) is int and report[field] == 0
+            for field in ("acknowledged_rows", "verified_after_uncertain_rows", "verified_rows")
+        )
+    )
+
+
 def fleet_runs(root: Path, *, project_id: str) -> dict[str, int]:
     """Every earlier run of this project, by run ID, with the rows it verified.
 
@@ -44,6 +66,12 @@ def fleet_runs(root: Path, *, project_id: str) -> dict[str, int]:
     generated values depend only on the sequence number, and each run's local report says how many
     rows it verified. A run that did not complete - interrupted, or with an uncertain batch - makes
     that sum unknowable, so the workload refuses instead of comparing a read with a guess.
+
+    One unfinished run is known exactly: one that failed before its first write. A run records the
+    batch it is about to write before writing it, so a failed run with no pending batch and no
+    acknowledged or verified row wrote nothing, and it adds nothing to the sum. Without this, a
+    first run that could not open its session - a missing driver - stopped every later fleet run
+    in that directory.
     """
     runs: dict[str, int] = {}
     for path in sorted((root / "runs").glob("*/report.json")):
@@ -51,6 +79,10 @@ def fleet_runs(root: Path, *, project_id: str) -> dict[str, int]:
         if report.get("project_id") != project_id:
             continue
         identity = report.get("run_id")
+        if _failed_before_writing(report) and isinstance(identity, str) and (
+            path.parent.name == identity
+        ):
+            continue
         if (
             not isinstance(identity, str)
             or re.fullmatch(r"[0-9a-f]{32}", identity) is None
@@ -137,6 +169,7 @@ def run(
     if workload not in WORKLOADS:
         raise DemoRefused("Choose the mixed, point, analytics, fleet or alerts workload.")
     settings = config(root)
+    require_drivers(binding["dialect"] for binding in settings["engines"].values())
     # Read before this run's own report exists; a run that starts later is not in the window.
     earlier = fleet_runs(root, project_id=settings["project_id"]) if workload == "fleet" else {}
     logical, keys = model(), public_keys(settings["public_keys"])

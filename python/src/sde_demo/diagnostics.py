@@ -12,12 +12,13 @@ from sde.engines._operator import NativeOperator
 
 from . import resources
 from .model import model
-from .project import config, connections, public_keys
+from .project import config, connections, public_keys, require_drivers
 
 
 def doctor(root: Path) -> dict[str, Any]:
     with transaction(root):
         settings = config(root)
+        require_drivers(binding["dialect"] for binding in settings["engines"].values())
         resources.verify(root)
         return _diagnose(root, settings)
 

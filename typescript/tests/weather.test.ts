@@ -12,7 +12,7 @@ import type { Row } from '../src/session.js'
 import { EngineError } from '../src/errors.js'
 import { generatorId, reading, weatherModel } from '../src/demo/model.js'
 import { project, read, write } from '../src/demo/project.js'
-import { alertExpected, alertHumidity, fleetExpected, fleetRuns, runWeather, workloads } from '../src/demo/weather.js'
+import { alertExpected, alertHumidity, fleetExpected, fleetRuns, requireDrivers, runWeather, workloads } from '../src/demo/weather.js'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -243,4 +243,41 @@ for (const [name, fields] of Object.entries({
 it('offers the fleet and alerts workloads and refuses anything else before reading setup', async () => {
   expect(workloads).toEqual(['mixed', 'point', 'analytics', 'fleet', 'alerts'])
   await expect(runWeather('/nonexistent', { workload: 'bogus' as never })).rejects.toThrow(/Invalid bounded workload/)
+})
+
+it('skips a run that failed before its first write, and still refuses one that may have written', () => {
+  // Found on the installed Weather acceptance of 26 September: a run without the `pg` package failed
+  // before writing, and its `incomplete` report stopped every later fleet run in that directory.
+  const beforeWriting = { status: 'incomplete', failure: 'EngineError', acknowledged_rows: 0,
+    verified_after_uncertain_rows: 0, verified_rows: 0 }
+  const { root } = fixture()
+  report(root, 'a'.repeat(32)); report(root, 'b'.repeat(32), beforeWriting)
+  expect(fleetRuns(root, 'p'.repeat(32))).toEqual(new Map([['a'.repeat(32), 4]]))
+  for (const change of [{ acknowledged_rows: 10 }, { verified_after_uncertain_rows: 10 }, { verified_rows: 3 },
+    { pending: { first: 1, count: 10 } }, { status: 'running' }, { acknowledged_rows: null },
+    { generator_id: 'weather-v0:other' }]) {
+    const { root: other } = fixture()
+    report(other, 'a'.repeat(32), { ...beforeWriting, ...change })
+    expect(() => fleetRuns(other, 'p'.repeat(32)), JSON.stringify(change)).toThrow(/every earlier run/)
+  }
+})
+it('checks the pg package only for a PostgreSQL binding, and names the install when it is missing', async () => {
+  const loaded: string[] = []
+  await requireDrivers(['clickhouse'], async name => { loaded.push(name) })
+  expect(loaded).toEqual([])
+  await requireDrivers(['clickhouse', 'postgres'], async name => { loaded.push(name) })
+  expect(loaded).toEqual(['pg'])
+  await expect(requireDrivers(['postgres'], async () => { throw new Error("Cannot find package 'pg'") }))
+    .rejects.toThrow("needs the 'pg' package: npm install pg")
+})
+it('refuses a run without the pg package before its report exists', async () => {
+  const { root } = fixture()
+  vi.doMock('pg', () => { throw new Error("Cannot find package 'pg'") })
+  const connect = vi.spyOn(Session, 'connect')
+  try {
+    await expect(runWeather(root, { iterations: 1, batchSize: 1, intervalMs: 0 }))
+      .rejects.toThrow("needs the 'pg' package")
+  } finally { vi.doUnmock('pg') }
+  expect(connect).not.toHaveBeenCalled()
+  expect(() => readdirSync(join(root, 'runs'))).toThrow()
 })
