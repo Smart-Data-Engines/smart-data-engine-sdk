@@ -242,7 +242,15 @@ class NativeOperator:
                         and table in allowed_tables
                         and access in ("SELECT", "INSERT")
                     )
-                    settings = database == "system" and table == "settings" and access == "SELECT"
+                    # Two whole system tables: settings, which the Python driver reads on connect,
+                    # and data_skipping_indices, the optional grant docs/runtime-roles.md offers
+                    # for verifying declared indexes - it shows a login its own tables' indexes
+                    # only (measured on 24.8).
+                    settings = (
+                        database == "system"
+                        and table in ("settings", "data_skipping_indices")
+                        and access == "SELECT"
+                    )
                     # The one column grant admitted: what a storage measurement reads of
                     # `system.parts`, which shows a login the parts of its own tables only
                     # (measured) and says nothing about a migrated table's access.

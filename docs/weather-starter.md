@@ -49,7 +49,11 @@ Setup accepts explicit loopback endpoints only. Do not point it at a production 
 .venv/bin/sde-weather --directory ./weather-demo doctor
 ```
 
-Setup creates random, isolated namespaces and restricted runtime users. It durably records intent
+Setup creates random, isolated namespaces and restricted runtime users - on ClickHouse with the
+column grant on `system.parts` that lets a runtime login measure its own tables' size
+([runtime roles](runtime-roles.md)). `doctor` reports, per engine, whether that measurement is
+available (`storage_telemetry`: `available`, `no_source` for an engine holding no group's source, or
+`unavailable:` and the reason class), never a size. It durably records intent
 before DDL, then calls SDK `prepare_schema` and `LocalCutover.enroll`. The operator and runtime
 DSNs occupy separate mode-0600 files. The application reads only `runtime-credentials.json`.
 `config.json` remains compatible with `sde-operator`: its connection fields are environment
@@ -95,9 +99,12 @@ between batches and 0-30000 ms for bounded read/recovery attempts.
 
 Each run writes `runs/RUN_ID/report.json` and a real SDK `window.json`. Reports contain counters,
 versions, status and a pending sequence range, not rows or DSNs. Only the window is the telemetry
-handoff to the controller. Its call count measures SDK operations: a batch is one call. The
-elapsed workload time in the local report is separate from the SDK window, which has no interval
-clock. Do not label either synthetic inputs or one local run as customer performance evidence.
+handoff to the controller. Its call count measures SDK operations: a batch is one call. Each run
+measures the group's size with `Session.measure_storage()` at its start and at its end, so the window
+carries `total_bytes`, `index_to_table_ratio`, `write_burstiness` and `time_filtered_share`; a run
+shorter than an hour leaves `daily_growth_bytes` unknown, because a day is not projected from
+seconds. The elapsed workload time in the local report is separate from the SDK window. Do not label
+either synthetic inputs or one local run as customer performance evidence.
 
 Before each batch, the application persists its intended sequence range. If the write response is
 lost, it checks the exact keys against the source using fresh local-map sessions. If the complete
