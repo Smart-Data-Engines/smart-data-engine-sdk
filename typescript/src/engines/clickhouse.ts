@@ -51,6 +51,7 @@ import { compareCodePoints } from '../canonical.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
+import { exactBytes } from '../telemetry.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
 import { ClickHouseFences, fenceIO } from './_write-fences.js'
@@ -671,6 +672,42 @@ export class ClickHouseEngine {
     })
   }
 
+  /**
+   * Each table's bytes and its secondary index bytes, from active parts. Numbers only.
+   *
+   * One statement: `system.tables` says which names exist - readable by a runtime login without
+   * any grant, and only for its own tables - and `system.parts` what their active parts occupy,
+   * which needs the column grant in `STORAGE_COLUMNS`. An empty table has no parts and reads 0
+   * bytes; a missing one is absent, because a missing table is not an empty one.
+   */
+  async storageSizes(tables: readonly string[]): Promise<Map<string, readonly [number, number]>> {
+    return this.usage.operation(async () => {
+      if (tables.length === 0) return new Map()
+      const names = tables.map((table) => literal(table)).join(', ')
+      const sql =
+        'SELECT t.name AS name, toString(sum(p.bytes_on_disk)) AS total, ' +
+        'toString(sum(p.secondary_indices_compressed_bytes + p.secondary_indices_marks_bytes)) ' +
+        'AS secondary FROM system.tables AS t LEFT JOIN (' +
+        'SELECT table, bytes_on_disk, secondary_indices_compressed_bytes, ' +
+        'secondary_indices_marks_bytes FROM system.parts ' +
+        'WHERE active AND database = currentDatabase()' +
+        ') AS p ON p.table = t.name ' +
+        `WHERE t.database = currentDatabase() AND t.name IN (${names}) ` +
+        'GROUP BY t.name SETTINGS join_use_nulls = 0'
+      try {
+        const rows = await this.query(sql)
+        return new Map(
+          rows.map((row) => [
+            String(row['name']),
+            [exactBytes(row['total']), exactBytes(row['secondary'])] as const,
+          ]),
+        )
+      } catch (error) {
+        throw new EngineError('storage sizes could not be read: ' + message(error), { cause: error })
+      }
+    })
+  }
+
   async count(table: string): Promise<number> {
     return this.usage.operation(async () => {
       try {
@@ -926,6 +963,20 @@ export class ClickHouseEngine {
  * a branch, and an unknown kind throws rather than falling through to a string. A value that
  * reached a query as an unquoted `[object Object]` would be a syntax error at best.
  */
+/**
+ * The columns of `system.parts` a storage measurement reads, and all a runtime login is granted.
+ * ClickHouse 24.8 refuses `system.parts` to a login with only table grants; a column grant on these
+ * names lets it read the parts of its own tables and no others (measured).
+ */
+export const STORAGE_COLUMNS = [
+  'database',
+  'table',
+  'active',
+  'bytes_on_disk',
+  'secondary_indices_compressed_bytes',
+  'secondary_indices_marks_bytes',
+] as const
+
 export function literal(value: unknown): string {
   if (value === null || value === undefined) return 'NULL'
   if (typeof value === 'number') {

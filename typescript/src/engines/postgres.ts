@@ -36,6 +36,7 @@ import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
+import { exactBytes } from '../telemetry.js'
 import type { PhysicalFinding } from '../physical.js'
 import { declaredTables } from '../physical.js'
 import type { PhysicalLayout } from '../placement.js'
@@ -710,6 +711,37 @@ export class PostgresEngine {
         if (row === undefined) throw new EngineError('summary query returned no result')
         return row
       } catch (error) { throw new EngineError('logical summary of ' + table + ' failed: ' + this.explain(error)) }
+    })
+  }
+
+  /**
+   * Each table's bytes and its secondary index bytes, from the catalogue. Numbers only.
+   *
+   * `pg_total_relation_size` - the table, its TOAST and every index - and the indexes other than
+   * the primary key, one statement for every table named. A name the connection does not resolve is
+   * absent rather than a zero: a missing table is not an empty one. A login with only SELECT and
+   * INSERT on the table reads the same numbers as the administrator (measured on PostgreSQL 15).
+   */
+  async storageSizes(tables: readonly string[]): Promise<Map<string, readonly [number, number]>> {
+    return this.usage.operation(async () => {
+      if (tables.length === 0) return new Map()
+      const sql =
+        'SELECT t.name AS name, pg_total_relation_size(r.oid)::text AS total, ' +
+        'COALESCE((SELECT sum(pg_relation_size(i.indexrelid)) FROM pg_index i ' +
+        'WHERE i.indrelid = r.oid AND NOT i.indisprimary), 0)::text AS secondary ' +
+        'FROM unnest($1::text[]) AS t(name) ' +
+        'JOIN pg_class r ON r.oid = to_regclass(quote_ident(t.name))'
+      try {
+        const result = await this.run(sql, [[...tables]])
+        return new Map(
+          result.rows.map((row) => [
+            String(row['name']),
+            [exactBytes(row['total']), exactBytes(row['secondary'])] as const,
+          ]),
+        )
+      } catch (error) {
+        throw new EngineError('storage sizes could not be read: ' + this.explain(error), { cause: error })
+      }
     })
   }
 

@@ -396,6 +396,44 @@ export interface StorageSample {
   readonly secondaryIndexBytes: number
 }
 
+/** One group's size on its source materialisation, as the engine's catalogue gave it. */
+export interface StorageSize {
+  readonly group: string
+  readonly materialization: string
+  readonly engine: string
+  readonly totalBytes: number
+  readonly secondaryIndexBytes: number
+}
+
+/**
+ * Why a group's size stayed unknown: its engine's adapter has no catalogue to read, a table the map
+ * names does not exist, the catalogue refused the login (ClickHouse without the `system.parts`
+ * grant) or the read failed otherwise.
+ */
+export const STORAGE_UNAVAILABLE = ['failed', 'missing_table', 'refused', 'unsupported'] as const
+export type StorageUnavailable = (typeof STORAGE_UNAVAILABLE)[number]
+
+/**
+ * What `Session.measureStorage` measured, and why the rest stayed unknown - a class of reason per
+ * group, never the engine's message.
+ */
+export interface StorageMeasurement {
+  readonly sizes: readonly StorageSize[]
+  readonly unavailable: Readonly<Record<string, StorageUnavailable>>
+}
+
+/**
+ * A catalogue size as an exact safe integer, or a refusal. Drivers hand a 64-bit count over as text;
+ * a size past 2^53 bytes would round, and a rounded size is a wrong one.
+ */
+export function exactBytes(value: unknown): number {
+  const parsed = typeof value === 'bigint' ? value : BigInt(String(value))
+  if (parsed < 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('a storage size outside the exact integer range')
+  }
+  return Number(parsed)
+}
+
 /**
  * One aggregation period, ready to send.
  *

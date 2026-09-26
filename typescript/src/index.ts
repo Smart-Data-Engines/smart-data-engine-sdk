@@ -149,8 +149,11 @@ export type {
   GroupFeatures,
   ReadPredicates,
   RecordOptions,
+  StorageMeasurement,
   StorageOptions,
   StorageSample,
+  StorageSize,
+  StorageUnavailable,
   Window,
 } from './telemetry.js'
 export {
@@ -158,6 +161,7 @@ export {
   BUCKET_COUNT,
   copyFreshnessRecord,
   DAY_NS,
+  exactBytes,
   FanOutStats,
   featuresRecord,
   FIELD_LIST_IS_TOTAL,
@@ -168,6 +172,7 @@ export {
   Recorder,
   SECOND_NS,
   ShapeStats,
+  STORAGE_UNAVAILABLE,
   timeFields,
   windowCopies,
   windowFeatures,
