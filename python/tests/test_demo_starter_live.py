@@ -39,6 +39,11 @@ def test_local_weather_setup_run_doctor_retry_and_reset(
         assert set(report["engines"]) == set(admin)
         for result in report["engines"].values():
             assert result["version"] and result["runtime_privileges"] == "qualified"
+        # The size a window will carry is readable on the source's engine - on ClickHouse through
+        # the system.parts column grant setup gives - and the other engine holds no source.
+        assert {name: item["storage_telemetry"] for name, item in report["engines"].items()} == {
+            name: "available" if name == source else "no_source" for name in admin
+        }
         original_engine = runtime.engine
 
         def active_only(dialect: str, dsn: str) -> object:
@@ -57,6 +62,21 @@ def test_local_weather_setup_run_doctor_retry_and_reset(
         assert "weather-" + first["run_id"] not in encoded
         assert "runtime-credentials" not in encoded
         assert first["model_version"] in encoded
+        # Measured at the start and the end of the run: a size, the index share (the declared
+        # layout has no secondary index) and how the writes arrived; a day is not projected from a
+        # run of seconds. The time-filtered share is the calls whose filter named `at`, exactly as
+        # the same window's `filtered_on` reports them.
+        body = window["groups"]["WeatherReading"]
+        assert body["total_bytes"] > 0 and body["index_to_table_ratio"] == 0.0
+        assert body["write_burstiness"] >= 1.0
+        timed = sum(
+            entry["calls"]
+            for shape in body["shapes"]
+            for entry in shape.get("filtered_on", ())
+            if entry.get("range") == "at" or "at" in entry["equal"]
+        )
+        assert body["time_filtered_share"] == timed / body["calls"]
+        assert body["missing"] == ["daily_growth_bytes"]
         # Fleet analytics reads both earlier runs' rows in one time window, across stations, and
         # expects the exact sum; the window says each read bounded `at` and fixed no station.
         fleet = runtime.run(root, iterations=2, batch_size=4, interval_ms=0, workload="fleet")
@@ -67,6 +87,10 @@ def test_local_weather_setup_run_doctor_retry_and_reset(
         filters = {entry["kind"]: entry.get("filtered_on") for entry in shapes}
         assert filters["range_read"] == [{"equal": [], "range": "at", "calls": 2}]
         assert filters["aggregate"] == [{"equal": [], "range": "at", "calls": 4}]
+        fleet_body = project.read(root / "runs" / fleet["run_id"] / "window.json")["groups"][
+            "WeatherReading"
+        ]
+        assert fleet_body["time_filtered_share"] > 0.0  # every fleet read bounded `at`
         # Alerts read one station's readings at or above a humidity: the first iteration has no
         # alert yet (an empty page and a summary of nothing), the second has five.
         alerts = runtime.run(root, iterations=2, batch_size=40, interval_ms=0, workload="alerts")

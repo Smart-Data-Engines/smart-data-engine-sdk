@@ -34,6 +34,19 @@ for (const source of ['postgres', 'clickhouse']) it.skipIf(!enabled)(`runs Weath
     const window = readFileSync(join(directory, 'runs', first.run_id, 'window.json'), 'utf8')
     expect(window).toContain(first.model_version)
     expect(window).not.toContain('weather-' + first.run_id)
+    // Measured at the start and the end of the run, exactly as the Python starter does: a size,
+    // no secondary index, how the writes arrived, and a share of calls whose filter named `at`
+    // equal to what the same window's `filtered_on` reports. A day is not projected from seconds.
+    const body = JSON.parse(window).groups.WeatherReading
+    expect(body.total_bytes).toBeGreaterThan(0)
+    expect(body.index_to_table_ratio).toBe(0)
+    expect(body.write_burstiness).toBeGreaterThanOrEqual(1)
+    let timed = 0
+    for (const shape of body.shapes as { filtered_on?: { equal: string[]; range?: string; calls: number }[] }[]) {
+      for (const entry of shape.filtered_on ?? []) if (entry.range === 'at' || entry.equal.includes('at')) timed += entry.calls
+    }
+    expect(body.time_filtered_share).toBe(timed / body.calls)
+    expect(body.missing).toEqual(['daily_growth_bytes'])
     // A Python run in the same directory, then fleet analytics across every station: the exact
     // expectation includes the other language's rows, read from its local report.
     const written = JSON.parse(call('run'))

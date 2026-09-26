@@ -170,6 +170,9 @@ export async function runWeather(root: string, options: RunOptions = {}): Promis
   checkpoint()
   const began = process.hrtime.bigint()
   try {
+    // The group's size at the start of the run and again at its end, for the window: the engine's
+    // catalogue answers with numbers, and a refused read leaves the size unknown.
+    await readRetry(current => current.measureStorage())
     for (let iteration = 0; iteration < iterations; iteration++) {
       const first = iteration * batchSize + 1
       const rows = Array.from({ length: batchSize }, (_, index) => reading(runId, 0, first + index))
@@ -242,6 +245,7 @@ export async function runWeather(root: string, options: RunOptions = {}): Promis
       report.verified_rows = count; checkpoint()
       if (intervalMs && iteration + 1 < iterations) await pause(intervalMs)
     }
+    await readRetry(current => current.measureStorage())
     report.status = 'complete'
   } catch (error) {
     report.status = 'incomplete'; report.failure = error instanceof Error ? error.name : 'UnknownError'; throw error

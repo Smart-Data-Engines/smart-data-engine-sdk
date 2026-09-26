@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 from sde import _local_state
+from sde.engines._storage import STORAGE_COLUMNS
 
 FILES = {"operator": "operator-credentials.json", "runtime": "runtime-credentials.json"}
 _FIELDS = {
@@ -692,6 +693,13 @@ def allocate(
                 if engine.dialect == "clickhouse":
                     engine._cx.command(
                         f"GRANT SELECT ON system.settings TO `{entry['runtime_user']}`"
+                    )
+                    # What a storage measurement reads, and nothing more: ClickHouse refuses
+                    # system.parts to a login with table grants alone, and this column grant shows
+                    # it the parts of its own tables only. The operator's qualification admits it.
+                    engine._cx.command(
+                        f"GRANT SELECT({', '.join(STORAGE_COLUMNS)}) ON system.parts "
+                        f"TO `{entry['runtime_user']}`"
                     )
                 entry["phase"] = "ready"
                 _write(root, record)
