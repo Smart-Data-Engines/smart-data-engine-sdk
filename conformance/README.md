@@ -63,8 +63,11 @@ vectors/
     calls.json                ordered column/constraint/drain/restore calls
   telemetry/<nnn>-<name>/
     model.json
-    operations.json           operations to record, each naming a shape by identifier
+    operations.json           operations to record, each naming a shape by identifier; an entry
+                              may carry `at_ms` (the case's clock) or be an `event`: `storage`
+                              (a size sample) or `roll` (an earlier window, closed and discarded)
     fan_out.json              writes to a derived copy - optional
+    clock.json                `window_ms`, the clock's reading at the final roll - optional
     window.json               the exact window document the library must produce
     features_for.json         features for a group with no traffic, which is not in the document
     buckets.json              (nanoseconds, bucket index) fed straight to the histogram
@@ -93,9 +96,10 @@ every number in a window is either a ratio of two integers or a bucket edge divi
 and IEEE 754 requires division to be correctly rounded, so two languages compute the same double
 even where they print it differently.
 
-Two things it deliberately leaves out. **A clock**: the document carries none, which is what makes
-it deterministic, and the two features that would need a duration are declared unmeasurable anyway.
-And **buffer eviction**: `dropped_windows` is in the document and zero in every case, because a full
+**The clock is the case's.** The document carries none, and the runner never lends the recorder
+its own: an entry's `at_ms` moves an injected clock and `clock.json` sets the reading at the final
+roll, so a write's second, a window's length and a storage sample's age are the case's facts; without
+either the clock stands at zero. One thing it deliberately leaves out: **buffer eviction**: `dropped_windows` is in the document and zero in every case, because a full
 buffer dropping its oldest window is behaviour with no artefact - each library asserts it directly,
 and the two assertions are the only thing holding those two implementations together.
 
