@@ -137,9 +137,11 @@ from .telemetry import (
     GroupFeatures,
     Histogram,
     Recorder,
+    StorageSample,
     ShapeStats,
     Window,
     has_time_dimension,
+    time_fields,
 )
 from .types import Float32, Int32, Json, Timestamp, precision
 from .watermark import (
@@ -239,6 +241,7 @@ __all__ = [
     "Queryable",
     "Range",
     "Recorder",
+    "StorageSample",
     "Ref",
     "ResourceBusy",
     "ResourceClosed",
@@ -277,6 +280,7 @@ __all__ = [
     "group_columns",
     "group_of",
     "has_time_dimension",
+    "time_fields",
     "hash_identifiers",
     "index_build_name",
     "infer_model",
