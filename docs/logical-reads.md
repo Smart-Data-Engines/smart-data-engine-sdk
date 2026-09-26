@@ -122,8 +122,9 @@ operations do not fall back to scans or loops.
 
 Scan records the existing full_scan or range_read shape. Count and summarize record aggregate.
 An aggregate returns one result row: its numeric result is not the telemetry row count.
-Filters, cursor keys and aggregate result values never enter telemetry. The current
-time_filtered_share metric remains explicitly unmeasured; these APIs do not invent that value.
+Filters, cursor keys and aggregate result values never enter telemetry. The window's
+time_filtered_share is counted from the field names each call filtered on - the same names
+`filtered_on` reports - never from a value.
 
 The ClickHouse layout generator now preserves nullable non-key fields as Nullable(nativeType).
 Previously it dropped that model property and a valid null value was refused by the generated

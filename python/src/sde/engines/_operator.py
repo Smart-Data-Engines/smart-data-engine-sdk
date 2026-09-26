@@ -8,6 +8,7 @@ from typing import Any
 
 from ..errors import EngineError, MigrationRefused
 from ..schema import QUOTE
+from ._storage import STORAGE_COLUMNS
 
 
 @dataclass(frozen=True)
@@ -241,10 +242,29 @@ class NativeOperator:
                         and table in allowed_tables
                         and access in ("SELECT", "INSERT")
                     )
-                    settings = database == "system" and table == "settings" and access == "SELECT"
-                    if not (ordinary or settings) or column is not None or partial or option:
+                    # Two whole system tables: settings, which the Python driver reads on connect,
+                    # and data_skipping_indices, the optional grant docs/runtime-roles.md offers
+                    # for verifying declared indexes - it shows a login its own tables' indexes
+                    # only (measured on 24.8).
+                    settings = (
+                        database == "system"
+                        and table in ("settings", "data_skipping_indices")
+                        and access == "SELECT"
+                    )
+                    # The one column grant admitted: what a storage measurement reads of
+                    # `system.parts`, which shows a login the parts of its own tables only
+                    # (measured) and says nothing about a migrated table's access.
+                    storage = (
+                        database == "system"
+                        and table == "parts"
+                        and access == "SELECT"
+                        and column in STORAGE_COLUMNS
+                    )
+                    whole = (ordinary or settings) and column is None
+                    if not (whole or storage) or partial or option:
                         raise MigrationRefused(
-                            "runtime grants must be direct SELECT/INSERT on declared tables"
+                            "runtime grants must be direct SELECT/INSERT on declared tables, "
+                            "plus the storage columns of system.parts"
                         )
                 for table in tables:
                     if required_access and (

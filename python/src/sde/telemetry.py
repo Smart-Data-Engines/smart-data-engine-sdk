@@ -29,7 +29,7 @@ import math
 import sys
 import threading
 from collections import deque
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dataclass_fields
 from typing import Any
@@ -323,6 +323,62 @@ rather than part of it. Both this module and the control plane's reader work fro
 so a field added to the feature vector cannot be written by one side and ignored by the other.
 """
 
+SECOND_NS = 1_000_000_000
+"""The bucket a write's rows are counted in for ``write_burstiness``."""
+
+GROWTH_MIN_NS = 3_600_000_000_000
+"""The shortest span a daily growth is projected from.
+
+A day projected from a few seconds of writes is a number with no basis: a demonstration writing a
+hundred rows in two seconds would claim gigabytes a day. An hour is where the projection multiplies
+a measurement by 24 rather than by thousands."""
+
+DAY_NS = 86_400_000_000_000
+"""The unit growth is projected to, and how long the recorder keeps a group's storage samples."""
+
+
+@dataclass(frozen=True)
+class StorageSample:
+    """One group's bytes on its source materialisation at one moment, from the engine's catalogue.
+
+    Numbers only. ``total_bytes`` is everything the group's tables occupy, indexes included;
+    ``secondary_index_bytes`` is the part of it that is indexes other than the one enforcing the
+    key - the part a physical design adds and can remove. ``at_ns`` is the recorder's clock.
+    """
+
+    group: str
+    at_ns: int
+    total_bytes: int
+    secondary_index_bytes: int
+
+
+@dataclass(frozen=True)
+class StorageSize:
+    """One group's size on its source materialisation, as the engine's catalogue gave it."""
+
+    group: str
+    materialization: str
+    engine: str
+    total_bytes: int
+    secondary_index_bytes: int
+
+
+STORAGE_UNAVAILABLE = ("failed", "missing_table", "refused", "unsupported")
+"""Why a group's size stayed unknown: its engine's adapter has no catalogue to read (the orderbook
+engine), a table the map names does not exist, the catalogue refused the login (ClickHouse without
+the ``system.parts`` grant) or the read failed otherwise."""
+
+
+@dataclass(frozen=True)
+class StorageMeasurement:
+    """What :meth:`sde.session.Session.measure_storage` measured, and why the rest stayed unknown.
+
+    ``unavailable`` maps a group to one of :data:`STORAGE_UNAVAILABLE`. A class, never the engine's
+    message: the message can name objects the application may not want in a log it forwards."""
+
+    sizes: tuple[StorageSize, ...]
+    unavailable: Mapping[str, str]
+
 
 @dataclass(frozen=True)
 class Window:
@@ -343,6 +399,17 @@ class Window:
     """What the fan-out to each derived copy did. Empty when the group has no copy, which is the
     ordinary case - a copy exists during a migration and while a derived materialisation is in the
     map, not otherwise."""
+    storage: Sequence[StorageSample] = ()
+    """The storage samples taken during this window - between the roll that opened it and the one
+    that closed it, by the recorder's own state rather than by comparing clock readings, so a sample
+    taken at the instant of a roll belongs to exactly one window."""
+    storage_history: Sequence[StorageSample] = ()
+    """Every storage sample the recorder kept when this window closed: this window's and earlier
+    ones up to a day old, which a daily growth is projected against."""
+    write_seconds: Mapping[str, Mapping[int, int]] = field(default_factory=dict)
+    """Rows written by successful writes, per group, per whole second of the window from its start.
+
+    What ``write_burstiness`` is computed from, and nothing else: a count per second, not a row."""
 
     def copies(self, group: str) -> tuple[CopyFreshness, ...]:
         """How far behind each of this group's derived copies ran, sorted by materialisation.
@@ -365,8 +432,19 @@ class Window:
             )
         )
 
-    def features(self, group: str, *, has_time_dimension: bool = False) -> GroupFeatures:
-        """Fold this window's records for one group into the planner's feature vector."""
+    def features(
+        self,
+        group: str,
+        *,
+        has_time_dimension: bool = False,
+        time_fields: Mapping[str, Collection[str]] | None = None,
+    ) -> GroupFeatures:
+        """Fold this window's records for one group into the planner's feature vector.
+
+        ``time_fields`` names, per entity, the fields of a time type (:func:`time_fields`), which is
+        what ``time_filtered_share`` is counted against. Without it that share stays unknown: which
+        fields are times is a fact about the model, and the window does not guess it.
+        """
         records = [s for s in self.shapes if s.group == group]
         if not records:
             # `no_traffic` is the *reason*, and the unknown fields are named too - by the same
@@ -406,6 +484,21 @@ class Window:
         pk_calls = sum(s.calls for s in records if s.kind == "point_read")
         errors = sum(s.errors for s in records)
 
+        # A call filtered on time when its filter bounded a time field by a range or compared one by
+        # equality. Names only - the fields `filtered_on` already reports - so no argument of any
+        # call is needed. The denominator is every call of the group, as for `pk_access_share`.
+        time_filtered: float | None = None
+        if time_fields is not None and calls:
+            filtered = 0
+            for record in records:
+                times = frozenset(time_fields.get(record.entity, ()))
+                for (equal, ranged), hits in record.filtered.items():
+                    if ranged in times or not times.isdisjoint(equal):
+                        filtered += hits
+            time_filtered = filtered / calls
+
+        total_bytes, index_ratio, growth = self._storage_features(group)
+
         measured = GroupFeatures(
             calls=calls,
             read_write_ratio=(reads / writes) if writes else None,
@@ -414,13 +507,60 @@ class Window:
             latency_p99_ms=latency.percentile_ms(0.99),
             result_cardinality_p50=_at(cardinalities, 0.5),
             result_cardinality_p99=_at(cardinalities, 0.99),
+            total_bytes=total_bytes,
+            daily_growth_bytes=growth,
+            index_to_table_ratio=index_ratio,
             pk_access_share=(pk_calls / calls) if calls else None,
             has_time_dimension=has_time_dimension,
+            time_filtered_share=time_filtered,
             distinct_shapes=len(records),
+            write_burstiness=self._burstiness(group),
             error_share=(errors / calls) if calls else None,
             complete=self.complete,
         )
         return _with_missing(measured)
+
+    def _storage_features(self, group: str) -> tuple[int | None, float | None, int | None]:
+        """``total_bytes``, ``index_to_table_ratio`` and ``daily_growth_bytes`` from the samples.
+
+        The size is the latest sample taken **in this window** - a sample from an earlier window is
+        an earlier size, and reporting it as this window's would date a measurement wrongly. Growth
+        reaches back to the oldest sample kept (up to a day) and is projected to a day only from a
+        span of at least :data:`GROWTH_MIN_NS`, truncated toward zero, and may be negative:
+        ClickHouse merges shrink parts. Every result is an integer or a ratio of two integers.
+        """
+        latest: StorageSample | None = None
+        for sample in self.storage:
+            if sample.group == group and (latest is None or sample.at_ns >= latest.at_ns):
+                latest = sample
+        if latest is None:
+            return None, None, None
+        rest = latest.total_bytes - latest.secondary_index_bytes
+        ratio = latest.secondary_index_bytes / rest if rest > 0 else None
+        history = [sample for sample in self.storage_history if sample.group == group]
+        oldest = min(history or [latest], key=lambda sample: sample.at_ns)
+        elapsed = latest.at_ns - oldest.at_ns
+        growth: int | None = None
+        if elapsed >= GROWTH_MIN_NS:
+            delta = latest.total_bytes - oldest.total_bytes
+            projected = abs(delta) * DAY_NS // elapsed
+            growth = projected if delta >= 0 else -projected
+        return latest.total_bytes, ratio, growth
+
+    def _burstiness(self, group: str) -> float | None:
+        """How many times the busiest second's rows exceed the window's mean rate.
+
+        ``M * S / W``: the busiest second's rows, the window's whole seconds - at least one, and at
+        least as many as the seconds its writes landed in - and every row written. One is perfectly
+        even; a window that wrote everything in one of its sixty seconds reads 60.
+        """
+        seconds = self.write_seconds.get(group) or {}
+        written = sum(seconds.values())
+        if written <= 0:
+            return None
+        duration = -(-(self.ended_ns - self.started_ns) // SECOND_NS)
+        span = max(1, duration, max(seconds) + 1)
+        return max(seconds.values()) * span / written
 
 
 
@@ -522,7 +662,9 @@ class Window:
         groups: dict[str, Any] = {}
         for name in named:
             record = self.features(
-                name, has_time_dimension=has_time_dimension(model, by_name[name])
+                name,
+                has_time_dimension=has_time_dimension(model, by_name[name]),
+                time_fields=time_fields(model, by_name[name]),
             ).as_record()
             shapes = self.shape_records(model, name)
             if shapes:
@@ -576,13 +718,14 @@ def _with_missing(
     from this set, which breaks the one promise the set makes: that a reader never has to infer
     absence from a null. Four other fields were named by hand and would have stayed the only ones.
 
-    What is unknown and why, because a derivation hides the reasons. Engine-side sizes
-    (``total_bytes``, ``index_to_table_ratio``) need a catalogue read, which is an adapter
-    capability rather than a measurement. ``daily_growth_bytes`` and ``write_burstiness`` need two
-    samples over time and a window is one. ``time_filtered_share`` would need the *arguments* of a
-    call, and this library records shapes and never values. Zero bytes and unknown bytes lead a
-    planner to opposite conclusions, which is the whole reason for naming them rather than
-    defaulting them.
+    What stays unknown and why, because a derivation hides the reasons. The sizes
+    (``total_bytes``, ``index_to_table_ratio``) come from a storage sample taken in the window -
+    :meth:`Recorder.record_storage`, fed by :meth:`sde.session.Session.measure_storage` - and are
+    unknown without one, or when the engine's catalogue could not be read. ``daily_growth_bytes``
+    needs samples at least an hour apart. ``write_burstiness`` needs rows written in the window.
+    ``time_filtered_share`` needs the caller to say which fields are times. Zero bytes and unknown
+    bytes lead a planner to opposite conclusions, which is the whole reason for naming them rather
+    than defaulting them.
 
     ``also`` carries reasons that are not field names - ``no_traffic`` is the only one - because a
     reader of the window needs to know the difference between "this group was idle" and "this
@@ -643,6 +786,22 @@ def has_time_dimension(model: LogicalModel, group: Group) -> bool:
     return False
 
 
+def time_fields(model: LogicalModel, group: Group) -> dict[str, frozenset[str]]:
+    """Each entity of this group and its fields of a time type - by type, never by name.
+
+    What ``time_filtered_share`` counts against, for the reasons :func:`has_time_dimension` gives:
+    a `created_at` typed as a string is not a time, and a hashed model must answer the same.
+    """
+    return {
+        member: frozenset(
+            spec_field.name
+            for spec_field in model.entity(member).fields
+            if spec_field.type in _TIME_TYPES
+        )
+        for member in group.members
+    }
+
+
 class Recorder:
     """Accumulates records, rolls windows, and drops telemetry rather than anything else.
 
@@ -652,12 +811,24 @@ class Recorder:
     placement decision made over days; a lock on the hot path would cost every operation forever.
     """
 
-    def __init__(self, model_version: str, *, max_windows: int = 64) -> None:
+    def __init__(
+        self,
+        model_version: str,
+        *,
+        max_windows: int = 64,
+        clock: Callable[[], int] | None = None,
+    ) -> None:
+        """``clock`` returns nanoseconds and defaults to a monotonic one; tests and the conformance
+        vectors pass their own, because a write's second and a sample's age are read from it."""
         self._model_version = model_version
+        self._clock: Callable[[], int] = clock or _now
         self._lock = threading.Lock()
         self._current: dict[str, ShapeStats] = {}
         self._fanned: dict[tuple[str, str], FanOutStats] = {}
-        self._started_ns = _now()
+        self._writes: dict[str, dict[int, int]] = {}
+        self._storage: dict[str, list[StorageSample]] = {}
+        self._storage_window: list[StorageSample] = []
+        self._started_ns = self._clock()
         self._windows: deque[Window] = deque(maxlen=max_windows)
         self._dropped = 0
         self._incomplete = False
@@ -719,6 +890,16 @@ class Recorder:
                     )
                     self._current[shape_id] = stats
         stats.record(nanoseconds, rows, failed, predicates)
+        if rows > 0 and not failed and kind in WRITE_KINDS:
+            # The second of the window this write's rows landed in - one clock read per write and no
+            # lock, the same trade as the counters above: a write racing a roll may be counted in
+            # the window it did not finish in, which moves a burstiness estimate, never a row.
+            second = max(0, (self._clock() - self._started_ns) // SECOND_NS)
+            seconds = self._writes.get(group)
+            if seconds is None:
+                with self._lock:
+                    seconds = self._writes.setdefault(group, {})
+            seconds[second] = seconds.get(second, 0) + rows
 
     def record_fan_out(
         self, *, group: str, materialization: str, nanoseconds: int, failed: bool = False
@@ -746,6 +927,37 @@ class Recorder:
                     self._fanned[key] = stats
         stats.record(nanoseconds, failed)
 
+    def record_storage(self, *, group: str, total_bytes: int, secondary_index_bytes: int) -> None:
+        """Record one group's size, as the engine's catalogue reported it. Never raises.
+
+        :meth:`sde.session.Session.measure_storage` calls this for every group it could measure. A
+        sample is kept for a day, across windows, because growth is a property of time rather than
+        of one window; a sample that is not two non-negative integers with the index part inside
+        the total is dropped and logged, never guessed into shape.
+        """
+        guard(
+            "telemetry.record_storage",
+            lambda: self._record_storage(group, total_bytes, secondary_index_bytes),
+        )
+
+    def _record_storage(self, group: str, total_bytes: int, secondary_index_bytes: int) -> None:
+        if (
+            not isinstance(group, str)
+            or not group
+            or type(total_bytes) is not int
+            or type(secondary_index_bytes) is not int
+            or total_bytes < 0
+            or not 0 <= secondary_index_bytes <= total_bytes
+        ):
+            log("sde.telemetry.storage_rejected")
+            return
+        sample = StorageSample(group, self._clock(), total_bytes, secondary_index_bytes)
+        with self._lock:
+            kept = [s for s in self._storage.get(group, ()) if s.at_ns >= sample.at_ns - DAY_NS]
+            kept.append(sample)
+            self._storage[group] = kept
+            self._storage_window.append(sample)
+
     # --- windows -----------------------------------------------------------------------------
 
     def roll(self) -> Window | None:
@@ -766,15 +978,20 @@ class Recorder:
             window = Window(
                 model_version=self._model_version,
                 started_ns=self._started_ns,
-                ended_ns=_now(),
+                ended_ns=self._clock(),
                 shapes=tuple(self._current.values()),
                 complete=not self._incomplete,
                 dropped_windows=self._dropped,
                 fanned=tuple(self._fanned.values()),
+                storage=tuple(self._storage_window),
+                storage_history=tuple(sample for kept in self._storage.values() for sample in kept),
+                write_seconds={group: dict(seconds) for group, seconds in self._writes.items()},
             )
             self._current = {}
             self._fanned = {}
-            self._started_ns = _now()
+            self._writes = {}
+            self._storage_window = []
+            self._started_ns = self._clock()
             self._incomplete = False
 
             # A full buffer drops the oldest window and says so in the next one. Telemetry is the

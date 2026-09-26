@@ -1,0 +1,105 @@
+[
+  {
+    "shape": "f6628f3174c65623",
+    "equal": [
+      "station"
+    ],
+    "range": "at",
+    "ns": 3000,
+    "rows": 12
+  },
+  {
+    "shape": "f6628f3174c65623",
+    "equal": [
+      "station"
+    ],
+    "range": "at",
+    "ns": 3000,
+    "rows": 12
+  },
+  {
+    "shape": "f6628f3174c65623",
+    "equal": [
+      "station"
+    ],
+    "range": "at",
+    "ns": 3000,
+    "rows": 12
+  },
+  {
+    "shape": "f6628f3174c65623",
+    "equal": [],
+    "range": "at",
+    "ns": 9000,
+    "rows": 90
+  },
+  {
+    "shape": "d85fcc17f5c6d0ee",
+    "equal": [
+      "at"
+    ],
+    "ns": 5000,
+    "rows": 1
+  },
+  {
+    "shape": "d85fcc17f5c6d0ee",
+    "equal": [
+      "station"
+    ],
+    "ns": 5000,
+    "rows": 1
+  },
+  {
+    "shape": "9fc825895c67125c",
+    "equal": [],
+    "range": "temperature",
+    "ns": 4000,
+    "rows": 7
+  },
+  {
+    "shape": "9fc825895c67125c",
+    "equal": [],
+    "range": "temperature",
+    "ns": 4000,
+    "rows": 7
+  },
+  {
+    "shape": "c420c132d5534961",
+    "equal": [],
+    "ns": 90000,
+    "rows": 500
+  },
+  {
+    "shape": "c418ad77f2190157",
+    "ns": 900,
+    "rows": 1
+  },
+  {
+    "shape": "c418ad77f2190157",
+    "ns": 900,
+    "rows": 1
+  },
+  {
+    "shape": "13d528a6abccae16",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "shape": "13d528a6abccae16",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "shape": "bbb4bab1c22a810b",
+    "equal": [
+      "height"
+    ],
+    "ns": 7000,
+    "rows": 3
+  },
+  {
+    "shape": "2979d7d3b5fa336e",
+    "ns": 800,
+    "rows": 1
+  }
+]

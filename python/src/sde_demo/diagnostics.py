@@ -57,8 +57,25 @@ def _diagnose(root: Path, settings: dict[str, Any]) -> dict[str, Any]:
                 "runtime_privileges": "qualified",
                 "connection_tls": tls,
             }
-        with sde.Session(logical, placement, runtime, project_id=settings["project_id"]):
-            pass
+        with sde.Session(
+            logical, placement, runtime, project_id=settings["project_id"]
+        ) as session:
+            storage = session.measure_storage()
+        # Whether each engine can give the window a group's size, by the class of the reason -
+        # never the size itself. An engine that holds no group's source has nothing to measure.
+        measured = {size.engine for size in storage.sizes}
+        for name, result in results.items():
+            sources = [
+                group for group, spot in placement.groups.items() if spot.source.engine == name
+            ]
+            reasons = sorted(
+                {storage.unavailable[group] for group in sources if group in storage.unavailable}
+            )
+            result["storage_telemetry"] = (
+                "no_source" if not sources
+                else "available" if name in measured and not reasons
+                else "unavailable: " + ", ".join(reasons)
+            )
     return {
         "protocol": 1,
         "status": "ready",

@@ -78,6 +78,31 @@ GRANT SELECT ON system.data_skipping_indices TO app_runtime;
 Provisioning (`prepare_schema`) refuses an unverified index, because "could not look" is not
 "looked and agreed"; the provisioning login normally has this access already.
 
+## Measuring storage and a second optional grant
+
+`Session.measure_storage()` reads each group's size on its source from the engine's catalogue, for
+the telemetry window's `total_bytes`, `index_to_table_ratio` and `daily_growth_bytes` - numbers
+about the customer's storage, never a row. PostgreSQL's `pg_total_relation_size` and index sizes are
+readable by the table grants above: measured on 15, the runtime login reads exactly what the
+administrator reads. ClickHouse refuses `system.parts` to a login with table grants alone (code 497
+on 24.8); a column grant on the measured columns lets it read the parts of its own tables and no
+others:
+
+```sql
+GRANT SELECT(database, table, active, bytes_on_disk, secondary_indices_compressed_bytes,
+             secondary_indices_marks_bytes) ON system.parts TO app_runtime;
+```
+
+Without it the size is unknown, not an error: the session reports `refused` for that group in
+`StorageMeasurement.unavailable`, logs `sde.telemetry.storage_unavailable`, and serves rows as
+before. The Weather starter gives this grant at setup.
+
+The local cutover and staging operator qualifies the runtime login's grants before it may revoke
+and restore them, and it admits exactly these two optional grants besides `system.settings`: the
+`system.parts` columns above and `SELECT ON system.data_skipping_indices`. Any other grant in
+`system`, a grant option or a partial revoke is still refused. Until 26 September 2026 it refused
+the index-verification grant this page offers, so a login given it could not be staged or cut over.
+
 ## Reading existing metadata and compatibility
 
 Both adapters check for an existing bookkeeping table through the native catalog before any

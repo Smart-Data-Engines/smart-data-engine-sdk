@@ -333,10 +333,10 @@ const EMPTY_FEATURES: GroupFeatures = {
  * did: `time_filtered_share` is a field neither library measures and it was left null and absent
  * from this set, which breaks the one promise the set makes.
  *
- * What is unknown and why, because a derivation hides the reasons. Engine-side sizes need a
- * catalogue read, which is an adapter capability rather than a measurement. Growth and burstiness
- * need two samples over time and a window is one. `time_filtered_share` would need the *arguments*
- * of a call, and this library records shapes and never values.
+ * What stays unknown and why, because a derivation hides the reasons. The sizes come from a storage
+ * sample taken in the window (`Recorder.recordStorage`, fed by `Session.measureStorage`) and are
+ * unknown without one. Growth needs samples at least an hour apart; burstiness needs rows written
+ * in the window; `time_filtered_share` needs the caller to say which fields are times.
  *
  * `also` carries reasons that are not field names - `no_traffic` is the only one - because a reader
  * needs the difference between "this group was idle" and "this field is not measurable".
@@ -367,6 +367,73 @@ export function featuresRecord(features: GroupFeatures): Record<string, unknown>
   return body
 }
 
+/** The bucket a write's rows are counted in for `write_burstiness`. */
+export const SECOND_NS = 1_000_000_000
+
+/**
+ * The shortest span a daily growth is projected from.
+ *
+ * A day projected from a few seconds of writes is a number with no basis: a demonstration writing a
+ * hundred rows in two seconds would claim gigabytes a day. An hour is where the projection
+ * multiplies a measurement by 24 rather than by thousands.
+ */
+export const GROWTH_MIN_NS = 3_600_000_000_000
+
+/** The unit growth is projected to, and how long the recorder keeps a group's storage samples. */
+export const DAY_NS = 86_400_000_000_000
+
+/**
+ * One group's bytes on its source materialisation at one moment, from the engine's catalogue.
+ *
+ * Numbers only. `totalBytes` is everything the group's tables occupy, indexes included;
+ * `secondaryIndexBytes` is the part that is indexes other than the one enforcing the key - the part
+ * a physical design adds and can remove. `atNs` is the recorder's clock.
+ */
+export interface StorageSample {
+  readonly group: string
+  readonly atNs: number
+  readonly totalBytes: number
+  readonly secondaryIndexBytes: number
+}
+
+/** One group's size on its source materialisation, as the engine's catalogue gave it. */
+export interface StorageSize {
+  readonly group: string
+  readonly materialization: string
+  readonly engine: string
+  readonly totalBytes: number
+  readonly secondaryIndexBytes: number
+}
+
+/**
+ * Why a group's size stayed unknown: its engine's adapter has no catalogue to read, a table the map
+ * names does not exist, the catalogue refused the login (ClickHouse without the `system.parts`
+ * grant) or the read failed otherwise.
+ */
+export const STORAGE_UNAVAILABLE = ['failed', 'missing_table', 'refused', 'unsupported'] as const
+export type StorageUnavailable = (typeof STORAGE_UNAVAILABLE)[number]
+
+/**
+ * What `Session.measureStorage` measured, and why the rest stayed unknown - a class of reason per
+ * group, never the engine's message.
+ */
+export interface StorageMeasurement {
+  readonly sizes: readonly StorageSize[]
+  readonly unavailable: Readonly<Record<string, StorageUnavailable>>
+}
+
+/**
+ * A catalogue size as an exact safe integer, or a refusal. Drivers hand a 64-bit count over as text;
+ * a size past 2^53 bytes would round, and a rounded size is a wrong one.
+ */
+export function exactBytes(value: unknown): number {
+  const parsed = typeof value === 'bigint' ? value : BigInt(String(value))
+  if (parsed < 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('a storage size outside the exact integer range')
+  }
+  return Number(parsed)
+}
+
 /**
  * One aggregation period, ready to send.
  *
@@ -387,6 +454,19 @@ export interface Window {
    * map, not otherwise.
    */
   readonly fanned: readonly FanOutStats[]
+  /**
+   * The storage samples taken during this window - between the roll that opened it and the one
+   * that closed it, by the recorder's own state rather than by comparing clock readings, so a
+   * sample taken at the instant of a roll belongs to exactly one window.
+   */
+  readonly storage: readonly StorageSample[]
+  /**
+   * Every storage sample the recorder kept when this window closed: this window's and earlier ones
+   * up to a day old, which a daily growth is projected against.
+   */
+  readonly storageHistory: readonly StorageSample[]
+  /** Rows written by successful writes, per group, per whole second of the window from its start. */
+  readonly writeSeconds: ReadonlyMap<string, ReadonlyMap<number, number>>
 }
 
 /**
@@ -492,6 +572,75 @@ function at(ordered: readonly number[], fraction: number): number | null {
 
 export interface FeatureOptions {
   readonly hasTimeDimension?: boolean
+  /**
+   * Per entity, the fields of a time type (`timeFields`), which `time_filtered_share` is counted
+   * against. Without it that share stays unknown: which fields are times is a fact about the model,
+   * and the window does not guess it.
+   */
+  readonly timeFields?: ReadonlyMap<string, ReadonlySet<string>>
+}
+
+/** Whole seconds in a non-negative integer count of nanoseconds, in integer arithmetic. */
+function wholeSeconds(nanoseconds: number): number {
+  return (nanoseconds - (nanoseconds % SECOND_NS)) / SECOND_NS
+}
+
+/**
+ * `total_bytes`, `index_to_table_ratio` and `daily_growth_bytes` from the window's samples.
+ *
+ * The size is the latest sample taken **in this window**. Growth reaches back to the oldest sample
+ * kept (up to a day), is projected to a day only from a span of at least `GROWTH_MIN_NS`, truncated
+ * toward zero - in `bigint`, because bytes times a day in nanoseconds passes 2^53 - and may be
+ * negative: ClickHouse merges shrink parts.
+ */
+function storageFeatures(
+  window: Window,
+  group: string,
+): [number | null, number | null, number | null] {
+  let latest: StorageSample | undefined
+  for (const sample of window.storage) {
+    if (sample.group === group && (latest === undefined || sample.atNs >= latest.atNs)) latest = sample
+  }
+  if (latest === undefined) return [null, null, null]
+  const rest = latest.totalBytes - latest.secondaryIndexBytes
+  const ratio = rest > 0 ? latest.secondaryIndexBytes / rest : null
+  let oldest = latest
+  let first = true
+  for (const sample of window.storageHistory) {
+    if (sample.group !== group) continue
+    if (first || sample.atNs < oldest.atNs) oldest = sample
+    first = false
+  }
+  const elapsed = latest.atNs - oldest.atNs
+  let growth: number | null = null
+  if (elapsed >= GROWTH_MIN_NS) {
+    const delta = latest.totalBytes - oldest.totalBytes
+    const projected = (BigInt(Math.abs(delta)) * BigInt(DAY_NS)) / BigInt(Math.trunc(elapsed))
+    growth = Number(delta >= 0 ? projected : -projected)
+  }
+  return [latest.totalBytes, ratio, growth]
+}
+
+/**
+ * How many times the busiest second's rows exceed the window's mean rate: `M * S / W`, with `S` the
+ * window's whole seconds - at least one, and at least as many as the seconds its writes landed in.
+ */
+function burstiness(window: Window, group: string): number | null {
+  const seconds = window.writeSeconds.get(group)
+  if (seconds === undefined) return null
+  let written = 0
+  let busiest = 0
+  let last = 0
+  for (const [second, rows] of seconds) {
+    written += rows
+    busiest = Math.max(busiest, rows)
+    last = Math.max(last, second)
+  }
+  if (written <= 0) return null
+  const duration = window.endedNs - window.startedNs
+  const ceiling = duration > 0 ? wholeSeconds(duration) + (duration % SECOND_NS > 0 ? 1 : 0) : 0
+  const span = Math.max(1, ceiling, last + 1)
+  return (busiest * span) / written
 }
 
 /** Fold this window's records for one group into the planner's feature vector. */
@@ -550,6 +699,26 @@ export function windowFeatures(
     .reduce((sum, stats) => sum + stats.calls, 0)
   const errors = records.reduce((sum, stats) => sum + stats.errors, 0)
 
+  // A call filtered on time when its filter bounded a time field by a range or compared one by
+  // equality. Names only - the fields `filtered_on` already reports. The denominator is every call
+  // of the group, as for `pk_access_share`.
+  let timeFilteredShare: number | null = null
+  if (options.timeFields !== undefined && calls > 0) {
+    let filtered = 0
+    for (const stats of records) {
+      const times = options.timeFields.get(stats.entity)
+      if (times === undefined || times.size === 0) continue
+      for (const { predicates, calls: hits } of stats.filtered.values()) {
+        if (times.has(predicates.ranged) || predicates.equal.some((name) => times.has(name))) {
+          filtered += hits
+        }
+      }
+    }
+    timeFilteredShare = filtered / calls
+  }
+
+  const [totalBytes, indexToTableRatio, dailyGrowthBytes] = storageFeatures(window, group)
+
   return withMissing({
     ...EMPTY_FEATURES,
     calls,
@@ -559,9 +728,14 @@ export function windowFeatures(
     latencyP99Ms: latency.percentileMs(0.99),
     resultCardinalityP50: at(cardinalities, 0.5),
     resultCardinalityP99: at(cardinalities, 0.99),
+    totalBytes,
+    dailyGrowthBytes,
+    indexToTableRatio,
     pkAccessShare: calls > 0 ? pkCalls / calls : null,
     hasTimeDimension: timeDimension,
+    timeFilteredShare,
     distinctShapes: records.length,
+    writeBurstiness: burstiness(window, group),
     errorShare: calls > 0 ? errors / calls : null,
     complete: window.complete,
   })
@@ -618,7 +792,10 @@ export function windowRecord(window: Window, model: LogicalModel): Record<string
     const group = byName.get(name)
     if (group === undefined) continue
     const record = featuresRecord(
-      windowFeatures(window, name, { hasTimeDimension: hasTimeDimension(model, group) }),
+      windowFeatures(window, name, {
+        hasTimeDimension: hasTimeDimension(model, group),
+        timeFields: timeFields(model, group),
+      }),
     )
     const shapes = windowShapes(window, model, name)
     if (shapes.length > 0) {
@@ -665,6 +842,30 @@ export function hasTimeDimension(model: LogicalModel, group: Group): boolean {
   return false
 }
 
+/**
+ * Each entity of this group and its fields of a time type - by type, never by name.
+ *
+ * What `time_filtered_share` counts against, for the reasons `hasTimeDimension` gives: a
+ * `created_at` typed as a string is not a time, and a hashed model must answer the same.
+ */
+export function timeFields(model: LogicalModel, group: Group): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>()
+  for (const member of group.members) {
+    const spec = model.entities.find((entity) => entity.name === member)
+    out.set(
+      member,
+      new Set((spec?.fields ?? []).filter((field) => TIME_TYPES.has(field.type)).map((f) => f.name)),
+    )
+  }
+  return out
+}
+
+export interface StorageOptions {
+  readonly group: string
+  readonly totalBytes: number
+  readonly secondaryIndexBytes: number
+}
+
 export interface RecordOptions {
   readonly shapeId: string
   readonly group: string
@@ -700,15 +901,25 @@ export interface FanOutOptions {
 export class Recorder {
   private current = new Map<string, ShapeStats>()
   private fanned = new Map<string, FanOutStats>()
-  private startedNs = now()
+  private writes = new Map<string, Map<number, number>>()
+  private storage = new Map<string, StorageSample[]>()
+  private storageWindow: StorageSample[] = []
+  private startedNs: number
   private windows: Window[] = []
   private dropped = 0
   private incomplete = false
 
+  /**
+   * `clock` returns nanoseconds and defaults to a monotonic one; tests and the conformance vectors
+   * pass their own, because a write's second and a sample's age are read from it.
+   */
   constructor(
     private readonly modelVersion: string,
     private readonly maxWindows = 64,
-  ) {}
+    private readonly clock: () => number = now,
+  ) {
+    this.startedNs = this.clock()
+  }
 
   /** Record one operation. Never throws. */
   record(options: RecordOptions): void {
@@ -725,7 +936,48 @@ export class Recorder {
               equal: [...new Set(options.equal)].sort(compareCodePoints),
               ranged: options.ranged ?? '',
             }
-      stats.record(options.nanoseconds, options.rows ?? 0, options.failed === true, predicates)
+      const rows = options.rows ?? 0
+      stats.record(options.nanoseconds, rows, options.failed === true, predicates)
+      if (rows > 0 && options.failed !== true && WRITE_KINDS.has(options.kind)) {
+        // The second of the window this write's rows landed in: one clock read per write.
+        const second = wholeSeconds(Math.max(0, this.clock() - this.startedNs))
+        let seconds = this.writes.get(options.group)
+        if (seconds === undefined) {
+          seconds = new Map()
+          this.writes.set(options.group, seconds)
+        }
+        seconds.set(second, (seconds.get(second) ?? 0) + rows)
+      }
+    })
+  }
+
+  /**
+   * Record one group's size, as the engine's catalogue reported it. Never throws.
+   *
+   * `Session.measureStorage` calls this for every group it could measure. A sample is kept for a
+   * day, across windows, because growth is a property of time rather than of one window; a sample
+   * that is not two non-negative safe integers with the index part inside the total is dropped,
+   * never guessed into shape.
+   */
+  recordStorage(options: StorageOptions): void {
+    guard('telemetry.record_storage', () => {
+      const { group, totalBytes, secondaryIndexBytes } = options
+      if (
+        typeof group !== 'string' ||
+        group.length === 0 ||
+        !Number.isSafeInteger(totalBytes) ||
+        !Number.isSafeInteger(secondaryIndexBytes) ||
+        totalBytes < 0 ||
+        secondaryIndexBytes < 0 ||
+        secondaryIndexBytes > totalBytes
+      ) {
+        return
+      }
+      const sample: StorageSample = { group, atNs: this.clock(), totalBytes, secondaryIndexBytes }
+      const kept = (this.storage.get(group) ?? []).filter((s) => s.atNs >= sample.atNs - DAY_NS)
+      kept.push(sample)
+      this.storage.set(group, kept)
+      this.storageWindow.push(sample)
     })
   }
 
@@ -764,15 +1016,20 @@ export class Recorder {
       const window: Window = {
         modelVersion: this.modelVersion,
         startedNs: this.startedNs,
-        endedNs: now(),
+        endedNs: this.clock(),
         shapes: [...this.current.values()],
         complete: !this.incomplete,
         droppedWindows: this.dropped,
         fanned: [...this.fanned.values()],
+        storage: [...this.storageWindow],
+        storageHistory: [...this.storage.values()].flat(),
+        writeSeconds: new Map([...this.writes].map(([group, seconds]) => [group, new Map(seconds)])),
       }
       this.current = new Map()
       this.fanned = new Map()
-      this.startedNs = now()
+      this.writes = new Map()
+      this.storageWindow = []
+      this.startedNs = this.clock()
       this.incomplete = false
 
       // A full buffer drops the oldest window and says so in the next one. Telemetry is the thing

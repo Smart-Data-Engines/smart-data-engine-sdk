@@ -1,0 +1,57 @@
+{
+  "entities": [
+    {
+      "name": "Label",
+      "fields": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "weight",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "name"
+      ]
+    },
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        },
+        {
+          "name": "temperature",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "station",
+        "at"
+      ]
+    },
+    {
+      "name": "Station",
+      "fields": [
+        {
+          "name": "code",
+          "type": "string"
+        },
+        {
+          "name": "height",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "code"
+      ]
+    }
+  ]
+}

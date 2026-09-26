@@ -61,6 +61,8 @@ one keeps working; the values are in `record.sde_fields` rather than interpolate
 - `sde.schema.extra_columns`
 - `sde.schema.physical_mismatch`
 - `sde.telemetry.dropped`
+- `sde.telemetry.storage_rejected`
+- `sde.telemetry.storage_unavailable`
 - `sde.telemetry.window_closed`
 - `sde.write.failed`
 <!-- events:end -->

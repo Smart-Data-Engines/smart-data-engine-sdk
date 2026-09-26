@@ -30,6 +30,7 @@ from .errors import (
     MigrationRefused,
     ModelPlanningError,
     ResourceBusy,
+    ResourceClosed,
 )
 from .generation import logical_row, stamp_values, validate_generations
 from .groups import Group, colocation_groups
@@ -55,7 +56,7 @@ from .query import (
 )
 from .routing import Router
 from .shapes import OperationShape, enumerate_shapes
-from .telemetry import Recorder
+from .telemetry import Recorder, StorageMeasurement, StorageSize
 from .verification import check_project_id
 from .watermark import WatermarkCheck, enforce_forward_only
 
@@ -84,6 +85,19 @@ class Engine(Protocol):
 class ManagedEngine(Engine, Protocol):
     def connect(self) -> None: ...
     def close(self) -> None: ...
+
+
+def _storage_refusal(exc: BaseException) -> str:
+    """``refused`` when the catalogue denied the login, ``failed`` for any other engine error.
+
+    Read from the driver's own error beneath the adapter's: PostgreSQL's SQLSTATE 42501,
+    ClickHouse's access error 497 - what a login without the ``system.parts`` grant receives
+    (measured on 24.8).
+    """
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
+    if getattr(cause, "sqlstate", None) == "42501" or "Code: 497" in str(cause):
+        return "refused"
+    return "failed"
 
 
 class Session:
@@ -764,6 +778,76 @@ class Session:
             raise
         finally:
             self._observe(shape, started, rows=0 if failed else 1, failed=failed, plan=plan)
+
+    @session_call
+    def measure_storage(self) -> StorageMeasurement:
+        """Measure each group's size on its source materialisation, from the engine's catalogue.
+
+        One catalogue statement per engine, for every table of every group whose source is on it.
+        Only the source counts: a copy a staging is still building is not the group's size. Each
+        size is recorded into this session's recorder, when it has one, for the window's
+        ``total_bytes``, ``index_to_table_ratio`` and ``daily_growth_bytes``.
+
+        **It never raises because an engine could not answer.** An adapter with no catalogue, a
+        refused read, a failed one or a table the map names that does not exist leaves that group's
+        size unknown - in ``unavailable`` and in an ``sde.telemetry.storage_unavailable`` line with
+        the engine and the class of the reason, never the engine's message. Using a closed session
+        or another owner's still raises, as every method of a session does.
+        """
+        by_engine: dict[str, list[tuple[str, Materialization]]] = {}
+        for name in sorted(self._placement.groups):
+            source = self._placement.groups[name].source
+            by_engine.setdefault(source.engine, []).append((name, source))
+        sizes: list[StorageSize] = []
+        unavailable: dict[str, str] = {}
+        for engine_name in sorted(by_engine):
+            members = by_engine[engine_name]
+            reader = getattr(self._engines[engine_name], "storage_sizes", None)
+            if not callable(reader):
+                unavailable.update((name, "unsupported") for name, _ in members)
+                continue
+            tables = sorted(
+                {table for _, source in members for table in source.layout.tables.values()}
+            )
+            try:
+                found: Mapping[str, tuple[int, int]] = reader(tables)
+            except (ResourceBusy, ResourceClosed):
+                raise  # misuse of an adapter is the caller's to see, not an unknown size
+            except Exception as exc:
+                reason = _storage_refusal(exc)
+                unavailable.update((name, reason) for name, _ in members)
+                continue
+            self._session_usage.check()
+            for name, source in members:
+                named = list(source.layout.tables.values())
+                if any(table not in found for table in named):
+                    unavailable[name] = "missing_table"
+                    continue
+                size = StorageSize(
+                    group=name,
+                    materialization=source.id,
+                    engine=engine_name,
+                    total_bytes=sum(found[table][0] for table in named),
+                    secondary_index_bytes=sum(found[table][1] for table in named),
+                )
+                sizes.append(size)
+                if self._recorder is not None:
+                    self._recorder.record_storage(
+                        group=name,
+                        total_bytes=size.total_bytes,
+                        secondary_index_bytes=size.secondary_index_bytes,
+                    )
+        for name in sorted(unavailable):
+            source = self._placement.groups[name].source
+            log(
+                "sde.telemetry.storage_unavailable",
+                engine=source.engine,
+                reason=unavailable[name],
+            )
+        return StorageMeasurement(
+            tuple(sorted(sizes, key=lambda size: size.group)),
+            MappingProxyType(dict(sorted(unavailable.items()))),
+        )
 
     @session_call
     def summarize(

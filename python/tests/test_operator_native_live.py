@@ -105,3 +105,50 @@ def test_failed_probe_is_not_evidence_of_access_denial(roles: Any) -> None:
     roles.runtime.close()
     with pytest.raises(sde.EngineError, match="probe"):
         native.access([identity], enabled=False)
+
+
+def test_the_storage_measurement_grant_is_admitted_on_clickhouse() -> None:
+    """The one grant in `system` besides settings: the columns a size measurement reads."""
+    from test_runtime_privileges_live import runtime_roles
+
+    from sde.engines.clickhouse import STORAGE_COLUMNS
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        held.command(
+            f"GRANT SELECT({', '.join(STORAGE_COLUMNS)}) ON system.parts TO `{held.username}`"
+        )
+        assert native.qualify(["events"], ["events", WATERMARK_TABLE]) == (held.username,)
+
+
+@pytest.mark.parametrize(
+    ("privilege", "suffix"),
+    [
+        ("SELECT(name) ON system.parts", ""),  # a column the measurement does not read
+        ("SELECT ON system.parts", ""),  # the whole table
+        ("SELECT(database, table) ON system.tables", ""),  # another system table
+        ("SELECT(bytes_on_disk) ON system.parts", " WITH GRANT OPTION"),
+    ],
+)
+def test_any_other_system_grant_is_still_refused(privilege: str, suffix: str) -> None:
+    from test_runtime_privileges_live import runtime_roles
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        held.command(f"GRANT {privilege} TO `{held.username}`{suffix}")
+        with pytest.raises(sde.MigrationRefused, match="runtime"):
+            native.qualify(["events"], ["events", WATERMARK_TABLE])
+
+
+def test_the_documented_index_verification_grant_is_admitted_on_clickhouse() -> None:
+    """docs/runtime-roles.md offers this grant so a session can verify declared skipping indexes.
+
+    It shows a login the indexes of its own tables only (measured on 24.8), and the qualification
+    used to refuse it - a customer who followed the page could not stage or cut over.
+    """
+    from test_runtime_privileges_live import runtime_roles
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        held.command(f"GRANT SELECT ON system.data_skipping_indices TO `{held.username}`")
+        assert native.qualify(["events"], ["events", WATERMARK_TABLE]) == (held.username,)

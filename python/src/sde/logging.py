@@ -82,6 +82,13 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # dropped fires when the buffer is full and the oldest window is discarded - telemetry is
         # the thing that gets lost when we run out of room, never an operation.
         "sde.telemetry.dropped",
+        # A storage sample that is not two non-negative integers with the index part inside the
+        # total - a caller feeding Recorder.record_storage by hand; dropped, never repaired.
+        "sde.telemetry.storage_rejected",
+        # A group whose size the engine's catalogue could not give - no catalogue in the adapter,
+        # a refused read (ClickHouse without the system.parts grant), a failed one or a missing
+        # table. Its size stays unknown in the window; the application is not told by an exception.
+        "sde.telemetry.storage_unavailable",
     }
 )
 

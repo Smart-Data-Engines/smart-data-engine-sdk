@@ -138,8 +138,12 @@ from .telemetry import (
     Histogram,
     Recorder,
     ShapeStats,
+    StorageMeasurement,
+    StorageSample,
+    StorageSize,
     Window,
     has_time_dimension,
+    time_fields,
 )
 from .types import Float32, Int32, Json, Timestamp, precision
 from .watermark import (
@@ -249,6 +253,9 @@ __all__ = [
     "ShapeStats",
     "StagingPlan",
     "StagingReceipt",
+    "StorageMeasurement",
+    "StorageSample",
+    "StorageSize",
     "Summarizable",
     "Timestamp",
     "VerificationRequest",
@@ -302,6 +309,7 @@ __all__ = [
     "snake_case",
     "staging_table_name",
     "stored_types",
+    "time_fields",
     "verification_request",
     "verify",
     "verify_frozen",

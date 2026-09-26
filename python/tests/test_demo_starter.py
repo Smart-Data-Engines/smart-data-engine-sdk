@@ -100,6 +100,7 @@ class Workload:
         self.copy_rows: list[dict[str, Any]] = []
         self.sessions: list[Any] = []
         self.saves = 0
+        self.measured = 0
         self.bindings: list[set[str]] = []
         self.mode = mode
         self.after_save = lambda: None
@@ -112,6 +113,10 @@ class Workload:
 
             def close(self) -> None:
                 self.closed = True
+
+            def measure_storage(self) -> sde.StorageMeasurement:
+                harness.measured += 1
+                return sde.StorageMeasurement((), {})
 
             def save_many(self, entity: str, rows: list[dict[str, Any]]) -> None:
                 harness.saves += 1
@@ -225,6 +230,7 @@ def test_runtime_does_not_open_unused_engine_bindings(
     fake = Workload(monkeypatch)
     assert runtime.run(tmp_path, iterations=1, batch_size=1)["status"] == "complete"
     assert fake.bindings == [{"postgres"}]
+    assert fake.measured == 2, "the group's size is measured at the start of the run and its end"
 
 
 def test_operator_status_does_not_open_engines(
@@ -432,6 +438,9 @@ class Engine:
         class Client:
             def close(self) -> None:
                 pass
+
+            def measure_storage(self) -> sde.StorageMeasurement:
+                return sde.StorageMeasurement((), {})
 
             def save_many(self, entity: str, rows: list[dict[str, Any]]) -> None:
                 harness.rows.extend(rows)

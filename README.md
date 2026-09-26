@@ -170,6 +170,9 @@ Three things you can verify without asking us:
 - **Telemetry carries no values.** An operation shape is assembled from the structure of a call, not
   from a query string, so there is nowhere for a value to come from. Compare that with the SQL route,
   where you receive a string full of literals and strip them out with a parser you hope is complete.
+  The one thing it reads from your engine is its catalogue - how many bytes each group's tables
+  occupy, when you call `measure_storage()` ([runtime roles](docs/runtime-roles.md)) - and a byte
+  count is not a row.
 - **It works without an account.** Hand-write a placement map, point the library at it, and everything
   runs — no key, no network, no account. An unsigned map is valid. That is a supported mode, tested as
   the default in our own suite, and the honest answer to what happens if you stop paying us.
@@ -198,7 +201,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **342 of them, in ten families** — that every
+And [`conformance/`](conformance/) holds the vectors — **346 of them, in ten families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 

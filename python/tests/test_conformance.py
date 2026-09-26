@@ -225,8 +225,26 @@ def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: P
     pin a classification by asserting it in its own input.
     """
     by_id = {shape.id: shape for shape in sde.enumerate_shapes(model)}
-    recorder = sde.Recorder(model.version)
+    # The case's clock: an entry's `at_ms` moves it, `clock.json` sets the final roll's reading, and
+    # without either it stands at zero - never the process's own clock, which would make a write's
+    # second, and so burstiness, depend on how fast this runner happened to be.
+    now = [0]
+    recorder = sde.Recorder(model.version, clock=lambda: now[0])
     for operation in operations:
+        if "at_ms" in operation:
+            now[0] = int(operation["at_ms"]) * 1_000_000
+        event = operation.get("event")
+        if event == "storage":
+            recorder.record_storage(
+                group=str(operation["group"]),
+                total_bytes=int(operation["total_bytes"]),
+                secondary_index_bytes=int(operation["secondary_index_bytes"]),
+            )
+            continue
+        if event == "roll":
+            closed = recorder.roll()
+            assert closed is not None, f"{_ident(case)}: an earlier window recorded nothing"
+            continue
         shape = by_id.get(operation["shape"])
         assert shape is not None, (
             f"{_ident(case)} refers to shape {operation['shape']}, which this library does not "
@@ -252,6 +270,9 @@ def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: P
                 nanoseconds=int(entry["ns"]),
                 failed=bool(entry.get("failed", False)),
             )
+    clock = case / "clock.json"
+    if clock.is_file():
+        now[0] = int(_read_json(clock)["window_ms"]) * 1_000_000
     window = recorder.roll()
     assert window is not None, f"{_ident(case)} recorded nothing, so it pins nothing"
     return window

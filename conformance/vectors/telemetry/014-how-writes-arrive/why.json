@@ -1,0 +1,3 @@
+{
+  "why": "write_burstiness is M * S / W: the rows of the busiest second, the window's whole seconds and every row written by a successful write. The window lasts 9.5 s, so S is 10. Reading wrote 50 rows in second 0, 1 in second 1 and 2 in second 4 - 50 * 10 / 53; the failed bulk write at 1.8 s wrote nothing, whatever rows it was recorded with. Label wrote 5 rows in each of its first five seconds and nothing in the other five, which reads 2, not 1: idle time is part of how writes arrive. Station only read, so its burstiness is unknown, not zero."
+}

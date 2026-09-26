@@ -641,6 +641,13 @@ interface Operation {
   readonly ns: number
   readonly rows?: number
   readonly failed?: boolean
+  /** Milliseconds since the recorder was created; moves the case's clock. */
+  readonly at_ms?: number
+  /** `storage` (a size sample) or `roll` (an earlier window, closed and discarded). */
+  readonly event?: 'storage' | 'roll'
+  readonly group?: string
+  readonly total_bytes?: number
+  readonly secondary_index_bytes?: number
 }
 
 interface FanOutEntry {
@@ -660,8 +667,25 @@ interface FanOutEntry {
  */
 function recorded(model: LogicalModel, operations: readonly Operation[], dir: string) {
   const byId = new Map(enumerateShapes(model).map((shape) => [shapeId(shape), shape]))
-  const recorder = new Recorder(model.version)
+  // The case's clock: an entry's `at_ms` moves it, `clock.json` sets the final roll's reading, and
+  // without either it stands at zero - never the process's own clock, which would make a write's
+  // second, and so burstiness, depend on how fast this runner happened to be.
+  let now = 0
+  const recorder = new Recorder(model.version, 64, () => now)
   for (const operation of operations) {
+    if (operation.at_ms !== undefined) now = operation.at_ms * 1_000_000
+    if (operation.event === 'storage') {
+      recorder.recordStorage({
+        group: operation.group!,
+        totalBytes: operation.total_bytes!,
+        secondaryIndexBytes: operation.secondary_index_bytes!,
+      })
+      continue
+    }
+    if (operation.event === 'roll') {
+      expect(recorder.roll(), 'an earlier window of the case recorded nothing').toBeDefined()
+      continue
+    }
     const shape = byId.get(operation.shape)
     expect(
       shape,
@@ -689,6 +713,8 @@ function recorded(model: LogicalModel, operations: readonly Operation[], dir: st
       })
     }
   }
+  const clockFile = join(dir, 'clock.json')
+  if (existsSync(clockFile)) now = readJson<{ window_ms: number }>(clockFile).window_ms * 1_000_000
   const window = recorder.roll()
   expect(window, 'the case recorded nothing, so it pins nothing').toBeDefined()
   return window!

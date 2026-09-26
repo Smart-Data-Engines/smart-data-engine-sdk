@@ -1,0 +1,115 @@
+{
+  "model_version": "6c3d3ca0fbaee196",
+  "complete": true,
+  "dropped_windows": 0,
+  "groups": {
+    "Label": {
+      "calls": 1,
+      "read_write_ratio": 0.0,
+      "shape_mix": {
+        "write": 1.0
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 0.004,
+      "total_bytes": 6000,
+      "index_to_table_ratio": 0.0,
+      "pk_access_share": 0.0,
+      "has_time_dimension": false,
+      "time_filtered_share": 0.0,
+      "distinct_shapes": 1,
+      "write_burstiness": 79260.0,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "result_cardinality_p50",
+        "result_cardinality_p99"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "020b37132095556d",
+          "entity": "Label",
+          "kind": "write",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
+    },
+    "Reading": {
+      "calls": 1,
+      "read_write_ratio": 0.0,
+      "shape_mix": {
+        "write": 1.0
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 0.004,
+      "total_bytes": 2000000,
+      "daily_growth_bytes": 939130,
+      "index_to_table_ratio": 0.0,
+      "pk_access_share": 0.0,
+      "has_time_dimension": true,
+      "time_filtered_share": 0.0,
+      "distinct_shapes": 1,
+      "write_burstiness": 79260.0,
+      "error_share": 0.0,
+      "missing": [
+        "result_cardinality_p50",
+        "result_cardinality_p99"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "13d528a6abccae16",
+          "entity": "Reading",
+          "kind": "write",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
+    },
+    "Station": {
+      "calls": 1,
+      "read_write_ratio": 0.0,
+      "shape_mix": {
+        "write": 1.0
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 0.004,
+      "total_bytes": 99,
+      "daily_growth_bytes": -3,
+      "index_to_table_ratio": 0.0,
+      "pk_access_share": 0.0,
+      "has_time_dimension": false,
+      "time_filtered_share": 0.0,
+      "distinct_shapes": 1,
+      "write_burstiness": 79260.0,
+      "error_share": 0.0,
+      "missing": [
+        "result_cardinality_p50",
+        "result_cardinality_p99"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "4a5b82ec5c24477a",
+          "entity": "Station",
+          "kind": "write",
+          "fields": [],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
+    }
+  }
+}

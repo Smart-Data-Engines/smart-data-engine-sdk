@@ -1,5 +1,5 @@
 import { registerSession, SessionUsage, withSession } from './_usage.js'
-import { ResourceBusy } from './errors.js'
+import { ResourceBusy, ResourceClosed } from './errors.js'
 /**
  * Routing operations for one model against one placement, and the dual write that makes a
  * migration possible.
@@ -42,7 +42,7 @@ import { resolve } from './routing.js'
 import { schemaIsFixed } from './schema.js'
 import type { OperationShape, ShapeKind } from './shapes.js'
 import { enumerateShapes, shapeId } from './shapes.js'
-import type { Recorder } from './telemetry.js'
+import type { Recorder, StorageMeasurement, StorageSize, StorageUnavailable } from './telemetry.js'
 import type { WatermarkCheck } from './watermark.js'
 import { checkProjectId } from './verification.js'
 import { logicalRow, stampValues, validateGenerations } from './generation.js'
@@ -128,6 +128,18 @@ const SEP = '\u0000'
  */
 function shapeKey(entity: string, kind: string, fields: readonly string[]): string {
   return [entity, kind, ...fields].join(SEP)
+}
+
+/**
+ * `refused` when the catalogue denied the login, `failed` for any other engine error - read from the
+ * driver's own error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access error
+ * 497 (what a login without the `system.parts` grant receives, measured on 24.8).
+ */
+function storageRefusal(error: unknown): StorageUnavailable {
+  const cause = error instanceof Error && error.cause !== undefined ? error.cause : error
+  const code = typeof cause === 'object' && cause !== null ? (cause as { code?: unknown }).code : undefined
+  const text = cause instanceof Error ? cause.message : String(cause)
+  return code === '42501' || text.includes('Code: 497') ? 'refused' : 'failed'
 }
 
 export class Session {
@@ -485,6 +497,70 @@ export class Session {
         this.observe(shape, started, 1, failed)
       }
 
+    })
+  }
+
+  /**
+   * Measure each group's size on its source materialisation, from the engine's catalogue.
+   *
+   * One catalogue statement per engine, for every table of every group whose source is on it. Only
+   * the source counts: a copy a staging is still building is not the group's size. Each size is
+   * recorded into this session's recorder, when it has one, for the window's `total_bytes`,
+   * `index_to_table_ratio` and `daily_growth_bytes`.
+   *
+   * **It never throws because an engine could not answer.** An adapter with no catalogue, a refused
+   * read, a failed one or a table the map names that does not exist leaves that group's size
+   * unknown, with the class of the reason in `unavailable`. Using a closed session, or an adapter
+   * another operation owns, still throws, as every method of a session does.
+   */
+  async measureStorage(): Promise<StorageMeasurement> {
+    return this.usage.operation(async () => {
+      const byEngine = new Map<string, [string, Materialization][]>()
+      for (const name of Object.keys(this.placement.groups).sort(compareCodePoints)) {
+        const source = placementOf(this.placement, name).source
+        const members = byEngine.get(source.engine) ?? []
+        members.push([name, source])
+        byEngine.set(source.engine, members)
+      }
+      const sizes: StorageSize[] = []
+      const unavailable: Record<string, StorageUnavailable> = {}
+      for (const engineName of [...byEngine.keys()].sort(compareCodePoints)) {
+        const members = byEngine.get(engineName) ?? []
+        const engine = this.engines[engineName] as Engine & {
+          storageSizes?: (tables: readonly string[]) => Promise<ReadonlyMap<string, readonly [number, number]>>
+        }
+        if (typeof engine.storageSizes !== 'function') {
+          for (const [name] of members) unavailable[name] = 'unsupported'
+          continue
+        }
+        const tables = [
+          ...new Set(members.flatMap(([, source]) => Object.values(source.layout.tables))),
+        ].sort(compareCodePoints)
+        let found: ReadonlyMap<string, readonly [number, number]>
+        try {
+          found = await engine.storageSizes(tables)
+        } catch (error) {
+          if (error instanceof ResourceBusy || error instanceof ResourceClosed) throw error
+          const reason = storageRefusal(error)
+          for (const [name] of members) unavailable[name] = reason
+          continue
+        }
+        this.usage.check()
+        for (const [name, source] of members) {
+          const named = Object.values(source.layout.tables)
+          if (named.some((table) => !found.has(table))) {
+            unavailable[name] = 'missing_table'
+            continue
+          }
+          const totalBytes = named.reduce((sum, table) => sum + found.get(table)![0], 0)
+          const secondaryIndexBytes = named.reduce((sum, table) => sum + found.get(table)![1], 0)
+          sizes.push({ group: name, materialization: source.id, engine: engineName, totalBytes, secondaryIndexBytes })
+          this.recorder?.recordStorage({ group: name, totalBytes, secondaryIndexBytes })
+        }
+      }
+      sizes.sort((a, b) => compareCodePoints(a.group, b.group))
+      const ordered = Object.keys(unavailable).sort(compareCodePoints)
+      return { sizes, unavailable: Object.fromEntries(ordered.map((name) => [name, unavailable[name]!])) }
     })
   }
 

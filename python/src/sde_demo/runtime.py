@@ -244,6 +244,9 @@ def run(
     checkpoint()
     began = time.monotonic_ns()
     try:
+        # The group's size at the start of the run and again at its end, for the window: the
+        # engine's catalogue answers with numbers, and a refused read leaves the size unknown.
+        read_retry(lambda current: current.measure_storage())
         for iteration in range(iterations):
             first = iteration * batch_size + 1
             rows = [reading(run_id, 0, number) for number in range(first, first + batch_size)]
@@ -359,6 +362,7 @@ def run(
             checkpoint()
             if interval_ms and iteration + 1 < iterations:
                 time.sleep(interval_ms / 1000)
+        read_retry(lambda current: current.measure_storage())
         report["status"] = "complete"
     except BaseException as exc:
         report["status"] = "incomplete"

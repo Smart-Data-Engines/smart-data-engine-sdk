@@ -474,14 +474,28 @@ answer is zero (`calls`, `shape_mix`, `distinct_shapes`) with everything else in
 | `has_time_dimension` | whether any entity of the group declares a field of type `date`, `timestamp` or `timestamptz`. By **type**, never by name: a `created_at` of type `string` is not one |
 | `distinct_shapes` | distinct shape identifiers seen, failures included |
 | `error_share` | failed calls ÷ `calls` |
+| `time_filtered_share` | calls whose filter bounded a field of a time **type** by a range or compared one by equality (from the same names `filtered_on` reports) ÷ `calls`. A measured 0 for a group with no field of a time type |
+| `total_bytes` | the latest storage sample the group took **in this window**: everything its tables occupy on the source materialisation, indexes included |
+| `index_to_table_ratio` | that sample's secondary index bytes (indexes other than the one enforcing the key) ÷ its remaining bytes. Unknown when the remainder is 0 |
+| `daily_growth_bytes` | from the oldest storage sample kept (the recorder keeps a group's samples for a day, across windows) to the window's latest, when they are at least an hour apart: the change × one day ÷ the span, in integers, **truncated toward zero**; may be negative |
+| `write_burstiness` | `M × S ÷ W`: the rows of the busiest whole second of the window written by successful writes, the window's whole seconds - at least 1, and at least one past the last second written in - and every such row. Unknown when no row was written |
 | `missing` | sorted names of every field above whose value is unknown, plus `no_traffic` when there was none |
 | `complete` | whether this group's own measurement is whole |
 
 **`missing` is derived from the values, never written by hand.** It exists so a reader never has to
-infer absence from a null, and the planner treats unknown and zero as opposite evidence. Five
-features are in it always, because no library can measure them from traffic: `daily_growth_bytes`,
-`index_to_table_ratio`, `time_filtered_share`, `total_bytes`, `write_burstiness`. A hand-written
-list of them was wrong by one the day a sixth field was added, which is why it is derived.
+infer absence from a null, and the planner treats unknown and zero as opposite evidence. A hand-written
+list was wrong by one the day a sixth field was added, which is why it is derived.
+
+**The sizes come from the engine's catalogue, read on the client's side.** `Session.measure_storage()`
+reads each group's source materialisation - one catalogue statement per engine: PostgreSQL's
+`pg_total_relation_size` and its non-primary indexes, ClickHouse's active `system.parts` - and records a
+sample per group; `Recorder.record_storage()` takes one directly. A sample belongs to the window in
+which it was recorded, by the recorder's own state rather than by comparing clock readings. A size is
+a number about the customer's storage, never a row. The two features that need time use the
+recorder's clock: growth is projected to a day only from samples at least an hour apart, because a
+day projected from seconds is a number with no basis, and burstiness counts the rows of each whole
+second of the window. Each is an integer or a ratio of two integers, like everything else here, so
+`telemetry/011`-`014` pin them in both languages with a clock the case injects.
 
 ### Shapes
 
@@ -1512,6 +1526,14 @@ The one that is easy to get wrong: a change to what a library *does* with a map 
 number even when no key changes. Equalising the ClickHouse timestamp precision changed which
 `also_write` maps a library accepts — a contract-2 library refuses a fan-out a contract-3 one
 performs, on the same document — so the map contract went to 3 with no new key anywhere.
+
+The window document is a third kind, and neither number moves for it. On 26 September 2026
+`telemetry/` began to pin five features that every window had listed in `missing` - storage size,
+index share, daily growth, the time-filtered share and write burstiness (`telemetry/011`-`014`,
+and the earlier cases recomputed). No IR and no map contains a window; a reader that predates the
+change knows these fields already, because they were always in the schema; and a window from an
+older library still says what it did not measure, in `missing`, which is the whole compatibility
+promise of that set.
 
 **There are two numbers, and they move independently.** `conformance/contract-version.txt` is the
 **IR's**, which is what the vectors embed and what `model_version` is a digest of. The placement map

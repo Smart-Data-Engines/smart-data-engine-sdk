@@ -1,0 +1,3 @@
+{
+  "why": "total_bytes is the latest storage sample the group took in the window - Reading's second one, 1 000 000 bytes - and index_to_table_ratio its secondary index bytes over the rest: 250 000 / 750 000. An empty group is a measured 0 bytes whose ratio divides by nothing, so the ratio is unknown and the size is not. Label took no sample: both unknown. Two samples a second apart project no growth - an hour is the shortest span a day is projected from."
+}

@@ -1,0 +1,129 @@
+{
+  "model_version": "6c3d3ca0fbaee196",
+  "complete": true,
+  "dropped_windows": 0,
+  "groups": {
+    "Label": {
+      "calls": 5,
+      "read_write_ratio": 0.0,
+      "shape_mix": {
+        "write": 1.0
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 0.004,
+      "pk_access_share": 0.0,
+      "has_time_dimension": false,
+      "time_filtered_share": 0.0,
+      "distinct_shapes": 1,
+      "write_burstiness": 2.0,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "result_cardinality_p50",
+        "result_cardinality_p99",
+        "total_bytes"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "020b37132095556d",
+          "entity": "Label",
+          "kind": "write",
+          "fields": [],
+          "calls": 5,
+          "errors": 0,
+          "rows": 25,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
+    },
+    "Reading": {
+      "calls": 5,
+      "read_write_ratio": 0.0,
+      "shape_mix": {
+        "bulk_write": 0.4,
+        "write": 0.6
+      },
+      "latency_p50_ms": 0.004,
+      "latency_p99_ms": 0.128,
+      "pk_access_share": 0.0,
+      "has_time_dimension": true,
+      "time_filtered_share": 0.0,
+      "distinct_shapes": 2,
+      "write_burstiness": 9.433962264150944,
+      "error_share": 0.2,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "result_cardinality_p50",
+        "result_cardinality_p99",
+        "total_bytes"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "9be069a1bf5805ec",
+          "entity": "Reading",
+          "kind": "bulk_write",
+          "fields": [],
+          "calls": 2,
+          "errors": 1,
+          "rows": 149,
+          "latency_p50_ms": 0.128,
+          "latency_p99_ms": 0.128
+        },
+        {
+          "id": "13d528a6abccae16",
+          "entity": "Reading",
+          "kind": "write",
+          "fields": [],
+          "calls": 3,
+          "errors": 0,
+          "rows": 4,
+          "latency_p50_ms": 0.004,
+          "latency_p99_ms": 0.004
+        }
+      ]
+    },
+    "Station": {
+      "calls": 1,
+      "shape_mix": {
+        "point_read": 1.0
+      },
+      "latency_p50_ms": 0.001,
+      "latency_p99_ms": 0.001,
+      "result_cardinality_p50": 1.0,
+      "result_cardinality_p99": 1.0,
+      "pk_access_share": 1.0,
+      "has_time_dimension": false,
+      "time_filtered_share": 0.0,
+      "distinct_shapes": 1,
+      "error_share": 0.0,
+      "missing": [
+        "daily_growth_bytes",
+        "index_to_table_ratio",
+        "read_write_ratio",
+        "total_bytes",
+        "write_burstiness"
+      ],
+      "complete": true,
+      "shapes": [
+        {
+          "id": "2979d7d3b5fa336e",
+          "entity": "Station",
+          "kind": "point_read",
+          "fields": [
+            "code"
+          ],
+          "calls": 1,
+          "errors": 0,
+          "rows": 1,
+          "latency_p50_ms": 0.001,
+          "latency_p99_ms": 0.001
+        }
+      ]
+    }
+  }
+}
