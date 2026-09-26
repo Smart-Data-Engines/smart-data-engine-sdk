@@ -353,6 +353,34 @@ class StorageSample:
 
 
 @dataclass(frozen=True)
+class StorageSize:
+    """One group's size on its source materialisation, as the engine's catalogue gave it."""
+
+    group: str
+    materialization: str
+    engine: str
+    total_bytes: int
+    secondary_index_bytes: int
+
+
+STORAGE_UNAVAILABLE = ("failed", "missing_table", "refused", "unsupported")
+"""Why a group's size stayed unknown: its engine's adapter has no catalogue to read (the orderbook
+engine), a table the map names does not exist, the catalogue refused the login (ClickHouse without
+the ``system.parts`` grant) or the read failed otherwise."""
+
+
+@dataclass(frozen=True)
+class StorageMeasurement:
+    """What :meth:`sde.session.Session.measure_storage` measured, and why the rest stayed unknown.
+
+    ``unavailable`` maps a group to one of :data:`STORAGE_UNAVAILABLE`. A class, never the engine's
+    message: the message can name objects the application may not want in a log it forwards."""
+
+    sizes: tuple[StorageSize, ...]
+    unavailable: Mapping[str, str]
+
+
+@dataclass(frozen=True)
 class Window:
     """One aggregation period, ready to send.
 
@@ -381,7 +409,7 @@ class Window:
     write_seconds: Mapping[str, Mapping[int, int]] = field(default_factory=dict)
     """Rows written by successful writes, per group, per whole second of the window from its start.
 
-    What ``write_burstiness`` is computed from, and nothing else: a count per second, never a row."""
+    What ``write_burstiness`` is computed from, and nothing else: a count per second, not a row."""
 
     def copies(self, group: str) -> tuple[CopyFreshness, ...]:
         """How far behind each of this group's derived copies ran, sorted by materialisation.

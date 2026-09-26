@@ -720,6 +720,35 @@ class PostgresEngine:
             raise EngineError(f"range select from {table} failed: {exc}") from exc
 
     @guarded
+    def storage_sizes(self, tables: Sequence[str]) -> dict[str, tuple[int, int]]:
+        """Each table's bytes and its secondary index bytes, from the catalogue. Numbers only.
+
+        ``pg_total_relation_size`` - the table, its TOAST and every index - and the indexes other
+        than the primary key, one statement for every table named. A name the connection does not
+        resolve is absent from the answer rather than a zero: a missing table is not an empty one.
+        A login with nothing but SELECT and INSERT on the table reads the same numbers as the
+        administrator (measured on PostgreSQL 15), so this needs no grant of its own.
+        """
+        if not tables:
+            return {}
+        sql = (
+            "SELECT t.name, pg_total_relation_size(r.oid), "
+            "COALESCE((SELECT sum(pg_relation_size(i.indexrelid)) FROM pg_index i "
+            "WHERE i.indrelid = r.oid AND NOT i.indisprimary), 0) "
+            "FROM unnest(%s::text[]) AS t(name) "
+            "JOIN pg_class r ON r.oid = to_regclass(quote_ident(t.name))"
+        )
+        try:
+            with self._cx.cursor() as cursor:
+                cursor.execute(sql, [list(tables)])
+                return {
+                    str(name): (int(total), int(secondary))
+                    for name, total, secondary in cursor.fetchall()
+                }
+        except Exception as exc:
+            raise EngineError(f"storage sizes could not be read: {self._explain(exc)}") from exc
+
+    @guarded
     def count(self, table: str) -> int:
         try:
             with self._cx.cursor() as cur:

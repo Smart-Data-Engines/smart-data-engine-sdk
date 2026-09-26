@@ -100,6 +100,20 @@ __all__ = ["ClickHouseEngine"]
 # how an identifier is escaped.
 _quote = QUOTE["clickhouse"]
 
+STORAGE_COLUMNS = (
+    "database",
+    "table",
+    "active",
+    "bytes_on_disk",
+    "secondary_indices_compressed_bytes",
+    "secondary_indices_marks_bytes",
+)
+"""The columns of ``system.parts`` a storage measurement reads, and all a runtime login is granted.
+
+ClickHouse 24.8 refuses ``system.parts`` to a login with only table grants; a column grant on these
+names lets it read the parts of the tables it may use and no others (measured). The operator's
+runtime qualification admits exactly this grant, and the starter gives it."""
+
 
 def _as_utc(value: Any) -> Any:
     """A naive datetime is UTC. See the module docstring for the measurement behind this."""
@@ -736,6 +750,37 @@ class ClickHouseEngine:
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"batch insert into {table} failed: {exc}") from exc
+
+    @guarded
+    def storage_sizes(self, tables: Sequence[str]) -> dict[str, tuple[int, int]]:
+        """Each table's bytes and its secondary index bytes, from active parts. Numbers only.
+
+        One statement: ``system.tables`` says which of the names exist - readable by a runtime
+        login without any grant, and only for its own tables - and ``system.parts`` what their
+        active parts occupy, which needs the column grant in :data:`STORAGE_COLUMNS`. An empty
+        table has no parts and reads 0 bytes; a missing one is absent from the answer, because a
+        missing table is not an empty one.
+        """
+        if not tables:
+            return {}
+        sql = (
+            "SELECT t.name, sum(p.bytes_on_disk), "
+            "sum(p.secondary_indices_compressed_bytes + p.secondary_indices_marks_bytes) "
+            "FROM system.tables AS t LEFT JOIN ("
+            "SELECT table, bytes_on_disk, secondary_indices_compressed_bytes, "
+            "secondary_indices_marks_bytes FROM system.parts "
+            "WHERE active AND database = currentDatabase()"
+            ") AS p ON p.table = t.name "
+            "WHERE t.database = currentDatabase() AND t.name IN {tables:Array(String)} "
+            "GROUP BY t.name"
+        )
+        try:
+            rows = self._cx.query(
+                sql, parameters={"tables": list(tables)}, settings={"join_use_nulls": 0}
+            ).result_rows
+        except Exception as exc:
+            raise EngineError(f"storage sizes could not be read: {exc}") from exc
+        return {str(name): (int(total), int(secondary)) for name, total, secondary in rows}
 
     @guarded
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:

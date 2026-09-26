@@ -316,7 +316,7 @@ def test_a_sample_taken_at_the_instant_of_a_roll_belongs_to_one_window() -> None
 
 
 def test_a_write_after_the_measured_end_still_counts_its_second() -> None:
-    """A record racing a roll can land past the end; the window is at least as long as its writes."""
+    """A record racing a roll can land past the end; a window is as long as its writes at least."""
     clock = Clock()
     recorder = sde.Recorder(MODEL.version, clock=clock)
     write = shape(MODEL, "write")
