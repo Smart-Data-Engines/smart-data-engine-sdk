@@ -589,3 +589,119 @@ def test_the_cli_and_the_runtime_offer_the_same_workloads(tmp_path: Path) -> Non
         cli.main(["--directory", str(tmp_path), "run", "--workload", "bogus"])
     with pytest.raises(project.DemoRefused, match="fleet"):
         runtime.run(tmp_path, workload="bogus")
+
+
+def test_fleet_skips_a_run_that_failed_before_its_first_write(tmp_path: Path) -> None:
+    """A run that could not open its first session wrote nothing, so it adds nothing to the sum.
+
+    It was found on the installed Weather acceptance of 26 September. A TypeScript run without the
+    `pg` package failed before its first write, and its `incomplete` report then stopped every
+    later fleet run in that directory, with no command to settle it.
+    """
+    _report(tmp_path, "a" * 32)
+    _report(
+        tmp_path, "b" * 32, status="incomplete", failure="EngineError", acknowledged_rows=0,
+        verified_after_uncertain_rows=0, verified_rows=0,
+    )
+    assert runtime.fleet_runs(tmp_path, project_id="p" * 32) == {"a" * 32: 4}
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"acknowledged_rows": 10},
+        {"verified_after_uncertain_rows": 10},
+        {"verified_rows": 3},
+        {"pending": {"first": 1, "count": 10}},
+        {"status": "running"},
+        {"acknowledged_rows": None},
+        {"generator_id": "weather-v0:other"},
+    ],
+    ids=["acknowledged", "resolved", "verified", "pending", "running", "unsaid", "generator"],
+)
+def test_fleet_still_refuses_an_unfinished_run_that_may_have_written(
+    tmp_path: Path, fields: dict[str, Any]
+) -> None:
+    before_writing = {
+        "status": "incomplete", "acknowledged_rows": 0, "verified_after_uncertain_rows": 0,
+        "verified_rows": 0,
+    }
+    _report(tmp_path, "a" * 32, **{**before_writing, **fields})
+    with pytest.raises(project.DemoRefused, match="every earlier run"):
+        runtime.fleet_runs(tmp_path, project_id="p" * 32)
+
+
+def test_setup_names_why_the_bootstrap_map_does_not_load_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the 'signed' extra the map cannot be verified: said in full, and nothing written.
+
+    It was found on the installed acceptance of 26 September, where the starter answered
+    "Operation incomplete ... uncertain writes must not be replayed" for a setup that had written
+    nothing, and hid the one sentence that said what to install.
+    """
+    import sys
+
+    bundle, _ = supplied()
+    monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
+    with pytest.raises(project.DemoRefused, match=r"map does not load: .*'signed' extra"):
+        project.setup(tmp_path / "refused", bundle, {})
+    assert not (tmp_path / "refused").exists()
+
+
+def test_setup_refuses_a_public_key_that_is_not_base64(tmp_path: Path) -> None:
+    bundle, _ = supplied()
+    bundle["public_keys"] = {name: "not base64!" for name in bundle["public_keys"]}
+    with pytest.raises(project.DemoRefused, match="Invalid public key configuration"):
+        project.setup(tmp_path / "refused", bundle, {})
+    assert not (tmp_path / "refused").exists()
+
+
+def _without(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
+    """As if `module` were not installed, for the driver check's import (and nothing else)."""
+    import importlib
+
+    real = importlib.import_module
+
+    def imported(name: str, *args: Any) -> Any:
+        if name == module:
+            raise ImportError(f"No module named {module!r}")
+        return real(name, *args)
+
+    monkeypatch.setattr(importlib, "import_module", imported)
+
+
+def test_setup_refuses_a_missing_driver_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle, _ = supplied()
+    _without(monkeypatch, "psycopg")
+    with pytest.raises(project.DemoRefused, match=r"smart-data-engine-sdk\[postgres\]"):
+        project.setup(tmp_path / "refused", bundle, {})
+    assert not (tmp_path / "refused").exists()
+
+
+def test_a_run_refuses_a_missing_driver_before_its_report_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal comes before the run's report, so no `incomplete` run is left to stop a fleet."""
+    local(tmp_path)
+    _without(monkeypatch, "psycopg")
+    monkeypatch.setattr(
+        sde.Session, "connect", lambda *a, **k: pytest.fail("a session opened without a driver")
+    )
+    with pytest.raises(project.DemoRefused, match=r"smart-data-engine-sdk\[postgres\]"):
+        runtime.run(tmp_path, iterations=1, batch_size=1, interval_ms=0)
+    assert not (tmp_path / "runs").exists()
+
+
+def test_the_driver_check_imports_each_dialects_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    imported: list[str] = []
+    monkeypatch.setattr(importlib, "import_module", imported.append)
+    project.require_drivers(["clickhouse", "postgres", "postgres"])
+    assert imported == ["clickhouse_connect", "psycopg"]
+    _without(monkeypatch, "clickhouse_connect")
+    with pytest.raises(project.DemoRefused, match=r"\[clickhouse\]"):
+        project.require_drivers(["clickhouse", "postgres"])

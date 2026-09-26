@@ -20,6 +20,11 @@ npm init -y
 npm install ./smart-data-engines-sde-0.1.0-dev.0.tgz pg
 ```
 
+`setup`, `doctor` and `run` refuse before writing anything when a binding's driver cannot be imported,
+naming what to install (`[postgres]` or `[clickhouse]` in Python, `pg` in Node). `setup` also says
+why the bootstrap's map does not load - for example that verifying its signature needs the `signed`
+extra - instead of reporting an incomplete operation.
+
 The version strings above identify development artifacts, not a promise that every package with
 that version contains this feature. Retain their SHA-256 checksums and the supplying source commit.
 The project owner can build a wheel with `python -m build --wheel --outdir ARTIFACT_DIRECTORY python`
@@ -89,6 +94,9 @@ Every run in a directory writes the same timeline, so the window holds every run
 program checks them exactly against the local reports of the directory's earlier runs of this
 project. It therefore refuses to start while any of those runs is not complete: an interrupted run
 or an unresolved batch makes the expected answer unknowable, and it does not compare with a guess.
+One unfinished run is known exactly and does not stop it: a run that failed before its first write
+(`incomplete`, no `pending` range, and no acknowledged or verified row), because a run records each
+batch before writing it.
 `--workload alerts` reads one station's readings at or above 95% humidity - a bounded page, a count
 and an exact celsius summary. Humidity is not in the key, so the key narrows the read to the station
 and cannot serve the range: this is the traffic an added index is for, and the window's `filtered_on`
