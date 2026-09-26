@@ -658,14 +658,17 @@ def test_setup_refuses_a_public_key_that_is_not_base64(tmp_path: Path) -> None:
 
 
 def _without(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
-    real = project.importlib.import_module
+    """As if `module` were not installed, for the driver check's import (and nothing else)."""
+    import importlib
+
+    real = importlib.import_module
 
     def imported(name: str, *args: Any) -> Any:
         if name == module:
             raise ImportError(f"No module named {module!r}")
         return real(name, *args)
 
-    monkeypatch.setattr(project.importlib, "import_module", imported)
+    monkeypatch.setattr(importlib, "import_module", imported)
 
 
 def test_setup_refuses_a_missing_driver_before_writing(
@@ -693,8 +696,10 @@ def test_a_run_refuses_a_missing_driver_before_its_report_exists(
 
 
 def test_the_driver_check_imports_each_dialects_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
     imported: list[str] = []
-    monkeypatch.setattr(project.importlib, "import_module", imported.append)
+    monkeypatch.setattr(importlib, "import_module", imported.append)
     project.require_drivers(["clickhouse", "postgres", "postgres"])
     assert imported == ["clickhouse_connect", "psycopg"]
     _without(monkeypatch, "clickhouse_connect")
