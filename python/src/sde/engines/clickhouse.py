@@ -91,28 +91,15 @@ from ._clickhouse_connection import (
     ConnectionParameters,
     parse_dsn,
 )
+from ._storage import STORAGE_COLUMNS
 from ._write_fences import ClickHouseFences
 
-__all__ = ["ClickHouseEngine"]
+__all__ = ["STORAGE_COLUMNS", "ClickHouseEngine"]
 
 
 # Bound from the one definition in sde.schema, so that DDL and DML cannot disagree about
 # how an identifier is escaped.
 _quote = QUOTE["clickhouse"]
-
-STORAGE_COLUMNS = (
-    "database",
-    "table",
-    "active",
-    "bytes_on_disk",
-    "secondary_indices_compressed_bytes",
-    "secondary_indices_marks_bytes",
-)
-"""The columns of ``system.parts`` a storage measurement reads, and all a runtime login is granted.
-
-ClickHouse 24.8 refuses ``system.parts`` to a login with only table grants; a column grant on these
-names lets it read the parts of the tables it may use and no others (measured). The operator's
-runtime qualification admits exactly this grant, and the starter gives it."""
 
 
 def _as_utc(value: Any) -> Any:
