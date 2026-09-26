@@ -1,0 +1,38 @@
+[
+  {
+    "shape": "13d528a6abccae16",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "shape": "4a5b82ec5c24477a",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "shape": "020b37132095556d",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "event": "storage",
+    "at_ms": 1000,
+    "group": "Reading",
+    "total_bytes": 900000,
+    "secondary_index_bytes": 300000
+  },
+  {
+    "event": "storage",
+    "at_ms": 2000,
+    "group": "Reading",
+    "total_bytes": 1000000,
+    "secondary_index_bytes": 250000
+  },
+  {
+    "event": "storage",
+    "at_ms": 2000,
+    "group": "Station",
+    "total_bytes": 0,
+    "secondary_index_bytes": 0
+  }
+]

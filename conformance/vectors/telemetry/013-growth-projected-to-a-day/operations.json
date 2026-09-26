@@ -1,0 +1,89 @@
+[
+  {
+    "at_ms": 0,
+    "shape": "13d528a6abccae16",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "event": "storage",
+    "at_ms": 0,
+    "group": "Reading",
+    "total_bytes": 1000000,
+    "secondary_index_bytes": 0
+  },
+  {
+    "event": "roll",
+    "at_ms": 600000
+  },
+  {
+    "at_ms": 7200000,
+    "shape": "13d528a6abccae16",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "event": "storage",
+    "at_ms": 7200000,
+    "group": "Reading",
+    "total_bytes": 1100000,
+    "secondary_index_bytes": 0
+  },
+  {
+    "event": "roll",
+    "at_ms": 10800000
+  },
+  {
+    "at_ms": 64800000,
+    "shape": "4a5b82ec5c24477a",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "event": "storage",
+    "at_ms": 64800000,
+    "group": "Station",
+    "total_bytes": 100,
+    "secondary_index_bytes": 0
+  },
+  {
+    "at_ms": 88200000,
+    "shape": "020b37132095556d",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "event": "storage",
+    "at_ms": 88200000,
+    "group": "Label",
+    "total_bytes": 5000,
+    "secondary_index_bytes": 0
+  },
+  {
+    "at_ms": 90000000,
+    "shape": "13d528a6abccae16",
+    "ns": 2000,
+    "rows": 1
+  },
+  {
+    "event": "storage",
+    "at_ms": 90000000,
+    "group": "Reading",
+    "total_bytes": 2000000,
+    "secondary_index_bytes": 0
+  },
+  {
+    "event": "storage",
+    "at_ms": 90000000,
+    "group": "Station",
+    "total_bytes": 99,
+    "secondary_index_bytes": 0
+  },
+  {
+    "event": "storage",
+    "at_ms": 90000000,
+    "group": "Label",
+    "total_bytes": 6000,
+    "secondary_index_bytes": 0
+  }
+]

@@ -17,10 +17,13 @@ the same double even where they would print it differently, so these expectation
 **numbers** rather than as bytes. That is the one place in this suite where that is true, and it is
 an argument rather than a convenience.
 
-**The document carries no clock.** A window's start and end are readings of a monotonic clock with
-no meaning outside the process that took them, and the two features that would need a duration -
-growth per day and write burstiness - are declared unmeasurable anyway. So the record is
-deterministic, which is what lets these vectors exist.
+**The document carries no clock, and each case brings its own.** A window's start and end are
+readings of a monotonic clock with no meaning outside the process that took them, so the recorder
+takes an injected clock here: a case entry may carry ``at_ms`` (milliseconds since the recorder was
+created), ``clock.json`` sets the reading at the final roll, and an entry may be an ``event`` -
+``storage`` (a size sample, as :meth:`Session.measure_storage` records it) or ``roll`` (an earlier
+window, closed and discarded; the document pinned is the last window's). Without ``at_ms`` the clock
+stands at zero, so every earlier case stays deterministic: its writes land in second zero.
 
 **Buffer eviction is not in here.** ``dropped_windows`` is part of the document and is zero in every
 case, because a full buffer dropping its oldest window is behaviour with no artefact: each library
@@ -113,27 +116,58 @@ def _by_kind(model: sde.LogicalModel) -> dict[tuple[str, str], sde.OperationShap
     return {(s.entity, s.kind): s for s in sde.enumerate_shapes(model)}
 
 
+class _Clock:
+    """The case's clock, in nanoseconds; entries move it with ``at_ms``."""
+
+    def __init__(self) -> None:
+        self.now = 0
+
+    def __call__(self) -> int:
+        return self.now
+
+
+def _replay(
+    recorder: sde.Recorder, model: sde.LogicalModel, entries: list[dict[str, Any]], clock: _Clock
+) -> None:
+    """Every entry of a case in order: operations, storage samples and earlier rolls."""
+    by_id = {s.id: s for s in sde.enumerate_shapes(model)}
+    for entry in entries:
+        if "at_ms" in entry:
+            clock.now = int(entry["at_ms"]) * 1_000_000
+        event = entry.get("event")
+        if event == "storage":
+            recorder.record_storage(
+                group=str(entry["group"]),
+                total_bytes=int(entry["total_bytes"]),
+                secondary_index_bytes=int(entry["secondary_index_bytes"]),
+            )
+        elif event == "roll":
+            assert recorder.roll() is not None, "an earlier window of the case recorded nothing"
+        else:
+            shape = by_id[entry["shape"]]
+            recorder.record(
+                shape_id=shape.id,
+                group=shape.group,
+                entity=shape.entity,
+                kind=shape.kind,
+                nanoseconds=int(entry["ns"]),
+                rows=int(entry.get("rows", 0)),
+                failed=bool(entry.get("failed", False)),
+                equal=entry.get("equal"),
+                ranged=entry.get("range"),
+            )
+
+
 def _record(
     model: sde.LogicalModel,
     operations: list[dict[str, Any]],
     fan_out: list[dict[str, Any]] | None = None,
+    window_ms: int | None = None,
 ) -> dict[str, Any]:
     """Feed the reference implementation and take the document it produces."""
-    by_id = {s.id: s for s in sde.enumerate_shapes(model)}
-    recorder = sde.Recorder(model.version)
-    for operation in operations:
-        shape = by_id[operation["shape"]]
-        recorder.record(
-            shape_id=shape.id,
-            group=shape.group,
-            entity=shape.entity,
-            kind=shape.kind,
-            nanoseconds=int(operation["ns"]),
-            rows=int(operation.get("rows", 0)),
-            failed=bool(operation.get("failed", False)),
-            equal=operation.get("equal"),
-            ranged=operation.get("range"),
-        )
+    clock = _Clock()
+    recorder = sde.Recorder(model.version, clock=clock)
+    _replay(recorder, model, operations, clock)
     for entry in fan_out or ():
         recorder.record_fan_out(
             group=str(entry["group"]),
@@ -141,6 +175,8 @@ def _record(
             nanoseconds=int(entry["ns"]),
             failed=bool(entry.get("failed", False)),
         )
+    if window_ms is not None:
+        clock.now = window_ms * 1_000_000
     window = recorder.roll()
     assert window is not None, "the case recorded nothing, so it would pin nothing"
     return window.as_record(model)
@@ -148,7 +184,7 @@ def _record(
 
 def _features(model: sde.LogicalModel, operations: list[dict[str, Any]], group: str) -> Any:
     by_id = {s.id: s for s in sde.enumerate_shapes(model)}
-    recorder = sde.Recorder(model.version)
+    recorder = sde.Recorder(model.version, clock=_Clock())
     for operation in operations:
         shape = by_id[operation["shape"]]
         recorder.record(
@@ -614,6 +650,226 @@ def _ten() -> None:
     )
 
 
+def _stations() -> sde.LogicalModel:
+    """Three groups: readings with a time and a number, stations and labels with neither."""
+    sde.clear_registry()
+    return model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Label",
+                    "fields": [
+                        {"name": "name", "type": "string"},
+                        {"name": "weight", "type": "int64"},
+                    ],
+                    "key": ["name"],
+                },
+                {
+                    "name": "Reading",
+                    "fields": [
+                        {"name": "at", "type": "timestamptz"},
+                        {"name": "station", "type": "string"},
+                        {"name": "temperature", "type": "int64"},
+                    ],
+                    "key": ["station", "at"],
+                },
+                {
+                    "name": "Station",
+                    "fields": [
+                        {"name": "code", "type": "string"},
+                        {"name": "height", "type": "int64"},
+                    ],
+                    "key": ["code"],
+                },
+            ]
+        }
+    )
+
+
+def _on(model: sde.LogicalModel, entity: str, kind: str, *fields: str) -> str:
+    return next(
+        s.id
+        for s in sde.enumerate_shapes(model)
+        if s.entity == entity and s.kind == kind and tuple(s.fields) == fields
+    )
+
+
+def _eleven() -> None:
+    """Which calls filtered on time: a range or an equality on a field of a time *type*."""
+    model = _stations()
+    ranged = _on(model, "Reading", "range_read", "at")
+    by_number = _on(model, "Reading", "range_read", "temperature")
+    aggregate = _on(model, "Reading", "aggregate")
+    operations = [
+        *[{"shape": ranged, "equal": ["station"], "range": "at", "ns": 3_000, "rows": 12}] * 3,
+        {"shape": ranged, "equal": [], "range": "at", "ns": 9_000, "rows": 90},
+        {"shape": aggregate, "equal": ["at"], "ns": 5_000, "rows": 1},
+        {"shape": aggregate, "equal": ["station"], "ns": 5_000, "rows": 1},
+        *[{"shape": by_number, "equal": [], "range": "temperature", "ns": 4_000, "rows": 7}] * 2,
+        {"shape": _on(model, "Reading", "full_scan"), "equal": [], "ns": 90_000, "rows": 500},
+        *[{"shape": _on(model, "Reading", "point_read", "at", "station"), "ns": 900, "rows": 1}] * 2,
+        *[{"shape": _on(model, "Reading", "write"), "ns": 2_000, "rows": 1}] * 2,
+        {"shape": _on(model, "Station", "full_scan"), "equal": ["height"], "ns": 7_000, "rows": 3},
+        {"shape": _on(model, "Station", "point_read", "code"), "ns": 800, "rows": 1},
+    ]
+    _write(
+        "011-what-filtered-on-time",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "time_filtered_share counts the calls whose filter bounded a field of a time "
+                    "type by a range or compared one by equality - names only, from what "
+                    "`filtered_on` already reports - over every call of the group, as "
+                    "pk_access_share does. Reading: three ranges over `at` fixing `station`, one "
+                    "without it, and an aggregate comparing `at` - 5 of 13. A range over "
+                    "`temperature` is a range over a number; an aggregate fixing only `station`, "
+                    "a scan filtering on nothing, point reads and writes did not filter on time. "
+                    "Station has no field of a time type, so its share is a measured zero, not an "
+                    "unknown. The clock stands still here, so every write lands in second zero "
+                    "and write_burstiness is 1."
+                )
+            },
+        },
+    )
+
+
+def _twelve() -> None:
+    """What a group occupies: the latest storage sample of the window, and its index share."""
+    model = _stations()
+    operations = [
+        {"shape": _on(model, "Reading", "write"), "ns": 2_000, "rows": 1},
+        {"shape": _on(model, "Station", "write"), "ns": 2_000, "rows": 1},
+        {"shape": _on(model, "Label", "write"), "ns": 2_000, "rows": 1},
+        {"event": "storage", "at_ms": 1_000, "group": "Reading", "total_bytes": 900_000,
+         "secondary_index_bytes": 300_000},
+        {"event": "storage", "at_ms": 2_000, "group": "Reading", "total_bytes": 1_000_000,
+         "secondary_index_bytes": 250_000},
+        {"event": "storage", "at_ms": 2_000, "group": "Station", "total_bytes": 0,
+         "secondary_index_bytes": 0},
+    ]
+    _write(
+        "012-what-a-group-occupies",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "clock.json": {"window_ms": 3_000},
+            "window.json": _record(model, operations, window_ms=3_000),
+            "why.json": {
+                "why": (
+                    "total_bytes is the latest storage sample the group took in the window - "
+                    "Reading's second one, 1 000 000 bytes - and index_to_table_ratio its "
+                    "secondary index bytes over the rest: 250 000 / 750 000. An empty group is "
+                    "a measured 0 bytes whose ratio divides by nothing, so the ratio is unknown "
+                    "and the size is not. Label took no sample: both unknown. Two samples a "
+                    "second apart project no growth - an hour is the shortest span a day is "
+                    "projected from."
+                )
+            },
+        },
+    )
+
+
+def _thirteen() -> None:
+    """Growth projected to a day: across windows, never past a day, truncated toward zero."""
+    model = _stations()
+    hour = 3_600_000
+    writes = [
+        {"shape": _on(model, entity, "write"), "ns": 2_000, "rows": 1}
+        for entity in ("Label", "Reading", "Station")
+    ]
+    operations = [
+        {"at_ms": 0, **writes[1]},
+        {"event": "storage", "at_ms": 0, "group": "Reading", "total_bytes": 1_000_000,
+         "secondary_index_bytes": 0},
+        {"event": "roll", "at_ms": 600_000},
+        {"at_ms": 2 * hour, **writes[1]},
+        {"event": "storage", "at_ms": 2 * hour, "group": "Reading", "total_bytes": 1_100_000,
+         "secondary_index_bytes": 0},
+        {"event": "roll", "at_ms": 3 * hour},
+        {"at_ms": 18 * hour, **writes[2]},
+        {"event": "storage", "at_ms": 18 * hour, "group": "Station", "total_bytes": 100,
+         "secondary_index_bytes": 0},
+        {"at_ms": 24 * hour + 1_800_000, **writes[0]},
+        {"event": "storage", "at_ms": 24 * hour + 1_800_000, "group": "Label",
+         "total_bytes": 5_000, "secondary_index_bytes": 0},
+        {"at_ms": 25 * hour, **writes[1]},
+        {"event": "storage", "at_ms": 25 * hour, "group": "Reading", "total_bytes": 2_000_000,
+         "secondary_index_bytes": 0},
+        {"event": "storage", "at_ms": 25 * hour, "group": "Station", "total_bytes": 99,
+         "secondary_index_bytes": 0},
+        {"event": "storage", "at_ms": 25 * hour, "group": "Label", "total_bytes": 6_000,
+         "secondary_index_bytes": 0},
+    ]
+    window_ms = 25 * hour + 60_000
+    _write(
+        "013-growth-projected-to-a-day",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "clock.json": {"window_ms": window_ms},
+            "window.json": _record(model, operations, window_ms=window_ms),
+            "why.json": {
+                "why": (
+                    "daily_growth_bytes projects the change between the oldest storage sample "
+                    "kept and the window's latest to a day, in integers, truncated toward zero. "
+                    "The recorder keeps a group's samples for a day across windows: Reading's "
+                    "first sample, 25 hours before the last, has been dropped, so its growth is "
+                    "measured from the 2-hour sample of an earlier window - 900 000 bytes in 23 "
+                    "hours is 939 130.43 a day, pinned as 939 130. Station shrank by one byte in "
+                    "7 hours: -3.43 a day truncates to -3, not -4 (ClickHouse merges do shrink "
+                    "parts). Label's two samples are 30 minutes apart, too short a span to "
+                    "project a day from, so its growth is unknown while its size is not. Each "
+                    "group wrote one row in a last window of 22 hours and a minute, so its "
+                    "write_burstiness is 79 260: one busy second in that many."
+                )
+            },
+        },
+    )
+
+
+def _fourteen() -> None:
+    """How writes arrive: the busiest second's rows against the window's mean rate."""
+    model = _stations()
+    reading_write = _on(model, "Reading", "write")
+    reading_bulk = _on(model, "Reading", "bulk_write")
+    label_write = _on(model, "Label", "write")
+    operations = [
+        {"at_ms": 0, "shape": reading_write, "ns": 2_000, "rows": 1},
+        {"at_ms": 0, "shape": reading_bulk, "ns": 90_000, "rows": 49},
+        {"at_ms": 1_500, "shape": reading_write, "ns": 2_000, "rows": 1},
+        {"at_ms": 1_800, "shape": reading_bulk, "ns": 90_000, "rows": 100, "failed": True},
+        {"at_ms": 4_200, "shape": reading_write, "ns": 2_000, "rows": 2},
+        *[{"at_ms": 1_000 * second, "shape": label_write, "ns": 2_000, "rows": 5}
+          for second in range(5)],
+        {"at_ms": 5_000, "shape": _on(model, "Station", "point_read", "code"), "ns": 800,
+         "rows": 1},
+    ]
+    _write(
+        "014-how-writes-arrive",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "clock.json": {"window_ms": 9_500},
+            "window.json": _record(model, operations, window_ms=9_500),
+            "why.json": {
+                "why": (
+                    "write_burstiness is M * S / W: the rows of the busiest second, the window's "
+                    "whole seconds and every row written by a successful write. The window lasts "
+                    "9.5 s, so S is 10. Reading wrote 50 rows in second 0, 1 in second 1 and 2 in "
+                    "second 4 - 50 * 10 / 53; the failed bulk write at 1.8 s wrote nothing, "
+                    "whatever rows it was recorded with. Label wrote 5 rows in each of its first "
+                    "five seconds and nothing in the other five, which reads 2, not 1: idle time "
+                    "is part of how writes arrive. Station only read, so its burstiness is "
+                    "unknown, not zero."
+                )
+            },
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true")
@@ -634,6 +890,10 @@ def main() -> int:
     _eight()
     _nine()
     _ten()
+    _eleven()
+    _twelve()
+    _thirteen()
+    _fourteen()
     return 0
 
 

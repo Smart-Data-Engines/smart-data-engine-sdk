@@ -13,16 +13,16 @@
       "latency_p99_ms": 0.004,
       "pk_access_share": 0.0,
       "has_time_dimension": true,
+      "time_filtered_share": 0.0,
       "distinct_shapes": 1,
+      "write_burstiness": 1.0,
       "error_share": 0.0,
       "missing": [
         "daily_growth_bytes",
         "index_to_table_ratio",
         "result_cardinality_p50",
         "result_cardinality_p99",
-        "time_filtered_share",
-        "total_bytes",
-        "write_burstiness"
+        "total_bytes"
       ],
       "complete": true,
       "shapes": [
