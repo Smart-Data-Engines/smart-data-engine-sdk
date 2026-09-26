@@ -474,7 +474,7 @@ answer is zero (`calls`, `shape_mix`, `distinct_shapes`) with everything else in
 | `has_time_dimension` | whether any entity of the group declares a field of type `date`, `timestamp` or `timestamptz`. By **type**, never by name: a `created_at` of type `string` is not one |
 | `distinct_shapes` | distinct shape identifiers seen, failures included |
 | `error_share` | failed calls ÷ `calls` |
-| `time_filtered_share` | calls whose filter bounded a field of a time **type** by a range or compared one by equality (from the same names `filtered_on` reports) ÷ `calls`. A measured 0 for a group with no field of a time type |
+| `time_filtered_share` | calls whose filter bounded a field of a time **type** by a range or compared one by equality (from the same names `filtered_on` reports) ÷ `calls`. A measured 0 for a group with no field of a time type. **Unknown** when a read that takes a `where` did not report its filters in an entity with a time field - except a `range_read`, whose shape names the field it bounded (`telemetry/015`, `016`) |
 | `total_bytes` | the latest storage sample the group took **in this window**: everything its tables occupy on the source materialisation, indexes included |
 | `index_to_table_ratio` | that sample's secondary index bytes (indexes other than the one enforcing the key) ÷ its remaining bytes. Unknown when the remainder is 0 |
 | `daily_growth_bytes` | from the oldest storage sample kept (the recorder keeps a group's samples for a day, across windows) to the window's latest, when they are at least an hour apart: the change × one day ÷ the span, in integers, **truncated toward zero**; may be negative |

@@ -18,7 +18,7 @@
       "result_cardinality_p99": 40.0,
       "pk_access_share": 0.25,
       "has_time_dimension": true,
-      "time_filtered_share": 0.0,
+      "time_filtered_share": 0.5,
       "distinct_shapes": 5,
       "write_burstiness": 1.0,
       "error_share": 0.08333333333333333,
