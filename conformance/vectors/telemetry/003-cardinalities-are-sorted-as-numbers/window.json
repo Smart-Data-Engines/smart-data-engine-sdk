@@ -16,13 +16,13 @@
       "result_cardinality_p99": 300.0,
       "pk_access_share": 0.3333333333333333,
       "has_time_dimension": true,
-      "time_filtered_share": 0.0,
       "distinct_shapes": 3,
       "error_share": 0.0,
       "missing": [
         "daily_growth_bytes",
         "index_to_table_ratio",
         "read_write_ratio",
+        "time_filtered_share",
         "total_bytes",
         "write_burstiness"
       ],

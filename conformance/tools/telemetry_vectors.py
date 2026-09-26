@@ -871,6 +871,67 @@ def _fourteen() -> None:
     )
 
 
+def _fifteen() -> None:
+    """A read that does not report its filters: unknown, unless its shape says what it bounded."""
+    model = _stations()
+    operations = [
+        # Reading: two range reads over `at` and one over `temperature`, none reporting filters.
+        *[{"shape": _on(model, "Reading", "range_read", "at"), "ns": 3_000, "rows": 10}] * 2,
+        {"shape": _on(model, "Reading", "range_read", "temperature"), "ns": 3_000, "rows": 10},
+        {"shape": _on(model, "Reading", "point_read", "at", "station"), "ns": 900, "rows": 1},
+        # Station: a scan without reported filters, in an entity with no field of a time type.
+        {"shape": _on(model, "Station", "full_scan"), "ns": 50_000, "rows": 30},
+        # Label: an aggregate without reported filters - Label has no time field either.
+        {"shape": _on(model, "Label", "aggregate"), "ns": 20_000, "rows": 1},
+    ]
+    _write(
+        "015-reads-that-did-not-report-their-filters",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "A read that takes a `where` and records no filters - another producer, or a "
+                    "recorder driven by hand - leaves time_filtered_share unknown, because zero "
+                    "would claim to know what it filtered on. A range read is the exception: its "
+                    "shape names the field it bounded, so Reading's two unreported range reads "
+                    "over `at` count and the one over `temperature` does not - 2 of 4. Station "
+                    "and Label have no field of a time type, so their unreported scan and "
+                    "aggregate could not have filtered on time: a measured 0. Case 016 is the "
+                    "unknown."
+                )
+            },
+        },
+    )
+
+
+def _sixteen() -> None:
+    """An unreported aggregate in an entity with a time field: the share is unknown."""
+    model = _stations()
+    operations = [
+        {"shape": _on(model, "Reading", "range_read", "at"), "equal": ["station"], "range": "at",
+         "ns": 3_000, "rows": 10},
+        {"shape": _on(model, "Reading", "aggregate"), "ns": 20_000, "rows": 1},
+    ]
+    _write(
+        "016-an-unreported-aggregate-over-a-time-entity",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "Reading has a field of a time type and an aggregate whose filters were not "
+                    "reported: it may have bounded `at` or not, and its shape does not say. So "
+                    "time_filtered_share is unknown - in `missing` - even though the one reported "
+                    "range read did filter on time. Half, or one, would be a guess."
+                )
+            },
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true")
@@ -895,6 +956,8 @@ def main() -> int:
     _twelve()
     _thirteen()
     _fourteen()
+    _fifteen()
+    _sixteen()
     return 0
 
 

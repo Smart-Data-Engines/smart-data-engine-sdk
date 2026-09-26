@@ -1,0 +1,3 @@
+{
+  "why": "Reading has a field of a time type and an aggregate whose filters were not reported: it may have bounded `at` or not, and its shape does not say. So time_filtered_share is unknown - in `missing` - even though the one reported range read did filter on time. Half, or one, would be a guess."
+}

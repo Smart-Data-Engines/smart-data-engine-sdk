@@ -1,0 +1,16 @@
+[
+  {
+    "shape": "f6628f3174c65623",
+    "equal": [
+      "station"
+    ],
+    "range": "at",
+    "ns": 3000,
+    "rows": 10
+  },
+  {
+    "shape": "d85fcc17f5c6d0ee",
+    "ns": 20000,
+    "rows": 1
+  }
+]

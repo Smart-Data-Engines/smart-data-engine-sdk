@@ -326,6 +326,9 @@ so a field added to the feature vector cannot be written by one side and ignored
 SECOND_NS = 1_000_000_000
 """The bucket a write's rows are counted in for ``write_burstiness``."""
 
+FILTERED_KINDS: frozenset[str] = frozenset({"aggregate", "full_scan", "range_read"})
+"""The kinds of read that take a ``where`` and so report what they filtered on (``filtered_on``)."""
+
 GROWTH_MIN_NS = 3_600_000_000_000
 """The shortest span a daily growth is projected from.
 
@@ -438,12 +441,15 @@ class Window:
         *,
         has_time_dimension: bool = False,
         time_fields: Mapping[str, Collection[str]] | None = None,
+        range_fields: Mapping[str, str] | None = None,
     ) -> GroupFeatures:
         """Fold this window's records for one group into the planner's feature vector.
 
         ``time_fields`` names, per entity, the fields of a time type (:func:`time_fields`), which is
         what ``time_filtered_share`` is counted against. Without it that share stays unknown: which
         fields are times is a fact about the model, and the window does not guess it.
+        ``range_fields`` maps a range read's shape identifier to the field its shape ranges over,
+        which settles a range read whose filters were not reported.
         """
         records = [s for s in self.shapes if s.group == group]
         if not records:
@@ -487,15 +493,30 @@ class Window:
         # A call filtered on time when its filter bounded a time field by a range or compared one by
         # equality. Names only - the fields `filtered_on` already reports - so no argument of any
         # call is needed. The denominator is every call of the group, as for `pk_access_share`.
+        #
+        # A read that takes a `where` and did not report its filters - a recorder fed by another
+        # producer, or a hand-written window - leaves the share unknown rather than counting it as
+        # not filtered on time: zero would claim to know. The exception is a range read, whose
+        # shape names the field it bounded; and in an entity with no time field nothing could have
+        # filtered on time, reported or not.
         time_filtered: float | None = None
         if time_fields is not None and calls:
             filtered = 0
+            known = True
             for record in records:
                 times = frozenset(time_fields.get(record.entity, ()))
                 for (equal, ranged), hits in record.filtered.items():
                     if ranged in times or not times.isdisjoint(equal):
                         filtered += hits
-            time_filtered = filtered / calls
+                unreported = record.calls - sum(record.filtered.values())
+                if unreported <= 0 or record.kind not in FILTERED_KINDS or not times:
+                    continue
+                bounded = (range_fields or {}).get(record.shape_id)
+                if record.kind == "range_read" and bounded is not None:
+                    filtered += unreported if bounded in times else 0
+                else:
+                    known = False
+            time_filtered = filtered / calls if known else None
 
         total_bytes, index_ratio, growth = self._storage_features(group)
 
@@ -659,12 +680,18 @@ class Window:
                 f"observed, so this is a session routing a model other than the one measured."
             )
 
+        ranges = {
+            shape.id: shape.fields[0]
+            for shape in enumerate_shapes(model)
+            if shape.kind == "range_read" and shape.fields
+        }
         groups: dict[str, Any] = {}
         for name in named:
             record = self.features(
                 name,
                 has_time_dimension=has_time_dimension(model, by_name[name]),
                 time_fields=time_fields(model, by_name[name]),
+                range_fields=ranges,
             ).as_record()
             shapes = self.shape_records(model, name)
             if shapes:

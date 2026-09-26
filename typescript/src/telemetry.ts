@@ -370,6 +370,9 @@ export function featuresRecord(features: GroupFeatures): Record<string, unknown>
 /** The bucket a write's rows are counted in for `write_burstiness`. */
 export const SECOND_NS = 1_000_000_000
 
+/** The kinds of read that take a `where` and so report what they filtered on (`filtered_on`). */
+export const FILTERED_KINDS: ReadonlySet<string> = new Set(['aggregate', 'full_scan', 'range_read'])
+
 /**
  * The shortest span a daily growth is projected from.
  *
@@ -578,6 +581,11 @@ export interface FeatureOptions {
    * and the window does not guess it.
    */
   readonly timeFields?: ReadonlyMap<string, ReadonlySet<string>>
+  /**
+   * A range read's shape identifier and the field its shape ranges over, which settles a range read
+   * whose filters were not reported.
+   */
+  readonly rangeFields?: ReadonlyMap<string, string>
 }
 
 /** Whole seconds in a non-negative integer count of nanoseconds, in integer arithmetic. */
@@ -702,19 +710,33 @@ export function windowFeatures(
   // A call filtered on time when its filter bounded a time field by a range or compared one by
   // equality. Names only - the fields `filtered_on` already reports. The denominator is every call
   // of the group, as for `pk_access_share`.
+  // A read that takes a `where` and did not report its filters leaves the share unknown rather than
+  // counting it as not filtered on time - except a range read, whose shape names the field it
+  // bounded; in an entity with no time field nothing could have filtered on time.
   let timeFilteredShare: number | null = null
   if (options.timeFields !== undefined && calls > 0) {
     let filtered = 0
+    let known = true
     for (const stats of records) {
       const times = options.timeFields.get(stats.entity)
       if (times === undefined || times.size === 0) continue
+      let reported = 0
       for (const { predicates, calls: hits } of stats.filtered.values()) {
+        reported += hits
         if (times.has(predicates.ranged) || predicates.equal.some((name) => times.has(name))) {
           filtered += hits
         }
       }
+      const unreported = stats.calls - reported
+      if (unreported <= 0 || !FILTERED_KINDS.has(stats.kind)) continue
+      const bounded = options.rangeFields?.get(stats.shapeId)
+      if (stats.kind === 'range_read' && bounded !== undefined) {
+        if (times.has(bounded)) filtered += unreported
+      } else {
+        known = false
+      }
     }
-    timeFilteredShare = filtered / calls
+    timeFilteredShare = known ? filtered / calls : null
   }
 
   const [totalBytes, indexToTableRatio, dailyGrowthBytes] = storageFeatures(window, group)
@@ -787,6 +809,11 @@ export function windowRecord(window: Window, model: LogicalModel): Record<string
     )
   }
 
+  const rangeFields = new Map(
+    enumerateShapes(model)
+      .filter((shape) => shape.kind === 'range_read' && shape.fields.length > 0)
+      .map((shape) => [shapeId(shape), shape.fields[0] as string] as const),
+  )
   const groups: Record<string, unknown> = {}
   for (const name of named) {
     const group = byName.get(name)
@@ -795,6 +822,7 @@ export function windowRecord(window: Window, model: LogicalModel): Record<string
       windowFeatures(window, name, {
         hasTimeDimension: hasTimeDimension(model, group),
         timeFields: timeFields(model, group),
+        rangeFields,
       }),
     )
     const shapes = windowShapes(window, model, name)

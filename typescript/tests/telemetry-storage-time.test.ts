@@ -357,3 +357,28 @@ describe('the five features', () => {
     })
   }
 })
+
+describe('reads whose filters were not reported', () => {
+  it('leave the share unknown', () => {
+    const recorder = new Recorder(MODEL.version)
+    record(recorder, shape(MODEL, 'aggregate'))
+    record(recorder, shape(MODEL, 'range_read', ['at']), { equal: [], ranged: 'at' })
+    const features = body(recorder)
+    expect(missing(features)).toContain('time_filtered_share')
+    expect(features).not.toHaveProperty('time_filtered_share')
+  })
+
+  it('count an unreported range read by the field its shape ranges over', () => {
+    const recorder = new Recorder(MODEL.version)
+    record(recorder, shape(MODEL, 'range_read', ['at']))
+    record(recorder, shape(MODEL, 'range_read', ['temperature']))
+    record(recorder, shape(MODEL, 'point_read', ['at', 'station']))
+    expect(body(recorder)['time_filtered_share']).toBe(1 / 3)
+  })
+
+  it('are zero for a group without a time field, reported or not', () => {
+    const recorder = new Recorder(TIMELESS.version)
+    record(recorder, shape(TIMELESS, 'full_scan'))
+    expect(body(recorder, TIMELESS)['time_filtered_share']).toBe(0)
+  })
+})

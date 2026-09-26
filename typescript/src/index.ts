@@ -165,6 +165,7 @@ export {
   FanOutStats,
   featuresRecord,
   FIELD_LIST_IS_TOTAL,
+  FILTERED_KINDS,
   GROWTH_MIN_NS,
   hasTimeDimension,
   Histogram,

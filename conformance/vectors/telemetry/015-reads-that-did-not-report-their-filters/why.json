@@ -1,0 +1,3 @@
+{
+  "why": "A read that takes a `where` and records no filters - another producer, or a recorder driven by hand - leaves time_filtered_share unknown, because zero would claim to know what it filtered on. A range read is the exception: its shape names the field it bounded, so Reading's two unreported range reads over `at` count and the one over `temperature` does not - 2 of 4. Station and Label have no field of a time type, so their unreported scan and aggregate could not have filtered on time: a measured 0. Case 016 is the unknown."
+}

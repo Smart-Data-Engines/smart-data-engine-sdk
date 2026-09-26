@@ -341,3 +341,32 @@ def test_the_five_features_are_no_longer_missing_when_measured(model: sde.Logica
         "write_burstiness",
     ):
         assert name in features and name not in features["missing"], name
+
+
+# --- reads whose filters were not reported ----------------------------------------------------
+
+
+def test_a_read_whose_filters_were_not_reported_leaves_the_share_unknown() -> None:
+    """A recorder fed without predicates - another producer, or a hand-written window - does not
+    say what its scans and aggregates filtered on, and zero would claim to know."""
+    recorder = sde.Recorder(MODEL.version)
+    record(recorder, shape(MODEL, "aggregate"))  # filters not reported
+    record(recorder, shape(MODEL, "range_read", ("at",)), equal=[], ranged="at")
+    features = body(recorder)
+    assert "time_filtered_share" in features["missing"]
+    assert "time_filtered_share" not in features
+
+
+def test_an_unreported_range_read_counts_by_the_field_its_shape_ranges_over() -> None:
+    """A range read's shape names the field it bounded, so an unreported one is still known."""
+    recorder = sde.Recorder(MODEL.version)
+    record(recorder, shape(MODEL, "range_read", ("at",)))
+    record(recorder, shape(MODEL, "range_read", ("temperature",)))
+    record(recorder, shape(MODEL, "point_read", ("at", "station")))
+    assert body(recorder)["time_filtered_share"] == 1 / 3
+
+
+def test_a_group_without_a_time_field_is_zero_even_when_filters_were_not_reported() -> None:
+    recorder = sde.Recorder(TIMELESS.version)
+    record(recorder, shape(TIMELESS, "full_scan"))
+    assert body(recorder, TIMELESS)["time_filtered_share"] == 0.0
