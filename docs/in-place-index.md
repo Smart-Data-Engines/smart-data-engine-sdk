@@ -120,7 +120,8 @@ declared would publish a map about another table. A refusal at this point leaves
 index of the bound name on the bound table, of the declared method and columns, not unique, without
 predicate, expression, INCLUDE columns or sort options, is this build's own: if it is valid and
 ready it is done; if it is not - what an interrupted concurrent build leaves - it is dropped with
-`DROP INDEX CONCURRENTLY` and built again. Anything else under the name is somebody else's object
+`DROP INDEX CONCURRENTLY` and built again, once no statement that names it is still running (see
+the deadline below). Anything else under the name is somebody else's object
 and the build refuses it. A concurrent build waits for every transaction with an older snapshot, so
 a long transaction anywhere in the database - an idle session left in a transaction included -
 holds it until that transaction ends or the build budget does.
@@ -166,14 +167,32 @@ removal.
 The deadline is the signed build budget, not the 30-second watchdog of staging and cutover. Nothing
 is paused while an index builds, so the budget is not a pause budget; it bounds a build on a server
 that stopped answering. When it ends a build the operator closes its connections and stops; resume
-or abandon with fresh ones. A PostgreSQL build interrupted this way may run on in the server until
-it notices; recovery waits for it, and keeps what it finished or drops what it left unfinished.
+or abandon with fresh ones.
+
+**A PostgreSQL build interrupted this way runs on in the server**, and so does the build of an
+operator that was killed. The server notices a vanished client only when it next talks to it. For
+a concurrent build that is once the index is valid (measured, PostgreSQL 15.19). So resume and
+abandonment first wait until no active statement names the index in `pg_stat_activity`, within
+the same budget, and only then read the catalogue. What the interrupted statement finished is kept,
+and what it left unfinished is dropped and built again.
+
+Reading first was not only wasteful. The build releases the table's session lock before its last
+transaction commits, and a `DROP INDEX CONCURRENTLY` waiting for that lock started in the window:
+"tuple concurrently updated", in the SDK's CI on 27 September 2026.
+
+`pg_stat_activity` shows a statement's text to its own login, which is the one an earlier run of
+the operator used. If recovery runs as another login, it cannot see the statement and cannot wait
+for it.
+
+A removal needs no such wait. Two concurrent drops of one index are serialized by the exclusive
+lock the first holds on the index until it commits, and the second ends on `IF EXISTS`.
 
 ## Abandonment
 
 `LocalCutover.abandon()` / `sde-operator abandon` ends an unfinished build without publishing
 anything, as long as its decision is not yet `built`. It records the decision `abandoned` first,
-then removes this build's own indexes: PostgreSQL with `DROP INDEX CONCURRENTLY`; ClickHouse by
+then removes this build's own indexes: PostgreSQL with `DROP INDEX CONCURRENTLY`, once any
+interrupted build of the index has ended; ClickHouse by
 killing the materialization if it is still running and dropping the index with
 `SETTINGS alter_sync = 0`, which leaves the catalogue at once instead of waiting for the merge pool
 (measured: the default form waits for as long as merges are stopped). Objects under the bound names
@@ -231,6 +250,8 @@ abandoned one returns the abandonment.
 engine itself while the application writes, then published; kept indexes and several new ones;
 recovery after every durable step and after a killed operator process mid-build (PostgreSQL leaves
 a leftover that is dropped and rebuilt, ClickHouse's mutation is found again, not repeated);
+recovery and abandonment beside a killed operator's PostgreSQL build that still runs in the server,
+which send no drop until it has ended and keep the index it finished;
 abandonment before the decision and its refusal after; an interrupted abandonment finished by
 resume or by a second abandonment; foreign objects under the bound name refused before any DDL and
 left alone by abandonment; another operation's barrier refused before and during a build; the
