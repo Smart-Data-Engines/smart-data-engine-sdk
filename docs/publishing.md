@@ -626,8 +626,25 @@ package, which is the shape of good news worth distrusting.
 
    ```bash
    npx npm@11.15.0 trust github @smart-data-engines/sde \
-       --repo Smart-Data-Engines/smart-data-engine-sdk --file release.yml --env npm
+       --repo Smart-Data-Engines/smart-data-engine-sdk --file release.yml --env npm \
+       --allow-publish --yes
    ```
+
+   **Two things measured on 27 September.**
+   - **The command needs a permission flag.** Without `--allow-publish`, npm 11.15.0 stops with "At
+     least one permission flag is required (--allow-publish, --allow-stage-publish)".
+   - **It needs a session with real two-factor authentication.** A granular token that bypasses 2FA
+     can publish the bootstrap, and the registry refuses it for this: `E403` "Granular access
+     tokens that bypass two-factor authentication may not perform this action". A token of that kind
+     can do the publish; the trust configuration then belongs on the package page (Settings →
+     Trusted Publisher → GitHub Actions) or in an `npm login` session. The same run printed "npm
+     tokens that bypass 2FA are being restricted for account changes and direct publishing"
+     (<https://gh.io/npm-gat-bypass2fa-deprecation>), so for any later hand-made publish prefer
+     `npm login`.
+
+   **A new package takes minutes to appear.** The package document is served with
+   `cache-control: public, max-age=300`. The bootstrap was published at 17:57:51Z and answered 404
+   until 18:02:58Z.
 
    **Do not put a token in an Actions secret to avoid this.** It would buy one attestation and leave
    behind a credential that publishes under our scope for as long as nobody remembers it is there.
@@ -683,8 +700,11 @@ one needs the one before it.
    npm login
    npm publish --access public --tag latest
    npx npm@11.15.0 trust github @smart-data-engines/sde \
-       --repo Smart-Data-Engines/smart-data-engine-sdk --file release.yml --env npm
+       --repo Smart-Data-Engines/smart-data-engine-sdk --file release.yml --env npm \
+       --allow-publish --yes
    ```
+
+   `npm trust` needs the permission flag and an interactive session with 2FA; §5.3 says why.
 3. **GitHub.** Require two-factor authentication for the organisation
    ([`github-security.md`](github-security.md)). It is off today.
 4. **The two tags**, both on the bump commit:
