@@ -471,3 +471,18 @@ def test_the_publish_job_takes_the_tag_the_build_job_chose_from_the_registry() -
     assert publish.count("DIST_TAG: ${{ needs.build-npm.outputs.dist_tag }}") == 2
     assert 'npm publish "$tarball" --access public --tag "$DIST_TAG"' in publish
     assert '"dist-tags.$DIST_TAG"' in publish
+
+
+def test_the_registry_check_waits_longer_than_the_registry_caches() -> None:
+    """The package document is cached for 300 seconds, and the build job fetched it just before.
+
+    Measured on the hand-made `0.1.0-dev.0`: published at 17:57:51Z and visible at 18:02:58Z. A
+    check that gave up after a minute would have reported a successful publish as a failure.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("  publish-npm:", 1)[1]
+    loop = re.search(r"for attempt in \$\(seq 1 (\d+)\); do(.*?)done", publish, re.DOTALL)
+    assert loop is not None, "the registry check is no longer a bounded loop"
+    pause = re.search(r"sleep (\d+)", loop.group(2))
+    assert pause is not None
+    assert int(loop.group(1)) * int(pause.group(1)) > 300 + 60

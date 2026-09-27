@@ -228,16 +228,19 @@ jobs:
           DIST_TAG: ${{ needs.build-npm.outputs.dist_tag }}
         run: |
           set -euo pipefail
-          # Bounded: the registry's metadata can trail the publish by seconds, and a check that
-          # waits for ever is not a check.
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+          # Bounded, and longer than the registry's cache. The package document is served with
+          # `cache-control: public, max-age=300`, and the build job has just fetched it, so for up
+          # to five minutes an edge can answer with the list from before this publish. Measured on
+          # the hand-made 0.1.0-dev.0: published at 17:57:51Z, visible at 18:02:58Z. Forty tries
+          # ten seconds apart outlast that, and a check that waits for ever is not a check.
+          for attempt in $(seq 1 40); do
             published=$(npm view "@smart-data-engines/sde@$VERSION" version 2>/dev/null || true)
             tagged=$(npm view "@smart-data-engines/sde" "dist-tags.$DIST_TAG" 2>/dev/null || true)
             if [ "$published" = "$VERSION" ] && [ "$tagged" = "$VERSION" ]; then
               echo "@smart-data-engines/sde@$published is on the registry as $DIST_TAG"
               exit 0
             fi
-            sleep 6
+            sleep 10
           done
-          echo "::error::after 10 attempts the registry shows version '$published' and $DIST_TAG '$tagged', not $VERSION"
+          echo "::error::after 40 attempts the registry shows version '$published' and $DIST_TAG '$tagged', not $VERSION"
           exit 1
