@@ -23,8 +23,8 @@ npm install @smart-data-engines/sde@0.1.0-rc.1 pg
 Or from reviewed build artifacts, which an operator supplies for a commit after the candidates:
 
 ```sh
-.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0rc1-py3-none-any.whl[signed,postgres,clickhouse]'
-npm install ./smart-data-engines-sde-0.1.0-rc.1.tgz pg
+.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0-py3-none-any.whl[signed,postgres,clickhouse]'
+npm install ./smart-data-engines-sde-0.1.0.tgz pg
 ```
 
 `setup`, `doctor` and `run` refuse before writing anything when a binding's driver cannot be imported,
