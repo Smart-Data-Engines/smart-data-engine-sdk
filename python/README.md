@@ -131,8 +131,9 @@ including portable keyset pages, typed values and explicit failure semantics.
 
 ## Local Weather starter
 
-The unreleased [Weather starter](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/weather-starter.md)
-installs from reviewed artifacts and exercises logical operations with restricted runtime credentials.
-It includes local setup, telemetry, operator handoffs and an ownership-checked reset.
+The [Weather starter](https://github.com/Smart-Data-Engines/smart-data-engine-sdk/blob/main/docs/weather-starter.md)
+is part of this package, as the `sde-weather` command. It exercises logical operations with
+restricted runtime credentials, and it includes local setup, telemetry, operator handoffs and an
+ownership-checked reset.
 
 Engine credentials and verified TLS configuration: [connection guide](../docs/engine-connections.md).

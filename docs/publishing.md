@@ -660,3 +660,46 @@ the attestation itself rather than leaving it to a flag somebody has to remember
 What makes that acceptable rather than merely tolerable: the version without an attestation is
 `0.1.0-dev.0`, matching the `0.1.0.dev0` already on PyPI. It is a dev release, so **every version a
 client would actually pin is attested** — the gap lands on the one release nobody depends on.
+
+### 5.5 The first release through the workflow: `0.1.0rc1` and `0.1.0-rc.1`
+
+These are release candidates, and that is deliberate. The pipeline has never run, and a candidate is
+the number this section says to spend on the first run (§5). Do the steps in this order, because each
+one needs the one before it.
+
+1. **PyPI.** Add the trusted publisher (§5.3, item 1). Then revoke both API tokens from the
+   12 September upload, on TestPyPI and on PyPI: Account settings → API tokens → Remove. Deleting the
+   uploaded files does not revoke a token.
+2. **npm, by hand, once** (§5.3, item 2). Publish `0.1.0-dev.0` from the last commit before the
+   version bump, meaning the bump commit's parent. Then configure the trusted publisher:
+
+   ```bash
+   BUMP=<the version-bump commit on main>
+   git fetch origin
+   git worktree add /tmp/sde-npm-bootstrap "$BUMP^"
+   cd /tmp/sde-npm-bootstrap/typescript
+   grep '"version"' package.json        # "0.1.0-dev.0"
+   npm ci
+   npm login
+   npm publish --access public --tag latest
+   npx npm@11.15.0 trust github @smart-data-engines/sde \
+       --repo Smart-Data-Engines/smart-data-engine-sdk --file release.yml --env npm
+   ```
+3. **GitHub.** Require two-factor authentication for the organisation
+   ([`github-security.md`](github-security.md)). It is off today.
+4. **The two tags**, both on the bump commit:
+
+   ```bash
+   git tag python-v0.1.0rc1 "$BUMP"       && git push origin python-v0.1.0rc1
+   git tag typescript-v0.1.0-rc.1 "$BUMP" && git push origin typescript-v0.1.0-rc.1
+   ```
+
+   Then approve each deployment: Actions → the release run → Review deployments. On npm the
+   candidate becomes `latest`, because no final version exists yet (§5.2).
+5. **Verification from the registries**, which is ours. A clean environment installs
+   `smart-data-engine-sdk==0.1.0rc1` from PyPI and `@smart-data-engines/sde@0.1.0-rc.1` from npm. It
+   runs the shared conformance vectors against the installed packages and the Weather starter end to
+   end. `0.1.0` is bumped only after that passes.
+6. **The documents that describe registry state change afterwards**, not before:
+   `docs/implementations.md`, `docs/weather-starter.md` and `python/tests/_claims.py`. The npm link
+   also goes onto the landing page (§5.3, item 2). Until the publish they say what is true.

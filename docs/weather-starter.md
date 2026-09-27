@@ -15,9 +15,9 @@ wheel and npm tarball. In fresh application directories:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0.dev0-py3-none-any.whl[signed,postgres,clickhouse]'
+.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0rc1-py3-none-any.whl[signed,postgres,clickhouse]'
 npm init -y
-npm install ./smart-data-engines-sde-0.1.0-dev.0.tgz pg
+npm install ./smart-data-engines-sde-0.1.0-rc.1.tgz pg
 ```
 
 `setup`, `doctor` and `run` refuse before writing anything when a binding's driver cannot be imported,
