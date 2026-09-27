@@ -360,7 +360,12 @@ def test_the_security_document_counts_the_required_checks_the_ruleset_requires()
     assert count < len(WORDS), f"{count} is past the end of the number words in _claims.py"
 
     text = (ROOT / "docs" / "github-security.md").read_text(encoding="utf-8")
-    written = re.findall(r"(\w+) required checks", text)
+    # Every order the document uses. The first version of this pattern matched only "fourteen
+    # required checks", so "Eleven required status checks" stayed wrong through three additions.
+    matches = re.findall(
+        r"(\w+) required (?:status )?checks|(\w+) (?:status )?checks required", text
+    )
+    written = [word.lower() for pair in matches for word in pair if word]
     assert written, (
         "docs/github-security.md no longer states a count of required checks, so this test would "
         "pass by finding nothing. Say the number, or delete this test deliberately."

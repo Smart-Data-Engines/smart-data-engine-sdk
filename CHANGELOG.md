@@ -7,6 +7,9 @@ not make them agree. What does is the conformance suite and
 
 ## `smart-data-engine-sdk` 0.1.0 and `@smart-data-engines/sde` 0.1.0
 
+Published on 27 September 2026, each tag on its first run of the release workflow, with attestations
+on PyPI and provenance on npm. On npm it is `latest`.
+
 The first final release. The libraries are the release candidates below: apart from the version
 itself, nothing in `python/src`, `typescript/src` or `typescript/bin` changed after `python-v0.1.0rc1`
 and `typescript-v0.1.0-rc.1`.

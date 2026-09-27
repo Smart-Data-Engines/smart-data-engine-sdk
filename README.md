@@ -108,8 +108,8 @@ artifacts under mixed traffic and checks scheduled latency, native recovery and 
 ownership for concurrent applications.
 The [Weather starter](docs/weather-starter.md) provides a local setup, restricted runtime clients in
 Python/TypeScript, measured telemetry, operator handoffs and an ownership-checked reset. It ships in the
-first release candidates, `smart-data-engine-sdk` 0.1.0rc1 and `@smart-data-engines/sde` 0.1.0-rc.1,
-and the runbook distinguishes this demo from production qualification.
+first release, `smart-data-engine-sdk` 0.1.0 and `@smart-data-engines/sde` 0.1.0, and the runbook
+distinguishes this demo from production qualification.
 
 
 What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and

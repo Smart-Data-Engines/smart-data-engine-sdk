@@ -4,8 +4,8 @@ This is a local, synthetic demonstration for PostgreSQL and ClickHouse. Python p
 setup and runs the existing SDK operator. Python and TypeScript applications use independent
 runtime connections. They read `state/active-map.json`; a running controller is not required.
 
-The starter ships in the first release candidates, `smart-data-engine-sdk` 0.1.0rc1 on PyPI and
-`@smart-data-engines/sde` 0.1.0-rc.1 on npm. Do not publish a release merely to try the demo.
+The starter ships in the first release, `smart-data-engine-sdk` 0.1.0 on PyPI and
+`@smart-data-engines/sde` 0.1.0 on npm. Do not publish a release merely to try the demo.
 [Publishing](publishing.md) describes the separate release procedure.
 
 ## Install the packages and obtain trusted metadata
@@ -15,16 +15,16 @@ from the registries, pinned:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install 'smart-data-engine-sdk[signed,postgres,clickhouse]==0.1.0rc1'
+.venv/bin/python -m pip install 'smart-data-engine-sdk[signed,postgres,clickhouse]==0.1.0'
 npm init -y
-npm install @smart-data-engines/sde@0.1.0-rc.1 pg
+npm install @smart-data-engines/sde@0.1.0 pg
 ```
 
-Or from reviewed build artifacts, which an operator supplies for a commit after the candidates:
+Or from reviewed build artifacts, which an operator supplies for a commit after the release:
 
 ```sh
-.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0-py3-none-any.whl[signed,postgres,clickhouse]'
-npm install ./smart-data-engines-sde-0.1.0.tgz pg
+.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.1.dev0-py3-none-any.whl[signed,postgres,clickhouse]'
+npm install ./smart-data-engines-sde-0.1.1-dev.0.tgz pg
 ```
 
 `setup`, `doctor` and `run` refuse before writing anything when a binding's driver cannot be imported,
@@ -32,8 +32,9 @@ naming what to install (`[postgres]` or `[clickhouse]` in Python, `pg` in Node).
 why the bootstrap's map does not load - for example that verifying its signature needs the `signed`
 extra - instead of reporting an incomplete operation.
 
-The version strings above identify development artifacts, not a promise that every package with
-that version contains this feature. Retain their SHA-256 checksums and the supplying source commit.
+A development version names a build, not a feature set: every commit after the release builds
+`0.1.1.dev0`, whatever it contains. Retain the artifacts' SHA-256 checksums and the supplying source
+commit.
 The project owner can build a wheel with `python -m build --wheel --outdir ARTIFACT_DIRECTORY python`
 and a tarball with `npm pack --pack-destination ARTIFACT_DIRECTORY` in `typescript/` after CI passes.
 
