@@ -210,6 +210,28 @@ jobs:
           name: npm-tarball
           path: .
 
+      - name: What the registry will be asked to trust
+        # The claims npm compares with the trusted publisher configured on npmjs.com, printed so that
+        # a refusal can be read against them. Only the claims: the token itself is a credential and
+        # never leaves this step. Measured on 27 September: 0.1.0-rc.1 was refused twice with
+        # nothing in this log but ENEEDAUTH, because npm reports why an exchange failed only at
+        # verbose level. The cause was that the package had no trust configuration at all (`npm trust
+        # list`: "No trust configurations found"); the website had not saved it.
+        run: |
+          set -euo pipefail
+          SDE_ID_TOKEN=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])')
+          export SDE_ID_TOKEN
+          python3 - <<'CLAIMS'
+          import base64, json, os
+          payload = os.environ["SDE_ID_TOKEN"].split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+          for key in ("repository", "repository_owner", "workflow_ref", "job_workflow_ref",
+                      "environment", "ref", "event_name", "runner_environment"):
+              print(f"{key}: {claims.get(key)}")
+          CLAIMS
+
       - name: Publish
         # No NODE_AUTH_TOKEN and no .npmrc. Trusted publishing generates the provenance attestation
         # by itself, so `--provenance` is not passed: npm does it and it cannot be forgotten. The tag
@@ -220,7 +242,15 @@ jobs:
           set -euo pipefail
           test -n "$DIST_TAG"
           tarball=$(ls ./*.tgz)
-          npm publish "$tarball" --access public --tag "$DIST_TAG"
+          npm publish "$tarball" --access public --tag "$DIST_TAG" || {
+            # The OIDC exchange never throws: npm logs why it got no token into its debug log, at
+            # verbose level, and the console shows only ENEEDAUTH. Those lines carry the registry's
+            # message and no credential.
+            echo "::group::npm's own account of the OIDC exchange"
+            grep -h "oidc" "$HOME"/.npm/_logs/*-debug-0.log || true
+            echo "::endgroup::"
+            exit 1
+          }
 
       - name: It is actually there, under its tag
         env:

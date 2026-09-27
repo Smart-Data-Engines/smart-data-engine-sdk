@@ -7,9 +7,9 @@ not make them agree. What does is the conformance suite and
 
 ## `smart-data-engine-sdk` 0.1.0rc1 and `@smart-data-engines/sde` 0.1.0-rc.1
 
-These are the first release candidates published through the release workflow. They cover
-everything since `0.1.0.dev0`, the development release that claimed the PyPI name on 12 September
-2026.
+Published on 27 September 2026. These are the first release candidates published through the
+release workflow, with attestations on PyPI and provenance on npm. They cover everything since
+`0.1.0.dev0`, the development release that claimed the PyPI name on 12 September 2026.
 
 **Runtimes.** Python 3.11 to 3.14 and Node 18 to 26, every version tested in CI
 ([`docs/platforms.md`](docs/platforms.md)).

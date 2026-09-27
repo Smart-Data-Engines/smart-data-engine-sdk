@@ -76,11 +76,13 @@ The tier in the table above is checked against the library's own `TIER` constant
 list that says one thing while the code says another is the failure requirement 17.6 exists to
 prevent, and prose does not fail.
 
-**`pip install smart-data-engine-sdk` installs this library**, published to PyPI on 12 September
-2026. `npm install @smart-data-engines/sde` does not install anything yet: the scope is ours, held by
-the `smart-data-engines` organisation from the same day, so that name cannot become somebody else's
-package — but on npm a scope is a reservation and the package under it is a separate act, and the
-first publish there will come from CI with provenance rather than from a laptop.
+**`pip install smart-data-engine-sdk` installs this library.** The name was claimed on PyPI on
+12 September 2026 with a development release. `0.1.0rc1` followed on 27 September, the first release
+candidate, published by the release workflow with attestations. **`npm install @smart-data-engines/sde`
+installs `0.1.0-rc.1`**, published by the same workflow the same day, with provenance. The one version
+before it, `0.1.0-dev.0`, was published by hand. That publish was forced: npm configures trusted
+publishing only on a package that already exists, so the first publish cannot come from CI
+([`publishing.md`](publishing.md) §5.3).
 
 The suffix is not decoration. `smart-data-engine` is **refused** by PyPI as "too similar to an
 existing project" — `smartdata-engine`, registered by somebody else with no releases — so the
