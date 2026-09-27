@@ -5,6 +5,22 @@ The two libraries are released separately, one tag per language: `python-v*` to 
 not make them agree. What does is the conformance suite and
 [`conformance/contract-version.txt`](conformance/contract-version.txt).
 
+## `smart-data-engine-sdk` 0.1.0 and `@smart-data-engines/sde` 0.1.0
+
+The first final release. The libraries are the release candidates below: nothing in `python/src`,
+`typescript/src` or `typescript/bin` changed after `python-v0.1.0rc1` and `typescript-v0.1.0-rc.1`.
+The candidates were verified from the registries before this number was set:
+- the registries' artefacts are the ones the release gate checked;
+- the PyPI package runs the library's suite;
+- the npm package's signatures and provenance verify;
+- both compute the same model version;
+- the Weather starter ran end to end from the registries.
+
+Two things changed around the libraries:
+- the release workflow checks the registry for longer than its cache (#95), and says why npm
+  refused a publish if it does (#96);
+- the documents describe a released SDK (#96).
+
 ## `smart-data-engine-sdk` 0.1.0rc1 and `@smart-data-engines/sde` 0.1.0-rc.1
 
 Published on 27 September 2026. These are the first release candidates published through the
