@@ -11,7 +11,7 @@ what decides which ones are worth a visit today and which are worth nothing unti
 | Name | Registry | State | How it gets claimed |
 |---|---|---|---|
 | `smart-data-engine-sdk` | PyPI | **ours since 12 September 2026** | the upload that claimed it |
-| `@smart-data-engines/sde` | npm | **scope ours since 12 September 2026**, package not yet published | creating the organisation granted the scope |
+| `@smart-data-engines/sde` | npm | **scope ours since 12 September 2026**, package published since 27 September 2026 | creating the organisation granted the scope |
 | `com.smartdataengines` | Maven Central | **ours since 12 September 2026** | a DNS TXT record; nothing published, ever |
 | `smart-data-engine` | PyPI | **refused** | too similar to `smartdata-engine`; see §2.0 |
 | `sde` | PyPI | taken by someone else | — which is why the distribution and the import differ |
@@ -63,8 +63,9 @@ the moment something has already failed, to run `pip install 'smart-data-engine-
 worst possible moment to point somebody at a name a stranger controls: they are debugging, they will
 copy the command, and the instruction came from inside code they had already decided to trust.
 
-Today the name resolves to nothing and the command simply fails, which is safe. It stops being safe
-the moment anybody else registers it, and nothing warns us when that happens.
+Until 12 September 2026 the name resolved to nothing and the command simply failed, which was safe.
+It would have stopped being safe the moment anybody else registered it, and nothing would have warned
+us. The upload in §2 closed that: the command now installs this library.
 
 ## What cannot be undone
 
@@ -112,9 +113,10 @@ Verified on 8 September 2026: `python -m build` succeeds and `twine check` passe
 ## 1. npm — the scope is ours ✅ (12 September 2026)
 
 **Done.** The `smart-data-engines` organisation exists, `krzysztof-smartdataengines` owns it, and
-`npm org ls smart-data-engines` is what says so rather than a screenshot. Two versions are
+`npm org ls smart-data-engines` is what says so rather than a screenshot. Three versions are
 published under the scope. `0.1.0-dev.0` was published by hand, as the bootstrap that trusted
-publishing needs. `0.1.0-rc.1` came from the release workflow (§5.5). Ten minutes, as estimated.
+publishing needs. `0.1.0-rc.1` and `0.1.0` came from the release workflow (§5.5). Ten minutes, as
+estimated.
 
 The steps are kept below rather than deleted, because the next scope this organisation reserves
 follows exactly this path and the two warnings in it are the part worth having again.
@@ -152,23 +154,24 @@ else can publish anything under `@smart-data-engines/`.
    **If the name is taken, stop and tell me** — six files cite the scope (`typescript/package.json`,
    its lockfile, `typescript/README.md`, and three documents), and they would all have to change
    together. That is a code change, not a rename.
-4. That is the whole reservation. Do not publish. The library is at `0.1.0-dev.0`, the first publish
-   should carry provenance from CI, and publishing by hand would spend that version number to prove
-   something the scope already guarantees.
+4. That is the whole reservation. Do not publish to hold the name: the scope already guarantees it,
+   and a publish spends a version number to prove it. The first real publish still has to be by
+   hand, because npm configures trusted publishing only on a package that exists (§5.3, item 2).
 
-**Nothing else on npm is urgent, and the distinction that makes that true is worth keeping straight:
-the scope is ours and the package is unpublished, which are two different facts.** `npm install
-@smart-data-engines/sde` still installs nothing — and cannot install somebody else's package either,
-which is the whole protection the reservation buys. `REGISTRIES` in `_claims.py` therefore reads the
-npm entry as registered while the package does not exist, and that is correct: the flag is about who
-owns the name, not about whether anything has been shipped under it.
+**The scope being ours and the package being published are two different facts, and for fifteen
+days only the first was true.** From 12 to 27 September `npm install @smart-data-engines/sde`
+installed nothing — and could not install somebody else's package either, which is the whole
+protection the reservation buys. `REGISTRIES` in `_claims.py` read the npm entry as registered while
+the package did not exist, and that was correct: the flag is about who owns the name, not about
+whether anything has been shipped under it.
 
 ## 2. PyPI — published ✅ (12 September 2026)
 
 **Done.** `smart-data-engine-sdk` `0.1.0.dev0` is on PyPI, and what says so is
 `pip install smart-data-engine-sdk` in an empty virtualenv rather than the page rendering: it
 imports, the wheel carries `licenses/LICENSE`, `licenses/NOTICE` and `py.typed`, and
-`[signed,postgres]` resolves `cryptography` and `psycopg` from the real index.
+`[signed,postgres]` resolves `cryptography` and `psycopg` from the real index. `0.1.0rc1` and
+`0.1.0` followed on 27 September, from the release workflow with attestations (§5.5).
 
 It took two attempts and the first one is §2.0, which is the part of this section worth reading.
 The steps are kept below because the second distribution this repository publishes walks the same
@@ -537,7 +540,8 @@ covered by nothing:
   account of the exchange.
 
 `python-v0.1.0rc1` published to PyPI on its first run. `typescript-v0.1.0-rc.1` published on its third
-(§5.5).
+(§5.5). The final release, `python-v0.1.0` and `typescript-v0.1.0`, published on the first run of
+each, the same evening.
 
 **It cannot be rehearsed, and that is a property of the design rather than an omission.** The only
 trigger is a tag push; tags are immutable under the ruleset; neither registry reuses a version
@@ -559,6 +563,13 @@ git tag typescript-v0.1.0 && git push origin typescript-v0.1.0   # -> npm
 Then approve the deployment on GitHub. The publish job waits on an environment with you as a required
 reviewer, so a merge cannot become a publish without a person — and the environments are scoped to
 their own tag pattern, so nothing but a `python-v*` tag can even ask to use the PyPI one.
+
+**After the release, `main` moves to a development version**, in its own pull request: `0.1.1.dev0`
+and `0.1.1-dev.0` followed `0.1.0`. Otherwise every later commit builds an artefact carrying the
+released number, and pip treats a local install of one as the release: `pip install
+smart-data-engine-sdk==0.1.0` answers "Requirement already satisfied" and fetches nothing. Measured
+on 27 September with a wheel of `f4d57c4` plus one comment: the comment stayed installed. The next
+release bumps from there to whatever number it takes.
 
 **The tags are per-language, and the reason is not tidiness.** One shared tag would publish an
 artefact byte-identical to its predecessor, with an empty changelog, every time the *other* language
@@ -597,9 +608,9 @@ that the registry shows the version under it.
 reported absent. A checker stuck on "present" would find every required file and report a flawless
 package, which is the shape of good news worth distrusting.
 
-### 5.3 Three things still need you
+### 5.3 Three things that needed the owner ✅ (27 September 2026)
 
-1. **PyPI: add the trusted publisher** ⚙️ — <https://pypi.org/manage/project/smart-data-engine-sdk/settings/publishing/>.
+1. **PyPI: add the trusted publisher** ✅ — <https://pypi.org/manage/project/smart-data-engine-sdk/settings/publishing/>.
    Four fields, and all four must match exactly or the token is refused:
 
    | Field | Value |
@@ -612,7 +623,7 @@ package, which is the shape of good news worth distrusting.
    The environment field is optional at PyPI and is filled in deliberately: with it, a token minted by
    any other job in this repository is rejected at the registry rather than trusted.
 
-2. **npm: the first publish has to be by hand** ⚙️, and this is npm's constraint rather than a
+2. **npm: the first publish has to be by hand** ✅, and this is npm's constraint rather than a
    shortcut. Trusted publishing there is configured on a package's own settings page, and `npm trust`
    (npm ≥ 11.15.0) says the same thing in its documentation: "The package you're configuring must
    already exist on the npm registry." So the sequence is fixed:
@@ -657,12 +668,12 @@ package, which is the shape of good news worth distrusting.
    **Do not put a token in an Actions secret to avoid this.** It would buy one attestation and leave
    behind a credential that publishes under our scope for as long as nobody remembers it is there.
 
-   **And then add the npm link to the landing page.** The product page links the PyPI package and the
-   repository from its "Read the Code" section and deliberately does *not* link npm, because a 404 is
-   worse than an absence. The file is
+   **And then add the npm link to the landing page** ✅. Until the package existed, the product page
+   linked the PyPI package and the repository from its "Read the Code" section and deliberately did
+   *not* link npm, because a 404 is worse than an absence. The file is
    `smart-data-engine-landing-page/frontend/smart-data-engine/index.html`, the block is
-   `<p class="engine-links">`, and it needs a key in **both** languages in `frontend/js/i18n.js` or
-   the i18n completeness test fails. The instruction lives here rather than in a list over there
+   `<p class="engine-links">`, and the link needs a key in **both** languages in `frontend/js/i18n.js`
+   or the i18n completeness test fails. The instruction lives here rather than in a list over there
    because this is the step that makes the link true.
 
 3. **The two environments** ✅ — already created, with you as the required reviewer and each one
@@ -677,14 +688,15 @@ package, which is the shape of good news worth distrusting.
 
 ### 5.4 The one cost, named rather than hidden
 
-**The first npm tarball will have no provenance attestation.** `npm publish --provenance` only works
+**The first npm tarball has no provenance attestation.** `npm publish --provenance` only works
 from a supported CI provider on a cloud-hosted runner, and the publish that has to happen by hand
-cannot be either. Every version after it gets one automatically, because trusted publishing generates
-the attestation itself rather than leaving it to a flag somebody has to remember.
+cannot be either. Every version after it has one, because trusted publishing generates the
+attestation itself rather than leaving it to a flag somebody has to remember.
 
 What makes that acceptable rather than merely tolerable: the version without an attestation is
 `0.1.0-dev.0`, matching the `0.1.0.dev0` already on PyPI. It is a dev release, so **every version a
-client would actually pin is attested** — the gap lands on the one release nobody depends on.
+client would actually pin is attested** — `0.1.0-rc.1` and `0.1.0` carry provenance, and the gap
+lands on the one release nobody depends on.
 
 ### 5.5 The first release through the workflow: `0.1.0rc1` and `0.1.0-rc.1`
 
@@ -744,3 +756,11 @@ one needs the one before it.
 6. **The documents that describe registry state change afterwards**, not before:
    `docs/implementations.md`, `docs/weather-starter.md` and `python/tests/_claims.py`. The npm link
    also goes onto the landing page (§5.3, item 2). Until the publish they say what is true.
+7. **The final release**, `0.1.0`, was set by #97 after step 5 passed. Both tags went on its squash
+   commit, `f4d57c4`, and each published on its first run. Then `main` moved to `0.1.1.dev0` and
+   `0.1.1-dev.0` (§5.1). Two observations for the next release:
+   - on npm the final took `latest` from the candidate, as `tools/npm_dist_tag.py` chose;
+   - straight after the upload, an unpinned `pip install smart-data-engine-sdk` in a fresh
+     environment still answered `0.1.0rc1`, from a cached index, and `0.1.0` about a minute later.
+     Verification right after a publish pins the version. An unpinned install is a separate check,
+     made later.

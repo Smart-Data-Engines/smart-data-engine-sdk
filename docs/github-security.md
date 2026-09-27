@@ -307,8 +307,8 @@ for it:
   so `--provenance` is deliberately *not* passed — a flag is something a future edit can drop in
   silence. PyPI attestations come the same way. The one gap is named in `publishing.md` §5.4: the
   first npm publish has to happen by hand, because npm requires a package to exist before a trusted
-  publisher can be configured for it, so `0.1.0-dev.0` will carry no attestation and every version a
-  client would pin will.
+  publisher can be configured for it, so `0.1.0-dev.0` carries no attestation and every version a
+  client would pin does: `0.1.0-rc.1` and `0.1.0` were published with provenance.
 - **Two GitHub Environments with a required reviewer** ✅, not a repository secret — and each one is
   locked to its own tag pattern, so nothing but a `python-v*` tag can ask to use the PyPI one. A merge
   cannot become a publish without a person.
@@ -439,7 +439,7 @@ malicious or broken code onto `main` and it reaches a release, (b) a published a
 forged, either through a leaked registry token or through the distribution name never having been
 registered, (c) a dependency is compromised and lands in a client's application through our extras,
 (d) a credential from a client engagement is committed by accident, (e) a leaked maintainer token is
-used to rewrite history or publish a fake release. Eleven required status checks on a protected branch
+used to rewrite history or publish a fake release. Fourteen required status checks on a protected branch
 with no bypass actors handle (a); trusted publishing with provenance, an environment with a reviewer,
 tag protection and — first of all — **registering the names** handle (b); Dependabot with a committed
 lockfile handles (c); secret scanning with push protection handles (d); 2FA, signed commits and tag
@@ -451,7 +451,8 @@ distribution name is the one an attacker needs no access at all to exploit.
 ## Checklist
 
 ```
-✅ ci.yml: lint, mypy --strict, tests on 3 Pythons against a real PostgreSQL, tsc + vitest on 3 Nodes
+✅ ci.yml: lint, mypy --strict, tests on every supported Python, tsc + vitest on every supported Node,
+   against a real PostgreSQL and ClickHouse (the versions: docs/platforms.md)
 ✅ ci.yml: contract job — PEP 561 marker in the wheel, openssl-verified digests, frozen vector
 ✅ codeql.yml — python, javascript-typescript, actions; default query suite on purpose
 ✅ dependabot.yml — actions, pip (python/), npm (typescript/); codeql-action grouped
@@ -463,19 +464,21 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ rulesets kept as JSON in .github/rulesets/
 ✅ branch ruleset on main: PR required, no force push, no deletion, linear history, no bypass actors
 ✅ branch ruleset: all fourteen status checks required, strict
-✅ tag ruleset on refs/tags/v*
+✅ tag ruleset on refs/tags/v*, python-v* and typescript-v*
 ✅ secret scanning + push protection
 ✅ Dependabot alerts + security updates
 ✅ private vulnerability reporting
 ✅ Actions: read-only default token, cannot approve PRs
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
-✅ smart-data-engine-sdk on PyPI, published 12 September 2026
-✅ @smart-data-engines scope on npm, held by the organisation since 12 September 2026
+✅ smart-data-engine-sdk on PyPI, claimed 12 September 2026, 0.1.0 released 27 September 2026
+✅ @smart-data-engines scope on npm, held by the organisation since 12 September 2026;
+   @smart-data-engines/sde 0.1.0 released 27 September 2026
 ✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
+✅ registry accounts with 2FA: PyPI requires it, and npm asked for the second factor on 27 September
+✅ release.yml: OIDC trusted publishing, attestations and provenance, an environment with a reviewer
+   per registry; first run 27 September 2026
 ⚙️ org-wide 2FA on Smart-Data-Engines — UI only, the API reports success and changes nothing
-⚙️ registry accounts with 2FA, before the first publish
 ⚙️ SSH/GPG signing key registered as a *signing* key, then required_signatures in the ruleset
 ⚙️ non-provider secret patterns + validity checks (organisation-level Secret Protection)
-⚙️ when a publish workflow is written: OIDC trusted publishing, provenance, environment with reviewer
 ```
