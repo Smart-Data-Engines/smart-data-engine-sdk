@@ -63,7 +63,7 @@ jobs:
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
             echo "::error::commit $GITHUB_SHA is not an ancestor of main, so it never passed the"
-            echo "::error::eleven required checks. The ruleset protects main; it does not stop a tag"
+            echo "::error::required checks. The ruleset protects main; it does not stop a tag"
             echo "::error::from being pointed at any commit in the repository, including one on a"
             echo "::error::branch that was never reviewed. Merge first, then tag the merge."
             exit 1

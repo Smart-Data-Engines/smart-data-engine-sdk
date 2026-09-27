@@ -568,7 +568,7 @@ upload:
 |---|---|
 | a bare `v0.1.0` tag | A tag that triggers nothing is a release that **looks done**: the tag is in the repository, protected, and nothing was published. The workflow triggers on `v*` purely so this can be said out loud, with both correct forms named. |
 | the tag disagrees with the manifest | Publishing the manifest's version under the tag's name. Neither half is correctable: the registry will not reuse a version number and the ruleset will not move the tag. |
-| the tagged commit is not on `main` | The ruleset protects `main` with eleven required checks; it does **not** stop a tag being pointed at any commit in the repository, including one on a branch nobody reviewed. Ancestry is what makes "the published artefact passed CI" a fact rather than an assumption. |
+| the tagged commit is not on `main` | The ruleset protects `main` with the required checks; it does **not** stop a tag being pointed at any commit in the repository, including one on a branch nobody reviewed. Ancestry is what makes "the published artefact passed CI" a fact rather than an assumption. |
 | the artefact is missing a licence, `py.typed`, or `dist/` | All three have actually been missing, on 8 September, and none of it was visible from a green suite — the suite runs the source tree and a user runs the artefact. The worst would have put an importable-looking package with no code in it under our own scope. |
 | the artefact records a version other than the tag's | The gate agreeing with the manifest does not prove the *build* used it, and what a user installs is the number inside the file. |
 

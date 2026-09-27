@@ -8,9 +8,9 @@ workflow, and fails if the three disagree.
 
 | | |
 |---|---|
-| Supported | **3.11, 3.12, 3.13** |
-| Tested in CI | 3.11, 3.12, 3.13 — every one, on every pull request |
-| Declared in `python/pyproject.toml` | `>=3.11,<3.14` |
+| Supported | **3.11, 3.12, 3.13, 3.14** |
+| Tested in CI | 3.11, 3.12, 3.13, 3.14 — every one, on every pull request |
+| Declared in `python/pyproject.toml` | `>=3.11,<3.15` |
 
 The floor is 3.11 because the code uses `X | None` in annotations that are resolved at runtime by
 `get_type_hints`.
@@ -33,9 +33,9 @@ one action instead of two.
 
 | | |
 |---|---|
-| Supported | **18, 20, 22** |
-| Tested in CI | 18, 20, 22 — every one, on every pull request |
-| Declared in `typescript/package.json` | `>=18 <23` |
+| Supported | **18, 20, 22, 24, 26** |
+| Tested in CI | 18, 20, 22, 24, 26 — every one, on every pull request |
+| Declared in `typescript/package.json` | `>=18 <27` |
 
 Same reasoning, same closed ceiling. The TypeScript implementation has to agree with the Python one
 byte for byte on the shared conformance vectors, so an untested runtime is an untested encoder.

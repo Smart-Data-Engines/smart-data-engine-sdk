@@ -55,7 +55,7 @@ check reads a table and a constructor cannot await. You therefore cannot hold a 
 has not run.
 
 **The ClickHouse adapter has no driver dependency.** There is an official Node client and it requires
-Node 20 or newer; this package supports Node 18 to 22 and its CI runs all three. Dropping Node 18
+Node 20 or newer; this package supports Node 18 to 26 and its CI runs all five majors. Dropping Node 18
 would narrow a published claim to gain a dependency, and pinning a superseded version of the client
 is the conflict the zero-dependency rule exists to avoid - so neither. ClickHouse's HTTP interface
 needs no client, and this adapter therefore owns both of its timeouts instead of inheriting a
@@ -146,7 +146,7 @@ It includes local setup, telemetry, operator handoffs and an ownership-checked r
 
 ## Test-tool dependencies
 
-The Node 18/20/22 matrix uses the tool versions and supported invocation described in
+The Node 18/20/22/24/26 matrix uses the tool versions and supported invocation described in
 [the test-toolchain record](../docs/test-toolchain.md). That record distinguishes the SDK runtime
 from development dependencies and documents the remaining development-server advisory.
 

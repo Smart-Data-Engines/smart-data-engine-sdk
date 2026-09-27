@@ -55,7 +55,7 @@
     "bin"
   ],
   "engines": {
-    "node": ">=18 <23"
+    "node": ">=18 <27"
   },
   "scripts": {
     "prepack": "npm run build",

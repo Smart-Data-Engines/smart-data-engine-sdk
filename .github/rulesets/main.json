@@ -51,6 +51,9 @@
             "context": "python (3.13)"
           },
           {
+            "context": "python (3.14)"
+          },
+          {
             "context": "typescript (18)"
           },
           {
@@ -58,6 +61,12 @@
           },
           {
             "context": "typescript (22)"
+          },
+          {
+            "context": "typescript (24)"
+          },
+          {
+            "context": "typescript (26)"
           },
           {
             "context": "contract"
