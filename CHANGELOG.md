@@ -7,8 +7,9 @@ not make them agree. What does is the conformance suite and
 
 ## `smart-data-engine-sdk` 0.1.0 and `@smart-data-engines/sde` 0.1.0
 
-The first final release. The libraries are the release candidates below: nothing in `python/src`,
-`typescript/src` or `typescript/bin` changed after `python-v0.1.0rc1` and `typescript-v0.1.0-rc.1`.
+The first final release. The libraries are the release candidates below: apart from the version
+itself, nothing in `python/src`, `typescript/src` or `typescript/bin` changed after `python-v0.1.0rc1`
+and `typescript-v0.1.0-rc.1`.
 The candidates were verified from the registries before this number was set:
 - the registries' artefacts are the ones the release gate checked;
 - the PyPI package runs the library's suite;
