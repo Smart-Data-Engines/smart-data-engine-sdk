@@ -112,8 +112,9 @@ Verified on 8 September 2026: `python -m build` succeeds and `twine check` passe
 ## 1. npm — the scope is ours ✅ (12 September 2026)
 
 **Done.** The `smart-data-engines` organisation exists, `krzysztof-smartdataengines` owns it, and
-`npm org ls smart-data-engines` is what says so rather than a screenshot. Nothing is published under
-the scope and nothing should be — see step 4. Ten minutes, as estimated.
+`npm org ls smart-data-engines` is what says so rather than a screenshot. Two versions are
+published under the scope. `0.1.0-dev.0` was published by hand, as the bootstrap that trusted
+publishing needs. `0.1.0-rc.1` came from the release workflow (§5.5). Ten minutes, as estimated.
 
 The steps are kept below rather than deleted, because the next scope this organisation reserves
 follows exactly this path and the two warnings in it are the part worth having again.
@@ -523,13 +524,20 @@ rotate, nothing to forget to delete. That matters more here than the convenience
 account-scoped PyPI token publishes to every project that account owns, forever, and section 2.4
 exists because the alternative was keeping one.
 
-**Nothing has been released through it yet, and that is the first thing to know before trusting it.**
-As of 12 September 2026 this repository has **zero tags** and this workflow has **never run** —
-`gh run list --workflow=release.yml` returns nothing. Every refusal in section 5.2 is covered by a
-test or by `check_contexts.py`, and nineteen mutations were used to show each one goes red when it
-should. What is *not* covered is the half only a real run exercises: whether PyPI accepts the OIDC
-token, whether the environment gate actually pauses, whether `npm publish` of a prebuilt tarball
-behaves the way its documentation says.
+**It first ran on 27 September 2026, and three things surfaced that the gate's tests could not
+see.** Until then every refusal in section 5.2 was covered by a test or by `check_contexts.py`, and
+nineteen mutations showed each one going red when it should. The half that talks to a registry was
+covered by nothing:
+- **npm 11 refuses a prerelease without `--tag`.** This was found before the run, by reading the
+  CLI's source, and fixed in #93.
+- **The registry caches the package document for five minutes**, which outlived the one-minute
+  check after publishing. Fixed in #95.
+- **A trust configuration that does not exist fails as `ENEEDAUTH`**, with the registry's reason
+  only in npm's verbose log. The publishing job now prints the claims it presents and npm's own
+  account of the exchange.
+
+`python-v0.1.0rc1` published to PyPI on its first run. `typescript-v0.1.0-rc.1` published on its third
+(§5.5).
 
 **It cannot be rehearsed, and that is a property of the design rather than an omission.** The only
 trigger is a tag push; tags are immutable under the ruleset; neither registry reuses a version
@@ -680,7 +688,7 @@ client would actually pin is attested** — the gap lands on the one release nob
 
 ### 5.5 The first release through the workflow: `0.1.0rc1` and `0.1.0-rc.1`
 
-These are release candidates, and that is deliberate. The pipeline has never run, and a candidate is
+These are release candidates, and that is deliberate. The pipeline had never run, and a candidate is
 the number this section says to spend on the first run (§5). Do the steps in this order, because each
 one needs the one before it.
 
@@ -716,6 +724,19 @@ one needs the one before it.
 
    Then approve each deployment: Actions → the release run → Review deployments. On npm the
    candidate becomes `latest`, because no final version exists yet (§5.2).
+
+   **What happened on 27 September.**
+   - `python-v0.1.0rc1`, on `ebc89be`, published to PyPI with attestations on its first run.
+   - `typescript-v0.1.0-rc.1`, on `1ec940f`, was refused twice at the trusted-publishing exchange
+     with only `ENEEDAUTH` in the log. The package had no trust configuration at all:
+     `npm trust list` answered "No trust configurations found", after the website had appeared to
+     save it twice.
+   - `npm trust github ... --allow-publish --yes`, run in an interactive session with 2FA, created
+     the configuration. The third run then published with provenance. Re-running the failed job
+     was enough; the version number was never spent.
+
+   **Read the configuration back before tagging:**
+   `npx npm@11.15.0 trust list @smart-data-engines/sde`.
 5. **Verification from the registries**, which is ours. A clean environment installs
    `smart-data-engine-sdk==0.1.0rc1` from PyPI and `@smart-data-engines/sde@0.1.0-rc.1` from npm. It
    runs the shared conformance vectors against the installed packages and the Weather starter end to

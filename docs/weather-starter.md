@@ -4,19 +4,26 @@ This is a local, synthetic demonstration for PostgreSQL and ClickHouse. Python p
 setup and runs the existing SDK operator. Python and TypeScript applications use independent
 runtime connections. They read `state/active-map.json`; a running controller is not required.
 
-The starter is unreleased: the published Python development version predates this command, and
-npm has no published package yet. Use reviewed build artifacts. Do not publish a release merely
-to try the demo. [Publishing](publishing.md) describes the separate release procedure.
+The starter ships in the first release candidates, `smart-data-engine-sdk` 0.1.0rc1 on PyPI and
+`@smart-data-engines/sde` 0.1.0-rc.1 on npm. Do not publish a release merely to try the demo.
+[Publishing](publishing.md) describes the separate release procedure.
 
-## Install artifacts and obtain trusted metadata
+## Install the packages and obtain trusted metadata
 
-Use Python 3.11-3.14, Node 18-26 and a local POSIX filesystem. An operator supplies the reviewed
-wheel and npm tarball. In fresh application directories:
+Use Python 3.11-3.14, Node 18-26 and a local POSIX filesystem. In fresh application directories,
+from the registries, pinned:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0rc1-py3-none-any.whl[signed,postgres,clickhouse]'
+.venv/bin/python -m pip install 'smart-data-engine-sdk[signed,postgres,clickhouse]==0.1.0rc1'
 npm init -y
+npm install @smart-data-engines/sde@0.1.0-rc.1 pg
+```
+
+Or from reviewed build artifacts, which an operator supplies for a commit after the candidates:
+
+```sh
+.venv/bin/python -m pip install './smart_data_engine_sdk-0.1.0rc1-py3-none-any.whl[signed,postgres,clickhouse]'
 npm install ./smart-data-engines-sde-0.1.0-rc.1.tgz pg
 ```
 

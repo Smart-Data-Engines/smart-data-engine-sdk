@@ -486,3 +486,25 @@ def test_the_registry_check_waits_longer_than_the_registry_caches() -> None:
     pause = re.search(r"sleep (\d+)", loop.group(2))
     assert pause is not None
     assert int(loop.group(1)) * int(pause.group(1)) > 300 + 60
+
+
+def test_the_publishing_job_says_what_it_presented_and_why_npm_refused() -> None:
+    """ENEEDAUTH alone is not a reason, and 0.1.0-rc.1 was refused twice with nothing else.
+
+    npm's OIDC helper never throws: it logs why the exchange produced no token at verbose level,
+    into its debug log, and the console shows only that no credential exists. So the job prints the
+    claims the registry compares with the trusted publisher, and on a failed publish the `oidc`
+    lines of npm's debug log - never the token itself.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("  publish-npm:", 1)[1]
+    claims = publish.split("What the registry will be asked to trust", 1)[1]
+    claims = claims.split("- name: Publish", 1)[0]
+    for claim in ("repository", "repository_owner", "workflow_ref", "environment"):
+        assert f'"{claim}"' in claims, claim
+    assert "audience=npm:registry.npmjs.org" in claims
+    assert 'print(f"{key}: {claims.get(key)}")' in claims
+    # The token is decoded, never printed.
+    assert "SDE_ID_TOKEN" in claims
+    assert not re.search(r"(echo|print)\W+\$?\{?SDE_ID_TOKEN", claims)
+    assert 'grep -h "oidc" "$HOME"/.npm/_logs/*-debug-0.log' in publish
