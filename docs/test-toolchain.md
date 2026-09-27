@@ -1,6 +1,6 @@
 # TypeScript test tools
 
-The SDK supports Node 18, 20 and 22. The test toolchain uses Vitest 3.2.7 and an explicit
+The SDK supports Node 18, 20, 22, 24 and 26. The test toolchain uses Vitest 3.2.7 and an explicit
 Vite 6.4.3 dependency range so that a new installation does not silently choose Vite 7,
 which has a different Node requirement. Both selected packages declare Node 18 support.
 This changes development tools only; neither package is an SDK runtime dependency.

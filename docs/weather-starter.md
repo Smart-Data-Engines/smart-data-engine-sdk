@@ -10,7 +10,7 @@ to try the demo. [Publishing](publishing.md) describes the separate release proc
 
 ## Install artifacts and obtain trusted metadata
 
-Use Python 3.11-3.13, Node 18-22 and a local POSIX filesystem. An operator supplies the reviewed
+Use Python 3.11-3.14, Node 18-26 and a local POSIX filesystem. An operator supplies the reviewed
 wheel and npm tarball. In fresh application directories:
 
 ```sh

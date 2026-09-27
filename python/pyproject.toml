@@ -24,7 +24,7 @@ name = "smart-data-engine-sdk"
 dynamic = ["version"]
 description = "Smart Data Engine client library: declare a data model, we place it and move it"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 # Apache-2.0 section 4 asks that the licence travel with the work, and section 4(d) says the same
 # about a NOTICE file where one exists. Both were missing from the wheel and the sdist until this
@@ -47,6 +47,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     # The wheel carries `py.typed`, so this row is a fact the artefact can be checked against.
     "Typing :: Typed",

@@ -34,7 +34,7 @@ jobs:
         # The floor is 3.11 because the code uses `X | None` at runtime in annotations resolved by
         # get_type_hints. The ceiling is whatever is current: a canonical encoding that drifts with a
         # Python release is exactly the failure the contract exists to prevent, so both ends get run.
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
 
     services:
       postgres:
@@ -141,14 +141,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["18", "20", "22"]
+        node: ["18", "20", "22", "24", "26"]
 
     # The same two engines the Python job gets, and for the same reason: this library reached Tier 2
     # on 6 September 2026, so "it renders DDL and takes part in a migration" is now a claim about
     # real servers. Running the vectors without them would leave the adapters - two of the eight
     # integrations requirement 17.5 is about - checked by nothing.
     #
-    # All three Node versions, deliberately. The ClickHouse adapter exists because the official
+    # All five Node versions, deliberately. The ClickHouse adapter exists because the official
     # client requires Node 20, and a matrix that only exercised the engines on one version would be
     # unable to notice the day that stops being the reason.
     services:
