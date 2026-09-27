@@ -51,6 +51,7 @@ def _tool(name: str) -> ModuleType:
 
 release_tag = _tool("release_tag")
 check_artefact = _tool("check_artefact")
+npm_dist_tag = _tool("npm_dist_tag")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -369,3 +370,104 @@ def test_the_security_document_counts_the_required_checks_the_ruleset_requires()
             f"the ruleset requires {count} checks ({WORDS[count]}) and the document says {word!r}. "
             f"Adding a matrix entry or an analysis changes the first number and not the second."
         )
+
+
+# --------------------------------------------------------------------------------------------------
+# The npm dist-tag
+# --------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("version", "published", "tag"),
+    [
+        # The first candidate after the version published by hand: no final yet, so `latest`,
+        # which is what an unpinned `pip install` gets on PyPI too.
+        ("0.1.0-rc.1", ["0.1.0-dev.0"], "latest"),
+        ("0.1.0-rc.2", ["0.1.0-dev.0", "0.1.0-rc.1"], "latest"),
+        ("0.1.0", ["0.1.0-dev.0", "0.1.0-rc.1"], "latest"),
+        # Once a final exists, a candidate must not take `latest` from it.
+        ("0.2.0-rc.1", ["0.1.0-dev.0", "0.1.0"], "next"),
+        ("0.2.0", ["0.1.0", "0.2.0-rc.1"], "latest"),
+        # Semantic Versioning precedence, not string order: rc.10 is after rc.9, and a longer
+        # prerelease ranks above its prefix.
+        ("0.2.0-rc.10", ["0.1.0", "0.2.0-rc.9"], "next"),
+        ("0.2.0-rc.1.1", ["0.1.0", "0.2.0-rc.1"], "next"),
+    ],
+)
+def test_the_dist_tag_follows_what_an_unpinned_install_should_get(
+    version: str, published: list[str], tag: str
+) -> None:
+    assert npm_dist_tag.choose(version, published)[0] == tag
+
+
+@pytest.mark.parametrize(
+    ("version", "published", "reason"),
+    [
+        ("0.1.0-rc.1", ["0.1.0-dev.0", "0.1.0-rc.1"], "already on the registry"),
+        ("0.1.0-rc.1", ["0.1.0-rc.2"], "lower than 0.1.0-rc.2"),
+        ("0.1.0-rc.9", ["0.1.0-rc.10"], "lower than 0.1.0-rc.10"),
+        ("0.1.1", ["0.2.0"], "lower than 0.2.0"),
+        ("0.1.1-rc.1", ["0.1.0", "0.2.0"], "lower than 0.2.0"),
+        ("0.1", ["0.1.0-dev.0"], "not a semantic version"),
+        ("01.0.0", ["0.1.0-dev.0"], "not a semantic version"),
+    ],
+)
+def test_a_version_that_would_move_a_tag_backwards_or_repeat_is_refused(
+    version: str, published: list[str], reason: str
+) -> None:
+    with pytest.raises(npm_dist_tag.Refused, match=re.escape(reason)):
+        npm_dist_tag.choose(version, published)
+
+
+def test_the_registry_answer_is_read_as_npm_prints_it() -> None:
+    """`npm view <package> versions --json` prints a string when the registry holds one version."""
+    assert npm_dist_tag.published_versions('"0.1.0-dev.0"') == ["0.1.0-dev.0"]
+    assert npm_dist_tag.published_versions('["0.1.0-dev.0", "0.1.0-rc.1"]') == [
+        "0.1.0-dev.0",
+        "0.1.0-rc.1",
+    ]
+    for broken in ("[]", "", "not json", "{}", "[1]", '["0.1"]'):
+        with pytest.raises(npm_dist_tag.Refused):
+            npm_dist_tag.published_versions(broken)
+
+
+def test_the_script_prints_one_tag_for_github_output_and_refuses_with_status_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert npm_dist_tag.main(["npm_dist_tag.py", "0.1.0-rc.1", '"0.1.0-dev.0"']) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "tag=latest\n"
+    assert "no final version is published" in captured.err
+    assert npm_dist_tag.main(["npm_dist_tag.py", "0.1.0-rc.1", "[]"]) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_no_npm_publish_in_this_repository_goes_without_an_explicit_tag() -> None:
+    """npm 11 refuses a prerelease without `--tag`, after the gate and the reviewer have said yes.
+
+    The release workflow published with `npm publish "$tarball" --access public`, and the runbook
+    told a person to type the same for the first, hand-made publish. Both were prereleases. So
+    every `npm publish` a workflow runs or a document tells someone to type must name its tag.
+    """
+    places = [ROOT / ".github" / "workflows" / "release.yml", ROOT / "docs" / "publishing.md"]
+    found = 0
+    for path in places:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if re.search(r"\bnpm publish\b", line) and not line.lstrip().startswith(("#", "//")):
+                if "`npm publish`" in line or "npm publish --provenance" in line:
+                    continue  # prose naming the command, not an invocation
+                found += 1
+                assert "--tag" in line, f"{path.relative_to(ROOT)}: {line.strip()}"
+    assert found >= 2, "the check found no invocation to look at, so it would pass on anything"
+
+
+def test_the_publish_job_takes_the_tag_the_build_job_chose_from_the_registry() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    build = workflow.split("  build-npm:", 1)[1].split("\n  publish-npm:", 1)[0]
+    publish = workflow.split("  publish-npm:", 1)[1]
+    assert "dist_tag: ${{ steps.dist_tag.outputs.tag }}" in build
+    assert 'npm view "@smart-data-engines/sde" versions --json' in build
+    assert 'python3 tools/npm_dist_tag.py "$VERSION" "$published" >> "$GITHUB_OUTPUT"' in build
+    assert publish.count("DIST_TAG: ${{ needs.build-npm.outputs.dist_tag }}") == 2
+    assert 'npm publish "$tarball" --access public --tag "$DIST_TAG"' in publish
+    assert '"dist-tags.$DIST_TAG"' in publish
