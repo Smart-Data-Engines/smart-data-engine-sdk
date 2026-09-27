@@ -939,6 +939,94 @@ def test_a_killed_operator_mid_build_resumes_the_same_build(engine: str, tmp_pat
         assert build.session().get("Event", {"id": 5000}) == {"id": 5000, "value": 5}
 
 
+def killed_mid_build(build: Build, run: Callable[..., Any]) -> tuple[bool, bool, str, str]:
+    """Kill the operator while its concurrent build waits for the held snapshot; leave the build.
+
+    Nothing here stands in for the server noticing the vanished client: it notices when it next
+    talks to it, which for a concurrent build is once the index is valid (measured, PostgreSQL
+    15.19). What is returned is the index as the killed build left it so far.
+    """
+    name = build.names[0]
+    worker = spawn(build, "native")
+    try:
+        expect_line(worker, "STARTED")
+        pid = wait_until_held(build, run, name)
+        kill(worker)
+    finally:
+        kill(worker)
+    assert run("SELECT state FROM pg_stat_activity WHERE pid = %s", [pid]) == [("active",)]
+    interrupted = pg_indexes(build.role)[name]
+    assert interrupted[0] is False
+    return interrupted
+
+
+def release_a_second_into(
+    step: str, release: Callable[[], None], run: Callable[..., Any], drops: list[bool]
+) -> Callable[[str], None]:
+    """At ``step``'s intent, release the snapshot a second later, noting any drop issued by then."""
+
+    def hook(seen: str) -> None:
+        if matches(seen, step):
+
+            def look_then_release() -> None:
+                try:
+                    drops.append(
+                        bool(
+                            run(
+                                "SELECT 1 FROM pg_stat_activity WHERE state = 'active' "
+                                "AND query LIKE 'DROP INDEX CONCURRENTLY%'"
+                            )
+                        )
+                    )
+                finally:
+                    release()
+
+            threading.Timer(1.0, look_then_release).start()
+
+    return hook
+
+
+def test_recovery_waits_for_a_killed_operators_build_and_keeps_what_it_finished(
+    tmp_path: Path,
+) -> None:
+    """The killed operator's build runs on in the server, and recovery waits for it to end.
+
+    PostgreSQL releases the table's session lock before a concurrent build's last transaction
+    commits. A drop waiting for that lock started in the window and failed with "tuple
+    concurrently updated" (SDK CI, 27 September 2026). Recovery that waits for the statement sends
+    no drop while it runs, and then keeps the index it finished: the same object, not a rebuild.
+    """
+    with initial("postgres", tmp_path) as build:
+        drops: list[bool] = []
+        with admin(build.role) as run, held(build, run) as release:
+            interrupted = killed_mid_build(build, run)
+            build.operator._after_step = release_a_second_into(
+                "index_build:intent", release, run, drops
+            )
+            receipt = build.operator.resume().as_record()
+            build.operator._after_step = quiet
+        assert drops == [False]
+        assert receipt["outcome"] == "built" and receipt["recovered"] is True
+        assert_built(build)
+        assert pg_indexes(build.role)[build.names[0]][3] == interrupted[3]
+
+
+def test_abandoning_waits_for_a_killed_operators_build_before_dropping_it(tmp_path: Path) -> None:
+    """Abandoned beside the killed operator's build that still runs: the drop waits for its end."""
+    with initial("postgres", tmp_path) as build:
+        drops: list[bool] = []
+        with admin(build.role) as run, held(build, run) as release:
+            killed_mid_build(build, run)
+            build.operator._after_step = release_a_second_into(
+                "index_drop:intent", release, run, drops
+            )
+            receipt = build.operator.abandon().as_record()
+            build.operator._after_step = quiet
+        assert drops == [False]
+        assert receipt["outcome"] == "abandoned"
+        assert_absent(build)
+
+
 @pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
 def test_a_killed_operator_between_watermark_and_publication_publishes_on_resume(
     engine: str, tmp_path: Path
@@ -961,16 +1049,23 @@ def test_a_killed_operator_between_watermark_and_publication_publishes_on_resume
 def test_the_build_budget_bounds_a_held_build_and_recovery_finishes_it(
     engine: str, tmp_path: Path
 ) -> None:
-    # The first build is held for good, so any budget ends it; the resume after the release has
-    # to fit a DROP and a CREATE INDEX CONCURRENTLY into the same signed budget, which 2.5 s did
-    # not always leave on a loaded two-core machine.
+    # The first build is held for good, so any budget ends it. On PostgreSQL the budget closes the
+    # operator's connection, not its CREATE INDEX CONCURRENTLY: that finishes in the server once
+    # the snapshot is released, and the resume waits for it and keeps the index. Resuming at once
+    # used to race that statement's commit: "tuple concurrently updated" (SDK CI, 27 September).
+    # The budget is still 6 s, not 2.5 s, which a rebuild did not always fit on a loaded two-core
+    # machine.
     with initial(engine, tmp_path, budget_ms=6000) as build:
+        interrupted = None
         with admin(build.role) as run, held(build, run) as release:
             started = time.monotonic()
             with pytest.raises(CutoverRecoveryRequired, match="build budget"):
                 build.operator.index(build.plan)
             assert time.monotonic() - started < 20
             operator = build.reconnect()
+            if engine == "postgres":
+                interrupted = pg_indexes(build.role)[build.names[0]]
+                assert interrupted[0] is False
             if engine == "clickhouse":
                 # Recovery is bounded by the same signed budget, not by the 30 s watchdog.
                 started = time.monotonic()
@@ -988,6 +1083,8 @@ def test_the_build_budget_bounds_a_held_build_and_recovery_finishes_it(
             receipt = operator.resume().as_record()
             assert receipt["outcome"] == "built" and receipt["recovered"] is True
             assert_built(build)
+            assert interrupted is not None
+            assert pg_indexes(build.role)[build.names[0]][3] == interrupted[3]
 
 
 def test_the_build_adds_its_own_history_and_leaves_the_rest_untouched(tmp_path: Path) -> None:

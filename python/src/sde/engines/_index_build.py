@@ -66,8 +66,33 @@ class NativeIndexBuild:
     def status(self, table: TableIdentity, index: Mapping[str, Any]) -> Status:
         return self.inspect(table, index)[0]
 
+    def settle(self, table: TableIdentity, index: Mapping[str, Any]) -> None:
+        """Wait until no statement still running in the server names this build's index.
+
+        On PostgreSQL a deadline or a killed operator ends the client, not its statement: the
+        server notices a vanished client only when it next talks to it, which for a concurrent
+        build is once the index is valid (measured, PostgreSQL 15.19). The build also releases the
+        table's session lock before its last transaction commits, so a drop waiting for that lock
+        started in the window and failed with "tuple concurrently updated". Read after the wait,
+        the catalogue says what that statement finished, which is kept, or left, which is dropped.
+
+        pg_stat_activity shows a statement's text to its own login, which is the one an earlier
+        run of this operator used. The wait is bounded by the operator's deadline. ClickHouse
+        needs none: its materialization is found again in ``system.mutations`` and waited for.
+        """
+        name = self.quote(self._check(table, index))
+        if self.dialect != "postgres":
+            return
+        while self.native.rows(
+            "SELECT 1 FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' "
+            "AND strpos(query, %s) > 0",
+            [name],
+        ):
+            time.sleep(POLL_SECONDS)
+
     def build(self, table: TableIdentity, index: Mapping[str, Any]) -> None:
         """Bring the index to ``ready`` without pausing the table's writers."""
+        self.settle(table, index)
         status, reason = self.inspect(table, index)
         if status == "foreign":
             raise MigrationRefused(reason)
@@ -105,7 +130,9 @@ class NativeIndexBuild:
         if self.dialect == "postgres":
             # IF EXISTS only for an index that goes while this drop waits for its lock: an earlier
             # drop whose client the budget closed runs on in the server until the transaction it
-            # waits for ends. What is left afterwards is read back below, as always.
+            # waits for ends. What is left afterwards is read back below, as always. No settle
+            # here, unlike a build: two drops of one index are serialized by the exclusive lock
+            # the first holds on it until it commits, so this one never meets a half-done drop.
             self.native.command(f"DROP INDEX CONCURRENTLY IF EXISTS {self.quote(name)}")
         else:
             for mutation_id, is_done, _failure in self._ch_mutations(table, name):
@@ -127,7 +154,8 @@ class NativeIndexBuild:
 
         A foreign object under the name means ours is not there: it is left as it is.
         """
-        status, _ = self.inspect(table, index)  # checks the name and the table first
+        self.settle(table, index)  # checks the name and the table first
+        status, _ = self.inspect(table, index)
         if status == "foreign":
             return
         name = str(index["name"])

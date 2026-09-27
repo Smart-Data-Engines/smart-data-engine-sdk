@@ -5,6 +5,15 @@ The two libraries are released separately, one tag per language: `python-v*` to 
 not make them agree. What does is the conformance suite and
 [`conformance/contract-version.txt`](conformance/contract-version.txt).
 
+## Unreleased
+
+**Fixed in `smart-data-engine-sdk`.** Resume and abandonment of a PostgreSQL in-place index build
+used to read the catalogue while the interrupted statement was still running. A deadline or a
+killed operator ends the client, not its `CREATE INDEX CONCURRENTLY`. Recovery then either raced
+that statement's commit and failed with "tuple concurrently updated", or dropped the index it was
+finishing. Both now wait for the statement to end, then keep what it finished
+([`docs/in-place-index.md`](docs/in-place-index.md)).
+
 ## `smart-data-engine-sdk` 0.1.0 and `@smart-data-engines/sde` 0.1.0
 
 Published on 27 September 2026, each tag on its first run of the release workflow, with attestations
