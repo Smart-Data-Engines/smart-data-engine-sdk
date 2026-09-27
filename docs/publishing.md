@@ -572,6 +572,19 @@ upload:
 | the artefact is missing a licence, `py.typed`, or `dist/` | All three have actually been missing, on 8 September, and none of it was visible from a green suite — the suite runs the source tree and a user runs the artefact. The worst would have put an importable-looking package with no code in it under our own scope. |
 | the artefact records a version other than the tag's | The gate agreeing with the manifest does not prove the *build* used it, and what a user installs is the number inside the file. |
 
+**The npm dist-tag is chosen, not defaulted.** npm 11 refuses a prerelease without `--tag`, and it
+does so in the publishing job, after the gate and the reviewer have both said yes. A fixed tag would
+be wrong in one direction or the other. So the build job reads the versions the registry holds, and
+`tools/npm_dist_tag.py` picks the tag:
+- a final version gets `latest`;
+- a prerelease gets `latest` while no final exists, because an unpinned `pip install` gets the
+  newest prerelease on PyPI too;
+- a prerelease gets `next` once a final exists.
+
+The script refuses a version already published, and any version lower than one already published,
+because it would move a tag backwards. The publishing job passes the tag explicitly and then checks
+that the registry shows the version under it.
+
 `tools/check_artefact.py` carries a control in the same run: one member that cannot exist must be
 reported absent. A checker stuck on "present" would find every required file and report a flawless
 package, which is the shape of good news worth distrusting.
@@ -598,10 +611,16 @@ package, which is the shape of good news worth distrusting.
 
    ```bash
    cd typescript
-   npm login                      # 2FA, the auth-and-writes mode from section 1
-   npm publish --access public    # prepack builds; this is the 0.1.0-dev.0 already on PyPI
+   npm login                                  # 2FA, the auth-and-writes mode from section 1
+   npm publish --access public --tag latest   # prepack builds; the 0.1.0-dev.0 already on PyPI
    npm view @smart-data-engines/sde version
    ```
+
+   **`--tag latest` is not optional.** npm 11 refuses to publish a prerelease without an explicit
+   tag: "You must specify a tag using --tag when publishing a prerelease version"
+   (`lib/commands/publish.js` in npm 11.15.0). It is `latest` because no final version exists, which
+   is what `tools/npm_dist_tag.py` would choose too. The first release candidate through the
+   workflow then takes `latest` from it.
 
    Then configure the publisher, either on the package page or in one command:
 

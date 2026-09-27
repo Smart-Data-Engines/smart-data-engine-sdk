@@ -134,6 +134,8 @@ jobs:
     needs: gate
     if: needs.gate.outputs.package == 'typescript'
     runs-on: ubuntu-latest
+    outputs:
+      dist_tag: ${{ steps.dist_tag.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
@@ -158,6 +160,21 @@ jobs:
           for tarball in typescript/*.tgz; do
             python3 tools/check_artefact.py npm "$tarball" "$VERSION"
           done
+
+      - name: The dist-tag, from what the registry already holds
+        # npm 11 refuses a prerelease without `--tag`, and a fixed tag is wrong one way or the
+        # other: `latest` would put every candidate over the last final, `next` would leave an
+        # unpinned install on the version published by hand. `tools/npm_dist_tag.py` decides, and
+        # it runs here because the publishing job must not check out this repository.
+        id: dist_tag
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Public metadata, no credential. A failed lookup stops the release: an empty list would
+          # let a prerelease take `latest` from a final.
+          published=$(npm view "@smart-data-engines/sde" versions --json)
+          python3 tools/npm_dist_tag.py "$VERSION" "$published" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -195,17 +212,32 @@ jobs:
 
       - name: Publish
         # No NODE_AUTH_TOKEN and no .npmrc. Trusted publishing generates the provenance attestation
-        # by itself, so `--provenance` is not passed: npm does it and it cannot be forgotten.
+        # by itself, so `--provenance` is not passed: npm does it and it cannot be forgotten. The tag
+        # is always explicit, chosen by the build job from the registry.
+        env:
+          DIST_TAG: ${{ needs.build-npm.outputs.dist_tag }}
         run: |
           set -euo pipefail
+          test -n "$DIST_TAG"
           tarball=$(ls ./*.tgz)
-          npm publish "$tarball" --access public
+          npm publish "$tarball" --access public --tag "$DIST_TAG"
 
-      - name: It is actually there
+      - name: It is actually there, under its tag
         env:
           VERSION: ${{ needs.gate.outputs.version }}
+          DIST_TAG: ${{ needs.build-npm.outputs.dist_tag }}
         run: |
           set -euo pipefail
-          published=$(npm view "@smart-data-engines/sde@$VERSION" version)
-          test "$published" = "$VERSION"
-          echo "@smart-data-engines/sde@$published is on the registry"
+          # Bounded: the registry's metadata can trail the publish by seconds, and a check that
+          # waits for ever is not a check.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            published=$(npm view "@smart-data-engines/sde@$VERSION" version 2>/dev/null || true)
+            tagged=$(npm view "@smart-data-engines/sde" "dist-tags.$DIST_TAG" 2>/dev/null || true)
+            if [ "$published" = "$VERSION" ] && [ "$tagged" = "$VERSION" ]; then
+              echo "@smart-data-engines/sde@$published is on the registry as $DIST_TAG"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "::error::after 10 attempts the registry shows version '$published' and $DIST_TAG '$tagged', not $VERSION"
+          exit 1
