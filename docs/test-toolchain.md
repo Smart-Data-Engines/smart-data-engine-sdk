@@ -9,6 +9,21 @@ Run tests with `npm test` or `npx vitest run`. The repository config disables th
 browser mode explicitly. It does not configure the public mockerPlugin/interceptorPlugin,
 a Vitest UI or a browser-test dev server. Do not expose these test tools as a service.
 
+A test gets 30 seconds unless it names its own budget. The number is a hang detector, not a
+performance claim. On 27 September vitest's default of 5 s failed four tests that take 0.4 to 1.7 s
+on an idle machine, while another session's build and tests held the load average at 8 on four
+threads:
+
+| Test | Idle | Loaded |
+|---|---|---|
+| `weather.test.ts`, an uncertain absent batch | 401 ms | over 5 s |
+| `frozen-verification.live.test.ts`, the request captured before metadata calls | 784 ms | over 5 s |
+| `frozen-verification.live.test.ts`, a target-only row | 1114 ms | over 5 s |
+| `generation-migration.live.test.ts`, historical epochs from PostgreSQL | 1724 ms | over 5 s |
+
+A bound a client depends on is asserted by its own test, as in `tests/failure.test.ts`, never by
+this setting.
+
 ## Audit record, 15 September 2026
 
 The previous Vitest 1.6 toolchain produced four npm audit findings: one critical, one high
