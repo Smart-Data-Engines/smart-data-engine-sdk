@@ -760,7 +760,9 @@ one needs the one before it.
    commit, `f4d57c4`, and each published on its first run. Then `main` moved to `0.1.1.dev0` and
    `0.1.1-dev.0` (§5.1). Two observations for the next release:
    - on npm the final took `latest` from the candidate, as `tools/npm_dist_tag.py` chose;
-   - straight after the upload, an unpinned `pip install smart-data-engine-sdk` in a fresh
-     environment still answered `0.1.0rc1`, from a cached index, and `0.1.0` about a minute later.
-     Verification right after a publish pins the version. An unpinned install is a separate check,
-     made later.
+   - the simple index lagged the upload. The wheel was uploaded at 20:49:10Z, and the JSON API
+     listed its files at 20:51:58Z. An unpinned `pip install --no-cache-dir` in a fresh
+     environment, started at 20:52:49Z, still resolved `0.1.0rc1`. At 20:53:29Z the simple index
+     listed `0.1.0`, and the same install resolved it. Verification right after a publish pins the
+     version. An unpinned install is a separate check, made once the simple index lists the
+     version.
