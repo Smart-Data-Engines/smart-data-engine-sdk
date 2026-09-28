@@ -5,9 +5,14 @@ The two libraries are released separately, one tag per language: `python-v*` to 
 not make them agree. What does is the conformance suite and
 [`conformance/contract-version.txt`](conformance/contract-version.txt).
 
-## Unreleased
+## `smart-data-engine-sdk` 0.1.1
 
-**Fixed in `smart-data-engine-sdk`.** Resume and abandonment of a PostgreSQL in-place index build
+A patch release of the Python library alone. `@smart-data-engines/sde` has no 0.1.1. Of what it
+ships, only the version field has changed since 0.1.0, to a development version. One tag per
+language keeps an otherwise identical package from going out under a new number (§5.1 of
+[`docs/publishing.md`](docs/publishing.md)).
+
+**Fixed.** Resume and abandonment of a PostgreSQL in-place index build
 used to read the catalogue while the interrupted statement was still running. A deadline or a
 killed operator ends the client, not its `CREATE INDEX CONCURRENTLY`. Recovery then either raced
 that statement's commit and failed with "tuple concurrently updated", or dropped the index it was
