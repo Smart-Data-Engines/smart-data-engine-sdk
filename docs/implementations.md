@@ -76,9 +76,11 @@ The tier in the table above is checked against the library's own `TIER` constant
 list that says one thing while the code says another is the failure requirement 17.6 exists to
 prevent, and prose does not fail.
 
-**`pip install smart-data-engine-sdk` installs `0.1.0`**, the first release, published by the release
-workflow on 27 September 2026 with attestations. The name was claimed on PyPI on 12 September with a
-development release, and the release candidate `0.1.0rc1` came through the same workflow earlier on
+**`pip install smart-data-engine-sdk` installs `0.1.1`**, a patch release of 28 September 2026 that
+fixes recovery of an interrupted PostgreSQL index build ([`CHANGELOG.md`](../CHANGELOG.md)).
+`0.1.0`, the first release, was published by the release workflow on 27 September with
+attestations, and so was `0.1.1`. The name was claimed on PyPI on 12 September with a development
+release, and the release candidate `0.1.0rc1` came through the same workflow earlier on
 27 September. **`npm install @smart-data-engines/sde` installs `0.1.0`**, published by the same
 workflow the same day, with provenance, after the candidate `0.1.0-rc.1`. The one version before
 those, `0.1.0-dev.0`, was published by hand. That publish was forced: npm configures trusted

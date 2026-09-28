@@ -569,7 +569,9 @@ and `0.1.1-dev.0` followed `0.1.0`. Otherwise every later commit builds an artef
 released number, and pip treats a local install of one as the release: `pip install
 smart-data-engine-sdk==0.1.0` answers "Requirement already satisfied" and fetches nothing. Measured
 on 27 September with a wheel of `f4d57c4` plus one comment: the comment stayed installed. The next
-release bumps from there to whatever number it takes.
+release bumps from there to whatever number it takes. A release of one language moves only that
+language on: after `python-v0.1.1`, Python went to `0.1.2.dev0` and TypeScript, not released,
+stayed on `0.1.1-dev.0`.
 
 **The tags are per-language, and the reason is not tidiness.** One shared tag would publish an
 artefact byte-identical to its predecessor, with an empty changelog, every time the *other* language
@@ -763,6 +765,16 @@ one needs the one before it.
    - the simple index lagged the upload. The wheel was uploaded at 20:49:10Z, and the JSON API
      listed its files at 20:51:58Z. An unpinned `pip install --no-cache-dir` in a fresh
      environment, started at 20:52:49Z, still resolved `0.1.0rc1`. At 20:53:29Z the simple index
-     listed `0.1.0`, and the same install resolved it. Verification right after a publish pins the
-     version. An unpinned install is a separate check, made once the simple index lists the
-     version.
+     listed `0.1.0`, and the same install resolved it.
+8. **The first patch release**, `python-v0.1.1` on `99c1ed7` (#101), was Python alone. Nothing the
+   npm package ships had changed, so npm kept `0.1.0` (§5.1). It published on its first run. One
+   more observation about the simple index:
+   - A *pinned* install waits for the index as well. The wheel was uploaded at 05:15:13Z. A
+     `pip install 'smart-data-engine-sdk==0.1.1' --no-cache-dir` started at 05:15:54Z answered "No
+     matching distribution found" and listed only `0.1.0rc1` and `0.1.0`. The simple index listed
+     `0.1.1` at 05:16:23Z.
+   - pip resolves a pinned version from that same index, so pinning is not the fix. Right after a
+     publish, the files are verified against the gate's artefacts through the JSON API, which
+     answered first both times. Installs, pinned or not, wait until the simple index lists the
+     version: `Accept: application/vnd.pypi.simple.v1+json`, which is served with
+     `cache-control: max-age=600`.
