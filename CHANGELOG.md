@@ -7,6 +7,8 @@ not make them agree. What does is the conformance suite and
 
 ## `smart-data-engine-sdk` 0.1.1
 
+Published on 28 September 2026, on the first run of `python-v0.1.1`, with attestations.
+
 A patch release of the Python library alone. `@smart-data-engines/sde` has no 0.1.1. Of what it
 ships, only the version field has changed since 0.1.0, to a development version. One tag per
 language keeps an otherwise identical package from going out under a new number (§5.1 of
