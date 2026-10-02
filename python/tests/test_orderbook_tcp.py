@@ -728,3 +728,34 @@ def test_the_shape_check_is_also_a_schema_validation_with_no_findings(
     assert tcp.validate_schema(layout, keys={"DepthLevel": sde.ORDERBOOK_KEY}) == ()
     with pytest.raises(EngineError, match="addresses rows by"):
         tcp.validate_schema(layout, keys={"DepthLevel": ("symbol",)})
+
+
+# ── The facts the control plane gives a model about this engine (sde/facts.py) ─────────────────
+
+
+def test_the_facts_name_what_a_scan_needs(tcp: OrderbookEngine, server: _Server) -> None:
+    needs = sde.engine_facts("orderbook")["scan_requires"]
+    book = {"symbol": "BTCUSDT", "exchange": "binance"}
+    assert sorted(needs["equal"]) == sorted(book)
+    for column in needs["equal"]:
+        partial = {name: value for name, value in book.items() if name != column}
+        with pytest.raises(QueryRefused):
+            tcp.select_rows(TABLE, _plan(where=partial, limit=1))
+    for column in needs["ranges"]:
+        tcp.select_rows(TABLE, _plan(where=book, bounds=sde.Range(column, 0, 10), limit=1))
+    unlisted = sorted(set(sde.ORDERBOOK_SHAPE) - set(needs["ranges"]) - set(needs["equal"]))
+    for column in unlisted:
+        with pytest.raises(QueryRefused):
+            tcp.select_rows(TABLE, _plan(where=book, bounds=sde.Range(column, 0, 3), limit=1))
+    assert needs["order"] == [name for name in sde.ORDERBOOK_KEY if name not in book]
+    with pytest.raises(QueryRefused, match="time order"):
+        tcp.select_rows(TABLE, _plan(where=book, order_by="price", limit=1))
+
+
+def test_the_facts_name_the_write_unit(tcp: OrderbookEngine, server: _Server) -> None:
+    assert sde.engine_facts("orderbook")["write_unit"] == "level_update"
+    with pytest.raises(EngineError, match="declares level 1"):
+        tcp.insert(TABLE, _row(level=1))
+    with pytest.raises(EngineError):
+        tcp.insert_many(TABLE, [_row(level=0), _row(level=2)])
+    assert server.batches == [] and server.inserts == []
