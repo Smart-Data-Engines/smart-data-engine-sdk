@@ -1,0 +1,6 @@
+{
+  "stage": "map",
+  "error": "MapError",
+  "match": "requires a positive safe write_epoch, or no write_epoch key",
+  "why": "Absence is the only way a group says it carries no write generation. A null would be a second spelling of the same claim, and a canonical document has one."
+}

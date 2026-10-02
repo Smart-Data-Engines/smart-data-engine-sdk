@@ -7,6 +7,7 @@ from time import monotonic_ns
 from typing import TYPE_CHECKING, Any
 
 from .errors import MigrationRefused
+from .generation import fenced_groups
 from .groups import colocation_groups
 from .local_cutover import CutoverRecoveryRequired
 from .physical import refuse_findings
@@ -21,8 +22,11 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
     from .engines._staging import NativeStaging, creation_marker
 
     plan.check_current(operator.active_map())
+    # Engines whose groups carry no write generation (contract 6) need no binding here.
     needed = {
-        material.engine for placed in plan.prepared.groups.values() for material in placed.all()
+        material.engine
+        for placed in fenced_groups(plan.prepared).values()
+        for material in placed.all()
     }
     if not needed <= set(operator.engines):
         raise MigrationRefused("staging is missing a configured local engine binding")
@@ -32,7 +36,7 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
     NativeStaging(operator.native[target.engine]).preflight(target.layout, keys)
     sources = []
     allowed: dict[str, set[str]] = {name: {WATERMARK_TABLE} for name in operator.engines}
-    for placed in plan.current.groups.values():
+    for placed in fenced_groups(plan.current).values():
         for material in placed.all():
             engine = operator.engines[material.engine]
             engine.validate_schema(material.layout)

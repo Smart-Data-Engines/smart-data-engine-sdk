@@ -1,0 +1,45 @@
+{
+  "contract": 6,
+  "project_id": "11111111111111111111111111111111",
+  "model_version": "6217c681f69d94c7",
+  "map_version": 2,
+  "groups": {
+    "Reading": {
+      "write_epoch": 2,
+      "source": {
+        "id": "Reading@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading"
+          },
+          "columns": {
+            "Reading": {
+              "id": "bigint",
+              "celsius": "integer"
+            }
+          }
+        }
+      }
+    },
+    "Tick": {
+      "source": {
+        "id": "Tick@book",
+        "engine": "book-1",
+        "layout": {
+          "tables": {
+            "Tick": "tick"
+          },
+          "columns": {
+            "Tick": {
+              "venue": "text",
+              "at": "bigint",
+              "price": "bigint"
+            }
+          }
+        }
+      },
+      "write_epoch": null
+    }
+  }
+}

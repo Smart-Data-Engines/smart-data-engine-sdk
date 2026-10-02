@@ -106,9 +106,15 @@ export interface LoadOptions {
   readonly requireSignature?: boolean
 }
 
-export const MAP_CONTRACT = 5
+export const MAP_CONTRACT = 6
 /**
  * The placement map's format version, which is not the IR's - see `CONTRACT`.
+ *
+ * Six since 2 October 2026, for a group that carries **no write generation** (`UNFENCED_SINCE`): a
+ * group whose engine cannot fence writes - our own orderbook engine - in a map whose other groups
+ * are generation-bearing. Contracts 4 and 5 require `write_epoch` in every group, so a contract-5
+ * library refuses such a document whole, which is the right answer: it would refuse to open a
+ * session on it anyway, since its engine has no fences to check.
  *
  * Five since 23 September 2026, for the physical design vocabulary (`physical.ts`): the order of a
  * key, a time partition, and index methods. An earlier library would ignore `"method": "brin"` and
@@ -118,6 +124,22 @@ export const MAP_CONTRACT = 5
  * Two because the map gained `also_write`, which a contract-1 library would ignore while a
  * contract-2 one honours it: the same document, two different sets of engines written to, and the
  * difference decided by which version happens to be installed. A loosening bumps the number.
+ */
+
+export const UNFENCED_SINCE = 6
+/**
+ * The contract from which a group's `write_epoch` may be **absent**, and what absence means.
+ *
+ * Absent: this group's writes carry no generation, because its engine cannot fence them. Not
+ * `null`, which is refused like any other value that is not a positive safe integer. Two rules come
+ * with it, one here and one in the session:
+ *
+ * - **The group has only a source.** A maintained copy and a fan-out exist only through a
+ *   migration, and a migration needs the generations this group does not carry, so `derived` and
+ *   `also_write` in such a group are refused at load.
+ * - **Its engine has no fences, and a generation-bearing group's engine has them.** A map names
+ *   engines by name and carries no dialect, so this is answerable only where the adapters are, and
+ *   `validateGenerations` refuses both mismatches when a session opens.
  */
 
 export const ALSO_WRITE_SINCE = 2
@@ -706,11 +728,23 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     }
 
     const writeEpoch = contract >= 4 ? placement['write_epoch'] : undefined
-    if (contract >= 4 && (typeof writeEpoch !== 'number' || !Number.isSafeInteger(writeEpoch) || writeEpoch < 1)) {
-      throw new MapError(`${where}: contract 4 requires a positive safe write_epoch`)
+    const unfenced = contract >= UNFENCED_SINCE && !('write_epoch' in placement)
+    if (contract >= 4 && !unfenced &&
+      (typeof writeEpoch !== 'number' || !Number.isSafeInteger(writeEpoch) || writeEpoch < 1)) {
+      throw new MapError(contract < UNFENCED_SINCE
+        ? `${where}: contract 4 requires a positive safe write_epoch`
+        : `${where}: contract ${contract} requires a positive safe write_epoch, or no ` +
+          'write_epoch key for a group whose engine cannot fence writes')
     }
     if (contract < 4 && 'write_epoch' in placement) {
       throw new MapError(`${where}: write_epoch requires placement map contract 4`)
+    }
+    if (unfenced && ('derived' in placement || 'also_write' in placement)) {
+      throw new MapError(
+        `${where}: a group without a write generation has only a source. A maintained copy and a ` +
+          'fan-out exist only through a migration, and a migration needs the write generations ' +
+          'this group does not carry.',
+      )
     }
     const sourceRead = readMaterialization(placement['source'], `${where}.source`, true, contract)
     const source: Materialization = {

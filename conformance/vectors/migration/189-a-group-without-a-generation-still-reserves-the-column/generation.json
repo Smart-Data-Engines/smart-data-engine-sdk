@@ -1,0 +1,33 @@
+{
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "actions": [
+    {
+      "op": "save",
+      "entity": "Tick",
+      "values": {
+        "venue": "XBT",
+        "at": 5,
+        "price": 7,
+        "__sde_write_epoch": 2
+      },
+      "error": "MigrationRefused",
+      "match": "reserved"
+    }
+  ],
+  "tables": {
+    "pg-main": {
+      "reading": []
+    },
+    "book-1": {
+      "tick": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111"
+}

@@ -1,0 +1,6 @@
+{
+  "stage": "map",
+  "error": "MapError",
+  "match": "contract 4 requires a positive safe write_epoch",
+  "why": "A group may leave its generation out from contract 6, so a contract-5 document without one is still refused. A contract-5 library would refuse this map whole, which is why the number moved."
+}

@@ -1,0 +1,6 @@
+{
+  "stage": "map",
+  "error": "MapError",
+  "match": "a group without a write generation has only a source",
+  "why": "A maintained copy and a fan-out exist only through a migration, and a migration cuts off old writers by the generation this group does not carry."
+}

@@ -168,8 +168,14 @@ class PlacementMap:
             ) from None
 
 
-MAP_CONTRACT = 5
+MAP_CONTRACT = 6
 """The placement map's format version, which is not the IR's - see :data:`sde.model.CONTRACT`.
+
+Six since 2 October 2026, for a group that carries **no write generation** (:data:`UNFENCED_SINCE`):
+a group whose engine cannot fence writes - our own orderbook engine - in a map whose other groups
+are generation-bearing. Contracts 4 and 5 require ``write_epoch`` in every group, so a contract-5
+library refuses such a document whole, which is the right answer: it would refuse to open a session
+on it anyway, since its engine has no fences to check.
 
 Five since 23 September 2026, for the physical design vocabulary (:mod:`sde.physical`): the order
 of a key, a time partition, and index methods. An earlier library would ignore ``"method": "brin"``
@@ -186,6 +192,23 @@ moved from `DateTime64(3)` to `DateTime64(6)` so that it matches PostgreSQL, whi
 this library believes the two dialects keep - and therefore whether it accepts a `also_write` map
 between them. A contract-2 library refuses a fan-out that a contract-3 one performs, on the same
 document, which is the loosening section 11 says bumps the number.
+"""
+
+UNFENCED_SINCE = 6
+"""The contract from which a group's ``write_epoch`` may be **absent**, and what absence means.
+
+Absent: this group's writes carry no generation, because its engine cannot fence them. Not ``null``,
+which is refused like any other value that is not a positive safe integer - a canonical document has
+no values that stand in for a missing key. Two rules come with it, one here and one in the session:
+
+- **The group has only a source.** A maintained copy and a fan-out exist only through a migration,
+  and a migration needs the generations this group does not carry, so ``derived`` and
+  ``also_write`` in such a group are refused at load. That is checkable from the document alone.
+- **Its engine has no fences, and a generation-bearing group's engine has them.** A map names
+  engines by name and carries no dialect, so this is answerable only where the adapters are, and
+  :func:`sde.generation.validate_generations` refuses both mismatches when a session opens.
+
+Contract 6 keeps everything contract 5 reads, physical design included.
 """
 
 ALSO_WRITE_SINCE = 2
@@ -693,10 +716,24 @@ def _parse_map(
         if not isinstance(body, dict) or "source" not in body:
             raise MapError(f"{where}: needs a 'source' materialisation")
         epoch = body.get("write_epoch") if contract >= 4 else None
-        if contract >= 4 and (type(epoch) is not int or not 1 <= epoch <= MAX_EPOCH):
-            raise MapError(f"{where}: contract 4 requires a positive safe write_epoch")
+        unfenced = contract >= UNFENCED_SINCE and "write_epoch" not in body
+        if contract >= 4 and not unfenced and (
+            type(epoch) is not int or not 1 <= epoch <= MAX_EPOCH
+        ):
+            raise MapError(
+                f"{where}: contract 4 requires a positive safe write_epoch"
+                if contract < UNFENCED_SINCE
+                else f"{where}: contract {contract} requires a positive safe write_epoch, or no "
+                f"write_epoch key for a group whose engine cannot fence writes"
+            )
         if contract < 4 and "write_epoch" in body:
             raise MapError(f"{where}: write_epoch requires placement map contract 4")
+        if unfenced and ("derived" in body or "also_write" in body):
+            raise MapError(
+                f"{where}: a group without a write generation has only a source. A maintained "
+                f"copy and a fan-out exist only through a migration, and a migration needs the "
+                f"write generations this group does not carry."
+            )
         source = _materialization(body["source"], f"{where}.source", source=True, contract=contract)
         derived = tuple(
             _materialization(d, f"{where}.derived[{i}]", source=False, contract=contract)

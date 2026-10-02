@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 from .capabilities import satisfies
 from .errors import EngineError, MigrationRefused
-from .generation import Fencable, check_map_project
+from .generation import Fencable, check_map_project, fenced_groups, refuse_a_fencing_engine
 from .groups import colocation_groups
 from .model import LogicalModel
 from .physical import refuse_findings
@@ -38,15 +38,23 @@ def prepare_schema(
     )
     if any(name not in engines for name in needed):
         raise MigrationRefused("schema preparation is missing an engine named by the map")
+    fenced = sorted(
+        {m.engine for spot in fenced_groups(placement).values() for m in spot.all()}
+    )
     if placement.contract >= 4 and any(
-        not callable(getattr(engines[name], "write_fence", None)) for name in needed
+        not callable(getattr(engines[name], "write_fence", None)) for name in fenced
     ):
-        raise MigrationRefused("schema preparation needs native write generations on every engine")
+        raise MigrationRefused(
+            "schema preparation needs native write generations on every engine of a group "
+            "that carries one"
+        )
     for group in colocation_groups(model):
         spot = placement.placement_of(group.name)
         keys = {name: model.entity(name).key for name in group.members}
         for material in spot.all():
             engine = engines[material.engine]
+            if placement.contract >= 4 and spot.write_epoch is None:
+                refuse_a_fencing_engine(group.name, material.engine, engine)
             # Provisioning is where a person can act on a physical difference, so here it refuses.
             refuse_findings(engine.ensure_schema(material.layout, keys=keys) or (), EngineError)
             if spot.write_epoch is not None:

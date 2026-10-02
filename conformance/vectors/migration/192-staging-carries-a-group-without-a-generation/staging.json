@@ -1,0 +1,12 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "stage_fingerprint": "1fb33fbe41cce4e3b20aa3e036c3b67ff239570ddca6a00d5749b3131800e706",
+  "verified_with": "staging",
+  "map_fingerprints": {
+    "current": "68d70199c728a489e130c84cbc5e58a51c36ddffa9b407ae3450249ac4b9a7d4",
+    "prepared": "2ec2615a3aaf42a0bd7c13985b17b721ce74964db8eb6a26957feb789749882c"
+  },
+  "tables": {
+    "Event": "sde_m_55555555555555555555555555555555_000001"
+  }
+}

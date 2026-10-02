@@ -1,0 +1,15 @@
+{
+  "engine_generations": {},
+  "actions": [],
+  "tables": {
+    "pg-main": {
+      "reading": []
+    },
+    "book-1": {
+      "tick": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111",
+  "error": "MigrationRefused",
+  "match": "engine pg-main does not implement write generations"
+}

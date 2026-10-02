@@ -1,0 +1,13 @@
+{
+  "pg-main": {
+    "tables": {
+      "reading": []
+    }
+  },
+  "book-1": {
+    "tables": {
+      "tick": []
+    },
+    "bookkeeping": false
+  }
+}

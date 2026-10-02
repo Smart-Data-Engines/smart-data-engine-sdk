@@ -16,7 +16,13 @@ from .canonical import canonical_bytes
 from .cutover import CutoverPlan, load_cutover_plan
 from .errors import EngineError, MigrationRefused
 from .frozen_verification import verify_frozen
-from .generation import EPOCH_COLUMN, GENERATIONS_SINCE, check_map_project, json_numbers
+from .generation import (
+    EPOCH_COLUMN,
+    GENERATIONS_SINCE,
+    check_map_project,
+    fenced_groups,
+    json_numbers,
+)
 from .groups import colocation_groups
 from .index_build import IndexPlan, IndexReceipt
 from .inspection import InspectionContext
@@ -209,7 +215,9 @@ class LocalCutover:
         import hashlib
 
         plan.check_current(self.active_map())
-        needed = {m.engine for g in plan.before.groups.values() for m in g.all()}
+        # Engines whose groups carry no write generation (contract 6) need no binding here.
+        fenced = fenced_groups(plan.before)
+        needed = {m.engine for g in fenced.values() for m in g.all()}
         if not needed <= set(self.engines):
             raise MigrationRefused("cutover is missing an operator binding")
         spot = plan.before.groups[plan.group]
@@ -237,7 +245,7 @@ class LocalCutover:
         all_tables: dict[str, list[str]] = {name: [] for name in self.engines}
         identities: list[tuple[str, str, TableIdentity]] = []
         target_id = plan.before.groups[plan.group].derived[0].id
-        for group, placement in plan.before.groups.items():
+        for group, placement in fenced.items():
             for material in placement.all():
                 keys = {entity: self.model.entity(entity).key for entity in material.layout.tables}
                 findings = self.engines[material.engine].validate_schema(material.layout, keys=keys)

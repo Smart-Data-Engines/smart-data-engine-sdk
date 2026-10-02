@@ -710,7 +710,12 @@ def test_signature_vector(case: Path) -> None:
     if "map_fingerprint" in expected:
         assert placement.fingerprint == expected["map_fingerprint"]
         assert placement.project_id == expected["project_id"]
-        epochs = {name: group.write_epoch for name, group in placement.groups.items()}
+        # Only the groups that carry a generation; contract 6 lets a group carry none.
+        epochs = {
+            name: group.write_epoch
+            for name, group in placement.groups.items()
+            if group.write_epoch is not None
+        }
         assert epochs == expected["write_epochs"]
 
 
@@ -1084,7 +1089,9 @@ def _drive_staging_vector(case: Path, model: sde.LogicalModel) -> None:
     wanted = _read_json(case / "staging.json")
     keys = {name: b64decode(value) for name, value in _read_json(case / "keys.json").items()}
     if "error" in wanted:
-        with pytest.raises(sde.MigrationRefused):
+        # Older staging refusals name only the class; a newer one also names the rule.
+        match = re.escape(wanted["match"]) if "match" in wanted else None
+        with pytest.raises(sde.MigrationRefused, match=match):
             sde.load_staging_plan(
                 raw, model=model, project_id=wanted["project_id"], public_key=keys
             )

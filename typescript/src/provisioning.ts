@@ -1,7 +1,7 @@
 /** Prepare client-owned physical schema before opening runtime connections. */
 import { compareCodePoints } from './canonical.js'
 import { EngineError, MigrationRefused } from './errors.js'
-import { checkMapProject, type Fencable } from './generation.js'
+import { checkMapProject, fencedGroups, refuseAFencingEngine, type Fencable } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
 import { refuseFindings } from './physical.js'
@@ -20,9 +20,12 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
   if (needed.some((name) => engines[name] === undefined)) {
     throw new MigrationRefused('schema preparation is missing an engine named by the map')
   }
-  if (placement.contract >= 4 && needed.some((name) =>
+  const fenced = [...new Set(Object.values(fencedGroups(placement)).flatMap((spot) =>
+    [spot.source, ...spot.derived].map((material) => material.engine)))].sort()
+  if (placement.contract >= 4 && fenced.some((name) =>
     typeof (engines[name] as Engine & Partial<Fencable>).writeFence !== 'function')) {
-    throw new MigrationRefused('schema preparation needs native write generations on every engine')
+    throw new MigrationRefused(
+      'schema preparation needs native write generations on every engine of a group that carries one')
   }
   for (const group of colocationGroups(model)) {
     const spot = placement.groups[group.name]!
@@ -30,6 +33,9 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
     for (const name of group.members) keys[name] = model.entities.find((entity) => entity.name === name)!.key
     for (const material of [spot.source, ...spot.derived]) {
       const engine = engines[material.engine] as Engine & Fencable
+      if (placement.contract >= 4 && spot.writeEpoch === undefined) {
+        refuseAFencingEngine(group.name, material.engine, engine)
+      }
       // Provisioning is where a person can act on a physical difference, so here it refuses.
       refuseFindings((await engine.ensureSchema(material.layout, { keys })) ?? [], EngineError)
       if (spot.writeEpoch !== undefined) {

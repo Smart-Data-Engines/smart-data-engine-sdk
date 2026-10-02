@@ -1,0 +1,22 @@
+[
+  {
+    "engine": "pg-main",
+    "call": "insert",
+    "table": "reading"
+  },
+  {
+    "engine": "book-1",
+    "call": "insert",
+    "table": "tick"
+  },
+  {
+    "engine": "book-1",
+    "call": "get",
+    "table": "tick"
+  },
+  {
+    "engine": "pg-main",
+    "call": "get",
+    "table": "reading"
+  }
+]

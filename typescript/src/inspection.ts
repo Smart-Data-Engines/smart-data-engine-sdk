@@ -1,6 +1,6 @@
 /** A local operator's data view, without runtime writes or watermark adoption. */
 import { MigrationRefused } from './errors.js'
-import { checkMapProject } from './generation.js'
+import { checkMapProject, fencedGroups } from './generation.js'
 import type { LogicalModel } from './model.js'
 import type { PlacementMap } from './placement.js'
 import type { Engine } from './session.js'
@@ -20,7 +20,8 @@ export class InspectionContext implements MigrationView {
     if (placement.contract < 4) throw new MigrationRefused('operator inspection requires a generation-bearing placement map')
     checkMapProject(placement, options.projectId)
     if (model.version !== placement.modelVersion) throw new MigrationRefused('operator inspection needs the model named by its map')
-    const missing = [...new Set(Object.values(placement.groups).flatMap((spot) =>
+    // A group without a write generation (contract 6) is out of every operator's reach.
+    const missing = [...new Set(Object.values(fencedGroups(placement)).flatMap((spot) =>
       [spot.source, ...spot.derived].map((material) => material.engine)))].filter((name) => engines[name] === undefined).sort()
     if (missing.length > 0) throw new MigrationRefused(`operator inspection is missing engines ${JSON.stringify(missing)}`)
     this.engines = Object.freeze({ ...engines })

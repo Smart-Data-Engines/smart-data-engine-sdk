@@ -191,6 +191,8 @@ def _load(
         raise MigrationRefused("cutover verification must require the signed before map")
     request.check_session(before, project_id=project_id, group=group)
     spot = before.placement_of(group)
+    # A group without a write generation (contract 6) never gets this far: the map refuses a copy
+    # in such a group, and a cutover needs one.
     if len(spot.derived) != 1 or spot.also_write != spot.derived:
         raise MigrationRefused("cutover requires exactly one derived copy maintained by fan-out")
     source, target = spot.source, spot.derived[0]

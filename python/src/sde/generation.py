@@ -10,7 +10,7 @@ from .errors import MigrationRefused
 if TYPE_CHECKING:
     from .model import LogicalModel
     from .physical import PhysicalFinding
-    from .placement import PhysicalLayout, PlacementMap
+    from .placement import GroupPlacement, PhysicalLayout, PlacementMap
     from .session import Engine
     from .write_fence import WriteFence
 
@@ -65,6 +65,34 @@ def check_map_project(placement: PlacementMap, project_id: str | None) -> str | 
     return project_id
 
 
+def fenced_groups(placement: PlacementMap) -> dict[str, GroupPlacement]:
+    """The groups whose writes carry a generation, by name: every group of a contract-4 or 5 map.
+
+    These are the only groups a local operator acts on. A contract-6 group without a generation is
+    on an engine that cannot fence writes, which no staging, cutover or index build can reach, so
+    an operator neither needs a binding for that engine nor reads its tables.
+    """
+    return {
+        name: spot
+        for name, spot in sorted(placement.groups.items())
+        if spot.write_epoch is not None
+    }
+
+
+def refuse_a_fencing_engine(group: str, engine_name: str, engine: object) -> None:
+    """Contract 6: a group without a write generation must be on an engine that cannot fence.
+
+    A map names its engines and carries no dialect, so this is answerable only where the adapters
+    are - when a session opens and when a schema is prepared.
+    """
+    if callable(getattr(engine, "write_fence", None)):
+        raise MigrationRefused(
+            f"group {group} carries no write generation on {engine_name}, which fences writes; "
+            f"a map we issue gives every group on such an engine a generation, so this one was "
+            f"built for another engine"
+        )
+
+
 def validate_generations(
     model: LogicalModel,
     placement: PlacementMap,
@@ -86,6 +114,17 @@ def validate_generations(
         raise MigrationRefused("the generation-bearing map names another session model")
     for name in sorted(placement.groups):
         spot = placement.groups[name]
+        if spot.write_epoch is None:
+            # Contract 6: a group with no write generation, on an engine that cannot fence. The
+            # map carries no dialect, so this is the first place either half can be checked.
+            for material in spot.all():
+                engine = engines[material.engine]
+                refuse_a_fencing_engine(name, material.engine, engine)
+                validate = getattr(engine, "validate_schema", None)
+                if callable(validate):
+                    keys = {entity: model.entity(entity).key for entity in material.layout.tables}
+                    findings.extend(validate(material.layout, keys=keys))
+            continue
         for material in spot.all():
             factory = getattr(engines[material.engine], "write_fence", None)
             if not callable(factory) or not callable(
@@ -118,10 +157,12 @@ def stamp_values(
     placement: PlacementMap, group: str, values: Mapping[str, Any]
 ) -> Mapping[str, Any]:
     epoch = placement.placement_of(group).write_epoch
+    # Reserved in every group of a generation-bearing map, including one without a generation of
+    # its own (contract 6): a read strips the column from every row such a map returns.
+    if placement.contract >= GENERATIONS_SINCE and EPOCH_COLUMN in values:
+        raise MigrationRefused("the write-epoch column is reserved for the SDK")
     if epoch is None:
         return values
-    if EPOCH_COLUMN in values:
-        raise MigrationRefused("the write-epoch column is reserved for the SDK")
     return {**values, EPOCH_COLUMN: epoch}
 
 

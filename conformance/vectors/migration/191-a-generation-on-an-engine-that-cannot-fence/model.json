@@ -1,0 +1,41 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "celsius",
+          "type": "int32"
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Tick",
+      "fields": [
+        {
+          "name": "at",
+          "type": "int64"
+        },
+        {
+          "name": "price",
+          "type": "int64"
+        },
+        {
+          "name": "venue",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "venue",
+        "at"
+      ]
+    }
+  ]
+}

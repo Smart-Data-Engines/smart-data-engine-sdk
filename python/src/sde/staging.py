@@ -16,7 +16,7 @@ from .generation import GENERATIONS_SINCE, MAX_EPOCH, check_map_project, json_nu
 from .groups import colocation_groups
 from .layout import group_columns
 from .model import LogicalModel
-from .placement import PlacementMap, _verify_signature, load_map
+from .placement import UNFENCED_SINCE, PlacementMap, _verify_signature, load_map
 
 STAGING_PROTOCOL = 1
 """A move: the fresh copy is prepared in another engine binding than the source."""
@@ -157,11 +157,25 @@ def _load(
     # the current map already relies on.
     if prepared.contract < current.contract:
         raise MigrationRefused("staging cannot lower the placement map contract")
+    # Contract 6 is for a group without a write generation, and no such group can appear through a
+    # staging: the staged group keeps its generation and every other group is carried byte for
+    # byte. So a prepared map reaches 6 only from a current map that is already 6.
+    if prepared.contract >= UNFENCED_SINCE > current.contract:
+        raise MigrationRefused(
+            f"staging cannot raise the placement map contract to {UNFENCED_SINCE}: a group without "
+            f"a write generation cannot appear through a staging"
+        )
     if current.map_version >= prepared.map_version:
         raise MigrationRefused("staging must allocate a newer prepared map")
     if group not in current.groups or set(current.groups) != set(prepared.groups):
         raise MigrationRefused("staging cannot add or remove colocation groups")
     old, new = current.groups[group], prepared.groups[group]
+    if old.write_epoch is None:
+        raise MigrationRefused(
+            f"group {group} carries no write generation, so it cannot be staged: a staging ends in "
+            f"a cutover that cuts off old writers by their generation, and its engine cannot "
+            f"fence writes"
+        )
     if old.derived or old.also_write:
         raise MigrationRefused("staging begins with a source-only group")
     if len(new.derived) != 1 or new.also_write != new.derived:
