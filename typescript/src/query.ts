@@ -45,12 +45,32 @@ export interface ReadOptions {
   readonly paginate?: boolean
 }
 
-export function queryEngine(engine: object): Queryable {
-  if (!('selectRows' in engine) || typeof engine.selectRows !== 'function' ||
-      !('countRows' in engine) || typeof engine.countRows !== 'function') {
-    throw new QueryRefused('this adapter does not support logical reads (selectRows/countRows)')
+/** The adapter, for a page of rows (`selectRows`). */
+export function queryEngine(engine: object): Pick<Queryable, 'selectRows'> {
+  if (!('selectRows' in engine) || typeof engine.selectRows !== 'function') {
+    throw new QueryRefused('this adapter does not support logical reads (selectRows)')
   }
-  return engine as Queryable
+  return engine as Pick<Queryable, 'selectRows'>
+}
+
+/**
+ * The adapter's own reason for not offering an operation, when it gives one.
+ *
+ * A string property rather than a method that throws, so the refusal comes before the operation is
+ * timed: a read an engine cannot answer is not an error of the engine, and recording it as one would
+ * put a failure into a window that no client call experienced. The reference reads the same names.
+ */
+function refusal(engine: object, property: string, otherwise: string): string {
+  const reason = (engine as Record<string, unknown>)[property]
+  return typeof reason === 'string' && reason !== '' ? reason : otherwise
+}
+
+/** The adapter, for a count (`countRows`), or its named refusal. */
+export function countEngine(engine: object): Pick<Queryable, 'countRows'> {
+  if (!('countRows' in engine) || typeof engine.countRows !== 'function') {
+    throw new QueryRefused(refusal(engine, 'countRefusal', 'this adapter does not support counts (countRows)'))
+  }
+  return engine as Pick<Queryable, 'countRows'>
 }
 
 function text(value: string): string {
@@ -269,7 +289,8 @@ export interface Summarizable {
 }
 export function summaryEngine(engine: object): Summarizable {
   if (!('summarizeRows' in engine) || typeof engine.summarizeRows !== 'function') {
-    throw new QueryRefused('this adapter does not support numeric summaries (summarizeRows)')
+    throw new QueryRefused(
+      refusal(engine, 'summaryRefusal', 'this adapter does not support numeric summaries (summarizeRows)'))
   }
   return engine as Summarizable
 }

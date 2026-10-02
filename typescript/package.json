@@ -38,6 +38,10 @@
       "types": "./dist/engines/clickhouse.d.ts",
       "import": "./dist/engines/clickhouse.js"
     },
+    "./engines/orderbook": {
+      "types": "./dist/engines/orderbook.d.ts",
+      "import": "./dist/engines/orderbook.js"
+    },
     "./testing": {
       "types": "./dist/testing/memory.d.ts",
       "import": "./dist/testing/memory.js"

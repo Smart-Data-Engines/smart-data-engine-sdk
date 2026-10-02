@@ -23,7 +23,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 | Library | Language | Tier | Hashing (§2a) | IR contract | Map contract | Engines |
 |---|---|---|---|---|---|---|
 | `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
-| `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `postgres` |
+| `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
@@ -109,9 +109,10 @@ SDE one.
 
 Generation-bearing Session maps (contract 4) are supported with PostgreSQL and ClickHouse native
 write fences. The orderbook engine has none, so from contract 6 its group carries no generation and
-never moves, while the other groups in the same map do. Both libraries read contract 6; only Python
-has an orderbook adapter so far, so a TypeScript session cannot open on a map with an orderbook
-group. Details: [generation-maps.md](generation-maps.md).
+never moves, while the other groups in the same map do. Both libraries read contract 6 and both
+have an orderbook adapter; the TypeScript one speaks the engine's TCP protocol only, because the
+in-process mode loads the engine's shared library. Details: [generation-maps.md](generation-maps.md)
+and [orderbook.md](orderbook.md).
 
 ## Not started
 

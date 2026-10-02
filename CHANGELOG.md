@@ -33,6 +33,23 @@ in-process and over TCP, plain and with credentials and TLS.
 - New vectors: `errors/074`-`077`, `migration/188`-`199`, `signature/015`. `errors/006` now declares
   contract 7.
 
+**The orderbook adapter in TypeScript** (`@smart-data-engines/sde/engines/orderbook`,
+[`docs/orderbook.md`](docs/orderbook.md)). It speaks the engine's TCP protocol itself, with
+credentials and TLS, and makes the reference's decisions with its refusals. That covers whole
+updates in batches of 64, pages in key order from an engine that answers in arrival order, the
+server's sequence number, and count and summarize refused by name. A TypeScript session can now
+open on a map with an orderbook group. As in Python, a count's or a summary's refusal now comes from
+the adapter's own reason (`countRefusal`, `summaryRefusal`), before the call is timed.
+
+**A trading firm's application on three engines** ([`examples/trading/`](examples/trading/)). Depth
+on the orderbook, orders and fills on PostgreSQL and trades on ClickHouse, from one contract-6 map.
+It provisions, writes and verifies every row from Python, and its TypeScript half reads what the
+Python half wrote. CI runs it on all three engines.
+
+**The orderbook engine pin is `9f55e84`**, past the engine's #198. A quantity of exactly 2^60 - 1
+used to read back as 2^64 - 1, and every later quantity in its segment as 0. Both libraries' slices
+now read the edges of the quantity range back.
+
 **`sde.engine_facts(dialect)`** (Python): what each engine can and cannot do, as data. It covers the
 schema (derived, or the fixed orderbook shape), transactions, the key, write generations, the write
 unit, the reads, and what an orderbook scan needs. The control plane gives it to the model that

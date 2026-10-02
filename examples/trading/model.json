@@ -1,0 +1,164 @@
+{
+  "atomic": [
+    [
+      "Fill",
+      "Order"
+    ]
+  ],
+  "cost_ceiling": {
+    "amount": "2000.00",
+    "currency": "EUR"
+  },
+  "entities": [
+    {
+      "name": "DepthLevel",
+      "fields": [
+        {
+          "name": "exchange",
+          "type": "string"
+        },
+        {
+          "name": "level",
+          "type": "int32"
+        },
+        {
+          "name": "order_count",
+          "type": "int32"
+        },
+        {
+          "name": "price",
+          "type": "int64"
+        },
+        {
+          "name": "quantity",
+          "type": "int64"
+        },
+        {
+          "name": "sequence_number",
+          "type": "int64",
+          "nullable": true
+        },
+        {
+          "name": "side",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "timestamp_ns",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "symbol",
+        "exchange",
+        "timestamp_ns",
+        "side",
+        "level"
+      ]
+    },
+    {
+      "name": "Fill",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "price",
+          "type": "decimal(18,8)"
+        },
+        {
+          "name": "qty",
+          "type": "decimal(18,8)"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "MarketTrade",
+      "fields": [
+        {
+          "name": "at_ns",
+          "type": "int64"
+        },
+        {
+          "name": "exchange",
+          "type": "string"
+        },
+        {
+          "name": "price",
+          "type": "int64"
+        },
+        {
+          "name": "quantity",
+          "type": "int64"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        },
+        {
+          "name": "trade_id",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "symbol",
+        "exchange",
+        "trade_id"
+      ]
+    },
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "account",
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "placed_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "price",
+          "type": "decimal(18,8)"
+        },
+        {
+          "name": "qty",
+          "type": "decimal(18,8)"
+        },
+        {
+          "name": "side",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "order",
+      "from": "Fill",
+      "to": "Order"
+    }
+  ]
+}
