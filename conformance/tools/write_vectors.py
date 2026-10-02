@@ -71,9 +71,9 @@ MAP: dict[str, Any] = {
     },
 }
 
-# Case 080's model: the same entity with its key declared nullable, which the loader accepts. A key
-# field is required whatever it declares, and only a nullable key can show that the rule is the key's
-# and not merely the field's.
+# Case 080's model: the same entity with its key declared nullable, which the loader accepts. A
+# key field is required whatever it declares, and only a nullable key can show that the rule is the
+# key's and not merely the field's.
 NULLABLE_KEY: dict[str, Any] = copy.deepcopy(MODEL)
 NULLABLE_KEY["entities"][0]["fields"][1]["nullable"] = True
 NULLABLE_KEY_VERSION = "480714072caaed67"  # its hash, under the same reasoning as MODEL_VERSION
