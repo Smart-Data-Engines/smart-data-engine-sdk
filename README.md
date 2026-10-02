@@ -344,3 +344,7 @@ Physical design (placement map contract 5): [key order, ClickHouse partitions an
 methods](docs/physical-design.md) - what a map can declare, how it renders, how the result is read
 back from each engine's catalogue, and why provisioning refuses a difference a running session only
 reports.
+
+A group on an engine that cannot fence writes (placement map contract 6):
+[generation-bearing maps](docs/generation-maps.md) - a group on the orderbook engine next to groups on
+PostgreSQL and ClickHouse, which still move, while it stays where it was placed.
