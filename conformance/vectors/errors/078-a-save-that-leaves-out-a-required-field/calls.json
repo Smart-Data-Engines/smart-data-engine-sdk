@@ -1,0 +1,7 @@
+[
+  {
+    "engine": "pg-main",
+    "call": "insert",
+    "table": "thing"
+  }
+]

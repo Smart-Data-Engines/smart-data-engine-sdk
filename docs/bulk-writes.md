@@ -34,6 +34,10 @@ Both SDKs export `MAX_BATCH_ROWS = 1000` and `MAX_BATCH_VALUES = 60000`. A batch
 - Every row has the same nonempty set of fields. The fields belong to the declared entity,
   including its derived foreign-key fields such as `parent_id`. Include the complete key and
   every non-nullable declared field. Omitted nullable fields retain the backend's default behavior.
+- No row gives a required field - one declared without `nullable`, or a key field - null (in
+  TypeScript, null or `undefined`). The whole batch is refused before anything is sent, naming the
+  row and the field: `row 1: Note.body is required and this row gives it null` (format contract
+  §8b, `errors/082`).
 
 The value limit is below PostgreSQL's [65535 query-parameter limit](https://www.postgresql.org/docs/15/limits.html).
 A local PostgreSQL 15 probe accepted 60000 and 65535 parameters and refused 65536. These are
@@ -43,7 +47,10 @@ The SDK never splits an oversized batch automatically.
 `BulkWriteRefused` is a `ModelPlanningError`: local batch validation or a required capability
 failed before any batch I/O. An empty batch checks the entity, session lifetime and transaction
 group, then returns without I/O, capability requirements or telemetry. Engine failures retain
-`EngineError`. The existing single-row `save` contract is unchanged.
+`EngineError`. The single-row `save` checks the same declaration since 2 October 2026: a field the
+entity does not declare, a required field left out and a required field given null are each refused
+with `ModelPlanningError` before any engine is called. Before that, PostgreSQL stored NULL in a
+required field and ClickHouse stored `0` or `""` for one left out (§8b).
 
 The SDK snapshots the batch and mutable values before its first I/O. Changing the caller's
 array, mappings, nested JSON, mutable dates or byte buffers afterward does not change a deferred

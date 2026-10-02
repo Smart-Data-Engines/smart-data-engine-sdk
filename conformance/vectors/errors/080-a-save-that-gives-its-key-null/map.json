@@ -1,0 +1,26 @@
+{
+  "contract": 3,
+  "model_version": "480714072caaed67",
+  "map_version": 1,
+  "groups": {
+    "Thing": {
+      "source": {
+        "id": "Thing@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Thing": "thing"
+          },
+          "columns": {
+            "Thing": {
+              "amount": "integer",
+              "id": "text",
+              "label": "text",
+              "note": "text"
+            }
+          }
+        }
+      }
+    }
+  }
+}

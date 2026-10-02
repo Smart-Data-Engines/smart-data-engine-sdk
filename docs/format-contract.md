@@ -1346,6 +1346,33 @@ gets half-applied: the reason for sorting was understood in one loop and read as
 other.
 
 
+## 8b. A row the model does not allow
+
+**A library refuses a write the model does not allow before it calls any engine.** A field is
+required when it is declared without `nullable` (§4a), and every key field is required whatever it
+declares. A row is refused when:
+
+1. it carries a field its entity does not declare: `<Entity> declares no field <field>`;
+2. it leaves out a required field: `<Entity>.<field> is required and this row leaves it out`;
+3. it gives a required field null: `<Entity>.<field> is required and this row gives it null`.
+
+The checks run in that order, and each names the first offending field in code-point order (§1).
+Names are the client's, with hashed identifiers too (§2a). A batch is refused whole, before anything
+is sent: its rows are checked in order and the message begins `row <i>: `, zero-based. A batch whose
+rows leave out a required field or carry an undeclared one keeps its earlier refusal, `batch fields
+must be declared and include the key and all non-nullable fields`. The write-generation column of
+§7d is not an undeclared field in a map with generations: it is refused there as reserved.
+
+Before 2 October 2026 neither library checked a row's values against the declaration, and the
+engines answered for it, each in its own way. Measured on PostgreSQL 15 and ClickHouse 24.8:
+- PostgreSQL stored NULL in a required field;
+- ClickHouse stored a value nobody wrote - `0` for an integer the row left out, `""` for a string;
+- ClickHouse's driver refused a null with a message about a column type.
+
+The same model meant different things on different engines, and moving a group would have changed
+which. `errors/078`-`082` pin the refusals at the `write` stage: a session is open on a valid map, one
+accepted write comes first, and `calls.json` holds that write and nothing of the refused one.
+
 ## 9. Capability tiers
 
 An implementation declares which tier it reaches, and "supported" has to mean the same thing across
@@ -1377,7 +1404,7 @@ There are ten kinds:
 | `model/` | a neutral declaration, and the exact IR bytes, version, groups and shapes it must produce |
 | `query/` | normalized bounded read plans and exact numeric-summary output bytes; query values remain local |
 | `routing/` | a map plus cases: `(shape, in a write transaction?, needs freshness?)` to materialisation |
-| `errors/` | which error, and at what stage it must be raised — `model`, `map` or `session` |
+| `errors/` | which error, and at what stage it must be raised — `model`, `map`, `session` or `write` |
 | `canonical/` | a value fed straight to the encoder, and the exact bytes |
 | `hashing/` | a salt, a model, and every digest §2a must derive from them |
 | `signature/` | which of the caller's keys verified a signed map, or which refusal it must raise |

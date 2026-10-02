@@ -25,6 +25,14 @@ entity with any other fields or types cannot be placed on this engine, and `defa
 with the whole expected shape in the message. `price` and `quantity` are integers in the engine's
 sub-unit; a model that declares `decimal(12,2)` is a different model.
 
+**Which fields may be null is part of the shape.** A model declares `sequence_number` nullable and no
+other field (`sde.ORDERBOOK_NULLABLE`). Over TCP the server assigns the number, so a model that made it
+required could not write at all. The engine stores no null anywhere else, so a model that allowed one
+in `quantity` could save a row the engine refuses. Both passed the shape check until 2 October 2026,
+on an engine a group can never be moved off. `default_layout` and `sde.fixed_schema_mismatch` refuse
+both now: the second takes `nullable`, which `sde.group_nullable` derives from the model, and the
+engine's facts list it as `fixed_shape.nullable` and `fixed_shape.assigned_by_server`.
+
 ## Connecting
 
 The engine's Python client is not on PyPI. Install it from the engine's repository: its `python/`
@@ -131,6 +139,13 @@ range. Bound it by time.
 **`Session.count` and `Session.summarize` are refused by name.** The engine's aggregates read the live
 book, not the stored rows, and a count here would be a full scan. The refusal comes before the call
 is timed, so a window does not record it as an engine error.
+
+**A row outside the model's types is refused, not returned.** The engine stores unsigned 64-bit
+times, quantities and sequence numbers, so it can hand back a value the model's `int64` cannot hold.
+No write of this library stores one. An engine before `c1f14c0` read a stored quantity of 2^60 - 1
+back as 2^64 - 1, and the adapter returned it. Now a time, quantity or sequence number above
+2^63 - 1, an order count above 2^31 - 1 or a level above 999 refuses the read, naming the field and
+the range but not the value, which is read data.
 
 **A book nothing has been written to** answers `OB_ERR_NOT_FOUND` over TCP, and reads as empty. In
 local mode the C API keeps no reason for a failed query, so an unknown book and a failure read alike.

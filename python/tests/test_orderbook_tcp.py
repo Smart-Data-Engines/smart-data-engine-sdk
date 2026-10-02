@@ -647,6 +647,45 @@ def test_a_book_nobody_has_written_to_is_empty_not_an_error(
                            "side": "bid", "level": 0}) is None
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quantity", (1 << 64) - 1),
+        ("quantity", 1 << 63),
+        ("timestamp_ns", 1 << 63),
+        ("order_count", 1 << 31),
+        ("level", 1000),
+        ("sequence_number", 1 << 63),
+    ],
+)
+def test_a_row_outside_the_models_types_is_refused_on_read(
+    tcp: OrderbookEngine, server: _Server, field: str, value: int
+) -> None:
+    """The engine stores unsigned 64-bit values; the model's ``int64`` cannot hold all of them.
+
+    Measured: an engine before ``c1f14c0`` read a stored quantity of 2^60 - 1 back as 2^64 - 1, and
+    this adapter returned it as an ``int64``. No write of this library stores such a value.
+    """
+    good = {"timestamp_ns": 1_000, "level": 0, "quantity": 5, "order_count": 1,
+            "sequence_number": 1}
+    server.rows.append(_Row("BTCUSDT", "binance", side="bid", price=10, **{**good, field: value}))
+    where = {"symbol": "BTCUSDT", "exchange": "binance"}
+    with pytest.raises(EngineError, match=f"whose {field} is outside") as raised:
+        tcp.select_rows(TABLE, _plan(where=where))
+    assert str(value) not in str(raised.value), "a value read back is data and stays out"
+
+
+def test_the_edges_of_the_models_types_read_back(tcp: OrderbookEngine, server: _Server) -> None:
+    """The control for the refusal above: the largest value of each type is a value, and an unknown
+    sequence number - the engine's 0 - is read as unknown, not refused."""
+    server.rows.append(_Row("BTCUSDT", "binance", (1 << 63) - 1, "bid", 999, -(1 << 63),
+                            (1 << 63) - 1, (1 << 31) - 1, 0))
+    rows = tcp.select_rows(TABLE, _plan(where={"symbol": "BTCUSDT", "exchange": "binance"}))
+    assert [(r["quantity"], r["order_count"], r["level"], r["sequence_number"]) for r in rows] == [
+        ((1 << 63) - 1, (1 << 31) - 1, 999, None)
+    ]
+
+
 def test_two_rows_with_one_key_in_a_page_are_refused_as_in_get(
     tcp: OrderbookEngine, server: _Server
 ) -> None:

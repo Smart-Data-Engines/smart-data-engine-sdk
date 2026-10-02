@@ -45,11 +45,18 @@ import { enumerateShapes, shapeId } from './shapes.js'
 import type { Recorder, StorageMeasurement, StorageSize, StorageUnavailable } from './telemetry.js'
 import type { WatermarkCheck } from './watermark.js'
 import { checkProjectId } from './verification.js'
-import { logicalRow, stampValues, validateGenerations } from './generation.js'
+import { EPOCH_COLUMN, GENERATIONS_SINCE, logicalRow, stampValues, validateGenerations } from './generation.js'
 import type { PhysicalFinding } from './physical.js'
 import { enforceForwardOnly } from './watermark.js'
 
 export type Row = Record<string, unknown>
+
+/** What a row of one entity must and may carry, computed once per session. */
+interface Admission {
+  readonly declared: ReadonlySet<string>
+  /** The fields a row must give a value, in code-point order: the order a refusal names. */
+  readonly required: readonly string[]
+}
 
 /** What an adapter has to offer for a session to route to it. */
 export interface Engine {
@@ -148,6 +155,7 @@ export class Session {
   private readonly groups: readonly Group[]
   private readonly reverseFields = new Map<string, Map<string, string>>()
   private readonly declared: readonly string[]
+  private readonly admission = new Map<string, Admission>()
   private inWriteTransaction = false
   private deferred: Deferred[] = []
   private readonly usage = new SessionUsage(this)
@@ -174,6 +182,20 @@ export class Session {
   ) {
     registerSession(this, this.usage)
     this.groups = colocationGroups(model)
+    // The write-generation column is left to `stampValues`, which refuses it in a map that has
+    // generations with its own reason: it is reserved, not merely undeclared.
+    const reserved = placement.contract >= GENERATIONS_SINCE ? [EPOCH_COLUMN] : []
+    for (const group of this.groups) {
+      const columns = groupColumns(model, group)
+      for (const entity of group.members) {
+        const spec = model.entities.find((e) => e.name === entity)!
+        const required = spec.fields
+          .filter((field) => !field.nullable || spec.key.includes(field.name))
+          .map((field) => field.name)
+          .sort(compareCodePoints)
+        this.admission.set(entity, { declared: new Set([...Object.keys(columns[entity] ?? {}), ...reserved]), required })
+      }
+    }
     for (const shape of enumerateShapes(model)) {
       this.shapes.set(shapeKey(shape.entity, shape.kind, shape.fields), shape)
     }
@@ -366,6 +388,38 @@ export class Session {
   }
 
   /**
+   * Refuse, before any engine is called, a row the model does not allow.
+   *
+   * A field declared without `nullable` and every key field must be present and neither null nor
+   * undefined, and a field the entity does not declare is refused by name. The engines would not
+   * agree on any of it, which is why the library decides: measured on 2 October 2026, PostgreSQL
+   * stored NULL in a required field and ClickHouse stored a value nobody wrote - 0 for an integer the
+   * row left out, '' for a string - and neither raised. The same model meant two things, and moving
+   * a group would have changed which. Shared vectors: `errors/078`-`082`, contract section 8b.
+   */
+  private admit(entity: string, target: string, values: Readonly<Row>): void {
+    const admission = this.admission.get(target)!
+    const names = Object.keys(values)
+    const unknown = names.filter((name) => !admission.declared.has(name)).sort(compareCodePoints)
+    if (unknown.length > 0) {
+      throw new ModelPlanningError(`${entity} declares no field ${this.clientNames(entity, unknown.slice(0, 1))[0]}`)
+    }
+    const absent = admission.required.find((name) => !Object.hasOwn(values, name))
+    if (absent !== undefined) {
+      throw new ModelPlanningError(`${entity}.${this.clientNames(entity, [absent])[0]} is required and this row leaves it out`)
+    }
+    for (const name of admission.required) {
+      const value = values[name]
+      if (value === null || value === undefined) {
+        throw new ModelPlanningError(
+          `${entity}.${this.clientNames(entity, [name])[0]} is required and this row gives it ` +
+            (value === undefined ? 'undefined' : 'null'),
+        )
+      }
+    }
+  }
+
+  /**
    * The adapter registered under this name, refusing an unknown one.
    *
    * Exposed for the migration module, which needs all three of what a session holds and is
@@ -477,6 +531,7 @@ export class Session {
       const target = this.entityName(entity)
       const body = this.fieldsIn(entity, values)
       const shape = this.shapeFor(target, 'write')
+      this.admit(entity, target, body)
       const [engine, materialization] = this.target(shape, false)
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()
@@ -581,6 +636,18 @@ export class Session {
       const required = new Set([...spec.fields.filter((field) => !field.nullable).map((field) => field.name), ...spec.key])
       if (fields.some((field) => !declared.has(field)) || [...required].some((field) => !fields.includes(field))) {
         throw new BulkWriteRefused('batch fields must be declared and include the key and all non-nullable fields')
+      }
+      const needed = this.admission.get(target)!.required
+      for (const [index, row] of translated.entries()) {
+        for (const name of needed) {
+          const value = row[name]
+          if (value === null || value === undefined) {
+            throw new BulkWriteRefused(
+              `row ${index}: ${entity}.${this.clientNames(entity, [name])[0]} is required and this row gives it ` +
+                (value === undefined ? 'undefined' : 'null'),
+            )
+          }
+        }
       }
       const writer = bulkWriter(engine)
       for (const copy of spot.alsoWrite) bulkWriter(this.engines[copy.engine] as Engine)

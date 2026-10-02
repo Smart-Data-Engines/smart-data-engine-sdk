@@ -1,0 +1,27 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Thing\\.amount is required and this row leaves it out",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "id": "t-2",
+        "label": "second",
+        "note": null
+      }
+    }
+  },
+  "why": "The case that wrote a value nobody chose. ClickHouse filled the missing integer with 0 and returned it on every read; PostgreSQL stored NULL in a column the model says never holds one. Nothing raised in either, so the refusal has to come from the library, before the engine, and the same in every engine."
+}

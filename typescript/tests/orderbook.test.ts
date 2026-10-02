@@ -418,6 +418,38 @@ describe('reading', () => {
     await engine.close()
   })
 
+  // The engine stores unsigned 64-bit values and the model's int64 cannot hold all of them. Measured:
+  // an engine before c1f14c0 read a stored quantity of 2^60 - 1 back as 2^64 - 1, and this adapter
+  // returned it. No write of this library stores such a value.
+  it('refuses a row outside the model\'s types on read, and reads the edges of those types', async () => {
+    const engine = await connected()
+    const good = { exchange: 'binance', timestamp: 1_000n, side: 0 as const, level: 0, price: 10n, quantity: 5n, count: 1n, sequence: 1n }
+    const cases: [string, Partial<StoredRow>][] = [
+      ['quantity', { quantity: (1n << 64n) - 1n }],
+      ['quantity', { quantity: 1n << 63n }],
+      ['timestamp_ns', { timestamp: 1n << 63n }],
+      ['order_count', { count: 1n << 31n }],
+      ['level', { level: 1000 }],
+      ['sequence_number', { sequence: 1n << 63n }],
+    ]
+    for (const [index, [field, change]] of cases.entries()) {
+      const symbol = `BAD${index}`
+      server.rows.push({ ...good, ...change, symbol })
+      const refused = await engine.selectRows(ORDERBOOK_TABLE, plan({ where: { symbol, exchange: 'binance' }, limit: 5 }))
+        .then(() => null, (error: unknown) => error as Error)
+      expect(refused?.message, field).toContain(`whose ${field} is outside`)
+      const value = String(Object.values(change)[0])
+      expect(refused?.message, 'a value read back is data and stays out').not.toContain(value)
+    }
+    // The control: the largest value of each type is a value, and the engine's 0 is an unknown number.
+    server.rows.push({ symbol: 'EDGE', exchange: 'binance', timestamp: (1n << 63n) - 1n, side: 0, level: 999, price: -(1n << 63n), quantity: (1n << 63n) - 1n, count: (1n << 31n) - 1n, sequence: 0n })
+    const rows = await engine.selectRows(ORDERBOOK_TABLE, plan({ where: { symbol: 'EDGE', exchange: 'binance' }, limit: 5 }))
+    expect(rows.map((row) => [row['quantity'], row['order_count'], row['level'], row['sequence_number']])).toEqual([
+      [(1n << 63n) - 1n, 2147483647, 999, null],
+    ])
+    await engine.close()
+  })
+
   it('splits a window too large and refuses one instant that holds more than the cap', async () => {
     OrderbookEngine.limits = { chunkRows: 4, firstWindowNs: 1_000n }
     const engine = await connected()

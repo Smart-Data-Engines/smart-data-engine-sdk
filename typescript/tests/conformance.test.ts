@@ -55,6 +55,10 @@ import {
   windowRecord,
 } from '../src/index.js'
 import {
+  BulkWriteRefused,
+  ModelPlanningError,
+} from '../src/errors.js'
+import {
   backfill,
   backfillRecord,
   compareCodePoints,
@@ -191,11 +195,20 @@ describe('routing vectors', () => {
 // One mapping from the name a vector writes to the class, shared by every family, so that a
 // family added later cannot introduce a second spelling of "which error".
 const ERRORS: Record<string, new (...args: never[]) => Error> = {
+  BulkWriteRefused,
   DeclarationError,
   EngineError,
   MapError,
   MapRolledBack,
   MigrationRefused,
+  ModelPlanningError,
+}
+
+interface WriteStep {
+  readonly operation: 'save' | 'save_many'
+  readonly entity: string
+  readonly values?: Readonly<Record<string, unknown>>
+  readonly rows?: readonly Readonly<Record<string, unknown>>[]
 }
 
 interface ErrorExpectation {
@@ -203,6 +216,12 @@ interface ErrorExpectation {
   readonly stage: string
   readonly match: string
   readonly load?: { readonly require_signature?: boolean; readonly public_key?: string }
+  readonly write?: { readonly accepted: WriteStep; readonly refused: WriteStep }
+}
+
+async function write(session: Session, step: WriteStep): Promise<void> {
+  if (step.operation === 'save') await session.save(step.entity, step.values!)
+  else await session.saveMany(step.entity, step.rows!)
 }
 
 describe('error vectors', () => {
@@ -217,7 +236,7 @@ describe('error vectors', () => {
       // runs, rather than when the model is built, has a different bug that a type-only assertion
       // cannot see.
       expect(
-        ['model', 'map', 'session'],
+        ['model', 'map', 'session', 'write'],
         `${name} expects the error at stage '${expected.stage}', which this runner does not know ` +
           'how to exercise yet. Failing rather than skipping: a stage nobody runs is a rule ' +
           'nobody checks.',
@@ -245,6 +264,32 @@ describe('error vectors', () => {
         requireSignature: load.require_signature === true,
       }
       if (load.public_key) options.publicKey = Buffer.from(load.public_key, 'base64')
+
+      if (expected.stage === 'write') {
+        // A row the model does not allow, refused before any engine is called. One accepted write
+        // comes first and is the control: the engine records what it receives, so the empty rest
+        // of `calls.json` says the refused row reached nothing.
+        const map = loadMap(raw, options)
+        const engines = enginesFrom(readJson(join(dir, 'engines.json')))
+        const session = await Session.open(model, map, engines)
+        await write(session, expected.write!.accepted)
+        const refused = await write(session, expected.write!.refused).then(
+          () => undefined,
+          (error: unknown) => error,
+        )
+        expect(refused, `${name}: the row was accepted`).toBeInstanceOf(Error)
+        expect((refused as Error).message).toMatch(new RegExp(expected.match))
+        // The class exactly: BulkWriteRefused is a ModelPlanningError, and a vector naming the
+        // parent must not be satisfied by the child, or the reverse.
+        expect((refused as Error).constructor, `${name}: raised ${(refused as Error).name}`).toBe(ctor)
+        const first = Object.values(engines)[0] as MemoryEngine
+        expect(
+          first.recorded.calls,
+          'the refusal is right and it came too late. A row the model does not allow must not reach ' +
+            'an engine, which would store it or answer in its own words.',
+        ).toEqual(readJson(join(dir, 'calls.json')))
+        return
+      }
 
       if (expected.stage !== 'session') {
         expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match))
@@ -274,7 +319,7 @@ describe('error vectors', () => {
   }
 })
 
-it('covers all three error stages with actual vectors', () => {
+it('covers every error stage with actual vectors', () => {
   // A stage the runner supports and no vector uses is a rule that reads as covered. Before the map
   // stage existed, every refusal in section 7 of the contract was checked in Python's own tests and
   // in nothing shared - which is how one message came to render a literal '{CONTRACT}' in Python
@@ -286,7 +331,9 @@ it('covers all three error stages with actual vectors', () => {
       (name) => readJson<ErrorExpectation>(join(VECTORS, 'errors', name, 'expected.json')).stage,
     ),
   )
-  expect([...stages].sort()).toEqual(['map', 'model', 'session'])
+  // The write stage is the fourth: a row the model does not allow, which until 2 October 2026 each
+  // engine answered its own way - PostgreSQL stored NULL, ClickHouse a default nobody wrote.
+  expect([...stages].sort()).toEqual(['map', 'model', 'session', 'write'])
 })
 
 

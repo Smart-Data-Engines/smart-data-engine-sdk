@@ -118,7 +118,7 @@ def test_the_engine_sees_only_digests() -> None:
 
 def test_a_field_the_model_does_not_declare_is_refused_by_its_own_name() -> None:
     session, _, _ = _session()
-    with pytest.raises(ModelPlanningError, match="has no field 'nickname'"):
+    with pytest.raises(ModelPlanningError, match="User declares no field nickname"):
         session.save("User", {"id": uuid.uuid4(), "nickname": "Ada"})
 
 

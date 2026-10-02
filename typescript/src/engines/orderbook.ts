@@ -74,6 +74,30 @@ const LAST_INSTANT = (1n << 64n) - 1n
 /** What the engine sends for a row whose sequence number it does not have. Read as `null`. */
 const UNKNOWN_SEQUENCE = 0n
 
+/**
+ * What a row read back may hold: the model's types, which are what this library writes.
+ *
+ * The engine stores unsigned 64-bit times, quantities and numbers, so it can hand back a value the
+ * model's int64 cannot hold. No write of this library stores one. Measured: an engine before
+ * c1f14c0 read a stored quantity of 2^60 - 1 back as 2^64 - 1, and this adapter returned it.
+ */
+const READ_BOUNDS: readonly (readonly [string, bigint, bigint])[] = [
+  ['timestamp_ns', 0n, MAX_TIMESTAMP_NS],
+  ['level', 0n, BigInt(MAX_LEVEL)],
+  ['quantity', 0n, MAX_QUANTITY],
+  ['order_count', 0n, MAX_ORDER_COUNT],
+  ['sequence_number', 1n, (1n << 63n) - 1n],
+]
+
+function outOfRange(field: string, low: bigint, high: bigint): string {
+  // The value itself is left out: it is read data, and it is not what this library wrote.
+  return (
+    `the engine returned a row whose ${field} is outside ${low} to ${high}, the range of the model's type. ` +
+    'No write of this library stores such a value, so the row is not one it wrote, and it is refused rather ' +
+    'than returned. An engine before c1f14c0 read a stored quantity of 2^60 - 1 back as 2^64 - 1.'
+  )
+}
+
 /** The columns of a `SELECT *` answer, in order. Read by position, so checked against the header. */
 const QUERY_COLUMNS = ['timestamp_ns', 'price', 'quantity', 'order_count', 'side', 'level', 'sequence_number']
 
@@ -759,7 +783,7 @@ export class OrderbookEngine {
 
   private static row(symbol: string, exchange: string, fields: readonly string[]): Row {
     const sequence = fields.length > 6 ? BigInt(fields[6]!) : UNKNOWN_SEQUENCE
-    return {
+    const row: Row = {
       symbol,
       exchange,
       timestamp_ns: BigInt(fields[0]!),
@@ -771,6 +795,13 @@ export class OrderbookEngine {
       // Unknown, not zero: the engine's own numbering starts at 1.
       sequence_number: sequence === UNKNOWN_SEQUENCE ? null : sequence,
     }
+    for (const [name, low, high] of READ_BOUNDS) {
+      const value = row[name]
+      if (value === null) continue
+      const number = BigInt(value as bigint | number)
+      if (number < low || number > high) throw new EngineError(outOfRange(name, low, high))
+    }
+    return row
   }
 
   private static duplicate(table: string, key: Readonly<Row>, count: number): string {

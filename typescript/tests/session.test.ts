@@ -146,11 +146,11 @@ describe('the hashing boundary', () => {
     const session = await Session.open(hashed, placement, { 'pg-main': engine }, { names })
 
     const id = '11111111-1111-1111-1111-111111111111'
-    await session.save('Reading', { id })
+    await session.save('Reading', { id, celsius: 21 })
     const back = await session.get('Reading', { id })
 
     // The client's vocabulary on the way in and on the way out.
-    expect(back).toEqual({ id })
+    expect(back).toEqual({ id, celsius: 21 })
     // And the digests underneath: the table is named after the hashed entity, and the column after
     // the hashed field. Nothing in the client's source has to know either.
     const table = Object.keys(engine.tables).find((name) => engine.tables[name]?.length === 1)
@@ -158,7 +158,41 @@ describe('the hashing boundary', () => {
     expect(table).not.toBe('reading')
     const stored = engine.tables[table as string]?.[0] as Record<string, unknown>
     expect(Object.keys(stored)).not.toContain('id')
-    expect(Object.values(stored)).toEqual([id])
+    expect(Object.values(stored)).toEqual([id, 21])
+  })
+
+  it('refuses a row the model does not allow in the client vocabulary, before the engine', async () => {
+    const built = model()
+    const { model: hashed, names } = hashIdentifiers(built, randomBytes(32))
+    const placement = loadMap(mapFor(hashed), { model: hashed })
+    const engine = new MemoryEngine()
+    const session = await Session.open(hashed, placement, { 'pg-main': engine }, { names })
+    const id = '11111111-1111-1111-1111-111111111111'
+    await expect(session.save('Reading', { id, celsius: 1, nickname: 'x' })).rejects.toThrow('Reading declares no field nickname')
+    await expect(session.save('Reading', { id })).rejects.toThrow('Reading.celsius is required and this row leaves it out')
+    await expect(session.save('Reading', { id, celsius: null })).rejects.toThrow('Reading.celsius is required and this row gives it null')
+    expect(engine.recorded.calls.filter((call) => String(call['call']).startsWith('insert'))).toEqual([])
+  })
+})
+
+describe('a row the model does not allow', () => {
+  it('is refused before any engine is called, undefined as null, in a save and in a batch', async () => {
+    // Contract section 8b and errors/078-082 pin null; undefined is this language's own way of
+    // leaving a value out, and a driver would send it as NULL or as nothing.
+    const built = model()
+    const engine = new MemoryEngine()
+    const session = await Session.open(built, loadMap(mapFor(built), { model: built }), { 'pg-main': engine })
+    const id = '22222222-2222-2222-2222-222222222222'
+    await expect(session.save('Reading', { id, celsius: undefined })).rejects.toThrow(
+      new ModelPlanningError('Reading.celsius is required and this row gives it undefined'),
+    )
+    await expect(session.saveMany('Note', [{ id, body: 'kept' }, { id: '33333333-3333-3333-3333-333333333333', body: undefined }]))
+      .rejects.toThrow('row 1: Note.body is required and this row gives it undefined')
+    expect(engine.recorded.calls).toEqual([])
+    // The control: the same rows complete are written, and a relation's column may stay out.
+    await session.save('Reading', { id, celsius: 3 })
+    await session.saveMany('Note', [{ id, body: 'kept' }])
+    expect(engine.recorded.calls.map((call) => call['call'])).toEqual(['insert', 'insert_many'])
   })
 
   it('puts a refusal back into the client vocabulary too', async () => {
