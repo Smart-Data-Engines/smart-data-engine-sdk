@@ -267,6 +267,108 @@ jobs:
             ' "$slice"
           done
 
+  orderbook:
+    # Our own engine, which no package index serves: its Python client lives in its repository and
+    # its shared library is built from C++. So this job builds the server and the library from the
+    # commit `.github/orderbook-engine.txt` pins, starts two servers - one plain, one with client
+    # authentication and TLS - and runs every orderbook slice in-process and over TCP. Until this
+    # job existed those slices skipped everywhere but one laptop, and the TCP path shipped broken
+    # for the engine of its own day: the adapter sent a sequence number the server refuses.
+    #
+    # Moving the pin is an ordinary pull request, and this job is what says the adapter still
+    # describes the engine it names.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: the pinned engine commit
+        id: engine
+        run: |
+          sha="$(tr -d '[:space:]' < .github/orderbook-engine.txt)"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "the pin is not a full commit SHA: $sha"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: Smart-Data-Engines/low-cost-and-low-latency-orderbook-dbengine
+          ref: ${{ steps.engine.outputs.sha }}
+          path: engine
+          persist-credentials: false
+
+      - name: build the server and the shared library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config liblz4-dev libcurl4-openssl-dev
+          cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOB_BUILD_TESTS=OFF
+          cmake --build engine/build --target ob_tcp_server orderbook_shared
+          engine/build/ob_tcp_server --version
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: install
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev,signed]'
+
+      - name: start a plain server and one with credentials and TLS
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/orderbook"
+          mkdir -p "$work/plain" "$work/secure"
+          cd "$work"
+          # Every extension Python 3.13+ verifies by default (VERIFY_X509_STRICT): a CA without
+          # keyUsage, or a leaf without an authority key identifier, fails the handshake there and
+          # passes on 3.12 - the first run of this job failed exactly so.
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout ca.key \
+            -out ca.pem -days 1 -subj "/CN=sde-ci-ca" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+          openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout server.key \
+            -out server.csr -subj "/CN=localhost" 2>/dev/null
+          printf '%s\n' 'basicConstraints=critical,CA:FALSE' 'keyUsage=critical,digitalSignature' \
+            'extendedKeyUsage=serverAuth' 'subjectAltName=DNS:localhost' \
+            'subjectKeyIdentifier=hash' 'authorityKeyIdentifier=keyid,issuer' > ext.cnf
+          openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
+            -out server.pem -days 1 -extfile ext.cnf 2>/dev/null
+          chmod 600 server.key
+          secret="$(openssl rand -hex 24)"
+          echo "::add-mask::$secret"
+          printf 'sde-ci %s\n' "$secret" > secrets
+          chmod 600 secrets
+          server="$GITHUB_WORKSPACE/engine/build/ob_tcp_server"
+          "$server" --port 59090 --data-dir "$work/plain" --profile eco --metrics-port 0 \
+            > "$work/plain.log" 2>&1 &
+          "$server" --port 59091 --data-dir "$work/secure" --profile eco --metrics-port 0 \
+            --auth-secret-file "$work/secrets" --tls-client --tls-cert-file "$work/server.pem" \
+            --tls-key-file "$work/server.key" > "$work/secure.log" 2>&1 &
+          for port in 59090 59091; do
+            for attempt in $(seq 1 50); do
+              if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then break; fi
+              sleep 0.2
+            done
+            (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null \
+              || { echo "no server on $port"; cat "$work"/*.log; exit 1; }
+          done
+          dsn="orderbook://sde-ci:$secret@localhost:59091?tls=on&ca=$work/ca.pem"
+          echo "SDE_ORDERBOOK_SECURE_DSN=$dsn" >> "$GITHUB_ENV"
+
+      - name: the orderbook slices, in-process and over TCP, plain and with TLS
+        working-directory: python
+        env:
+          SDE_ORDERBOOK: "1"
+          SDE_ORDERBOOK_TCP: 127.0.0.1:59090
+        run: |
+          export OB_LIB_PATH="$GITHUB_WORKSPACE/engine/build/liborderbook_shared.so"
+          export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
+          pytest tests/test_orderbook_slice.py tests/test_orderbook_session_slice.py \
+            tests/test_orderbook_tcp.py tests/test_orderbook_adapter.py \
+            -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
+          python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
+
   contract:
     runs-on: ubuntu-latest
     steps:

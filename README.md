@@ -76,6 +76,9 @@ It does not enforce a key — two writes with the same one both persist, measure
 update of N depth levels rather than a row, because `level` is a price's index inside an update and
 not a column the write API accepts; a single-row write can therefore only produce level 0, and any
 other value is refused rather than stored at 0 with the read disagreeing with the write.
+`save_many` writes whole updates instead, and `scan` pages one book in key order although the engine
+answers in arrival order. [The orderbook adapter](docs/orderbook.md) describes both modes - in-process
+and over TCP with credentials and TLS - and every refusal.
 
 Smoothing any of those over had only bad forms. Mapping a client's field names onto the engine's
 would mean guessing which declared field is the price from what it is called, and reasoning from a
@@ -303,21 +306,20 @@ The integration slices run against real servers rather than fakes. A fake would 
 this library believes about types, quoting and transactions, which is exactly the set of beliefs
 worth checking.
 
-The orderbook slice is the exception, and the exception is split rather than waived. That engine's
-Python client is not on PyPI and its shared library is built from C++, so it cannot run everywhere.
-Everything the adapter *decides* — the shape check, the level refusal, the refusal on a duplicate
-key, unknown-not-zero for a sequence number — happens before the client library is called and is
-tested against a fake, which runs everywhere. What a fake cannot check is whether the engine still
-behaves as measured, so four measurements are asserted against the engine itself:
+The orderbook slices are split rather than waived. That engine's Python client is not on PyPI and
+its shared library is built from C++, so they cannot run wherever the other suites do. Everything the
+adapter *decides* happens before the client library is called and is tested against fakes, which run
+everywhere:
+- the shape check, the level refusal and the refusal on a duplicate key;
+- the sequence number over TCP and the ranges of what the engine stores;
+- updates in a batch, and pages in key order.
 
-```bash
-git clone https://github.com/Smart-Data-Engines/low-cost-and-low-latency-orderbook-dbengine ../ob
-cmake -S ../ob -B ../ob/build && cmake --build ../ob/build -j"$(nproc)"
-OB_LIB_PATH=$PWD/../ob/build/liborderbook_shared.so PYTHONPATH=$PWD/../ob/python \
-  SDE_ORDERBOOK=1 python/.venv/bin/python -m pytest python/tests/test_orderbook_slice.py
-```
+What a fake cannot check is whether the engine still behaves as measured. The CI job `orderbook`
+builds the engine at the commit `.github/orderbook-engine.txt` pins and asserts those measurements
+against it in both of its modes, in-process and over TCP, plain and with credentials and TLS. It fails
+if any of them was skipped. Running them locally is described in [the adapter's page](docs/orderbook.md).
 
-If the engine changes, that file fails and the fake stops describing something true — which is the
+If the engine changes, those files fail and the fakes stop describing something true — which is the
 failure mode a fake normally hides.
 
 ## Contributing

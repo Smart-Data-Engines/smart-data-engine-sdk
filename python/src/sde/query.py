@@ -64,8 +64,29 @@ class Queryable(Protocol):
 
 
 def query_engine(engine: object) -> Queryable:
-    if not all(callable(getattr(engine, name, None)) for name in ("select_rows", "count_rows")):
-        raise QueryRefused("this adapter does not support logical reads (select_rows/count_rows)")
+    """The adapter, for a page of rows (``select_rows``)."""
+    if not callable(getattr(engine, "select_rows", None)):
+        raise QueryRefused("this adapter does not support logical reads (select_rows)")
+    return cast(Queryable, engine)
+
+
+def _refusal(engine: object, attribute: str, default: str) -> str:
+    """The adapter's own reason for not offering an operation, when it gives one.
+
+    A string attribute rather than a method that raises, so the refusal comes before the operation
+    is timed: a read an engine cannot answer is not an error of the engine, and recording it as one
+    would put a failure into a window that no client call ever experienced.
+    """
+    reason = getattr(engine, attribute, None)
+    return reason if isinstance(reason, str) and reason else default
+
+
+def count_engine(engine: object) -> Queryable:
+    """The adapter, for a count (``count_rows``), or its named refusal."""
+    if not callable(getattr(engine, "count_rows", None)):
+        raise QueryRefused(
+            _refusal(engine, "count_refusal", "this adapter does not support counts (count_rows)")
+        )
     return cast(Queryable, engine)
 
 
@@ -392,7 +413,13 @@ class Summarizable(Protocol):
 
 def summary_engine(engine: object) -> Summarizable:
     if not callable(getattr(engine, "summarize_rows", None)):
-        raise QueryRefused("this adapter does not support numeric summaries (summarize_rows)")
+        raise QueryRefused(
+            _refusal(
+                engine,
+                "summary_refusal",
+                "this adapter does not support numeric summaries (summarize_rows)",
+            )
+        )
     return cast(Summarizable, engine)
 
 

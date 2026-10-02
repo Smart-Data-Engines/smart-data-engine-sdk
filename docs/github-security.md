@@ -27,7 +27,7 @@ they differ, the difference is called out rather than left to be noticed.
 - **Releasing is a tag and holds no credential** ✅ — both registries authenticate the workflow over
   OIDC, so there is no publishing token in this repository, in its Actions secrets or on a laptop.
   See §4.2, which was a list of intentions until 12 September.
-- **Two languages, so two analyses and fourteen required checks**, not four (§1). The count is derived from
+- **Two languages, so two analyses and fifteen required checks**, not four (§1). The count is derived from
   `main.json` by a test, because it was wrong here by one until 12 September and nothing counted it.
 - **The default branch is `main`, not `master`.** The rulesets differ in that one string, and a
   ruleset targeting the wrong ref is silently inert.
@@ -49,14 +49,14 @@ A ruleset named `main` is active on `refs/heads/main` with **no bypass actors**,
 - `required_linear_history` — no merge commits, so `git log main` stays readable
 - `pull_request` — direct pushes are blocked, with `required_review_thread_resolution: true` so an
   unresolved comment cannot be merged past, and `allowed_merge_methods: [squash, rebase]`
-- `required_status_checks` with `strict: true` and **fourteen contexts**
+- `required_status_checks` with `strict: true` and **fifteen contexts**
 
-The fourteen are the whole matrix, not a representative sample:
+The fifteen are the whole matrix, not a representative sample:
 
 ```
 python (3.11)   python (3.12)   python (3.13)   python (3.14)
 typescript (18) typescript (20) typescript (22) typescript (24) typescript (26)
-contract
+contract        orderbook
 analyze (python)  analyze (javascript-typescript)  analyze (actions)
 CodeQL
 ```
@@ -73,7 +73,11 @@ bytes; a canonical encoding that drifts with a Python release or a Node release 
 failure the byte contract exists to prevent, and a matrix cell that runs but blocks nothing is how
 that drift would arrive looking green.
 
-`contract` is the cheapest and most valuable of the fourteen: it rebuilds the wheel and checks the PEP 561
+`orderbook` builds our own engine from the commit `.github/orderbook-engine.txt` pins and runs every
+orderbook slice against it, in-process and over TCP, plain and with credentials and TLS. Nothing else
+can run those slices: the engine's client is not on any package index.
+
+`contract` is the cheapest and most valuable of the fifteen: it rebuilds the wheel and checks the PEP 561
 marker is inside it, re-derives every committed hashing digest with `openssl`, and refuses a change to
 the one hand-written conformance vector without a deliberate edit to the workflow.
 
@@ -439,7 +443,7 @@ malicious or broken code onto `main` and it reaches a release, (b) a published a
 forged, either through a leaked registry token or through the distribution name never having been
 registered, (c) a dependency is compromised and lands in a client's application through our extras,
 (d) a credential from a client engagement is committed by accident, (e) a leaked maintainer token is
-used to rewrite history or publish a fake release. Fourteen required status checks on a protected branch
+used to rewrite history or publish a fake release. Fifteen required status checks on a protected branch
 with no bypass actors handle (a); trusted publishing with provenance, an environment with a reviewer,
 tag protection and — first of all — **registering the names** handle (b); Dependabot with a committed
 lockfile handles (c); secret scanning with push protection handles (d); 2FA, signed commits and tag
@@ -463,7 +467,7 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ pull_request_template.md and issue templates
 ✅ rulesets kept as JSON in .github/rulesets/
 ✅ branch ruleset on main: PR required, no force push, no deletion, linear history, no bypass actors
-✅ branch ruleset: all fourteen status checks required, strict
+✅ branch ruleset: all fifteen status checks required, strict
 ✅ tag ruleset on refs/tags/v*, python-v* and typescript-v*
 ✅ secret scanning + push protection
 ✅ Dependabot alerts + security updates

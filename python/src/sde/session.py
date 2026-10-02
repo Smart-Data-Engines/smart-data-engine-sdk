@@ -48,6 +48,7 @@ from .query import (
     ReadColumn,
     ReadPlan,
     ScanPage,
+    count_engine,
     numeric_summary,
     plan_read,
     query_engine,
@@ -765,7 +766,7 @@ class Session:
         shape = self._shape(target, "aggregate")
         engine, material = self._target(shape, fresh=fresh)
         self._read_projection(material, target, plan, count=True)
-        reader = query_engine(engine)
+        reader = count_engine(engine)
         table = material.layout.table_for(target)
         started = perf_counter_ns() if self._recorder else 0
         failed = False

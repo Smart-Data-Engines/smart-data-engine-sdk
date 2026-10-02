@@ -72,6 +72,9 @@
             "context": "contract"
           },
           {
+            "context": "orderbook"
+          },
+          {
             "context": "analyze (python)"
           },
           {
