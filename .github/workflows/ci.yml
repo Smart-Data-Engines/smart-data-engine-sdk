@@ -86,13 +86,13 @@ jobs:
 
       - name: lint
         working-directory: python
-        run: ruff check --config pyproject.toml src tests ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py
+        run: ruff check --config pyproject.toml src tests ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py
 
       - name: types
         working-directory: python
         # Not decoration: several guarantees in this design are enforced by types rather than by
         # runtime checks, so a weakened annotation is a deleted guarantee.
-        run: mypy src tests/qualification ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py
+        run: mypy src tests/qualification ../tools ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py
 
       - name: tests, including both engine slices
         working-directory: python
@@ -277,7 +277,35 @@ jobs:
     #
     # Moving the pin is an ordinary pull request, and this job is what says the adapter still
     # describes the engine it names.
+    #
+    # PostgreSQL and ClickHouse are here too, for one scenario on all three engines: a group staged,
+    # cut over and indexed between the first two while a group on the orderbook, which carries no
+    # write generation (map contract 6), stays where it is and keeps working.
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -312,7 +340,7 @@ jobs:
         working-directory: python
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,signed]'
+          pip install -e '.[dev,signed,postgres,clickhouse]'
 
       - name: start a plain server and one with credentials and TLS
         run: |
@@ -361,11 +389,14 @@ jobs:
         env:
           SDE_ORDERBOOK: "1"
           SDE_ORDERBOOK_TCP: 127.0.0.1:59090
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: |
           export OB_LIB_PATH="$GITHUB_WORKSPACE/engine/build/liborderbook_shared.so"
           export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
           pytest tests/test_orderbook_slice.py tests/test_orderbook_session_slice.py \
             tests/test_orderbook_tcp.py tests/test_orderbook_adapter.py \
+            tests/test_orderbook_three_engines.py \
             -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
 

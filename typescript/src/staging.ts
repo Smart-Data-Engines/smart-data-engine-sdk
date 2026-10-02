@@ -6,7 +6,14 @@ import { checkMapProject, GENERATIONS_SINCE, MAX_EPOCH } from './generation.js'
 import { colocationGroups } from './groups.js'
 import { groupColumns } from './layout.js'
 import type { LogicalModel } from './model.js'
-import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type PlacementMap } from './placement.js'
+import {
+  fingerprintOf,
+  loadMap,
+  UNFENCED_SINCE,
+  verifyMapSignature,
+  type LoadOptions,
+  type PlacementMap,
+} from './placement.js'
 
 /** A move: the fresh copy is prepared in another engine binding than the source. */
 export const STAGING_PROTOCOL = 1
@@ -129,11 +136,26 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   // appear - and may not lower it: a lower number tells an older library it may ignore keys the
   // current map already relies on.
   if (prepared.contract < current.contract) throw new MigrationRefused('staging cannot lower the placement map contract')
+  // Contract 6 is for a group without a write generation, and no such group can appear through a
+  // staging: the staged group keeps its generation and every other group is carried byte for byte.
+  // So a prepared map reaches 6 only from a current map that is already 6.
+  if (prepared.contract >= UNFENCED_SINCE && current.contract < UNFENCED_SINCE) {
+    throw new MigrationRefused(
+      `staging cannot raise the placement map contract to ${UNFENCED_SINCE}: a group without a write ` +
+        'generation cannot appear through a staging',
+    )
+  }
   if (current.mapVersion >= prepared.mapVersion) throw new MigrationRefused('staging must allocate a newer prepared map')
   if (!(group in current.groups) || !equal(Object.keys(current.groups).sort(compareCodePoints), Object.keys(prepared.groups).sort(compareCodePoints))) {
     throw new MigrationRefused('staging cannot add or remove colocation groups')
   }
   const old = current.groups[group]!, next = prepared.groups[group]!
+  if (old.writeEpoch === undefined) {
+    throw new MigrationRefused(
+      `group ${group} carries no write generation, so it cannot be staged: a staging ends in a ` +
+        'cutover that cuts off old writers by their generation, and its engine cannot fence writes',
+    )
+  }
   if (old.derived.length !== 0 || old.alsoWrite.length !== 0) throw new MigrationRefused('staging begins with a source-only group')
   if (next.derived.length !== 1 || next.alsoWrite.length !== 1 || next.alsoWrite[0]!.id !== next.derived[0]!.id) {
     throw new MigrationRefused('staging prepares exactly one maintained copy')

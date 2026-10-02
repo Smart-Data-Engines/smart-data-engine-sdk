@@ -630,7 +630,7 @@ key in a different document would give every client a new model version, invalid
 and re-bless every model vector. The evidence that the split is right is `model/001-single-entity`,
 the hand-written vector whose digest CI pins: adding `also_write` does not move it.
 
-A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 5.
+A library reads **`MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`**, which today is 1 through 6.
 Backwards compatible, forwards strict, and the asymmetry is knowledge rather than kindness: every
 contract-1 document is a valid contract-2 one with a key absent, which reads as "no dual write" -
 a complete meaning. What came *after* a library cannot be known, so a higher number is refused
@@ -1230,7 +1230,8 @@ wire meaning, JSON-number normalization before signing/fingerprinting, reserved 
 validation and Session/copy behavior are specified in [generation-maps.md](generation-maps.md).
 Earlier map contracts remain readable in their legacy mode. A document's declared version must
 match the fields it carries; a reader's newest supported version is not a producer's implicit
-schema choice. The generation primitive is not the final cutover authorization gate.
+schema choice. The generation primitive is not the final cutover authorization gate. From contract
+6 a group may carry no generation at all, for an engine that cannot fence writes (§7k).
 
 ## 7e. Exact verification under native barriers
 
@@ -1651,3 +1652,36 @@ after them under the same naming rule, possibly none. The prepared map may raise
 acceptances and one refusal per rule, each refusal with the message fragment both libraries give.
 The Python local operator executes the build, the removals after its decision, its recovery and its
 abandonment. Loading an authorization builds nothing and activates no map.
+
+
+## 7k. A group without a write generation (map contract 6)
+
+From contract 6 a group may leave `write_epoch` out. Absent means that the group's writes carry no
+generation, because its engine cannot fence them; our own orderbook engine is that engine. The rest
+of the document, physical design included, reads as in contract 5. Contracts 4 and 5 still require
+a generation in every group (`errors/077`), so a contract-5 library refuses a contract-6 document
+whole - which is right, since it would refuse to open a session on such a group anyway. `errors/006`
+declares 7 now.
+
+**Rules checkable from the document, at load:**
+- absence is the only spelling: `"write_epoch": null` is refused like any other value that is not a
+  positive safe integer (`errors/074`);
+- such a group has only a source. `derived` and `also_write` are refused, even as an empty list,
+  because a maintained copy and a fan-out exist only through a migration and a migration cuts off
+  old writers by the generation this group does not carry (`errors/075`, `076`).
+
+**Rules that need the adapters, when a session opens** - a map names its engines and carries no
+dialect. A group without a generation on an engine that has write fences is refused, and so, as
+before, is a group with one on an engine that has none (`migration/190`, `191`). A session writes
+the first group without the generation column and stamps the others as before (`migration/188`).
+The column stays reserved in every group of the map, because a read strips it from every row such
+a map returns (`migration/189`). Schema preparation applies the same rule before it creates
+anything.
+
+A signed contract-6 map reports write generations only for the groups that carry one
+(`signature/015`).
+
+**Packets.** No staging, cutover or in-place index build can act on such a group or raise a map to
+contract 6, since no such group can appear through one. Each carries the group byte for byte when it
+acts on another (`migration/192`-`199`). The Python local operator needs no binding for an engine
+that hosts only such groups, refuses one offered for it, and reads none of its tables.

@@ -33,7 +33,7 @@ from .cutover import _hex, _record, _signature
 from .errors import MapError, MigrationRefused
 from .generation import GENERATIONS_SINCE, check_map_project, json_numbers
 from .model import LogicalModel
-from .placement import PlacementMap, _verify_signature, load_map
+from .placement import UNFENCED_SINCE, PlacementMap, _verify_signature, load_map
 
 INDEX_PROTOCOL = 1
 """Indexes added to one group's source, built on the tables in force; no copy, no cutover."""
@@ -204,11 +204,21 @@ def _load(
     # older library it may ignore keys that the current map already relies on.
     if prepared.contract < current.contract:
         raise MigrationRefused("an index build cannot lower the placement map contract")
+    if prepared.contract >= UNFENCED_SINCE > current.contract:
+        raise MigrationRefused(
+            f"an index build cannot raise the placement map contract to {UNFENCED_SINCE}: a group "
+            f"without a write generation cannot appear through an index build"
+        )
     if current.map_version >= prepared.map_version:
         raise MigrationRefused("an index build must allocate a newer prepared map")
     if group not in current.groups or set(current.groups) != set(prepared.groups):
         raise MigrationRefused("an index build cannot add or remove colocation groups")
     old, new = current.groups[group], prepared.groups[group]
+    if old.write_epoch is None:
+        raise MigrationRefused(
+            f"group {group} carries no write generation, so its indexes are not built in place: "
+            f"its engine has no physical design to change"
+        )
     if old.derived or old.also_write or new.derived or new.also_write:
         raise MigrationRefused("an index build begins and ends with a source-only group")
     if new.write_epoch != old.write_epoch:

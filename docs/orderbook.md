@@ -143,8 +143,13 @@ A group's size stays unknown (`total_bytes` in `missing`, `unsupported` in
 ## What this engine does not do
 
 It has no transactions, so a group that declared atomicity cannot be placed here. It has no write
-fences, so a group here cannot take part in a staging or a cutover. It has no query planner, so
-`explain_plan` refuses. Each refusal says so in its message.
+fences, so a group here carries no write generation (map contract 6, see
+[generation-maps.md](generation-maps.md)) and cannot take part in a staging, a cutover or an index
+build. The other groups of the same map move as usual, and the local operator needs no binding for
+this engine. It has no query planner, so `explain_plan` refuses. Each refusal says so in its message.
+
+`sde.engine_facts("orderbook")` states all of this as data, for the control plane to give a model that
+decides placement; the tests hold each fact against the adapter and the engine.
 
 ## Running the slices
 
@@ -160,4 +165,5 @@ OB_LIB_PATH=$PWD/../ob/build/liborderbook_shared.so PYTHONPATH=$PWD/../ob/python
 ```
 
 `SDE_ORDERBOOK_SECURE_DSN` adds a server with `--auth-secret-file` and `--tls-client`. The CI job
-generates a CA, a certificate and a secret for one.
+generates a CA, a certificate and a secret for one. `test_orderbook_three_engines.py` needs
+`SDE_POSTGRES_DSN` and `SDE_CLICKHOUSE_DSN` as well, as every live slice does.

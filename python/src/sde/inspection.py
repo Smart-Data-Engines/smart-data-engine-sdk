@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol
 
 from .errors import MigrationRefused
-from .generation import check_map_project
+from .generation import check_map_project, fenced_groups
 from .model import LogicalModel
 from .placement import PlacementMap
 
@@ -49,10 +49,11 @@ class InspectionContext:
         check_map_project(self.placement, self.project_id)
         if self.model.version != self.placement.model_version:
             raise MigrationRefused("operator inspection needs the model named by its map")
+        # A group without a write generation (contract 6) is out of every operator's reach.
         missing = sorted(
             {
                 material.engine
-                for group in self.placement.groups.values()
+                for group in fenced_groups(self.placement).values()
                 for material in group.all()
             }
             - set(self.engines)

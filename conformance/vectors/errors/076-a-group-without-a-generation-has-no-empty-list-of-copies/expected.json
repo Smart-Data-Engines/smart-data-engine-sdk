@@ -1,0 +1,6 @@
+{
+  "stage": "map",
+  "error": "MapError",
+  "match": "a group without a write generation has only a source",
+  "why": "The rule is on the key, not on its length: such a group says nothing about copies, and an empty list is a statement about them."
+}

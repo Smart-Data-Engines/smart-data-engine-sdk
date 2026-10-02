@@ -1,0 +1,28 @@
+{
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    },
+    "book-1": {
+      "tick": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 2
+      }
+    }
+  },
+  "actions": [],
+  "tables": {
+    "pg-main": {
+      "reading": []
+    },
+    "book-1": {
+      "tick": []
+    }
+  },
+  "project_id": "11111111111111111111111111111111",
+  "error": "MigrationRefused",
+  "match": "carries no write generation on book-1, which fences writes"
+}

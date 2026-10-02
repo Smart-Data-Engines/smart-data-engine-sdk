@@ -51,6 +51,7 @@ from .errors import (
     SdeError,
 )
 from .explain import Cost, Explains, PlanFinding, QueryPlan, QueryPlanRefused, explain
+from .facts import FACTS_VERSION, engine_facts
 from .frozen_verification import FrozenVerifyReport, verify_frozen
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
@@ -167,6 +168,7 @@ __all__ = [
     "CUTOVER_RELAYOUT_PROTOCOL",
     "DIALECTS",
     "DIALECT_PRECISION",
+    "FACTS_VERSION",
     "FIXED_SCHEMA",
     "INDEX_CHANGE_PROTOCOL",
     "INDEX_PROTOCOL",
@@ -277,6 +279,7 @@ __all__ = [
     "denormalized_layout",
     "digest16",
     "enforce_forward_only",
+    "engine_facts",
     "entity",
     "enumerate_shapes",
     "explain",

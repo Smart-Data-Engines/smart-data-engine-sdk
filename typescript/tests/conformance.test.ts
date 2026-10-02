@@ -340,7 +340,10 @@ describe('signature vectors', () => {
       if (expected.map_fingerprint !== undefined) {
         expect(placement.fingerprint).toBe(expected.map_fingerprint)
         expect(placement.projectId).toBe(expected.project_id)
-        expect(Object.fromEntries(Object.entries(placement.groups).map(([name, group]) => [name, group.writeEpoch]))).toEqual(expected.write_epochs)
+        // Only the groups that carry a generation; contract 6 lets a group carry none.
+        expect(Object.fromEntries(Object.entries(placement.groups)
+          .filter(([, group]) => group.writeEpoch !== undefined)
+          .map(([name, group]) => [name, group.writeEpoch]))).toStrictEqual(expected.write_epochs)
       }
     })
   }
@@ -1333,14 +1336,18 @@ function driveIndexVector(dir: string, model: LogicalModel): void {
 
 function driveStagingVector(dir: string, model: LogicalModel): void {
   const raw = readJson<Record<string, unknown>>(join(dir, 'plan.json'))
-  const wanted = readJson<{ project_id: string; error?: string; stage_fingerprint: string;
+  const wanted = readJson<{ project_id: string; error?: string; match?: string; stage_fingerprint: string;
     verified_with: string; map_fingerprints: Record<'current' | 'prepared', string>;
     tables: Record<string, string> }>(join(dir, 'staging.json'))
   const keys = readJson<Record<string, string>>(join(dir, 'keys.json'))
   const publicKey = Object.fromEntries(Object.entries(keys).map(([name, value]) => [name, Buffer.from(value, 'base64')]))
   const options = { model, projectId: wanted.project_id, publicKey }
   if (wanted.error !== undefined) {
-    expect(() => loadStagingPlan(raw, options)).toThrow(StagingRefused)
+    let refusal: unknown
+    try { loadStagingPlan(raw, options) } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(StagingRefused)
+    // Older staging refusals name only the class; a newer one also names the rule.
+    expect((refusal as Error).message).toContain(wanted.match ?? '')
     return
   }
   const plan = loadStagingPlan(raw, options)

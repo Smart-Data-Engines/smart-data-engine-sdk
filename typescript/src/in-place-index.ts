@@ -16,7 +16,14 @@ import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.j
 import { MapError, MigrationRefused } from './errors.js'
 import { checkMapProject, GENERATIONS_SINCE } from './generation.js'
 import type { LogicalModel } from './model.js'
-import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type PlacementMap } from './placement.js'
+import {
+  fingerprintOf,
+  loadMap,
+  UNFENCED_SINCE,
+  verifyMapSignature,
+  type LoadOptions,
+  type PlacementMap,
+} from './placement.js'
 
 /** Indexes added to one group's source, built on the tables in force; no copy, no cutover. */
 export const INDEX_PROTOCOL = 1
@@ -173,11 +180,23 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   // index under a contract-4 current map. It may not lower it: a lower number would tell an older
   // library it may ignore keys that the current map already relies on.
   if (prepared.contract < current.contract) throw new MigrationRefused('an index build cannot lower the placement map contract')
+  if (prepared.contract >= UNFENCED_SINCE && current.contract < UNFENCED_SINCE) {
+    throw new MigrationRefused(
+      `an index build cannot raise the placement map contract to ${UNFENCED_SINCE}: a group without ` +
+        'a write generation cannot appear through an index build',
+    )
+  }
   if (current.mapVersion >= prepared.mapVersion) throw new MigrationRefused('an index build must allocate a newer prepared map')
   if (!(group in current.groups) || !equal(Object.keys(current.groups).sort(compareCodePoints), Object.keys(prepared.groups).sort(compareCodePoints))) {
     throw new MigrationRefused('an index build cannot add or remove colocation groups')
   }
   const old = current.groups[group]!, next = prepared.groups[group]!
+  if (old.writeEpoch === undefined) {
+    throw new MigrationRefused(
+      `group ${group} carries no write generation, so its indexes are not built in place: its ` +
+        'engine has no physical design to change',
+    )
+  }
   if (old.derived.length !== 0 || old.alsoWrite.length !== 0 || next.derived.length !== 0 || next.alsoWrite.length !== 0) {
     throw new MigrationRefused('an index build begins and ends with a source-only group')
   }

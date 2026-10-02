@@ -1,7 +1,7 @@
 /** Prepare client-owned physical schema before opening runtime connections. */
 import { compareCodePoints } from './canonical.js'
 import { EngineError, MigrationRefused } from './errors.js'
-import { checkMapProject, type Fencable } from './generation.js'
+import { checkMapProject, fencedGroups, refuseAFencingEngine, type Fencable } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
 import { refuseFindings } from './physical.js'
@@ -20,9 +20,22 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
   if (needed.some((name) => engines[name] === undefined)) {
     throw new MigrationRefused('schema preparation is missing an engine named by the map')
   }
-  if (placement.contract >= 4 && needed.some((name) =>
+  const fenced = [...new Set(Object.values(fencedGroups(placement)).flatMap((spot) =>
+    [spot.source, ...spot.derived].map((material) => material.engine)))].sort()
+  if (placement.contract >= 4 && fenced.some((name) =>
     typeof (engines[name] as Engine & Partial<Fencable>).writeFence !== 'function')) {
-    throw new MigrationRefused('schema preparation needs native write generations on every engine')
+    throw new MigrationRefused(
+      'schema preparation needs native write generations on every engine of a group that carries one')
+  }
+  if (placement.contract >= 4) {
+    // Before any statement, like the check above: a map that cannot work creates nothing.
+    for (const name of Object.keys(placement.groups).sort()) {
+      const spot = placement.groups[name]!
+      if (spot.writeEpoch !== undefined) continue
+      for (const material of [spot.source, ...spot.derived]) {
+        refuseAFencingEngine(name, material.engine, engines[material.engine])
+      }
+    }
   }
   for (const group of colocationGroups(model)) {
     const spot = placement.groups[group.name]!

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 from .capabilities import satisfies
 from .errors import EngineError, MigrationRefused
-from .generation import Fencable, check_map_project
+from .generation import Fencable, check_map_project, fenced_groups, refuse_a_fencing_engine
 from .groups import colocation_groups
 from .model import LogicalModel
 from .physical import refuse_findings
@@ -38,10 +38,22 @@ def prepare_schema(
     )
     if any(name not in engines for name in needed):
         raise MigrationRefused("schema preparation is missing an engine named by the map")
+    fenced = sorted(
+        {m.engine for spot in fenced_groups(placement).values() for m in spot.all()}
+    )
     if placement.contract >= 4 and any(
-        not callable(getattr(engines[name], "write_fence", None)) for name in needed
+        not callable(getattr(engines[name], "write_fence", None)) for name in fenced
     ):
-        raise MigrationRefused("schema preparation needs native write generations on every engine")
+        raise MigrationRefused(
+            "schema preparation needs native write generations on every engine of a group "
+            "that carries one"
+        )
+    if placement.contract >= 4:
+        # Before any statement, like the check above: a map that cannot work creates nothing.
+        for name, spot in sorted(placement.groups.items()):
+            if spot.write_epoch is None:
+                for material in spot.all():
+                    refuse_a_fencing_engine(name, material.engine, engines[material.engine])
     for group in colocation_groups(model):
         spot = placement.placement_of(group.name)
         keys = {name: model.entity(name).key for name in group.members}

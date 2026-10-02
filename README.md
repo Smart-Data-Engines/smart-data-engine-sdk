@@ -205,7 +205,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **348 of them, in ten families** — that every
+And [`conformance/`](conformance/) holds the vectors — **365 of them, in ten families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 
@@ -316,8 +316,10 @@ everywhere:
 
 What a fake cannot check is whether the engine still behaves as measured. The CI job `orderbook`
 builds the engine at the commit `.github/orderbook-engine.txt` pins and asserts those measurements
-against it in both of its modes, in-process and over TCP, plain and with credentials and TLS. It fails
-if any of them was skipped. Running them locally is described in [the adapter's page](docs/orderbook.md).
+against it in both of its modes, in-process and over TCP, plain and with credentials and TLS. It also
+runs one scenario on all three engines, a staging, a cutover and an index build between PostgreSQL and
+ClickHouse beside a group on the orderbook. It fails if any of them was skipped. Running them locally
+is described in [the adapter's page](docs/orderbook.md).
 
 If the engine changes, those files fail and the fakes stop describing something true — which is the
 failure mode a fake normally hides.
@@ -344,3 +346,7 @@ Physical design (placement map contract 5): [key order, ClickHouse partitions an
 methods](docs/physical-design.md) - what a map can declare, how it renders, how the result is read
 back from each engine's catalogue, and why provisioning refuses a difference a running session only
 reports.
+
+A group on an engine that cannot fence writes (placement map contract 6):
+[generation-bearing maps](docs/generation-maps.md) - a group on the orderbook engine next to groups on
+PostgreSQL and ClickHouse, which still move, while it stays where it was placed.

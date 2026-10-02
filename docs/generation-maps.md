@@ -26,6 +26,23 @@ native generation or deleting a source.
 - The physical `__sde_write_epoch` column and `__sde_fence_drains` table are reserved. The technical
   column is not a logical model field or an application-supplied write value.
 
+## A group without a write generation (contract 6)
+
+From contract 6 a group may leave `write_epoch` out: its engine cannot fence writes, so its writes
+carry no generation. The orderbook engine is that engine. The rules, with the vectors that hold them,
+are in [format-contract.md §7k](format-contract.md); in short:
+
+- absent is the only spelling (`null` is refused), and such a group has only a source;
+- a session refuses such a group on an engine that has write fences, and a generation-bearing group
+  on one that has none;
+- its rows carry no technical column, and an application still may not supply one;
+- no staging, cutover or in-place index build acts on it, and each carries it unchanged;
+- the local operator needs no binding for its engine and refuses one.
+
+So a map can put a group on the orderbook engine next to groups on PostgreSQL and ClickHouse, and the
+others still move. The group on the orderbook stays where it was placed: moving it would need write
+fences the engine does not have.
+
 The loader owns and freezes the parsed placement. Copied map objects do not inherit loaded
 provenance. The generation-aware session checks that provenance, local project and model before
 checking each native table's generation and physical columns. These checks precede forward-only
@@ -55,8 +72,9 @@ For contract 4, `Session.ensure_schema()` / `ensureSchema()` verifies existing s
 without issuing DDL. Both adapters expose `validate_schema()` / `validateSchema()` for that read-only
 check. Runtime credentials can therefore omit provisioning powers; complete role qualification and
 cutover revocation are separate from this Session check. An adapter without native generation and
-read-only schema support is refused. PostgreSQL and ClickHouse implement them; the orderbook adapter
-continues with legacy maps and is not claimed to implement this migration protocol.
+read-only schema support is refused for a group that carries a generation. PostgreSQL and ClickHouse
+implement them. The orderbook adapter has read-only schema validation and no generations, so its
+group carries none (contract 6, above).
 
 `get` removes the SDK's technical epoch column before returning a logical row, including when
 identifier hashing is enabled. A caller cannot override the epoch by supplying the reserved physical

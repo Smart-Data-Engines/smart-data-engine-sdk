@@ -192,6 +192,8 @@ def test_two_writes_with_the_same_key_both_persist(prepared: OrderbookEngine, sy
     rows = prepared.levels(symbol=symbol, exchange=EXCHANGE)
     assert len(rows) == 2
     assert {row["level"] for row in rows} == {0}, "both at level 0: the key is violated"
+    # What the control plane tells a model about this engine (sde/facts.py) says the same.
+    assert sde.engine_facts("orderbook")["key"] == "not_enforced"
 
     with pytest.raises(EngineError, match="2 rows in orderbook share the key"):
         prepared.get(sde.ORDERBOOK_TABLE, _key(symbol))
@@ -326,6 +328,7 @@ def test_another_book_is_a_different_address_and_not_a_filter(
 
 
 def test_transactions_are_refused_against_the_real_engine_too(prepared: OrderbookEngine) -> None:
+    assert sde.engine_facts("orderbook")["transactions"] is False
     refused = pytest.raises(EngineError, match="no multi-statement transactions")
     with refused, prepared.transaction():
         pass

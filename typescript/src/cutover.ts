@@ -137,6 +137,8 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   if (!request.requiresSignature) throw new MigrationRefused('cutover verification must require the signed before map')
   request.checkSession(before, projectId, group)
   const spot = before.groups[group]!
+  // A group without a write generation (contract 6) never gets this far: the map refuses a copy in
+  // such a group, and a cutover needs one.
   if (spot.derived.length !== 1 || spot.alsoWrite.length !== 1 || spot.alsoWrite[0]!.id !== spot.derived[0]!.id) {
     throw new MigrationRefused('cutover requires exactly one derived copy maintained by fan-out')
   }

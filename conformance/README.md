@@ -328,6 +328,15 @@ OpenSSL; every vector is signed with a key of its own, so `--only` rewrites the 
 leaves the others byte for byte. The native build, its removals, recovery and abandonment have
 separate live tests.
 
+`errors/074`–`077`, `migration/188`–`199` and `signature/015` hold map contract 6, a group that
+carries no write generation because its engine cannot fence writes: the map refusals, four session
+cases (writes without the column, the column still reserved, an engine whose fences contradict the
+map either way), a signed map, and staging, in-place index and cutover authorizations that carry
+such a group unchanged or refuse to act on it, with the `match` fragment both libraries must give.
+`tools/unfenced_vectors.py` writes every expectation by hand and signs with OpenSSL; the session
+model's version is the one constant it does not derive, and both loaders refuse a map whose version
+is not their own hash of the model, so a wrong one fails every case instead of passing one.
+
 `migration/122`–`132` carry `bulk.json`: application-batch operations, expected source/copy
 call order, transaction outcomes, capability/bound refusals and exact value-free metric bytes.
 The expected effects in `tools/bulk_vectors.py` are hand-specified; the generator does not execute

@@ -20,6 +20,24 @@ not make them agree. What does is the conformance suite and
 A new CI job, `orderbook`, builds the engine at a pinned commit and runs every orderbook slice
 in-process and over TCP, plain and with credentials and TLS.
 
+**Placement map contract 6: a group without a write generation** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md) §7k).
+- **A group may leave `write_epoch` out** when its engine cannot fence writes, as the orderbook
+  engine cannot. Such a group has only a source, and `null` is not absence. A contract-5 library
+  refuses the whole document.
+- **A session checks the engine against the map, both ways.** It refuses such a group on an engine
+  with write fences, and a group with a generation on an engine without them. Its writes carry no
+  generation column, and the column stays reserved.
+- **No staging, cutover or in-place index build acts on such a group**, and each carries it
+  unchanged. The local operator needs no binding for its engine and refuses one.
+- New vectors: `errors/074`-`077`, `migration/188`-`199`, `signature/015`. `errors/006` now declares
+  contract 7.
+
+**`sde.engine_facts(dialect)`** (Python): what each engine can and cannot do, as data. It covers the
+schema (derived, or the fixed orderbook shape), transactions, the key, write generations, the write
+unit, the reads, and what an orderbook scan needs. The control plane gives it to the model that
+decides placement. Each fact is tested against its adapter and engine.
+
 ## `smart-data-engine-sdk` 0.1.1
 
 Published on 28 September 2026, on the first run of `python-v0.1.1`, with attestations.

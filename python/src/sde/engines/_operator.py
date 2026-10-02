@@ -42,6 +42,14 @@ class NativeOperator:
         from .clickhouse import ClickHouseEngine
         from .postgres import PostgresEngine
 
+        if not callable(getattr(engine, "write_fence", None)):
+            # The orderbook engine. Its groups carry no write generation (map contract 6), so no
+            # staging, cutover or index build reaches them and there is nothing to bind it for.
+            raise MigrationRefused(
+                f"a local operator acts only on groups whose writes carry a generation, and "
+                f"{type(engine).__name__} cannot fence writes: leave its engine out of the "
+                f"operator bindings"
+            )
         if not isinstance(engine, (PostgresEngine, ClickHouseEngine)) or not runtime:
             raise MigrationRefused(
                 "local cutover requires stock operator adapters and runtime probes"

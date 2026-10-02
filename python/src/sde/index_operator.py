@@ -17,6 +17,7 @@ from time import monotonic_ns
 from typing import TYPE_CHECKING, Any
 
 from .errors import MigrationRefused
+from .generation import fenced_groups
 from .index_build import IndexPlan, IndexReceipt, load_index_plan
 from .local_cutover import CutoverRecoveryRequired
 from .physical import METHODS_BY_DIALECT, index_method, refuse_findings
@@ -74,7 +75,7 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
                     "inspect the table before changing its indexes"
                 )
     allowed: dict[str, set[str]] = {name: {WATERMARK_TABLE} for name in operator.engines}
-    for placed in plan.current.groups.values():
+    for placed in fenced_groups(plan.current).values():
         for material in placed.all():
             allowed[material.engine].update(material.layout.tables.values())
     bindings = {}
