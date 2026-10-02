@@ -75,7 +75,9 @@ that drift would arrive looking green.
 
 `orderbook` builds our own engine from the commit `.github/orderbook-engine.txt` pins and runs every
 orderbook slice against it, in-process and over TCP, plain and with credentials and TLS. Nothing else
-can run those slices: the engine's client is not on any package index.
+can run those slices: the engine's client is not on any package index. It also starts PostgreSQL and
+ClickHouse, for the one scenario that needs all three engines: a group moves between the first two
+while a group on the orderbook, which carries no write generation, stays and keeps working.
 
 `contract` is the cheapest and most valuable of the fifteen: it rebuilds the wheel and checks the PEP 561
 marker is inside it, re-derives every committed hashing digest with `openssl`, and refuses a change to

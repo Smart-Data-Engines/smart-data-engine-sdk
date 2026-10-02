@@ -165,4 +165,5 @@ OB_LIB_PATH=$PWD/../ob/build/liborderbook_shared.so PYTHONPATH=$PWD/../ob/python
 ```
 
 `SDE_ORDERBOOK_SECURE_DSN` adds a server with `--auth-secret-file` and `--tls-client`. The CI job
-generates a CA, a certificate and a secret for one.
+generates a CA, a certificate and a secret for one. `test_orderbook_three_engines.py` needs
+`SDE_POSTGRES_DSN` and `SDE_CLICKHOUSE_DSN` as well, as every live slice does.

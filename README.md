@@ -316,8 +316,10 @@ everywhere:
 
 What a fake cannot check is whether the engine still behaves as measured. The CI job `orderbook`
 builds the engine at the commit `.github/orderbook-engine.txt` pins and asserts those measurements
-against it in both of its modes, in-process and over TCP, plain and with credentials and TLS. It fails
-if any of them was skipped. Running them locally is described in [the adapter's page](docs/orderbook.md).
+against it in both of its modes, in-process and over TCP, plain and with credentials and TLS. It also
+runs one scenario on all three engines, a staging, a cutover and an index build between PostgreSQL and
+ClickHouse beside a group on the orderbook. It fails if any of them was skipped. Running them locally
+is described in [the adapter's page](docs/orderbook.md).
 
 If the engine changes, those files fail and the fakes stop describing something true — which is the
 failure mode a fake normally hides.
