@@ -140,6 +140,13 @@ range. Bound it by time.
 book, not the stored rows, and a count here would be a full scan. The refusal comes before the call
 is timed, so a window does not record it as an engine error.
 
+**A row outside the model's types is refused, not returned.** The engine stores unsigned 64-bit
+times, quantities and sequence numbers, so it can hand back a value the model's `int64` cannot hold.
+No write of this library stores one. An engine before `c1f14c0` read a stored quantity of 2^60 - 1
+back as 2^64 - 1, and the adapter returned it. Now a time, quantity or sequence number above
+2^63 - 1, an order count above 2^31 - 1 or a level above 999 refuses the read, naming the field and
+the range but not the value, which is read data.
+
 **A book nothing has been written to** answers `OB_ERR_NOT_FOUND` over TCP, and reads as empty. In
 local mode the C API keeps no reason for a failed query, so an unknown book and a failure read alike.
 There a failed read stays a failure and says why.

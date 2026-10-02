@@ -157,6 +157,31 @@ def _quote_literal(value: str) -> str:
     return f"'{_name(value, 'symbol or exchange')}'"
 
 
+_READ_BOUNDS: tuple[tuple[str, int, int], ...] = (
+    ("timestamp_ns", 0, MAX_TIMESTAMP_NS),
+    ("level", 0, MAX_LEVEL),
+    ("quantity", 0, MAX_QUANTITY),
+    ("order_count", 0, MAX_ORDER_COUNT),
+    ("sequence_number", 1, (1 << 63) - 1),
+)
+"""What a row read back may hold: the model's types, which are what this library writes.
+
+The engine stores unsigned 64-bit times, quantities and numbers, so it can hand back a value the
+model's ``int64`` cannot hold. No write of this library stores one. Measured: an engine before
+``c1f14c0`` read a stored quantity of 2^60 - 1 back as 2^64 - 1, and this adapter returned it.
+"""
+
+
+def _out_of_range(field: str, low: int, high: int) -> str:
+    # The value itself is left out: it is read data, and it is not what this library wrote.
+    return (
+        f"the engine returned a row whose {field} is outside {low} to {high}, the range of the "
+        f"model's type. No write of this library stores such a value, so the row is not one it "
+        f"wrote, and it is refused rather than returned. An engine before c1f14c0 read a stored "
+        f"quantity of 2^60 - 1 back as 2^64 - 1."
+    )
+
+
 def _integer(value: Any, field: str, low: int, high: int) -> int:
     """An integer in ``[low, high]``, or a refusal naming the field and both bounds."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -968,7 +993,7 @@ class OrderbookEngine:
 
     @staticmethod
     def _row(symbol: str, exchange: str, row: Any) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "symbol": symbol,
             "exchange": exchange,
             "timestamp_ns": int(row.timestamp_ns),
@@ -984,6 +1009,11 @@ class OrderbookEngine:
                 else int(row.sequence_number)
             ),
         }
+        for name, low, high in _READ_BOUNDS:
+            value = out[name]
+            if value is not None and not low <= value <= high:
+                raise EngineError(_out_of_range(name, low, high))
+        return out
 
     def get(self, table: str, key: Mapping[str, Any]) -> dict[str, Any] | None:
         """One row by key, ``None`` if there is none, and a refusal if there are two.

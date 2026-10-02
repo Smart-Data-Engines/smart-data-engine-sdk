@@ -35,6 +35,10 @@ The engine facts say so: `fixed_shape.nullable` and `fixed_shape.assigned_by_ser
 `fixed_schema_mismatch` must now pass `nullable`, and a call without it fails rather than returning
 half an answer.
 
+**Fixed: an orderbook read refuses a value outside the model's types** (both libraries). An engine
+before `c1f14c0` read a stored quantity of 2^60 - 1 back as 2^64 - 1, and the adapters returned it as
+an `int64`. Now the read is refused, naming the field.
+
 **The orderbook adapter over TCP** (`smart-data-engine-sdk`, [`docs/orderbook.md`](docs/orderbook.md)).
 - **Credentials, TLS and a timeout**, and an `orderbook://` DSN.
 - **A chosen sequence number is refused before sending.** The server numbers every update itself.
