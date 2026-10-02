@@ -92,6 +92,7 @@ class _Server:
     inserts: list[dict[str, Any]] = field(default_factory=list)
     refuse: set[int] = field(default_factory=set)
     fail_batch: int | None = None
+    fail_close: bool = False
     capabilities: set[str] = field(
         default_factory=lambda: {"insert_event_time", "strict_args", "backup"}
     )
@@ -166,6 +167,8 @@ class _Client:
 
     def close(self) -> None:
         self.server.closed += 1
+        if self.server.fail_close:
+            raise OSError("bad file descriptor")
 
 
 @pytest.fixture
@@ -519,6 +522,19 @@ def test_a_failed_connection_mid_batch_is_an_unknown_outcome_and_closes_the_adap
     assert "64 of its 130 updates were confirmed" in message
     assert "in full, in part or not at all" in message
     assert server.closed == 1
+    with pytest.raises(EngineError, match="not connected"):
+        tcp.insert(TABLE, _row())
+
+
+def test_a_connection_that_fails_to_close_does_not_hide_the_unknown_outcome(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    server.fail_batch, server.fail_close = 1, True
+    sde.reset_internal_failures()
+    with pytest.raises(EngineError, match="outcome of this batch is unknown"):
+        tcp.insert_many(TABLE, [_row()])
+    assert server.closed == 1
+    assert sde.internal_failures() == {"orderbook.close": 1}
     with pytest.raises(EngineError, match="not connected"):
         tcp.insert(TABLE, _row())
 

@@ -62,6 +62,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from ..errors import EngineError
 from ..explain import QueryPlan
+from ..internal import guard
 from ..layout import ORDERBOOK_KEY, ORDERBOOK_SHAPE, ORDERBOOK_TABLE
 from ..logging import log
 from ..placement import PhysicalLayout
@@ -552,10 +553,9 @@ class OrderbookEngine:
         engine, self._engine = self._engine, None
         self._unflushed = 0
         if engine is not None:
-            try:
-                engine.close()
-            except Exception:  # pragma: no cover - closing a broken connection
-                log("sde.orderbook.close_failed")
+            # Internal in the sense of sde.internal: the caller already has the exception that says
+            # the outcome is unknown, and a socket that fails to close cannot change it.
+            guard("orderbook.close", engine.close)
 
     # --- schema ----------------------------------------------------------------------------
 
