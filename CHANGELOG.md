@@ -5,6 +5,21 @@ The two libraries are released separately, one tag per language: `python-v*` to 
 not make them agree. What does is the conformance suite and
 [`conformance/contract-version.txt`](conformance/contract-version.txt).
 
+## Unreleased
+
+**The orderbook adapter over TCP** (`smart-data-engine-sdk`, [`docs/orderbook.md`](docs/orderbook.md)).
+- **Credentials, TLS and a timeout**, and an `orderbook://` DSN.
+- **A chosen sequence number is refused before sending.** The server numbers every update itself.
+  The current server refuses a chosen number, and an older one discarded it, so the row read back
+  disagreed with the row written.
+- **`Session.save_many` writes whole updates.**
+- **`Session.scan` pages one book in key order** although the engine answers in arrival order.
+- **`count` and `summarize` are refused by name.**
+- **Values the engine cannot store are refused with the field named**, before anything is sent.
+
+A new CI job, `orderbook`, builds the engine at a pinned commit and runs every orderbook slice
+in-process and over TCP, plain and with credentials and TLS.
+
 ## `smart-data-engine-sdk` 0.1.1
 
 Published on 28 September 2026, on the first run of `python-v0.1.1`, with attestations.

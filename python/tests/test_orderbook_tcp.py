@@ -2,7 +2,7 @@
 
 Everything here is decided before the engine's client is called, so it runs everywhere. The fake
 book answers the way the engine was **measured** to answer on 2 October 2026 (engine ``971dda2``),
-and ``test_orderbook_slice.py`` and ``test_orderbook_session_live.py`` re-check each of those
+and ``test_orderbook_slice.py`` and ``test_orderbook_session_slice.py`` re-check each of those
 behaviours against the engine itself:
 
 - a scan returns rows in **arrival** order, whatever their event times, and ``LIMIT`` keeps the

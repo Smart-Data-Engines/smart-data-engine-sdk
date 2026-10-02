@@ -2,7 +2,7 @@
 
 The engine's Python client is not on PyPI and its shared library is built from C++, so these tests
 run only where an engine is: the SDK's ``orderbook`` CI job builds one at the commit
-``conformance/orderbook-engine.txt`` pins, starts two servers and fails if anything here was
+``.github/orderbook-engine.txt`` pins, starts two servers and fails if anything here was
 skipped. Locally::
 
     cmake -S . -B build -DOB_BUILD_TESTS=OFF
