@@ -190,14 +190,28 @@ def test_a_scan_by_a_text_key_prefix_uses_the_primary_key(
 
 
 def test_a_scan_by_a_designed_index_on_a_text_column_uses_it(
-    pg_schema: str, monkeypatch: pytest.MonkeyPatch
+    pg_schema: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """A table this library created: its key and its index on text are in the reads' collation.
+
+    So nothing is named - the event is for a table from before, and a session on every new one
+    would otherwise log it for its primary key.
+    """
     model = _model()
     index = {"entity": "Reading", "name": "reading_sensor_btree", "columns": ["sensor"]}
     placement = _placement(model, "postgres", [index])
     with PostgresEngine(_pg_dsn(pg_schema)) as engine:
-        session = sde.Session(model, placement, {"e": engine})
-        session.ensure_schema()
+        with caplog.at_level(logging.INFO, logger="sde"):
+            session = sde.Session(model, placement, {"e": engine})
+            session.ensure_schema()
+            sde.Session(model, placement, {"e": engine}).close()
+        assert not [
+            record for record in caplog.records
+            if record.__dict__.get("sde_event") == "sde.schema.text_collation"
+        ]
+        assert any(
+            record.__dict__.get("sde_event") == "sde.schema.applied" for record in caplog.records
+        ), "the capture saw none of the session's events"
         _fill(session)
         calls = _spy(monkeypatch, postgres_module)
         assert session.count("Reading", where={"sensor": "sn-123"}) == 3
