@@ -490,11 +490,15 @@ class OrderbookEngine:
                 "extra here because an extra resolving to a git URL cannot be published, and a "
                 "dependency you cannot install from an index is worse than one you were told about."
             ) from exc
+        # Typed as Any on purpose: the client is typed where it is installed and absent from the
+        # index everywhere else, and this module has to check the same in both.
+        client: Any = orderbook_engine.OrderbookEngine
+        engine: Any
         try:
             if self._data_dir is not None:
-                engine = orderbook_engine.OrderbookEngine(self._data_dir)
+                engine = client(self._data_dir)
             else:
-                engine = orderbook_engine.OrderbookEngine(
+                engine = client(
                     host=self._host,
                     port=self._port,
                     timeout=self._timeout,
