@@ -122,7 +122,12 @@ predicate, expression, INCLUDE columns or sort options, is this build's own: if 
 ready it is done; if it is not - what an interrupted concurrent build leaves - it is dropped with
 `DROP INDEX CONCURRENTLY` and built again, once no statement that names it is still running (see
 the deadline below). Anything else under the name is somebody else's object
-and the build refuses it. A concurrent build waits for every transaction with an older snapshot, so
+and the build refuses it. A text column is built `COLLATE "C"`, the collation of the library's
+reads, so the index serves them on a table an earlier library created too, whose own text columns
+are in the default collation ([format contract](format-contract.md) §7a). A ready index of ours with
+a text column in another collation was built for this map by a library from before 2 October 2026,
+and the build was then resumed by this one. It is no use to a read, so it is dropped and built
+again like an unfinished one. A concurrent build waits for every transaction with an older snapshot, so
 a long transaction anywhere in the database - an idle session left in a transaction included -
 holds it until that transaction ends or the build budget does.
 

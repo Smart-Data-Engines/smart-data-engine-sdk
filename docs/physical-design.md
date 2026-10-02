@@ -70,11 +70,16 @@ map that says otherwise would be a silent drop.
 
 | Dialect | Method | Parameters | Renders as |
 |---|---|---|---|
-| PostgreSQL | `btree` (or absent) | - | `CREATE INDEX ... ON t (cols)`, the bytes every earlier map produced |
+| PostgreSQL | `btree` (or absent) | - | `CREATE INDEX ... ON t (cols)`, without the `USING` clause no earlier map had |
 | PostgreSQL | `brin` | - | `CREATE INDEX ... ON t USING brin (cols)` |
 | ClickHouse | `minmax` | `granularity` 1-1024 | `INDEX name col TYPE minmax GRANULARITY g` inside `CREATE TABLE` |
 | ClickHouse | `set` | `granularity` 1-1024, `max_rows` 1-65536 | `... TYPE set(N) GRANULARITY g` |
 | ClickHouse | `bloom_filter` | `granularity` 1-1024 | `... TYPE bloom_filter GRANULARITY g` |
+
+In PostgreSQL a text column renders with `COLLATE "C"` in every index, whatever its method, as
+it does in `CREATE TABLE`. That is the collation of the library's own scans, counts and summaries,
+and an index in any other collation serves none of them ([format contract](format-contract.md)
+§7a).
 
 A ClickHouse data-skipping index summarises exactly one column. `set(0)` means unlimited there,
 which is an unbounded memory commitment per entry, so zero is outside the range rather than a
