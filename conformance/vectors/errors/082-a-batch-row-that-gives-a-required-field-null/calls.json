@@ -1,0 +1,8 @@
+[
+  {
+    "engine": "pg-main",
+    "call": "insert_many",
+    "table": "thing",
+    "rows": 2
+  }
+]

@@ -32,7 +32,13 @@ from .errors import (
     ResourceBusy,
     ResourceClosed,
 )
-from .generation import logical_row, stamp_values, validate_generations
+from .generation import (
+    EPOCH_COLUMN,
+    GENERATIONS_SINCE,
+    logical_row,
+    stamp_values,
+    validate_generations,
+)
 from .groups import Group, colocation_groups
 from .hashing import NameMap
 from .layout import group_columns
@@ -166,6 +172,7 @@ class Session:
         self._router = Router(placement)
         self._groups: tuple[Group, ...] = colocation_groups(model)
         self._shapes = {(s.entity, s.kind, s.fields): s for s in enumerate_shapes(model)}
+        self._admission = _admission(model, placement, self._groups)
         self._in_write_transaction = False
         self._deferred: list[tuple[str, str, str, str, int, _WriteValues]] = []
         """Rows waiting for their transaction to commit before reaching a copy.
@@ -381,9 +388,9 @@ class Session:
             return {mapping[field]: value for field, value in values.items()}
         except KeyError as exc:
             raise ModelPlanningError(
-                f"{entity} has no field {exc.args[0]!r}. With hashed identifiers a field the model "
-                "does not declare cannot be translated, so it is refused here rather than sent to "
-                "an engine under a name nothing will recognise."
+                f"{entity} declares no field {exc.args[0]}. With hashed identifiers a field the "
+                "model does not declare cannot be translated, so it is refused here rather than "
+                "sent to an engine under a name nothing will recognise."
             ) from None
 
     def _fields_out(self, entity: str, row: Any) -> Any:
@@ -408,6 +415,40 @@ class Session:
             return sorted(fields)
         reverse = self._reverse_fields.get(self._names.entity(entity), {})
         return sorted(reverse.get(field, field) for field in fields)
+
+    def _admit(self, entity: str, target: str, values: Mapping[str, Any]) -> None:
+        """Refuse, before any engine is called, a row the model does not allow.
+
+        A field declared without ``nullable`` and every key field must be present and not ``None``,
+        and a field the entity does not declare is refused by name. The engines would not agree on
+        any of it, which is why the library decides: measured on 2 October 2026, PostgreSQL stored
+        NULL in a required field and ClickHouse stored a value nobody wrote - ``0`` for an integer
+        the row left out, ``""`` for a string - and neither raised. The same model meant two things,
+        and moving a group would have changed which. Shared vectors: ``errors/078``-``082``.
+
+        Two comparisons of key views and one pass over the required fields, from sets built once
+        per session: this is on every write.
+        """
+        admission = self._admission[target]
+        names = values.keys()
+        if names <= admission.declared and admission.needed <= names:
+            name = _null_required(values, admission.required)
+            if name is None:
+                return
+            raise ModelPlanningError(
+                f"{entity}.{self._client_names(entity, (name,))[0]} is required and this row "
+                f"gives it null"
+            )
+        unknown = sorted(name for name in names if name not in admission.declared)
+        if unknown:
+            raise ModelPlanningError(
+                f"{entity} declares no field {self._client_names(entity, unknown[:1])[0]}"
+            )
+        absent = next(name for name in admission.required if name not in names)
+        raise ModelPlanningError(
+            f"{entity}.{self._client_names(entity, (absent,))[0]} is required and this row leaves "
+            f"it out"
+        )
 
     # --- structure -------------------------------------------------------------------------
 
@@ -469,6 +510,7 @@ class Session:
         target = self._entity(entity)
         values = self._fields_in(entity, values)
         shape = self._shape(target, "write")
+        self._admit(entity, target, values)
         engine, materialization = self._target(shape, fresh=False)
         table = materialization.layout.table_for(target)
         started = perf_counter_ns() if self._recorder else 0
@@ -515,6 +557,13 @@ class Session:
             raise BulkWriteRefused(
                 "batch fields must be declared and include the key and all non-nullable fields"
             )
+        for index, row in enumerate(translated):
+            name = _null_required(row, self._admission[target].required)
+            if name is not None:
+                raise BulkWriteRefused(
+                    f"row {index}: {entity}.{self._client_names(entity, (name,))[0]} is required "
+                    f"and this row gives it null"
+                )
         writer = bulk_writer(engine)
         for copy in spot.also_write:
             bulk_writer(self._engines[copy.engine])
@@ -992,3 +1041,40 @@ def _predicates(plan: ReadPlan) -> dict[str, Any]:
     bounded = sorted({item.column.name for item in plan.filters if item.operation != "eq"})
     return {"equal": equal, "ranged": bounded[0] if bounded else None}
 
+
+class _Admission:
+    """What a row of one entity must and may carry, computed once per session."""
+
+    __slots__ = ("declared", "needed", "required")
+
+    def __init__(self, declared: frozenset[str], required: tuple[str, ...]) -> None:
+        self.declared = declared
+        self.required = required
+        """The fields a row must give a value, in code-point order: the order a refusal names."""
+        self.needed = frozenset(required)
+
+
+def _admission(
+    model: LogicalModel, placement: PlacementMap, groups: Sequence[Group]
+) -> dict[str, _Admission]:
+    # The write-generation column is left to `stamp_values`, which refuses it in a map that has
+    # generations with its own reason: it is reserved, not merely undeclared.
+    reserved = frozenset({EPOCH_COLUMN}) if placement.contract >= GENERATIONS_SINCE else frozenset()
+    admission: dict[str, _Admission] = {}
+    for group in groups:
+        columns = group_columns(model, group)
+        for entity in group.members:
+            spec = model.entity(entity)
+            required = tuple(
+                sorted(f.name for f in spec.fields if not f.nullable or f.name in spec.key)
+            )
+            admission[entity] = _Admission(frozenset(columns[entity]) | reserved, required)
+    return admission
+
+
+def _null_required(values: Mapping[str, Any], required: tuple[str, ...]) -> str | None:
+    """The first required field the row gives ``None``, or ``None`` if there is none."""
+    for name in required:
+        if values[name] is None:
+            return name
+    return None

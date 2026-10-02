@@ -1,0 +1,28 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Thing\\.amount is required and this row gives it null",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": null,
+        "id": "t-2",
+        "label": "second",
+        "note": null
+      }
+    }
+  },
+  "why": "PostgreSQL stored this null; ClickHouse's driver refused it with a message about a column type. One model, two outcomes, and neither was the library's decision. `note` is null in the same row and that is allowed: only the required field is refused."
+}

@@ -22,11 +22,13 @@ vectors/
     cases.json                (shape, in a write transaction?, needs freshness?) -> materialisation
   errors/<nnn>-<name>/
     model.json
-    map.json                  for the `map` and `session` stage cases
-    engines.json              the engine set to build, for `session` cases - the same document
-                              the migration family uses, and `dialect` is the field that matters
-    calls.json                for `session` cases: what the library was allowed to do to those
-                              engines on its way to refusing, which so far is nothing
+    map.json                  for the `map`, `session` and `write` stage cases
+    engines.json              the engine set to build, for `session` and `write` cases - the same
+                              document the migration family uses, and `dialect` is the field that
+                              matters
+    calls.json                for `session` and `write` cases: what the library was allowed to do
+                              to those engines on its way to refusing - nothing for a session, and
+                              only the accepted write for a write
     keys.json                 the public keys the caller holds - only where a case needs one
     expected.json             which error, at what point it must be raised, and optionally a
                               `load` block of arguments the runner must pass to the loader
@@ -175,6 +177,10 @@ vectors exist to catch, and it is invisible after parsing.
    a stage nobody runs is a rule nobody checks, and skipping reads as coverage in the summary.
    Where a `session` case carries `calls.json`, compare it: the refusal is only half the claim, and
    the other half is that nothing was created, read or written before it.
+   A `write` case opens a session on its valid map, makes `write.accepted` - a write that must
+   succeed - and then `write.refused`, which must raise exactly the named class. `calls.json` holds
+   the accepted write and nothing of the refused one: a row the model does not allow is refused
+   before any engine is called (contract §8b).
 
 7. For signature vectors, load `map.json` with the keys in `keys.json` and assert which one
    verified it. A single entry under the **empty** name means the caller passed one bare key and

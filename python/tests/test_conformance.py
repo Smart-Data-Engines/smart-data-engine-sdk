@@ -29,11 +29,13 @@ import sde
 import sde.telemetry
 from sde.canonical import CanonicalError, canonical_bytes
 from sde.errors import (
+    BulkWriteRefused,
     DeclarationError,
     EngineError,
     MapError,
     MapRolledBack,
     MigrationRefused,
+    ModelPlanningError,
 )
 from sde.hashing import hash_identifiers
 from sde.testing.loader import model_from_neutral
@@ -733,6 +735,7 @@ def test_the_signature_family_covers_both_outcomes() -> None:
 
 
 _ERRORS: dict[str, type[Exception]] = {
+    "BulkWriteRefused": BulkWriteRefused,
     "DeclarationError": DeclarationError,
     # Named here rather than in a second table for the `schema/` family: one mapping from the name a
     # vector writes to the class, so a family added later cannot introduce a second spelling of
@@ -741,6 +744,7 @@ _ERRORS: dict[str, type[Exception]] = {
     "MapError": MapError,
     "MapRolledBack": MapRolledBack,
     "MigrationRefused": MigrationRefused,
+    "ModelPlanningError": ModelPlanningError,
 }
 
 
@@ -790,6 +794,39 @@ def _refuse_at_session(case: Path, exc_type: type[Exception], expected: Mapping[
     )
 
 
+def _write(session: sde.Session, step: Mapping[str, Any]) -> None:
+    if step["operation"] == "save":
+        session.save(step["entity"], step["values"])
+    else:
+        assert step["operation"] == "save_many", step["operation"]
+        session.save_many(step["entity"], step["rows"])
+
+
+def _refuse_at_write(case: Path, exc_type: type[Exception], expected: Mapping[str, Any]) -> None:
+    """A row the model does not allow, refused before any engine is called.
+
+    The session is open on a valid map and one accepted write comes first. It is the control: the
+    engine records what it receives, so the empty remainder of ``calls.json`` says the refused row
+    reached nothing, and is not a recorder that records nothing.
+    """
+    model = model_from_neutral(_read_json(case / "model.json"))
+    placement = _load_map_from_vector(case, expected.get("load", {}))
+    engines = engines_from(_read_json(case / "engines.json"))
+    session = sde.Session(model, placement, engines)
+    write = expected["write"]
+    _write(session, write["accepted"])
+    with pytest.raises(exc_type, match=expected["match"]) as raised:
+        _write(session, write["refused"])
+    # The class exactly: `BulkWriteRefused` is a `ModelPlanningError`, and a vector naming the
+    # parent must not be satisfied by the child, or the reverse.
+    assert type(raised.value) is exc_type, f"{_ident(case)}: raised {type(raised.value).__name__}"
+    journal = next(iter(engines.values())).recorded
+    assert journal.as_list() == _read_json(case / "calls.json"), (
+        f"{_ident(case)}: the refusal is right and it came too late. A row the model does not "
+        "allow must not reach an engine, which would store it or answer in its own words."
+    )
+
+
 @pytest.mark.parametrize("case", _cases("errors"), ids=_ident)
 def test_error_vector(case: Path) -> None:
     expected = _read_json(case / "expected.json")
@@ -799,7 +836,7 @@ def test_error_vector(case: Path) -> None:
     # The stage matters as much as the error. A library that raises the right exception when the
     # query runs, rather than when the model is built, has a different bug that happens to look the
     # same in a test that only checks the type.
-    assert stage in ("model", "map", "session"), (
+    assert stage in ("model", "map", "session", "write"), (
         f"{_ident(case)} expects the error at stage {stage!r}, which this runner does not know how "
         "to exercise yet. Failing rather than skipping: a stage nobody runs is a rule nobody "
         "checks."
@@ -807,6 +844,9 @@ def test_error_vector(case: Path) -> None:
 
     if stage == "session":
         _refuse_at_session(case, exc_type, expected)
+        return
+    if stage == "write":
+        _refuse_at_write(case, exc_type, expected)
         return
 
     with pytest.raises(exc_type, match=expected["match"]):
@@ -816,7 +856,7 @@ def test_error_vector(case: Path) -> None:
             _load_map_from_vector(case, expected.get("load", {}))
 
 
-def test_all_three_stages_are_actually_covered_by_vectors() -> None:
+def test_every_stage_is_actually_covered_by_vectors() -> None:
     """A stage the runner supports and no vector uses is a rule that reads as covered.
 
     Before the map stage existed, every rule in section 7 of the contract - eleven refusals, each
@@ -829,9 +869,14 @@ def test_all_three_stages_are_actually_covered_by_vectors() -> None:
     in both languages on the same day and held by a per-language test in each, which is the state
     this suite exists to refuse. Two green suites is exactly how one map with two meanings looks
     from the inside.
+
+    The write stage is the fourth: a row the model does not allow, which until 2 October 2026 each
+    engine answered its own way - PostgreSQL stored NULL, ClickHouse a default nobody wrote.
     """
     stages = {_read_json(case / "expected.json")["stage"] for case in _cases("errors")}
-    assert stages == {"map", "model", "session"}, f"error vectors cover only {sorted(stages)}"
+    assert stages == {"map", "model", "session", "write"}, (
+        f"error vectors cover only {sorted(stages)}"
+    )
 
 
 

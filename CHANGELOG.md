@@ -7,6 +7,22 @@ not make them agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a row the model does not allow is refused before any engine** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md) §8b). `Session.save` refuses a field its entity
+does not declare, a required field left out, and a required field given null. In TypeScript
+`undefined` is refused like null. `Session.save_many` / `saveMany` refuses a null in a required field,
+naming the row. A field is required when it is declared without `nullable`, and a key field always is.
+Until now the engines answered for the library, each its own way, measured on PostgreSQL 15 and
+ClickHouse 24.8:
+- PostgreSQL stored NULL in a required field;
+- ClickHouse stored a value nobody wrote: `0` for an integer left out, `""` for a string;
+- ClickHouse's driver refused a null with a message about a column type.
+
+A new `write` stage in the shared error vectors, `errors/078`-`082`, holds the refusal in both
+runners. In each, one accepted write comes first, and the refused one must reach no engine. With
+hashed identifiers, Python's refusal of an undeclared field now reads `declares no field`, as in
+TypeScript. Rows stored before this release are unchanged.
+
 **The orderbook adapter over TCP** (`smart-data-engine-sdk`, [`docs/orderbook.md`](docs/orderbook.md)).
 - **Credentials, TLS and a timeout**, and an `orderbook://` DSN.
 - **A chosen sequence number is refused before sending.** The server numbers every update itself.

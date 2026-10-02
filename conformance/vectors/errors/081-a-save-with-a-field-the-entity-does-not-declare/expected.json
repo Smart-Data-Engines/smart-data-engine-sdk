@@ -1,0 +1,29 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Thing declares no field colour",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 2,
+        "colour": "red",
+        "id": "t-2",
+        "label": "second",
+        "note": null
+      }
+    }
+  },
+  "why": "Refused by name before an engine is called. It used to reach the engine, which refused it in its own words - or, with hashed identifiers, was refused here in one language and sent on in the other."
+}
