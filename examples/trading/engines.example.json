@@ -1,0 +1,5 @@
+{
+  "ch-main": {"runtime_env": "TRADING_CH_DSN", "provision_env": "TRADING_CH_ADMIN_DSN"},
+  "ob-main": {"runtime_env": "TRADING_OB_DSN", "provision_env": "TRADING_OB_DSN"},
+  "pg-main": {"runtime_env": "TRADING_PG_DSN", "provision_env": "TRADING_PG_ADMIN_DSN"}
+}
