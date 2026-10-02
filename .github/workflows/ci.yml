@@ -400,6 +400,41 @@ jobs:
             -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: typescript/package-lock.json
+
+      - name: install the TypeScript library
+        working-directory: typescript
+        run: npm ci
+
+      # The TypeScript adapter against the same two servers, and the same book written by one
+      # library and read by the other in both directions: the Python half is this job's own
+      # interpreter, which has the SDK and, on its path, the engine's client.
+      - name: the TypeScript orderbook slices, plain and with TLS, and across both libraries
+        working-directory: typescript
+        env:
+          SDE_ORDERBOOK_TCP: 127.0.0.1:59090
+          SDE_PYTHON: python
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
+          npx vitest run tests/orderbook.test.ts tests/orderbook.slice.test.ts \
+            --reporter=json --outputFile="$RUNNER_TEMP/sde-orderbook-ts.json"
+          node -e '
+            const report = require(process.env.RUNNER_TEMP + "/sde-orderbook-ts.json")
+            if (report.numPendingTests > 0) {
+              console.error(report.numPendingTests + " TypeScript orderbook test(s) skipped")
+              process.exit(1)
+            }
+            if (report.numPassedTests < 1) {
+              console.error("the TypeScript orderbook slices ran no tests at all")
+              process.exit(1)
+            }
+            console.log(report.numPassedTests + " passed, none skipped")
+          '
+
   contract:
     runs-on: ubuntu-latest
     steps:

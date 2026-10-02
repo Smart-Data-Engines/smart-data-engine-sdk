@@ -151,6 +151,36 @@ this engine. It has no query planner, so `explain_plan` refuses. Each refusal sa
 `sde.engine_facts("orderbook")` states all of this as data, for the control plane to give a model that
 decides placement; the tests hold each fact against the adapter and the engine.
 
+## From TypeScript
+
+`OrderbookEngine` from `@smart-data-engines/sde/engines/orderbook` is the same adapter for Node,
+over the engine's TCP protocol only: the in-process mode loads the engine's shared library, which
+this runtime has no binding for. It speaks the protocol itself, with no client library, and makes
+the same decisions with the same refusals:
+
+```typescript
+import { OrderbookEngine } from '@smart-data-engines/sde/engines/orderbook'
+
+const engine = OrderbookEngine.fromDsn(process.env.SDE_ORDERBOOK_DSN!)
+// or: new OrderbookEngine({ host, port, auth: { identity, secret }, tls: true, tlsCaFile })
+await engine.connect()
+```
+
+`timestamp_ns`, `price`, `quantity` and `sequence_number` are `bigint` when read, as every `int64`
+in this library is, and a write takes a `bigint` or a safe `number`. A nanosecond timestamp is past
+2^53, so in practice it is a `bigint`. `orderbook.slice.test.ts` writes a book from each library and
+reads it from the other, in both directions, against a live server.
+
+## Who sees a write, and when
+
+A process reads its own writes: the adapter flushes before a read when it has written anything since
+the last flush. **Another connection sees a write at the server's next flush tick** -
+`--flush-interval-ms`, 100 ms by default - or at once after a `FLUSH`. So with a writer and a reader in
+two processes, a read can miss the last tick's writes. Measured on 2 October 2026: a reader in another
+process found none of a book written a moment earlier, until the writer flushed. Call `flush()` on
+the writer where a reader elsewhere must see the data at once; it is not done after every write,
+because a flush in local mode costs 3.4 ms (measured).
+
 ## Running the slices
 
 ```bash
@@ -165,5 +195,7 @@ OB_LIB_PATH=$PWD/../ob/build/liborderbook_shared.so PYTHONPATH=$PWD/../ob/python
 ```
 
 `SDE_ORDERBOOK_SECURE_DSN` adds a server with `--auth-secret-file` and `--tls-client`. The CI job
-generates a CA, a certificate and a secret for one. `test_orderbook_three_engines.py` needs
+generates a CA, a certificate and a secret for one. The TypeScript slices run with the same two
+variables (`npx vitest run tests/orderbook.slice.test.ts` in `typescript/`), and `SDE_PYTHON` names
+an interpreter with this SDK and the engine's client for the half written in Python. `test_orderbook_three_engines.py` needs
 `SDE_POSTGRES_DSN` and `SDE_CLICKHOUSE_DSN` as well, as every live slice does.
