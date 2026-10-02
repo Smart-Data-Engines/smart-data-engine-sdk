@@ -400,6 +400,15 @@ describe('reading', () => {
     await engine.close()
   })
 
+  it('answers a key no row can have without asking: a negative time, a side that is neither', async () => {
+    const engine = await connected()
+    const before = server.commands.length
+    expect(await engine.get(ORDERBOOK_TABLE, { ...BOOK, timestamp_ns: -1n, side: 'bid', level: 0 })).toBeNull()
+    expect(await engine.get(ORDERBOOK_TABLE, { ...BOOK, timestamp_ns: 1n, side: 'mid', level: 0 })).toBeNull()
+    expect(server.commands.length).toBe(before)
+    await engine.close()
+  })
+
   it('refuses two rows with one key, in a page and in get', async () => {
     const engine = await connected()
     server.store('BTCUSDT', 'binance', 0, 7n, [[1n, 1n, 1n]])
