@@ -292,7 +292,9 @@ def test_with_credentials_and_tls_a_session_writes_and_reads() -> None:
 def test_a_wrong_secret_is_refused_at_connect() -> None:
     assert SECURE_DSN is not None
     engine = OrderbookEngine.from_dsn(_variant(SECURE_DSN, secret="not-the-secret"))
-    with pytest.raises(EngineError) as refused:
+    # By name: a refusal for any other reason - a certificate the client does not accept, which is
+    # how this test once passed in CI - would say nothing about the secret.
+    with pytest.raises(EngineError, match="Authentication failed") as refused:
         engine.connect()
     assert "not-the-secret" not in str(refused.value)
 
@@ -305,5 +307,8 @@ def test_plain_text_against_the_tls_port_does_not_connect() -> None:
         item for item in parts.query.split("&") if not item.startswith(("tls=", "ca=", "verify="))
     )
     engine = OrderbookEngine.from_dsn(_variant(SECURE_DSN, query=plain_query + "&timeout=2"))
-    with pytest.raises(EngineError):
+    # Measured: the server waits for a TLS handshake and the client for its challenge, so the
+    # connection times out rather than being refused - and a server that is not there at all would
+    # be refused, not time out.
+    with pytest.raises(EngineError, match="timed out"):
         engine.connect()
