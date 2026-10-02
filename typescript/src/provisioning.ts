@@ -27,15 +27,22 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
     throw new MigrationRefused(
       'schema preparation needs native write generations on every engine of a group that carries one')
   }
+  if (placement.contract >= 4) {
+    // Before any statement, like the check above: a map that cannot work creates nothing.
+    for (const name of Object.keys(placement.groups).sort()) {
+      const spot = placement.groups[name]!
+      if (spot.writeEpoch !== undefined) continue
+      for (const material of [spot.source, ...spot.derived]) {
+        refuseAFencingEngine(name, material.engine, engines[material.engine])
+      }
+    }
+  }
   for (const group of colocationGroups(model)) {
     const spot = placement.groups[group.name]!
     const keys: Record<string, readonly string[]> = {}
     for (const name of group.members) keys[name] = model.entities.find((entity) => entity.name === name)!.key
     for (const material of [spot.source, ...spot.derived]) {
       const engine = engines[material.engine] as Engine & Fencable
-      if (placement.contract >= 4 && spot.writeEpoch === undefined) {
-        refuseAFencingEngine(group.name, material.engine, engine)
-      }
       // Provisioning is where a person can act on a physical difference, so here it refuses.
       refuseFindings((await engine.ensureSchema(material.layout, { keys })) ?? [], EngineError)
       if (spot.writeEpoch !== undefined) {

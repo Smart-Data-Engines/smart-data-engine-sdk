@@ -48,13 +48,17 @@ def prepare_schema(
             "schema preparation needs native write generations on every engine of a group "
             "that carries one"
         )
+    if placement.contract >= 4:
+        # Before any statement, like the check above: a map that cannot work creates nothing.
+        for name, spot in sorted(placement.groups.items()):
+            if spot.write_epoch is None:
+                for material in spot.all():
+                    refuse_a_fencing_engine(name, material.engine, engines[material.engine])
     for group in colocation_groups(model):
         spot = placement.placement_of(group.name)
         keys = {name: model.entity(name).key for name in group.members}
         for material in spot.all():
             engine = engines[material.engine]
-            if placement.contract >= 4 and spot.write_epoch is None:
-                refuse_a_fencing_engine(group.name, material.engine, engine)
             # Provisioning is where a person can act on a physical difference, so here it refuses.
             refuse_findings(engine.ensure_schema(material.layout, keys=keys) or (), EngineError)
             if spot.write_epoch is not None:

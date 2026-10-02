@@ -14,6 +14,7 @@ job (``test_orderbook_three_engines.py``).
 from __future__ import annotations
 
 import base64
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -233,17 +234,54 @@ def run(book: Any, tmp_path: Path, *, symbol: str) -> None:
             assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
         moved.save("DepthLevel", level(symbol, 102, 3))
         for offset, price in ((1, 100), (2, 101), (3, 102)):
-            key = {
+            address = {
                 "symbol": symbol,
                 "exchange": "binance",
                 "timestamp_ns": T0 + offset,
                 "side": "bid",
                 "level": 0,
             }
-            row = moved.get("DepthLevel", key)
+            row = moved.get("DepthLevel", address)
             assert row is not None and row["price"] == price, (offset, row)
         # The old session's Event writes are cut off by their generation; its DepthLevel writes are
         # not, because that group carries none - and it never moves, so there is nothing to cut off.
         with pytest.raises(sde.EngineError):
             old.save("Event", {"id": 9, "value": 99})
         old.save("DepthLevel", level(symbol, 103, 4))
+
+        # An index built in place on Event, now in ClickHouse, beside the same unbound engine.
+        in_force = json.loads(operator.store.root.joinpath("active-map.json").read_bytes())
+        identity = uuid4().hex
+        indexed = deepcopy(in_force)
+        indexed["map_version"] = in_force["map_version"] + 3
+        indexed["groups"]["Event"]["source"]["layout"]["indexes"] = [
+            {
+                "entity": "Event",
+                "name": sde.index_build_name(identity, 1),
+                "columns": ["value"],
+                "method": "minmax",
+                "granularity": 4,
+            }
+        ]
+        build = sde.load_index_plan(
+            signed(
+                {
+                    "kind": "sde-index",
+                    "protocol": 1,
+                    "index_id": identity,
+                    "project_id": PROJECT,
+                    "group": "Event",
+                    "current": in_force,
+                    "prepared": signed(indexed),
+                    "build_budget_ms": 600_000,
+                }
+            ),
+            model=logical,
+            project_id=PROJECT,
+            public_key=public,
+        )
+        assert operator.index(build).as_record()["outcome"] == "built"
+        final = sde.Session(logical, operator.active_map(), runtime, project_id=PROJECT)
+        assert final.placement.groups["DepthLevel"].write_epoch is None
+        assert final.get("Event", {"id": 2}) == {"id": 2, "value": 22}
+        final.save("DepthLevel", level(symbol, 104, 5))
