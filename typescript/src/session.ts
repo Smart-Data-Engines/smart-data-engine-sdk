@@ -34,7 +34,7 @@ import type { NameMap } from './hashing.js'
 import { groupColumns } from './layout.js'
 import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
-import { isQueryMapping, numericSummary, planRead, QueryRefused, queryEngine, summaryEngine, summaryScale } from './query.js'
+import { countEngine, isQueryMapping, numericSummary, planRead, QueryRefused, queryEngine, summaryEngine, summaryScale } from './query.js'
 import type { NumericSummary, ReadOptions, ReadPlan, ScanPage } from './query.js'
 import type { Materialization, PhysicalLayout, PlacementMap } from './placement.js'
 import { placementOf } from './placement.js'
@@ -787,7 +787,7 @@ export class Session {
       const shape = this.shapeFor(target, 'aggregate')
       const [engine, material] = this.target(shape, options.fresh === true)
       this.readProjection(material, target, plan, true)
-      const reader = queryEngine(engine), table = tableFor(material.layout, target)
+      const reader = countEngine(engine), table = tableFor(material.layout, target)
       const started = this.recorder === undefined ? 0 : now()
       let failed = false
       try {
