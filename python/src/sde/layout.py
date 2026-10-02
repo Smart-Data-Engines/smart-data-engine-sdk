@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -34,6 +34,7 @@ __all__ = [
     "CLICKHOUSE_TYPES",
     "FIXED_SCHEMA",
     "ORDERBOOK_KEY",
+    "ORDERBOOK_NULLABLE",
     "ORDERBOOK_SHAPE",
     "ORDERBOOK_TABLE",
     "ORDERBOOK_TYPES",
@@ -44,6 +45,7 @@ __all__ = [
     "denormalized_layout",
     "fixed_schema_mismatch",
     "group_columns",
+    "group_nullable",
     "snake_case",
     "stored_types",
 ]
@@ -218,6 +220,16 @@ ORDERBOOK_KEY: Final[tuple[str, ...]] = (
 )
 """The key, in the order the engine addresses by. Positional and load-bearing, as in ClickHouse."""
 
+ORDERBOOK_NULLABLE: Final[frozenset[str]] = frozenset({"sequence_number"})
+"""The fields of the shape an entity declares ``nullable`` - these, and no others.
+
+Over TCP the server numbers every update itself, so a row is written without ``sequence_number``
+and read back with the server's number: a model that made it required could not write at all.
+Every other field is stored exactly as given and the engine has no null to store in it, so a model
+that allowed null there could save a row the engine refuses. Both used to pass the shape check, and
+a placement on this engine is final, because it has no write generations.
+"""
+
 FIXED_SCHEMA: Final[frozenset[str]] = frozenset({"orderbook"})
 """Dialects whose physical schema the engine imposes rather than accepting from us.
 
@@ -226,32 +238,42 @@ differently - the layout, the DDL renderer and the control plane's eligibility f
 construction instead of each testing for one name.
 """
 
-_FIXED_SHAPES: Final[Mapping[str, tuple[str, Mapping[str, str], tuple[str, ...]]]] = {
-    "orderbook": (ORDERBOOK_TABLE, ORDERBOOK_SHAPE, ORDERBOOK_KEY),
+_FIXED_SHAPES: Final[
+    Mapping[str, tuple[str, Mapping[str, str], tuple[str, ...], frozenset[str]]]
+] = {
+    "orderbook": (ORDERBOOK_TABLE, ORDERBOOK_SHAPE, ORDERBOOK_KEY, ORDERBOOK_NULLABLE),
 }
 
 assert set(_FIXED_SHAPES) == set(FIXED_SCHEMA), sorted(set(_FIXED_SHAPES) ^ set(FIXED_SCHEMA))
 
 
 def fixed_schema_mismatch(
-    columns: Mapping[str, Mapping[str, str]], *, dialect: str
+    columns: Mapping[str, Mapping[str, str]],
+    *,
+    dialect: str,
+    nullable: Mapping[str, Collection[str]],
 ) -> str | None:
     """Why a group cannot live in a fixed-schema engine, or ``None`` if it can.
 
     ``columns`` is entity name to column name to neutral type - what :func:`group_columns` returns.
-    ``None`` for a dialect that is not fixed-schema, because "no objection" is the honest answer to
-    a question that does not apply: the caller asks this once per engine and branching on the
-    dialect at the call site would put the set of fixed-schema engines in two places.
+    ``nullable`` is entity name to the fields declared ``nullable`` - what :func:`group_nullable`
+    returns. ``None`` for a dialect that is not fixed-schema, because "no objection" is the honest
+    answer to a question that does not apply: the caller asks this once per engine and branching on
+    the dialect at the call site would put the set of fixed-schema engines in two places.
 
     A type check alone is not enough and that is the whole reason this exists. The orderbook shape
     is made of ``string``, ``int32`` and ``int64``, all of which every engine can store - so a model
     of two integers and a string passes representability and then fails while the layout is built,
     which is the failure this function was added to stop happening twice.
+
+    Nor are names and types enough, which is why ``nullable`` is required rather than optional: a
+    nullable ``quantity``, or a required ``sequence_number``, passed this check until 2 October 2026
+    and then could not be written over TCP - on an engine a group can never be moved off.
     """
     fixed = _FIXED_SHAPES.get(dialect)
     if fixed is None:
         return None
-    _, shape, _ = fixed
+    _, shape, _, allowed_null = fixed
 
     if len(columns) != 1:
         return (
@@ -268,7 +290,10 @@ def fixed_schema_mismatch(
         for name in sorted(set(shape) & set(declared))
         if declared[name] != shape[name]
     )
-    if not (missing or extra or wrong):
+    null = set(nullable.get(entity, ())) & set(shape)
+    stores_no_null = sorted(null - allowed_null)
+    assigned = sorted((allowed_null & set(declared)) - null)
+    if not (missing or extra or wrong or stores_no_null or assigned):
         return None
 
     problems = []
@@ -278,7 +303,19 @@ def fixed_schema_mismatch(
         problems.append(f"{entity} declares {extra}, which this engine has nowhere to put")
     if wrong:
         problems.append("; ".join(wrong))
-    expected = ", ".join(f"{name}: {kind}" for name, kind in shape.items())
+    if stores_no_null:
+        problems.append(
+            f"{entity} declares {stores_no_null} nullable, and this engine stores no null there"
+        )
+    if assigned:
+        problems.append(
+            f"{entity} declares {assigned} required, and this engine assigns it: a row is written "
+            f"without it and read back with the engine's value"
+        )
+    expected = ", ".join(
+        f"{name}: {kind}{', nullable' if name in allowed_null else ''}"
+        for name, kind in shape.items()
+    )
     return (
         f"{'. '.join(problems)}. This engine's schema is fixed in the engine and not chosen by us, "
         f"so a model either is that shape or cannot be stored here. The shape is exactly: "
@@ -394,6 +431,18 @@ def group_columns(model: LogicalModel, group: Group) -> Mapping[str, Mapping[str
     return _neutral_columns(model, group)
 
 
+def group_nullable(model: LogicalModel, group: Group) -> Mapping[str, frozenset[str]]:
+    """The fields each entity of a group declares ``nullable``, per entity.
+
+    The companion of :func:`group_columns` for :func:`fixed_schema_mismatch`. Only declared fields
+    are listed: a relation's column is not a field, and a group that has one is not a fixed shape.
+    """
+    return {
+        entity: frozenset(field.name for field in model.entity(entity).fields if field.nullable)
+        for entity in group.members
+    }
+
+
 def stored_types(model: LogicalModel, group: Group) -> tuple[str, ...]:
     """The neutral types a group's tables need, sorted and deduplicated.
 
@@ -438,10 +487,12 @@ def default_layout(
     neutral = _neutral_columns(model, group)
 
     if dialect in FIXED_SCHEMA:
-        mismatch = fixed_schema_mismatch(neutral, dialect=dialect)
+        mismatch = fixed_schema_mismatch(
+            neutral, dialect=dialect, nullable=group_nullable(model, group)
+        )
         if mismatch is not None:
             raise DeclarationError(mismatch)
-        table, shape, _ = _FIXED_SHAPES[dialect]
+        table, shape, _, _ = _FIXED_SHAPES[dialect]
         entity = next(iter(neutral))
         # The engine's own table name and the engine's own column names, typed through the same
         # `_column_type` as everything else so that an unmapped neutral type still raises here

@@ -59,15 +59,40 @@ def test_a_fixed_schema_is_the_layouts_own_shape_and_its_eligibility_rule() -> N
         "entities": 1,
         "fields": dict(sde.ORDERBOOK_SHAPE),
         "key": list(sde.ORDERBOOK_KEY),
+        "nullable": sorted(sde.ORDERBOOK_NULLABLE),
+        "assigned_by_server": ["sequence_number"],
     }
     fields = dict(shape["fields"])
-    assert sde.fixed_schema_mismatch({"DepthLevel": fields}, dialect="orderbook") is None
-    two = sde.fixed_schema_mismatch({"A": fields, "B": fields}, dialect="orderbook")
+    null = {"DepthLevel": set(shape["nullable"])}
+    check = sde.fixed_schema_mismatch
+    assert check({"DepthLevel": fields}, dialect="orderbook", nullable=null) is None
+    two = check({"A": fields, "B": fields}, dialect="orderbook", nullable={"A": set(), "B": set()})
     assert two is not None and "stores one thing" in two
-    decimal = sde.fixed_schema_mismatch(
-        {"DepthLevel": {**fields, "price": "decimal(12,2)"}}, dialect="orderbook"
+    decimal = check(
+        {"DepthLevel": {**fields, "price": "decimal(12,2)"}}, dialect="orderbook", nullable=null
     )
     assert decimal is not None and "price" in decimal
+    loose = check({"DepthLevel": fields}, dialect="orderbook", nullable={"DepthLevel": set(fields)})
+    assert loose is not None and "stores no null there" in loose
+    strict = check({"DepthLevel": fields}, dialect="orderbook", nullable={"DepthLevel": set()})
+    assert strict is not None and "this engine assigns it" in strict
+
+
+def test_the_nullable_field_is_the_one_a_write_leaves_out_and_the_server_assigns() -> None:
+    """Held against the adapter: every other field is required before anything is sent, and over
+    TCP a chosen sequence number is refused because the server numbers the update."""
+    shape = sde.engine_facts("orderbook")["fixed_shape"]
+    tcp = OrderbookEngine(host="127.0.0.1", port=1)
+    row = {
+        "symbol": "BTCUSDT", "exchange": "binance", "timestamp_ns": 1, "side": "bid", "level": 0,
+        "price": 100, "quantity": 5, "order_count": 1,
+    }
+    for name in sorted(set(shape["fields"]) - set(shape["nullable"])):
+        with pytest.raises(EngineError, match=rf"missing \['{name}'\]"):
+            tcp.insert(sde.ORDERBOOK_TABLE, {k: v for k, v in row.items() if k != name})
+    for name in shape["assigned_by_server"]:
+        with pytest.raises(EngineError, match="sequence number is the server's"):
+            tcp.insert(sde.ORDERBOOK_TABLE, {**row, name: 7})
 
 
 def test_write_generations_are_the_adapters_write_fences() -> None:

@@ -39,7 +39,7 @@ def _model(**fields: str) -> sde.LogicalModel:
                 {
                     "name": "Depth",
                     "fields": [
-                        {"name": name, "type": kind, "nullable": False}
+                        {"name": name, "type": kind, "nullable": name in sde.ORDERBOOK_NULLABLE}
                         for name, kind in fields.items()
                     ],
                     "key": key,
@@ -57,6 +57,15 @@ def _orderbook_model() -> sde.LogicalModel:
 
 def _group(model: sde.LogicalModel) -> sde.Group:
     return sde.colocation_groups(model)[0]
+
+
+def _mismatch(model: sde.LogicalModel) -> str | None:
+    group = _group(model)
+    return sde.fixed_schema_mismatch(
+        sde.group_columns(model, group),
+        dialect="orderbook",
+        nullable=sde.group_nullable(model, group),
+    )
 
 
 # ── The shape itself ────────────────────────────────────────────────────────────────────────────
@@ -86,7 +95,8 @@ def test_orderbook_is_a_dialect_and_a_fixed_schema_one() -> None:
 def test_the_exact_shape_fits() -> None:
     model = _orderbook_model()
     columns = sde.group_columns(model, _group(model))
-    assert sde.fixed_schema_mismatch(columns, dialect="orderbook") is None
+    nullable = sde.group_nullable(model, _group(model))
+    assert sde.fixed_schema_mismatch(columns, dialect="orderbook", nullable=nullable) is None
 
 
 def test_a_dialect_that_is_not_fixed_schema_has_no_objection() -> None:
@@ -97,8 +107,9 @@ def test_a_dialect_that_is_not_fixed_schema_has_no_objection() -> None:
     """
     model = _orderbook_model()
     columns = sde.group_columns(model, _group(model))
+    nullable = sde.group_nullable(model, _group(model))
     for dialect in ("postgres", "clickhouse"):
-        assert sde.fixed_schema_mismatch(columns, dialect=dialect) is None
+        assert sde.fixed_schema_mismatch(columns, dialect=dialect, nullable=nullable) is None
 
 
 def test_a_missing_field_is_named_and_the_whole_expected_shape_is_printed() -> None:
@@ -106,7 +117,7 @@ def test_a_missing_field_is_named_and_the_whole_expected_shape_is_printed() -> N
     fields = dict(sde.ORDERBOOK_SHAPE)
     del fields["order_count"]
     model = _model(**fields)
-    reason = sde.fixed_schema_mismatch(sde.group_columns(model, _group(model)), dialect="orderbook")
+    reason = _mismatch(model)
     assert reason is not None
     assert "order_count" in reason
     for name in sde.ORDERBOOK_SHAPE:
@@ -116,7 +127,7 @@ def test_a_missing_field_is_named_and_the_whole_expected_shape_is_printed() -> N
 def test_an_extra_field_is_refused_rather_than_dropped() -> None:
     """Dropping it would lose data in an engine chosen for not losing any."""
     model = _model(**dict(sde.ORDERBOOK_SHAPE), venue_note="string")
-    reason = sde.fixed_schema_mismatch(sde.group_columns(model, _group(model)), dialect="orderbook")
+    reason = _mismatch(model)
     assert reason is not None
     assert "venue_note" in reason
     assert "nowhere to put" in reason
@@ -127,7 +138,7 @@ def test_a_field_of_the_right_name_and_wrong_type_is_refused() -> None:
     fields = dict(sde.ORDERBOOK_SHAPE)
     fields["price"] = "decimal(12,2)"
     model = _model(**fields)
-    reason = sde.fixed_schema_mismatch(sde.group_columns(model, _group(model)), dialect="orderbook")
+    reason = _mismatch(model)
     assert reason is not None
     assert "price is declared 'decimal(12,2)' and this engine stores 'int64'" in reason
 
@@ -156,8 +167,7 @@ def test_a_group_of_two_entities_cannot_go_somewhere_with_room_for_one() -> None
             "atomic": [["Depth", "Trade"]],
         }
     )
-    group = sde.colocation_groups(model)[0]
-    reason = sde.fixed_schema_mismatch(sde.group_columns(model, group), dialect="orderbook")
+    reason = _mismatch(model)
     assert reason is not None
     assert "this engine stores one thing" in reason
 
@@ -176,7 +186,67 @@ def test_a_type_check_alone_would_have_let_the_wrong_model_through() -> None:
     assert all(sde.can_store(t, dialect="orderbook") for t in types), (
         "every type here is storable; that is the point"
     )
-    assert sde.fixed_schema_mismatch(columns, dialect="orderbook") is not None
+    assert sde.fixed_schema_mismatch(
+        columns, dialect="orderbook", nullable=sde.group_nullable(model, _group(model))
+    ) is not None
+
+
+def test_a_field_the_engine_stores_no_null_in_cannot_be_declared_nullable() -> None:
+    """A nullable quantity passed the shape check and then could not be saved as null.
+
+    Measured on 2 October 2026 against the engine at ``9f55e84``: the model let the application
+    save ``None``, the adapter refused it while writing - after a placement on an engine a group
+    can never be moved off. Names and types alone do not make the shape.
+    """
+    model = _model(**dict(sde.ORDERBOOK_SHAPE))
+    loose_fields = {"quantity", "sequence_number"}
+    loose = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Depth",
+                    "fields": [
+                        {"name": name, "type": kind, "nullable": name in loose_fields}
+                        for name, kind in sde.ORDERBOOK_SHAPE.items()
+                    ],
+                    "key": list(sde.ORDERBOOK_KEY),
+                }
+            ]
+        }
+    )
+    assert _mismatch(model) is None
+    reason = _mismatch(loose)
+    assert reason is not None
+    assert "Depth declares ['quantity'] nullable, and this engine stores no null there" in reason
+    assert "sequence_number: int64, nullable" in reason, "the expected shape says which one is"
+    with pytest.raises(DeclarationError, match="stores no null there"):
+        sde.default_layout(loose, _group(loose), dialect="orderbook")
+
+
+def test_the_field_the_server_assigns_cannot_be_declared_required() -> None:
+    """Over TCP the server numbers every update; a model requiring the number could not write.
+
+    The adapter refuses a chosen sequence number before sending, and the model would refuse a row
+    without one, so every write failed - on a group that passed the shape check and was placed.
+    """
+    strict = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Depth",
+                    "fields": [
+                        {"name": name, "type": kind} for name, kind in sde.ORDERBOOK_SHAPE.items()
+                    ],
+                    "key": list(sde.ORDERBOOK_KEY),
+                }
+            ]
+        }
+    )
+    reason = _mismatch(strict)
+    assert reason is not None
+    assert "Depth declares ['sequence_number'] required, and this engine assigns it" in reason
+    with pytest.raises(DeclarationError, match="this engine assigns it"):
+        sde.default_layout(strict, _group(strict), dialect="orderbook")
 
 
 # ── default_layout ──────────────────────────────────────────────────────────────────────────────

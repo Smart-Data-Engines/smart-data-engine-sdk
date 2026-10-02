@@ -18,7 +18,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Final
 
-from .layout import DIALECTS, ORDERBOOK_KEY, ORDERBOOK_SHAPE, ORDERBOOK_TABLE
+from .layout import DIALECTS, ORDERBOOK_KEY, ORDERBOOK_NULLABLE, ORDERBOOK_SHAPE, ORDERBOOK_TABLE
 
 __all__ = ["FACTS_VERSION", "engine_facts"]
 
@@ -53,6 +53,13 @@ _FACTS: Final[dict[str, dict[str, Any]]] = {
             "entities": 1,
             "fields": dict(ORDERBOOK_SHAPE),
             "key": list(ORDERBOOK_KEY),
+            # Declared nullable by a model, these and no others: the engine stores no null anywhere
+            # else, and a model that requires one of these could not write over TCP.
+            "nullable": sorted(ORDERBOOK_NULLABLE),
+            # Over TCP, which is how a registry's engine is reached, the server numbers every
+            # update: a row is written without it and read back with the server's number. In
+            # process the caller chooses it.
+            "assigned_by_server": ["sequence_number"],
         },
         "transactions": False,
         # Both rows are stored, and a read that meets two rows with one key refuses.

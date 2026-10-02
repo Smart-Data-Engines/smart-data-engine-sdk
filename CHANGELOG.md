@@ -23,6 +23,18 @@ runners. In each, one accepted write comes first, and the refused one must reach
 hashed identifiers, Python's refusal of an undeclared field now reads `declares no field`, as in
 TypeScript. Rows stored before this release are unchanged.
 
+**Changed: which fields may be null is part of the orderbook shape.** `sde.fixed_schema_mismatch`
+takes a required `nullable` argument, which `sde.group_nullable(model, group)` derives. A model
+declares `sequence_number` nullable and no other field (`sde.ORDERBOOK_NULLABLE`), and
+`default_layout` refuses anything else. Both kinds of mismatch used to pass and then could not be
+written, on an engine a group can never move off:
+- a nullable `quantity`;
+- a required `sequence_number`, which the server assigns.
+
+The engine facts say so: `fixed_shape.nullable` and `fixed_shape.assigned_by_server`. A caller of
+`fixed_schema_mismatch` must now pass `nullable`, and a call without it fails rather than returning
+half an answer.
+
 **The orderbook adapter over TCP** (`smart-data-engine-sdk`, [`docs/orderbook.md`](docs/orderbook.md)).
 - **Credentials, TLS and a timeout**, and an `orderbook://` DSN.
 - **A chosen sequence number is refused before sending.** The server numbers every update itself.

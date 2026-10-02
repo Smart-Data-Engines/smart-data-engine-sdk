@@ -25,6 +25,14 @@ entity with any other fields or types cannot be placed on this engine, and `defa
 with the whole expected shape in the message. `price` and `quantity` are integers in the engine's
 sub-unit; a model that declares `decimal(12,2)` is a different model.
 
+**Which fields may be null is part of the shape.** A model declares `sequence_number` nullable and no
+other field (`sde.ORDERBOOK_NULLABLE`). Over TCP the server assigns the number, so a model that made it
+required could not write at all. The engine stores no null anywhere else, so a model that allowed one
+in `quantity` could save a row the engine refuses. Both passed the shape check until 2 October 2026,
+on an engine a group can never be moved off. `default_layout` and `sde.fixed_schema_mismatch` refuse
+both now: the second takes `nullable`, which `sde.group_nullable` derives from the model, and the
+engine's facts list it as `fixed_shape.nullable` and `fixed_shape.assigned_by_server`.
+
 ## Connecting
 
 The engine's Python client is not on PyPI. Install it from the engine's repository: its `python/`

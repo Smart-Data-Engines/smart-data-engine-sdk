@@ -63,7 +63,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from ..errors import EngineError
 from ..explain import QueryPlan
 from ..internal import guard
-from ..layout import ORDERBOOK_KEY, ORDERBOOK_SHAPE, ORDERBOOK_TABLE
+from ..layout import ORDERBOOK_KEY, ORDERBOOK_NULLABLE, ORDERBOOK_SHAPE, ORDERBOOK_TABLE
 from ..logging import log
 from ..placement import PhysicalLayout
 from ..query import QueryRefused, ReadPlan
@@ -697,7 +697,7 @@ class OrderbookEngine:
         several levels (:meth:`insert_many`), which is the granularity this engine has.
         """
         self._table(table)
-        missing = sorted(set(ORDERBOOK_SHAPE) - set(values) - {"sequence_number"})
+        missing = sorted(set(ORDERBOOK_SHAPE) - set(values) - ORDERBOOK_NULLABLE)
         if missing:
             raise EngineError(
                 f"insert into {table} is missing {missing}. Every field of the fixed shape is "
@@ -791,7 +791,7 @@ class OrderbookEngine:
         shape = set(ORDERBOOK_SHAPE)
         for index, row in enumerate(rows):
             where = f"row {index}: "
-            missing = sorted(shape - set(row) - {"sequence_number"})
+            missing = sorted(shape - set(row) - ORDERBOOK_NULLABLE)
             if missing:
                 raise EngineError(f"{where}missing {missing}; every field of the shape is required")
             extra = sorted(set(row) - shape)
