@@ -164,6 +164,13 @@ describe.skipIf(SECURE === undefined)('the orderbook engine with credentials and
     }
   })
 
+  it('verifies the server certificate: without the CA that signed it, the handshake fails', async () => {
+    const parts = new URL(SECURE!)
+    parts.searchParams.delete('ca')
+    const untrusted = OrderbookEngine.fromDsn(parts.toString())
+    await expect(untrusted.connect()).rejects.toThrow(/TLS handshake with .* failed/)
+  })
+
   it('refuses a wrong secret as an authentication failure, and plain text at the TLS port', async () => {
     const parts = new URL(SECURE!)
     parts.password = 'not-the-secret'
