@@ -354,7 +354,9 @@ def test_the_symbol_and_the_exchange_reach_the_query_as_literals(
     engine: OrderbookEngine, fake: _FakeClient
 ) -> None:
     engine.levels(symbol="BTCUSDT", exchange="binance")
-    assert fake.queries == ["SELECT * FROM 'BTCUSDT'.'binance'"]
+    # Capped one row past the most this process will hold, so an unbounded read of a long history
+    # is refused rather than brought into memory whole.
+    assert fake.queries == ["SELECT * FROM 'BTCUSDT'.'binance' LIMIT 100001"]
 
 
 def test_a_range_is_inclusive_at_both_ends_because_the_engines_between_is(
