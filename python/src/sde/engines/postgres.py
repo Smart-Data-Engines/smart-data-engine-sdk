@@ -31,9 +31,10 @@ from ..explain import (
     QueryPlanRefused,
     postgres_findings,
 )
+from ..layout import POSTGRES_TYPES
 from ..logging import log
 from ..migration import key_columns, same_width
-from ..physical import PhysicalFinding, declared_tables
+from ..physical import DeclaredTable, PhysicalFinding, declared_tables
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
@@ -54,6 +55,16 @@ _quote = QUOTE["postgres"]
 # is a default rather than a rule - a `connect_timeout` in the DSN wins - and it exists because the
 # alternative, measured, is a call that never returns.
 CONNECT_TIMEOUT_SECONDS = 10
+
+
+# What fixes a table whose text columns predate the reads' collation, in the
+# sde.schema.text_collation event. Both measured on 15.19: the ALTER rewrites no table, and holds
+# ACCESS EXCLUSIVE on it until every index on the column is rebuilt.
+_TEXT_COLLATION_REMEDY = (
+    'a staging into a fresh copy, whose text columns are created COLLATE "C"; or, by an '
+    'administrator, ALTER COLUMN ... TYPE text COLLATE "C", which rebuilds the column\'s indexes '
+    "under an exclusive lock on the table"
+)
 
 
 class PostgresEngine:
@@ -244,7 +255,10 @@ class PostgresEngine:
                 "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.num "
                 "ORDER BY k.pos), "
                 "i.indpred IS NULL AND i.indexprs IS NULL AND i.indnkeyatts = i.indnatts, "
-                "i.indisunique, i.indisvalid AND i.indisready "
+                "i.indisunique, i.indisvalid AND i.indisready, "
+                "ARRAY(SELECT coalesce(co.collname, '') FROM unnest(i.indcollation) "
+                "WITH ORDINALITY k(oid, pos) LEFT JOIN pg_collation co ON co.oid = k.oid "
+                "ORDER BY k.pos) "
                 "FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid "
                 "JOIN pg_class t ON t.oid = i.indrelid JOIN pg_am am ON am.oid = ic.relam "
                 "JOIN pg_namespace n ON n.oid = t.relnamespace "
@@ -253,11 +267,21 @@ class PostgresEngine:
             )
             rows = cur.fetchall()
         primary: dict[str, tuple[str, ...]] = {}
+        primary_index: dict[str, str] = {}
         indexes: dict[str, dict[str, tuple[str, tuple[str, ...], bool, bool, bool]]] = {}
-        for table, index, is_primary, method, columns, simple, unique, usable in rows:
+        # Each key column's collation, for the indexes whose columns are plain and all key columns
+        # - every primary key and every index a layout declares. Elsewhere an expression has a
+        # collation and no attribute, and the two lists would not line up.
+        collations: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {}
+        for table, index, is_primary, method, columns, simple, unique, usable, collated in rows:
             names = tuple(str(column) for column in columns)
+            if simple:
+                collations[(str(table), str(index))] = tuple(
+                    zip(names, (str(collation) for collation in collated), strict=False)
+                )
             if is_primary:
                 primary[str(table)] = names
+                primary_index[str(table)] = str(index)
             else:
                 indexes.setdefault(str(table), {})[str(index)] = (
                     str(method),
@@ -266,6 +290,7 @@ class PostgresEngine:
                     bool(unique),
                     bool(usable),
                 )
+        self._log_text_collation(layout, declared, primary_index, collations)
         findings: list[PhysicalFinding] = []
         for entry in declared:
             found_key = primary.get(entry.table)
@@ -308,6 +333,52 @@ class PostgresEngine:
                         )
                     )
         return tuple(findings)
+
+    def _log_text_collation(
+        self,
+        layout: PhysicalLayout,
+        declared: Sequence[DeclaredTable],
+        primary: Mapping[str, str],
+        collations: Mapping[tuple[str, str], tuple[tuple[str, str], ...]],
+    ) -> None:
+        """Name a primary key or declared index whose text column the library's reads cannot use.
+
+        Every scan, count and summary compares text as ``("x" COLLATE "C")``, and the planner uses
+        an index only in the predicate's own collation. A table created before 2 October 2026, when
+        the DDL began to declare text columns ``COLLATE "C"``, keeps the default one, and with it
+        a primary key no read of this library can use - measured, a scan by a text key's prefix
+        read the whole table. Not a finding: a finding is refused where a table is provisioned and
+        before an operation starts, and this table is right to provision and to build an index on,
+        since the build renders the column with the reads' collation.
+
+        An index the map does not declare is left out. A client who added one outside SDE did so
+        for their own SQL, in whatever collation that SQL compares.
+        """
+        text = {
+            table: {
+                column
+                for column, kind in layout.columns.get(entity, {}).items()
+                if kind == POSTGRES_TYPES["string"]
+            }
+            for entity, table in layout.tables.items()
+        }
+        for entry in declared:
+            names = [primary[entry.table]] if entry.table in primary else []
+            names += sorted(index.name for index in entry.indexes)
+            for name in names:
+                stale = [
+                    column
+                    for column, collation in collations.get((entry.table, name), ())
+                    if column in text.get(entry.table, set()) and collation != "C"
+                ]
+                if stale:
+                    log(
+                        "sde.schema.text_collation",
+                        table=entry.table,
+                        index=name,
+                        columns=stale,
+                        remedy=_TEXT_COLLATION_REMEDY,
+                    )
 
     def _verify_schema(self, layout: PhysicalLayout) -> None:
         """Check that what exists is what the map describes, because IF NOT EXISTS does not.

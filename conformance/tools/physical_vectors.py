@@ -392,8 +392,8 @@ def schema_vectors() -> list[str]:
             postgres,
             "Ledger@pg",
             "postgres",
-            "A B-tree renders exactly the bytes every earlier map produced, with no USING clause, "
-            "whether the method is absent or written out; BRIN renders USING brin. Statements in "
+            "A B-tree renders with no USING clause, whether the method is absent or written out, "
+            "and its text column with the reads' collation; BRIN renders USING brin. Statements in "
             "code point order of the index name, and the document lists them out of order.",
         ),
         _case(

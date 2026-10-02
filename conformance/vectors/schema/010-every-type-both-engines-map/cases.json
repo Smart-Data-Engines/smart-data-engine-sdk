@@ -4,7 +4,7 @@
     "dialect": "postgres",
     "fixed": false,
     "statements": [
-      "CREATE TABLE IF NOT EXISTS \"sample\" (\"approx\" double precision, \"at\" timestamptz, \"big\" bigint, \"day\" date, \"flag\" boolean, \"id\" uuid, \"label\" text, \"money\" numeric(12,2), \"naive\" timestamp, \"narrow\" real, \"small\" integer, PRIMARY KEY (\"id\"))"
+      "CREATE TABLE IF NOT EXISTS \"sample\" (\"approx\" double precision, \"at\" timestamptz, \"big\" bigint, \"day\" date, \"flag\" boolean, \"id\" uuid, \"label\" text COLLATE \"C\", \"money\" numeric(12,2), \"naive\" timestamp, \"narrow\" real, \"small\" integer, PRIMARY KEY (\"id\"))"
     ],
     "why": "Every type this library maps for PostgreSQL, in one statement, so a change to the type table is a change to this file. The pair with the ClickHouse case below is the useful part: two columns of the same neutral type, spelled by two engines, and an adapter has to give a caller the same value back from either."
   },

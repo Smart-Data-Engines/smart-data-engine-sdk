@@ -171,7 +171,9 @@ def _orderbook() -> sde.LogicalModel:
                 {
                     "name": "Depth",
                     "fields": [
-                        {"name": name, "type": kind}
+                        # The shape includes which fields may be null (SDK #107): the sequence
+                        # number, which the server assigns, and nothing else.
+                        {"name": name, "type": kind, "nullable": name in sde.ORDERBOOK_NULLABLE}
                         for name, kind in sde.ORDERBOOK_SHAPE.items()
                     ],
                     "key": list(sde.ORDERBOOK_KEY),

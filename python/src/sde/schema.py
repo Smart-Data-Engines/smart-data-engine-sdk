@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .errors import EngineError
-from .layout import DIALECTS, FIXED_SCHEMA
+from .layout import DIALECTS, FIXED_SCHEMA, POSTGRES_TYPES
 from .physical import (
     CLICKHOUSE_METHODS,
     POSTGRES_METHODS,
@@ -93,6 +93,24 @@ def _columns_and_key(
     return cols, key
 
 
+POSTGRES_TEXT_COLLATION = 'COLLATE "C"'
+"""The collation of every PostgreSQL text column and index column this library creates.
+
+The library's reads compare and order text by code point (§7a) - what ClickHouse does with bytes -
+and say so on every text column they touch: ``(col COLLATE "C")``. PostgreSQL uses an index only
+for an expression of the index's own collation, and matches collations by identity, so a column
+created with the default collation - even in a database whose default is ``C`` - had a primary key
+and indexes no scan, count or summary of this library could use. Measured on 2 October 2026: a
+B-tree an agent decided and the operator built served none of the reads it was decided for, and a
+scan by a text key's prefix read the whole table.
+"""
+
+
+def _postgres_column(column: str, kind: str) -> str:
+    collation = f" {POSTGRES_TEXT_COLLATION}" if kind == POSTGRES_TYPES["string"] else ""
+    return f"{_quote_ansi(column)} {kind}{collation}"
+
+
 def _sorted_indexes(layout: PhysicalLayout) -> list[Mapping[str, Any]]:
     """Indexes in code point order of their name (§7a), whatever order the document gave."""
     return sorted(layout.indexes, key=lambda index: str(index["name"]))
@@ -118,7 +136,7 @@ def _postgres_statements(
             key_order=layout.key_order,
             error=EngineError,
         )
-        defs = ", ".join(f"{_quote_ansi(c)} {t}" for c, t in sorted(cols.items()))
+        defs = ", ".join(_postgres_column(c, t) for c, t in sorted(cols.items()))
         pk = ", ".join(_quote_ansi(c) for c in ordered)
         statements.append(
             f"CREATE TABLE IF NOT EXISTS {_quote_ansi(table)} ({defs}, PRIMARY KEY ({pk}))"
@@ -128,16 +146,26 @@ def _postgres_statements(
         index_table = layout.tables.get(str(index["entity"]))
         if index_table is None:
             continue
-        statements.append(f"CREATE INDEX IF NOT EXISTS {postgres_index_target(index, index_table)}")
+        columns = layout.columns.get(str(index["entity"]), {})
+        statements.append(
+            f"CREATE INDEX IF NOT EXISTS {postgres_index_target(index, index_table, columns)}"
+        )
     return tuple(statements)
 
 
-def postgres_index_target(index: Mapping[str, Any], table: str) -> str:
+def postgres_index_target(
+    index: Mapping[str, Any], table: str, columns: Mapping[str, str]
+) -> str:
     """``<name> ON <table> [USING <method>] (<columns>)``: what every PostgreSQL index DDL shares.
 
-    One function for the index a new table gets and for the one an in-place build adds
-    concurrently, because two renderings of one index are how a build creates something other than
-    what its map declares.
+    One function for the index a new table gets, the one an in-place build adds concurrently and
+    the one a staged copy gets, because two renderings of one index are how a build creates
+    something other than what its map declares.
+
+    ``columns`` is the entity's layout columns, so a text column is rendered with the reads'
+    collation (``POSTGRES_TEXT_COLLATION``). On a table this library created that repeats the
+    column's own; on a table an earlier library created, whose text columns have the default
+    collation, it is what makes the index usable by the library's scans at all.
     """
     method = index_method(index)
     if method not in POSTGRES_METHODS:
@@ -146,8 +174,12 @@ def postgres_index_target(index: Mapping[str, Any], table: str) -> str:
             f"index; PostgreSQL has {list(POSTGRES_METHODS)}. This map was designed for "
             f"another dialect."
         )
-    index_cols = ", ".join(_quote_ansi(str(c)) for c in index["columns"])
-    # A B-tree keeps the bytes every earlier map produced: no USING clause.
+    index_cols = ", ".join(
+        _quote_ansi(str(c))
+        + (f" {POSTGRES_TEXT_COLLATION}" if columns.get(str(c)) == POSTGRES_TYPES["string"] else "")
+        for c in index["columns"]
+    )
+    # A B-tree has no USING clause, as no index did before map contract 5 named a method.
     using = "" if method == "btree" else f"USING {method} "
     return f"{_quote_ansi(str(index['name']))} ON {_quote_ansi(table)} {using}({index_cols})"
 

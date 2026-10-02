@@ -47,6 +47,12 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # writes are unaffected - but logged, because the alternative to refusing is saying
         # nothing, and a schema that has quietly diverged is worth one line.
         "sde.schema.extra_columns",
+        # text_collation names a PostgreSQL primary key or declared index on a text column whose
+        # collation is not the reads' "C": a table from before 2 October 2026, which no scan,
+        # count or summary of this library can read through that index. Logged per index with the
+        # remedy rather than reported as a finding, because a finding refuses provisioning and
+        # every operation on the table - the in-place build that adds a usable index included.
+        "sde.schema.text_collation",
         # physical_mismatch fires when a session finds tables whose sort key, partition or
         # indexes differ from the physical design the map declares. Reported, not refused: the
         # rows are the same and a running application must not stop over performance.
