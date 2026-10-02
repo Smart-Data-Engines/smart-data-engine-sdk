@@ -93,6 +93,12 @@ In local mode you choose the number, from 1; 0 is the engine's "unknown".
 Measured: the server refuses `INSERT BTC USD ...` as "unexpected token" and a negative quantity as
 "unknown command", which tells a client nothing.
 
+**Use an engine at or after `c1f14c0`** (the engine's #198). Every quantity from 0 to 2^63 - 1 is
+admitted, and an engine before that commit wrote exactly 2^60 - 1 as its codec's fallback marker:
+that quantity read back as 2^64 - 1, and every later quantity in the segment as 0. Measured against
+`971dda2` from both libraries. The slices write the edges of the range, 2^60 - 1 among them, and read
+them back, so the pin cannot move below that commit unnoticed.
+
 **A batch is not a transaction.** Over TCP the updates go in pipelined round trips of 64. If the
 server refuses some of them, the error names the first refused update and how many were stored. If
 the connection fails, the error names the outcome as unknown - the rest may have been stored in full,

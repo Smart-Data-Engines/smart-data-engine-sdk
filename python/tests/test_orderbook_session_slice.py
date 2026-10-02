@@ -127,6 +127,39 @@ def test_save_many_writes_whole_updates_and_every_row_reads_back(engine: Orderbo
     assert _without_sequence(session.get("DepthLevel", key)) == written[0]
 
 
+def test_every_quantity_the_adapter_admits_reads_back_as_written(engine: OrderbookEngine) -> None:
+    """The edges of the quantity range, and the update after them, read back exactly.
+
+    The adapter admits every quantity from 0 to 2^63 - 1. An engine before ``c1f14c0`` (its #198)
+    wrote exactly 2^60 - 1 as Simple8b's fallback marker, so that value read back as garbage and
+    each later quantity in the segment as 0. That is why the pin is past it, and this test is what
+    says so: red against ``971dda2``, green from ``c1f14c0`` on.
+    """
+    session, _ = _session(engine)
+    symbol = fresh_book()
+    edges = [0, 1, (1 << 60) - 2, (1 << 60) - 1, 1 << 60, (1 << 63) - 1]
+    first = [
+        {
+            "symbol": symbol,
+            "exchange": EXCHANGE,
+            "timestamp_ns": T0,
+            "side": "bid",
+            "level": level,
+            "price": 6_500_000 - level * 100,
+            "quantity": quantity,
+            "order_count": 1,
+        }
+        for level, quantity in enumerate(edges)
+    ]
+    later = _snapshot(symbol, T0 + 1_000)
+    session.save_many("DepthLevel", first)
+    session.save_many("DepthLevel", later)
+    page = session.scan("DepthLevel", where={"symbol": symbol, "exchange": EXCHANGE}, limit=100)
+    assert [_without_sequence(row) for row in page.rows] == sorted(
+        first + later, key=lambda row: (row["timestamp_ns"], row["side"], row["level"])
+    )
+
+
 def test_a_scan_pages_in_key_order_although_the_engine_answers_in_arrival_order(
     engine: OrderbookEngine,
 ) -> None:

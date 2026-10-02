@@ -105,6 +105,29 @@ describe.skipIf(TCP === undefined)('the orderbook engine, from TypeScript', () =
     }
   })
 
+  // An engine before c1f14c0 (its #198) wrote exactly 2^60 - 1 as Simple8b's fallback marker: that
+  // value read back as garbage and every later quantity in the segment as 0. The pin is past it.
+  it('reads back every quantity it admits, the edges of the range and the update after them', async () => {
+    const adapter = engine()
+    await adapter.connect()
+    try {
+      const symbol = book()
+      const current = await session(adapter)
+      const edges = [0n, 1n, (1n << 60n) - 2n, (1n << 60n) - 1n, 1n << 60n, (1n << 63n) - 1n]
+      const first: Record<string, unknown>[] = edges.map((quantity, position) => ({ ...level(symbol, 0n, 'bid', position, 9_900n - BigInt(position)), quantity }))
+      const later = [level(symbol, 1_000n, 'bid', 0, 9_901n), level(symbol, 1_000n, 'bid', 1, 9_900n)]
+      await current.saveMany('DepthLevel', first)
+      await current.saveMany('DepthLevel', later)
+      const page = await current.scan('DepthLevel', { where: { symbol, exchange: EXCHANGE }, limit: 20 })
+      expect(page.rows.map((row) => [row['timestamp_ns'], row['level'], row['quantity']])).toEqual(
+        [...first, ...later].map((row) => [row['timestamp_ns'], row['level'], row['quantity']]),
+      )
+      await current.close()
+    } finally {
+      await adapter.close()
+    }
+  })
+
   it('keeps two rows with one key and refuses to pick one; an unknown book is empty', async () => {
     const adapter = engine()
     await adapter.connect()
