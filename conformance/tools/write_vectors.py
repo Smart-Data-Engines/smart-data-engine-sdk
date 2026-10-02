@@ -19,6 +19,7 @@ Every expectation is written here rather than computed by a library.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,13 @@ MAP: dict[str, Any] = {
         }
     },
 }
+
+# Case 080's model: the same entity with its key declared nullable, which the loader accepts. A key
+# field is required whatever it declares, and only a nullable key can show that the rule is the key's
+# and not merely the field's.
+NULLABLE_KEY: dict[str, Any] = copy.deepcopy(MODEL)
+NULLABLE_KEY["entities"][0]["fields"][1]["nullable"] = True
+NULLABLE_KEY_VERSION = "480714072caaed67"  # its hash, under the same reasoning as MODEL_VERSION
 
 ENGINES = {"pg-main": {"dialect": "postgres"}}
 
@@ -121,8 +129,8 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
         save({"amount": 2, "id": None, "label": "second", "note": None}),
         r"Thing\.id is required and this row gives it null",
         ACCEPTED_ONE,
-        "A key field is required whether or not it is declared nullable: a row without its key "
-        "cannot be read back by it.",
+        "A key field is required whether or not it is declared nullable, and this model declares "
+        "it nullable, which the loader accepts: a row without its key cannot be read back by it.",
     ),
     (
         "081-a-save-with-a-field-the-entity-does-not-declare",
@@ -161,6 +169,10 @@ def main() -> None:
     for name, error, accepted, refused, match, calls, why in CASES:
         directory = ERRORS / name
         directory.mkdir(exist_ok=True)
+        model, placement = MODEL, MAP
+        if name.startswith("080-"):
+            model = NULLABLE_KEY
+            placement = {**copy.deepcopy(MAP), "model_version": NULLABLE_KEY_VERSION}
         expected = {
             "error": error,
             "stage": "write",
@@ -169,8 +181,8 @@ def main() -> None:
             "why": why,
         }
         for filename, value in (
-            ("model.json", MODEL),
-            ("map.json", MAP),
+            ("model.json", model),
+            ("map.json", placement),
             ("engines.json", ENGINES),
             ("calls.json", calls),
             ("expected.json", expected),

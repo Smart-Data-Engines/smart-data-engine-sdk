@@ -24,5 +24,5 @@
       }
     }
   },
-  "why": "A key field is required whether or not it is declared nullable: a row without its key cannot be read back by it."
+  "why": "A key field is required whether or not it is declared nullable, and this model declares it nullable, which the loader accepts: a row without its key cannot be read back by it."
 }

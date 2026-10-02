@@ -9,7 +9,8 @@
         },
         {
           "name": "id",
-          "type": "string"
+          "type": "string",
+          "nullable": true
         },
         {
           "name": "label",
