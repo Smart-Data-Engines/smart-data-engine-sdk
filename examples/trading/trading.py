@@ -8,7 +8,8 @@ file and the engines' credentials from its own environment, and connects to each
 
     python trading.py provision --map MAP --keys KEYS --project ID --engines ENGINES
     python trading.py run       --map MAP --keys KEYS --project ID --engines ENGINES \\
-                                --run RUN [--books 4] [--updates 200] [--window WINDOW]
+                                --run RUN [--books 4] [--updates 200] [--window WINDOW] \\
+                                [--workload feed|accounts]
     python trading.py verify    --map MAP --keys KEYS --project ID --engines ENGINES \\
                                 --run RUN [--books 4] [--updates 200]
 
@@ -17,7 +18,9 @@ map names to the environment variables holding its DSN, one for the runtime logi
 provisioning login (``engines.example.json``); a DSN is ``postgresql://...``, ``clickhouse://...``
 or ``orderbook://...``. ``run`` writes deterministic traffic for ``RUN`` - a 32-digit hex id - and
 ``verify`` reads every row of it back, every field except the sequence number the orderbook server
-assigns, and exits 1 on any difference.
+assigns, and exits 1 on any difference. ``--workload accounts`` adds what a risk desk does over the
+same data: it pages through each account's orders, so the window shows reads of ``Order`` filtered
+on ``account`` - the traffic an index on that field is for.
 """
 
 from __future__ import annotations
@@ -180,6 +183,9 @@ def run(arguments: argparse.Namespace) -> int:
                     session.save("Order", order)
                     for fill in fills:
                         session.save("Fill", fill)
+            if arguments.workload == "accounts" and update % ORDER_EVERY == 0:
+                for account in range(3):
+                    session.scan("Order", where={"account": f"acct-{account}"}, limit=100)
             if update % READ_EVERY == 0:
                 book = update % traffic.books
                 where = {"symbol": traffic.symbols[book], "exchange": EXCHANGE}
@@ -293,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--updates", type=int, default=200)
         if name == "run":
             command.add_argument("--window")
+            command.add_argument("--workload", choices=("feed", "accounts"), default="feed")
     arguments = parser.parse_args(argv)
     return {"provision": provision, "run": run, "verify": verify}[arguments.command](arguments)
 

@@ -137,7 +137,8 @@ def test_the_trading_example_provisions_runs_and_verifies_from_both_libraries(
     ]
     run = uuid4().hex
     sizes = ["--books", "2", "--updates", "30"]
-    _run([*python, "run", *common, "--run", run, *sizes, "--window", "window.json"], env, tmp_path)
+    window_file = ["--window", "window.json", "--workload", "accounts"]
+    _run([*python, "run", *common, "--run", run, *sizes, *window_file], env, tmp_path)
     verified = _run([*python, "verify", *common, "--run", run, *sizes], env, tmp_path)
     assert verified["mismatches"] == []
     assert verified["verified"] == {"depth": 300, "trades": 60, "orders": 3, "fills": 6}
@@ -151,6 +152,14 @@ def test_the_trading_example_provisions_runs_and_verifies_from_both_libraries(
     window = json.loads((tmp_path / "window.json").read_text())
     assert set(window["groups"]) == {"DepthLevel", "Fill", "MarketTrade"}
     assert "total_bytes" in window["groups"]["DepthLevel"]["missing"]
+    # The accounts workload is what an index on Order.account would be for, and the window says so.
+    filtered = [
+        entry
+        for shape in window["groups"]["Fill"]["shapes"]
+        if shape["entity"] == "Order"
+        for entry in shape.get("filtered_on", ())
+    ]
+    assert {"equal": ["account"], "calls": 9} in filtered, filtered
 
     # The TypeScript half, from the library built in this tree, as an installed package would be.
     package = ROOT / "typescript"
