@@ -238,7 +238,7 @@ def test_a_fixed_schema_engine_has_nowhere_to_put_one_and_says_so() -> None:
                 {
                     "name": "Depth",
                     "fields": [
-                        {"name": name, "type": kind, "nullable": False}
+                        {"name": name, "type": kind, "nullable": name in sde.ORDERBOOK_NULLABLE}
                         for name, kind in sde.ORDERBOOK_SHAPE.items()
                     ],
                     "key": list(sde.ORDERBOOK_KEY),
