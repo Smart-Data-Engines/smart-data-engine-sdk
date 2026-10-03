@@ -103,6 +103,40 @@ and restore them, and it admits exactly these two optional grants besides `syste
 `system`, a grant option or a partial revoke is still refused. Until 26 September 2026 it refused
 the index-verification grant this page offers, so a login given it could not be staged or cut over.
 
+## The operator's login, and the principals beside it
+
+The operator may log in as the server's administrator or as a login of its own. On ClickHouse a
+login of its own needs what the tests and the general test of 2 October 2026 gave it:
+
+```sql
+GRANT ALL ON app.* TO sde_operator WITH GRANT OPTION;  -- tables, barriers, the runtime's grants
+GRANT SELECT ON system.* TO sde_operator;               -- the catalogue, system.grants included
+```
+
+`system.grants` is how the operator sees every other principal. Without `SELECT` on it the
+qualification fails with code 497 and refuses; with it, every user's grants are listed (both measured,
+24.8). It never passes blind.
+
+Who else may hold a grant covering a table of the operation:
+
+| Principal | Staging, cutover, recovery | In-place index build |
+|---|---|---|
+| the operation's runtime logins | qualified as above | qualified as above |
+| a PostgreSQL superuser | admitted: appears in no ACL | admitted |
+| a ClickHouse user with a direct global `ACCESS MANAGEMENT` | admitted: an administrator | admitted |
+| anyone else: a role, a login with `SELECT ON *.*`, any grant on the database, of any kind | refused, naming it and its grants | admitted |
+
+A staging or a cutover moves authority, and a principal the operator does not know gets no barrier
+and no access transition. After the cutover it would keep reading the retired source, or writing to
+it, and those writes would be lost. An administrator is admitted because refusing one protects
+nothing: it can grant itself anything, and this protocol does not revoke administrative powers. A
+build moves no authority, because the tables stay the same tables, so nobody beside it is affected.
+A role is never an administrator here.
+
+Until 3 October 2026 ClickHouse refused an administrator who was not the operator's own login, and
+an index build refused any other grantee at all. No test had run an operator that was not the
+administrator, and the first build of the general test was refused beside one.
+
 ## Reading existing metadata and compatibility
 
 Both adapters check for an existing bookkeeping table through the native catalog before any

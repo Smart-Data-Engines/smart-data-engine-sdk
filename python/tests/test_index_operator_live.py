@@ -109,6 +109,7 @@ def initial(
     budget_ms: int = 60000,
     remove: bool = False,
     text: bool = False,
+    operator_login: bool = False,
 ) -> Iterator[Build]:
     """A source-only map in force, a process writing on it, an operator, and a build authorization.
 
@@ -117,12 +118,16 @@ def initial(
     first index is where a physical design first appears. ``remove`` makes it an index change
     (protocol 2): the next map drops that index in force and adds ``added`` new ones. ``text``
     gives the entity a nullable text field, ``note``, and builds the index on it (PostgreSQL).
+    ``operator_login`` gives ClickHouse an operator login of its own, beside the administrator.
     """
     assert kept or not remove, "only an index in force can be removed"
     assert engine == "postgres" or not text, "the text index case is PostgreSQL's"
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    with runtime_roles("postgres") as pg, runtime_roles("clickhouse") as ch:
+    with (
+        runtime_roles("postgres") as pg,
+        runtime_roles("clickhouse", operator_login=operator_login) as ch,
+    ):
         roles = {"postgres": pg, "clickhouse": ch}
         sde.clear_registry()
 
@@ -574,6 +579,30 @@ def test_on_a_table_from_before_a_text_column_is_built_in_the_reads_collation(
         assert receipt["outcome"] == "built"
         assert_built(build)
         assert pg_collations(build.role, build.names[0]) == ["C"]
+
+
+@pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
+def test_an_index_builds_beside_an_administrator_and_a_reader(engine: str, tmp_path: Path) -> None:
+    """Finding 2 of the general test: a build refused over principals it never needed to know.
+
+    A build moves no authority, so no grantee besides the runtime logins concerns it. ClickHouse:
+    the operator is a login of its own, the server's administrator is beside it, and so is a
+    reader with SELECT on every database. PostgreSQL: a reporting role reads every table of the
+    schema, the bookkeeping table included.
+    """
+    from test_runtime_privileges_live import outsider
+
+    with initial(engine, tmp_path, operator_login=engine == "clickhouse") as build:
+        name = build.role.namespace + "_reader"
+        grant = (
+            f'GRANT SELECT ON ALL TABLES IN SCHEMA "{build.role.namespace}" TO {{who}}'
+            if engine == "postgres"
+            else "GRANT SELECT ON *.* TO {who}"
+        )
+        with outsider(engine, name, grant):
+            receipt = build.operator.index(build.plan).as_record()
+        assert receipt["outcome"] == "built"
+        assert_built(build)
 
 
 CHECKPOINTS = [

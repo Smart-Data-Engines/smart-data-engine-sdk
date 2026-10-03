@@ -97,7 +97,11 @@ refusal for each rule protocol 2 changes, with `migration/149` refusing protocol
 ## Local execution
 
 Use the [operator configuration](local-cutover.md#local-configuration-and-command-handoff) already
-enrolled for the project. The build needs no new grants: the tables stay the same tables.
+enrolled for the project. The build needs no new grants: the tables stay the same tables. For
+the same reason it qualifies the runtime logins as staging does and nobody else. A grantee the
+operator does not know reads and writes the same rows before the build and after it, so a reader
+beside the build, such as a monitoring login, refuses a staging but not a build
+([runtime roles](runtime-roles.md#the-operators-login-and-the-principals-beside-it)).
 
 ```sh
 sde-operator --config local-operator.json --project-dir ./client-state index --plan index.json

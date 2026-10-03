@@ -83,7 +83,9 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
         value = operator.engines[name].map_watermark()
         if value is not None and value > plan.current.map_version:
             raise MigrationRefused("a newer map was adopted before this index build")
-        driver.qualify([WATERMARK_TABLE], sorted(allowed[name]))
+        # The runtime logins as staging qualifies them, without its rule for every other
+        # grantee: a build moves no authority, so nobody needs a barrier or an access transition.
+        driver.qualify([WATERMARK_TABLE], sorted(allowed[name]), readers=False)
         bindings[name] = {
             "endpoint": list(driver.endpoint()),
             "watermark_identity": driver.identity(WATERMARK_TABLE).as_record(),
@@ -124,7 +126,7 @@ def _recheck(operator: LocalCutover, execution: dict[str, Any]) -> None:
         expected_watermark = TableIdentity(**binding["watermark_identity"])
         if native.identity(WATERMARK_TABLE).physical_key != expected_watermark.physical_key:
             raise MigrationRefused("an index build's namespace or watermark identity changed")
-        native.qualify([WATERMARK_TABLE], binding["allowed_tables"])
+        native.qualify([WATERMARK_TABLE], binding["allowed_tables"], readers=False)
         if native.principal_ids != binding["principals"]:
             raise MigrationRefused("a runtime login identity changed during the index build")
     engine = operator.engines[execution["engine"]]

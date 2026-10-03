@@ -7,6 +7,19 @@ not make them agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: the local operator beside the engine's administrator** (Python,
+[`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).
+On ClickHouse the operator refused every operation when the server's administrator was not its own
+login. It took the administrator's global grants for an undeclared grantee of the tables.
+- A user with a direct global `ACCESS MANAGEMENT` is now admitted, as a PostgreSQL superuser always
+  was and as `docs/local-cutover.md` promised.
+- An in-place index build no longer refuses any other grantee, because it moves no authority.
+- Staging and cutover still refuse anyone else covering a table, a role or a monitoring login with
+  `SELECT ON *.*` among them. The refusal now names the principal and its grants.
+
+A general test on 2 October 2026 found it: the first build was refused beside the administrator.
+No test had run an operator that was not the administrator; now staging, cutover and a build do.
+
 **Fixed: the library's own reads use the engines' indexes** (both libraries,
 [`docs/format-contract.md`](docs/format-contract.md) §7a). On PostgreSQL every scan, count and
 summary compares text as `("x" COLLATE "C")`, but the library created text columns in the default

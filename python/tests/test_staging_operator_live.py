@@ -26,16 +26,21 @@ def initial(
     *,
     target: str | None = None,
     indexes: list[dict[str, Any]] | None = None,
+    operator_login: bool = False,
 ) -> Iterator[tuple[Any, ...]]:
     """A source-only map, an old session on it, an operator, and a staging packet for one copy.
 
     ``target`` defaults to the other engine - a move, staging protocol 1. Naming the source's own
     engine prepares a relayout under staging protocol 2, and ``indexes`` gives the copy a physical
-    design the source does not have, which is what a relayout is for.
+    design the source does not have, which is what a relayout is for. ``operator_login`` gives
+    ClickHouse an operator login of its own, beside the server's administrator.
     """
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    with runtime_roles("postgres") as pg, runtime_roles("clickhouse") as ch:
+    with (
+        runtime_roles("postgres") as pg,
+        runtime_roles("clickhouse", operator_login=operator_login) as ch,
+    ):
         roles = {"postgres": pg, "clickhouse": ch}
         if target is None:
             target = "clickhouse" if source == "postgres" else "postgres"
@@ -226,6 +231,59 @@ def test_stage_retains_old_source_and_then_cutover_repairs_its_missing_fanout(
             assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
         with pytest.raises(sde.EngineError):
             old.get("Event", {"id": 1})
+
+
+def test_beside_a_clickhouse_administrator_a_staging_cuts_over(tmp_path: Path) -> None:
+    """Finding 2 of the general test, for the operations it did not reach: staging and cutover.
+
+    The ClickHouse operator is a login of its own - everything on its database, with grant
+    option, and the system tables - and the server's administrator, who holds SELECT and INSERT
+    on every table, is beside it. An administrator is trusted, as on PostgreSQL. Before, the
+    staging was refused at its first qualification, and no test had ever run an operator that
+    was not the administrator.
+    """
+    with initial("clickhouse", tmp_path, operator_login=True) as (
+        operator,
+        stage,
+        old,
+        roles,
+        model,
+        public,
+        signed,
+        _,
+        _,
+        _,
+    ):
+        assert operator.stage(stage).as_record()["outcome"] == "prepared"
+        old.save("Event", {"id": 2, "value": 22})
+        final = operator.execute(cutover(stage, signed, model, public)).as_record()
+        assert final["outcome"] == "success"
+        moved = sde.Session(
+            model,
+            operator.active_map(),
+            {name: role.runtime for name, role in roles.items()},
+            project_id=PROJECT,
+        )
+        for identity in (1, 2):
+            assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
+
+
+def test_a_global_reader_refuses_a_staging_and_is_named(tmp_path: Path) -> None:
+    """The rule a cutover stands on stays: nothing fences a reader of every database.
+
+    A move from PostgreSQL to ClickHouse qualifies ClickHouse's bookkeeping table, which a user
+    with SELECT on every database covers. Refused before any change, naming the user.
+    """
+    from test_runtime_privileges_live import outsider
+
+    with initial("postgres", tmp_path) as (operator, stage, *_):
+        name = "sde_reader_" + uuid4().hex[:12]
+        with (
+            outsider("clickhouse", name, "GRANT SELECT ON *.* TO {who}"),
+            pytest.raises(sde.MigrationRefused, match="undeclared") as refused,
+        ):
+            operator.stage(stage)
+        assert f"user {name} (SELECT ON *.*)" in str(refused.value), refused.value
 
 
 def _indexes(roles: Any, table: str) -> list[tuple[str, ...]]:
