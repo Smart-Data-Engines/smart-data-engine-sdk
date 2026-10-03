@@ -98,6 +98,82 @@ def test_an_undeclared_reader_is_refused_before_any_barrier(roles: Any) -> None:
         roles.command(f"DROP ROLE {quote(outsider)}")
 
 
+def test_a_clickhouse_administrator_beside_the_operator_is_trusted() -> None:
+    """Finding 2 of the general test: the operator was refused beside the server's administrator.
+
+    A user with a direct global ACCESS MANAGEMENT grants itself anything, so refusing it protects
+    nothing - this protocol does not revoke administrative powers, and a PostgreSQL superuser,
+    who appears in no ACL, was never refused. This one also holds SELECT and INSERT on every
+    table, as the administrator in the general test did.
+    """
+    from test_runtime_privileges_live import outsider, runtime_roles
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        with outsider(
+            "clickhouse",
+            held.namespace + "_dba",
+            "GRANT ACCESS MANAGEMENT ON *.* TO {who}",
+            "GRANT SELECT, INSERT ON *.* TO {who}",
+        ):
+            assert native.qualify(["events"], ["events", WATERMARK_TABLE]) == (held.username,)
+
+
+def test_a_global_reader_refuses_a_cutover_and_is_named() -> None:
+    """Global SELECT without ACCESS MANAGEMENT - a monitoring or backup login - still refuses.
+
+    It would keep reading the retired source after a cutover, and nothing here can revoke what
+    it holds on every database. The refusal names it and the grant, so that it can be acted on.
+    """
+    from test_runtime_privileges_live import outsider, runtime_roles
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        name = held.namespace + "_monitor"
+        with (
+            outsider("clickhouse", name, "GRANT SELECT ON *.* TO {who}"),
+            pytest.raises(sde.MigrationRefused, match="undeclared") as refused,
+        ):
+            native.qualify(["events"], ["events", WATERMARK_TABLE])
+        assert f"user {name} (SELECT ON *.*)" in str(refused.value), refused.value
+        assert held.operator.write_fence("events", project_id="1" * 32).state().holds == ()
+
+
+def test_administration_through_a_role_is_not_trusted() -> None:
+    """Only a user's own grant makes an administrator; a role's covering grant still refuses."""
+    from test_runtime_privileges_live import outsider, runtime_roles
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        name = held.namespace + "_admins"
+        with (
+            outsider("clickhouse", name, "GRANT ACCESS MANAGEMENT ON *.* TO {who}", role=True),
+            pytest.raises(sde.MigrationRefused, match="undeclared") as refused,
+        ):
+            native.qualify(["events"], ["events", WATERMARK_TABLE])
+        assert f"role {name} (ACCESS MANAGEMENT ON *.*)" in str(refused.value), refused.value
+
+
+def test_an_index_build_qualifies_its_logins_without_the_reader_rule(roles: Any) -> None:
+    """``readers=False``: no rule for another grantee, the same rules for the runtime logins."""
+    from test_runtime_privileges_live import outsider
+
+    native = prepare(roles)
+    quote = native.quote
+    table = f"{quote(roles.namespace)}.{quote('events')}"
+    with outsider(native.dialect, roles.namespace + "_other", f"GRANT SELECT ON {table} TO {{who}}",
+                  role=True):
+        with pytest.raises(sde.MigrationRefused, match="undeclared"):
+            native.qualify(["events"], ["events", WATERMARK_TABLE])
+        assert native.qualify(["events"], ["events", WATERMARK_TABLE], readers=False) == (
+            roles.username,
+        )
+        privilege = "UPDATE" if native.dialect == "postgres" else "ALTER ADD COLUMN"
+        roles.command(f"GRANT {privilege} ON {table} TO {quote(roles.username)}")
+        with pytest.raises(sde.MigrationRefused, match="runtime"):
+            native.qualify(["events"], ["events", WATERMARK_TABLE], readers=False)
+
+
 def test_failed_probe_is_not_evidence_of_access_denial(roles: Any) -> None:
     native = prepare(roles)
     native.qualify(["events"], ["events", WATERMARK_TABLE])

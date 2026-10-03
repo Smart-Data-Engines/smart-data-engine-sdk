@@ -159,9 +159,20 @@ class NativeOperator:
         return TableIdentity(self.dialect, server, database, str(oid), str(namespace), str(actual))
 
     def qualify(
-        self, tables: Sequence[str], allowed_tables: Sequence[str], *, required_access: bool = True
+        self,
+        tables: Sequence[str],
+        allowed_tables: Sequence[str],
+        *,
+        required_access: bool = True,
+        readers: bool = True,
     ) -> tuple[str, ...]:
-        """Require direct restricted logins whose table grants can be removed independently."""
+        """Require direct restricted logins whose table grants can be removed independently.
+
+        ``readers`` also requires every other grantee of ``tables`` to be the operator or an
+        administrator (:meth:`_qualify_readers`), which is what a cutover stands on. An in-place
+        index build passes ``False``: it moves no authority, so a principal the operator does
+        not know reads and writes the same rows before the build and after it.
+        """
         endpoint = self.endpoint()
         principals: list[str] = []
         for probe in self.runtime:
@@ -289,12 +300,24 @@ class NativeOperator:
             self.principal_ids[str(user)] = str(oid)
         if len(set(principals)) != len(principals):
             raise MigrationRefused("runtime probes repeat the same login")
-        self._qualify_readers(tables, principals)
+        if readers:
+            self._qualify_readers(tables, principals)
         self.principals = tuple(sorted(principals))
         return self.principals
 
     def _qualify_readers(self, tables: Sequence[str], principals: Sequence[str]) -> None:
-        """A missing runtime principal would keep reading the retired authority after cutover."""
+        """Every grantee of a table must be the operator, a runtime login or an administrator.
+
+        A principal the operator does not know gets no barrier and no access transition, so after
+        a cutover it keeps reading the retired source, or writing to it, and those writes are lost
+        in silence. An administrator is trusted, because this protocol does not revoke
+        administrative powers (docs/local-cutover.md): refusing one protects nothing. On
+        PostgreSQL that is a superuser, who appears in no ACL. On ClickHouse it is a user with a
+        direct global ACCESS MANAGEMENT, who can grant itself anything; measured on 24.8, such a
+        user's grants are listed one access type per row, that one with no database or table.
+        A role is never an administrator here, and any other grant covering the table refuses,
+        whatever its kind, global ones included.
+        """
         if self.dialect == "postgres":
             operator = str(self.rows("SELECT current_user")[0][0])
             allowed = {*principals, operator}
@@ -308,21 +331,51 @@ class NativeOperator:
                     "WHERE c.oid=to_regclass(%s) AND a.grantee <> c.relowner",
                     [self.quote(table), self.quote(table)],
                 )
-                if any(str(row[0]) not in allowed for row in grants):
-                    raise MigrationRefused("cutover table has an undeclared runtime grantee")
+                outsiders = sorted(str(row[0]) for row in grants if str(row[0]) not in allowed)
+                if outsiders:
+                    raise MigrationRefused(
+                        f"cutover table {table} has an undeclared runtime grantee: "
+                        f"{', '.join(outsiders)} holds a grant on it and is neither this "
+                        f"operator, a runtime login nor a superuser; declare it as a runtime "
+                        f"login or revoke its grant for the operation"
+                    )
         else:
             operator = str(self.rows("SELECT currentUser()")[0][0])
             database = self.endpoint()[2]
-            allowed = {*principals, operator}
+            administrators = {
+                str(row[0])
+                for row in self.rows(
+                    "SELECT DISTINCT user_name FROM system.grants WHERE user_name IS NOT NULL "
+                    "AND access_type='ACCESS MANAGEMENT' AND database IS NULL AND table IS NULL "
+                    "AND column IS NULL AND is_partial_revoke=0"
+                )
+            }
+            allowed = {*principals, operator, *administrators}
             for table in tables:
                 grants = self.rows(
-                    "SELECT user_name,role_name FROM system.grants "
+                    "SELECT user_name,role_name,access_type,database,table FROM system.grants "
                     "WHERE (database IS NULL OR database='' OR database={database:String}) "
                     "AND (table IS NULL OR table='' OR table={table:String})",
                     {"database": database, "table": table},
                 )
-                if any(role is not None or user not in allowed for user, role in grants):
-                    raise MigrationRefused("cutover table has an undeclared runtime grantee")
+                held: dict[str, set[str]] = {}
+                for user, role, access, granted_db, granted_table in grants:
+                    if role is not None or user not in allowed:
+                        who = f"role {role}" if role is not None else f"user {user}"
+                        level = f"{granted_db or '*'}.{granted_table or '*'}"
+                        held.setdefault(who, set()).add(f"{access} ON {level}")
+                if held:
+                    named = "; ".join(
+                        who + " (" + ", ".join(sorted(rights)[:3])
+                        + (", ..." if len(rights) > 3 else "") + ")"
+                        for who, rights in sorted(held.items())
+                    )
+                    raise MigrationRefused(
+                        f"cutover table {table} has an undeclared runtime grantee: {named}. A "
+                        f"grantee must be this operator, a runtime login or a user with a direct "
+                        f"global ACCESS MANAGEMENT; declare it as a runtime login or narrow its "
+                        f"grants away from this database for the operation"
+                    )
 
     def access(self, tables: Sequence[TableIdentity], *, enabled: bool) -> None:
         if not self.principals:

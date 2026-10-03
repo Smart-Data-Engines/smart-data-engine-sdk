@@ -76,7 +76,15 @@ def cleanup_dsn(dsn: str) -> str:
 
 
 @contextmanager
-def runtime_roles(dialect: str) -> Iterator[Roles]:
+def runtime_roles(dialect: str, *, operator_login: bool = False) -> Iterator[Roles]:
+    """A schema or database of its own, with a restricted runtime login on it.
+
+    ``operator_login`` (ClickHouse) makes the operator a login of its own rather than the
+    server's administrator, as a deployment with an administrator beside it has it: everything
+    on its database with grant option, and the system tables it reads. No global grant, so a
+    login left behind by a killed run covers no other test's tables.
+    """
+    assert dialect == "clickhouse" or not operator_login, "PostgreSQL's operator is the DSN's"
     dsn = os.environ.get("SDE_POSTGRES_DSN" if dialect == "postgres" else "SDE_CLICKHOUSE_DSN")
     if not dsn:
         pytest.skip(f"{dialect} is required for restricted runtime qualification")
@@ -123,6 +131,7 @@ def runtime_roles(dialect: str) -> Iterator[Roles]:
         with ClickHouseEngine(dsn) as root:
             created = False
             runtime = None
+            operator_user = None
             try:
                 root._cx.command(
                     f"CREATE USER {username} IDENTIFIED WITH sha256_password BY '{password}'"
@@ -133,6 +142,22 @@ def runtime_roles(dialect: str) -> Iterator[Roles]:
                 local = urlunsplit(
                     (parts.scheme, parts.netloc, "/" + name, parts.query, parts.fragment)
                 )
+                if operator_login:
+                    operator_user, secret = name + "_op", secrets.token_hex(24)
+                    root._cx.command(
+                        f"CREATE USER {operator_user} IDENTIFIED WITH sha256_password BY '{secret}'"
+                    )
+                    root._cx.command(f"GRANT ALL ON {name}.* TO {operator_user} WITH GRANT OPTION")
+                    root._cx.command(f"GRANT SELECT ON system.* TO {operator_user}")
+                    local = urlunsplit(
+                        (
+                            parts.scheme,
+                            f"{operator_user}:{secret}@{parts.hostname}:{parts.port}",
+                            "/" + name,
+                            parts.query,
+                            parts.fragment,
+                        )
+                    )
                 with ClickHouseEngine(local) as operator:
                     app = urlunsplit(
                         (
@@ -155,6 +180,45 @@ def runtime_roles(dialect: str) -> Iterator[Roles]:
                     cleanup._cx.command(f"DROP DATABASE IF EXISTS {name} SYNC")
                     if created:
                         cleanup._cx.command(f"DROP USER {username}")
+                    if operator_user:
+                        cleanup._cx.command(f"DROP USER IF EXISTS {operator_user}")
+
+
+@contextmanager
+def outsider(dialect: str, name: str, *grants: str, role: bool = False) -> Iterator[str]:
+    """A principal beside the operation, holding ``grants`` (``{who}`` is its quoted name).
+
+    Created and dropped by the server's administrator, around the block alone: a global grant
+    left on the shared test server would refuse every later cutover there. PostgreSQL's is a
+    role; ClickHouse's is a user, or a role with ``role``.
+    """
+    dsn = os.environ.get("SDE_POSTGRES_DSN" if dialect == "postgres" else "SDE_CLICKHOUSE_DSN")
+    if not dsn:
+        pytest.skip(f"{dialect} is required for a principal beside the operation")
+    quote = '"' if dialect == "postgres" else "`"
+    who = f"{quote}{name}{quote}"
+    with PostgresEngine(dsn) if dialect == "postgres" else ClickHouseEngine(dsn) as admin:
+
+        def run(statement: str) -> None:
+            if dialect == "postgres":
+                admin._cx.execute(statement)
+            else:
+                admin._cx.command(statement)
+
+        if dialect == "postgres" or role:
+            run(f"CREATE ROLE {who}")
+        else:
+            run(f"CREATE USER {who} IDENTIFIED WITH sha256_password BY '{secrets.token_hex(24)}'")
+        try:
+            for grant in grants:
+                run(grant.format(who=who))
+            yield name
+        finally:
+            if dialect == "postgres":
+                run(f"DROP OWNED BY {who}")
+                run(f"DROP ROLE IF EXISTS {who}")
+            else:
+                run(f"DROP {'ROLE' if role else 'USER'} IF EXISTS {who}")
 
 
 @pytest.fixture(params=["postgres", "clickhouse"])
