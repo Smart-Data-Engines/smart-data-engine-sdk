@@ -127,6 +127,25 @@ function typeOf(layout: PhysicalLayout, entity: string, column: string): string 
   return declared
 }
 
+/**
+ * The collation of every PostgreSQL text column and index column this library creates.
+ *
+ * The library's reads compare and order text by code point (§7a) - what ClickHouse does with bytes -
+ * and say so on every text column they touch: `(col COLLATE "C")`. PostgreSQL uses an index only for
+ * an expression of the index's own collation, and matches collations by identity, so a column created
+ * with the default collation - even in a database whose default is `C` - had a primary key and
+ * indexes no scan, count or summary of this library could use. Measured on 2 October 2026: a B-tree
+ * an agent decided and the operator built served none of the reads it was decided for.
+ */
+export const POSTGRES_TEXT_COLLATION = 'COLLATE "C"'
+
+/** The PostgreSQL type a neutral `string` maps to: the one type that takes the collation. */
+const POSTGRES_TEXT = 'text'
+
+function postgresColumn(column: string, type: string): string {
+  return `${quoteAnsi(column)} ${type}${type === POSTGRES_TEXT ? ' ' + POSTGRES_TEXT_COLLATION : ''}`
+}
+
 /** Indexes in code point order of their name (§7a), whatever order the document gave. */
 function sortedIndexes(layout: PhysicalLayout): Readonly<Record<string, unknown>>[] {
   return [...layout.indexes].sort((a, b) => compareCodePoints(String(a['name']), String(b['name'])))
@@ -146,7 +165,7 @@ function postgresStatements(layout: PhysicalLayout, options: SchemaOptions): str
   for (const [entity, table] of tablesInOrder(layout)) {
     const { columns, key } = columnsAndKey(layout, entity, options.keys)
     const ordered = effectiveKey(`table '${table}'`, entity, key, layout.keyOrder ?? {}, EngineError)
-    const defs = columns.map((c) => `${quoteAnsi(c)} ${typeOf(layout, entity, c)}`).join(', ')
+    const defs = columns.map((c) => postgresColumn(c, typeOf(layout, entity, c))).join(', ')
     const pk = ordered.map(quoteAnsi).join(', ')
     statements.push(
       `CREATE TABLE IF NOT EXISTS ${quoteAnsi(table)} (${defs}, PRIMARY KEY (${pk}))`,
@@ -173,8 +192,13 @@ function postgresStatements(layout: PhysicalLayout, options: SchemaOptions): str
           `narrower index, it is a statement that will not parse.`,
       )
     }
-    const cols = declared.map((c) => quoteAnsi(String(c))).join(', ')
-    // A B-tree keeps the bytes every earlier map produced: no USING clause.
+    // A text column carries the reads' collation, as a new table's own text columns do: on a table an
+    // earlier library created, with the default collation, that is what makes the index usable.
+    const types = layout.columns[entity] ?? {}
+    const cols = declared
+      .map((c) => quoteAnsi(String(c)) + (types[String(c)] === POSTGRES_TEXT ? ' ' + POSTGRES_TEXT_COLLATION : ''))
+      .join(', ')
+    // A B-tree has no USING clause, as no index did before map contract 5 named a method.
     const using = method === 'btree' ? '' : `USING ${method} `
     statements.push(
       `CREATE INDEX IF NOT EXISTS ${quoteAnsi(name)} ON ${quoteAnsi(table)} ${using}(${cols})`,

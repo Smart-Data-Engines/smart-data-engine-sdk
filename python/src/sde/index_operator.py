@@ -160,9 +160,15 @@ def _finish(
         for row in execution["indexes"]
     ]
     if execution["decision"] is None:
+        # The columns come from the map being built, which is signed and reloaded on a resume, so a
+        # recovered build renders each index exactly as a fresh one would.
+        prepared = plan.prepared.groups[plan.group].source.layout.columns
         for table, index in rows:
+            columns = prepared.get(str(index["entity"]), {})
             operator._step(
-                state, "index_build_" + str(index["name"]), partial(builder.build, table, index)
+                state,
+                "index_build_" + str(index["name"]),
+                partial(builder.build, table, index, columns),
             )
 
         def qualify() -> None:

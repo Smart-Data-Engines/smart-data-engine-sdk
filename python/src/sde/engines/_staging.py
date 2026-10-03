@@ -10,7 +10,7 @@ from typing import Any
 from ..errors import EngineError, MigrationRefused
 from ..physical import POSTGRES_METHODS, index_method
 from ..placement import PhysicalLayout
-from ..schema import schema_statements
+from ..schema import postgres_index_target, schema_statements
 from ._operator import NativeOperator, TableIdentity
 
 
@@ -188,11 +188,11 @@ class NativeStaging:
             columns = [str(column) for column in index["columns"]]
             rows = self._index(name)
             if not rows:
-                column_sql = ", ".join(self.quote(column) for column in columns)
-                using = "" if declared_method == "btree" else f"USING {declared_method} "
+                # The same rendering as a new table's indexes and an in-place build's: one
+                # function, so a staged copy's index has the collation the reads use.
                 self.native.command(
-                    f"CREATE INDEX {self.quote(name)} ON {self.quote(table.name)} "
-                    f"{using}({column_sql})"
+                    "CREATE INDEX "
+                    + postgres_index_target(index, table.name, layout.columns.get(entity, {}))
                 )
                 rows = self._index(name)
             if len(rows) != 1:

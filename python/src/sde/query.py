@@ -302,6 +302,12 @@ def _comparison(
     expression = _expression(column, dialect)
     if value is None:
         return f"{expression} IS NULL"
+    if column.type == "uuid" and dialect == "clickhouse" and operator == "=":
+        # Equality compares the native value. `toString` is there for the order a range or a page
+        # follows, which ClickHouse's own uuid order is not; equality does not depend on it, and a
+        # condition on `toString` cannot prune the primary key - measured on 24.8: 25 of 25
+        # granules read for one id, 1 of 25 with the native comparison.
+        return f"{QUOTE[dialect](column.name)} = toUUID({parameter(str(value))})"
     if column.type.startswith("decimal("):
         _, scale_text = column.type[len("decimal(") : -1].split(",")
         scale = max(int(scale_text), max(0, -value.as_tuple().exponent))

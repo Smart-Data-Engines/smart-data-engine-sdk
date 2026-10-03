@@ -1018,6 +1018,37 @@ untouched, which is exactly what makes the defect look absent. `schema/011` pins
 nothing in the family carried a delimiter at all before it: the escaping could be deleted outright
 and every schema vector stayed green.
 
+### Text in PostgreSQL carries the reads' collation
+
+**A `text` column renders as `"x" text COLLATE "C"`, and a text column of an index as
+`("x" COLLATE "C")`, whatever the index's method.** The layout still says `text`. The collation is
+syntax the renderer supplies, like the quotes, so no map, `model_version` or signature changes with
+it. It is there for the reads. A scan, count or summary compares and orders text by code point
+([logical reads](logical-reads.md)). PostgreSQL spells that `("x" COLLATE "C")`; ClickHouse gets it
+by comparing bytes. And PostgreSQL uses an index for a predicate only when the predicate's
+collation is the index's, compared by identity: a column of the default collation is not `"C"` to
+the planner, even in a database whose `datcollate` is `C`.
+
+Until 2 October 2026 every renderer wrote `"x" text`. So no index on a text column, primary keys
+included, served a single read of either library, and no test had ever looked at a read's plan.
+A general test found it: an agent decided a B-tree, the operator built it under traffic, and the
+scans it was decided for took 131 ms before it and 131 ms after it. Measured on PostgreSQL 15.19 with
+200 000 rows:
+
+| Scan | Default collation | With `COLLATE "C"` |
+|---|---|---|
+| one station of a `(station, at)` key | whole table, 27 ms over 1 471 buffers | the primary key, 0.103 ms over 54 |
+| by a text column with a B-tree | whole table, 20.7 ms over 1 537 | the index, 0.18 ms over 10 |
+
+`schema/003`, `010`, `011`, `012`, `014` and `017` carry the bytes, and `017` has a text column in
+an index.
+
+The index half is written separately from the table half on purpose. An index on a table an earlier
+library created names the collation itself, so it serves the reads without the table moving. That
+holds whether the index comes from `CREATE INDEX IF NOT EXISTS` at provisioning or from the
+operator's [in-place build](in-place-index.md). The table's own primary key cannot be repaired
+that way. What a runtime says about it is under the next heading.
+
 ### What the server holds afterwards
 
 **A Tier 2 runtime verifies the columns it just applied, by name *and by type*.** `CREATE TABLE IF
@@ -1072,6 +1103,25 @@ implementer:
   declares an index, and report a declared index a login cannot read as *unverified*, not absent. The
   first version read it unconditionally, and every restricted session of an existing deployment
   would have stopped starting.
+
+**A text column's collation is not a physical difference, and an index the reads cannot use is
+named instead.** A PostgreSQL table created before 2 October 2026 keeps the default collation on its
+text columns. `format_type` reports `text` either way and the rows are right; what it lacks is an
+index the reads can use, starting with its primary key. A difference would be refused where the
+table is provisioned and before any operation on it. That includes the in-place build that adds an
+index the reads *can* use. So the reference library reads the collations of the primary key and of
+each declared index from `pg_index.indcollation`. For each such index with a text column whose
+collation is not `C`, it logs `sde.schema.text_collation`, naming the table, the index, those columns
+and the remedy. An index the client added outside SDE is not named, because it serves the client's
+own SQL in whatever collation that SQL uses. The TypeScript library has no output channel
+([observability](observability.md)) and says nothing. Two remedies, both measured on PostgreSQL
+15.19:
+
+- a staging into a fresh copy, which this renderer creates with the collation, and the cutover to it;
+- `ALTER TABLE ... ALTER COLUMN "x" TYPE text COLLATE "C"`, run by an administrator. It does not
+  rewrite the table (`relfilenode` unchanged), but it rebuilds every index on the column under
+  `ACCESS EXCLUSIVE` on the table, so each read and write of that table waits until it commits.
+  Afterwards the column check passes and the scan by the key's prefix uses the primary key.
 
 And one about order: PostgreSQL indexes are built **after** the table's key is confirmed. A table
 whose primary key is not the declared one belongs to another design and its refusal is coming, and

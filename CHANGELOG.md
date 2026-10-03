@@ -7,6 +7,29 @@ not make them agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: the library's own reads use the engines' indexes** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md) §7a). On PostgreSQL every scan, count and
+summary compares text as `("x" COLLATE "C")`, but the library created text columns in the default
+collation, and every index on them with it, primary keys included. The planner uses an index only in
+the predicate's own collation, so none of them served a read. Measured on 200 000 rows, a scan of one
+station of a `(station, at)` key read the whole table in 27 ms; now it reads the key in 0.103 ms. On
+ClickHouse a UUID equality was `toString(id) = ...` and read 25 of 25 granules; now it compares
+natively and reads 1. A general test found it: a B-tree an agent decided, and the operator built
+under traffic, left the scans it was decided for at 131 ms, before it and after it.
+- PostgreSQL text columns are created `COLLATE "C"`. So is a text column in every index: built at
+  provisioning, in place, or on a staged copy. Six `schema/` vectors carry the new bytes. Maps, model
+  versions and signatures do not change.
+- A table created before this release keeps its collation. An index built on it now serves the
+  reads, but its primary key still cannot. Python logs `sde.schema.text_collation` for the primary key
+  and for each declared index in that state, with the remedy. Either stage a fresh copy, or have an
+  administrator run `ALTER COLUMN ... TYPE text COLLATE "C"`, which holds an exclusive lock on the
+  table while its indexes rebuild.
+- An in-place build resumed after an upgrade builds again an index of its own that an earlier library
+  left without the collation.
+- `python/tests/test_index_use_live.py` and `typescript/tests/index-use.live.test.ts` ask each engine's
+  planner for the plan of the exact statement the library sent. Point `get` already used plain
+  equality on both engines and was not affected.
+
 **Fixed: a row the model does not allow is refused before any engine** (both libraries,
 [`docs/format-contract.md`](docs/format-contract.md) §8b). `Session.save` refuses a field its entity
 does not declare, a required field left out, and a required field given null. In TypeScript

@@ -4,12 +4,12 @@
     "dialect": "postgres",
     "fixed": false,
     "statements": [
-      "CREATE TABLE IF NOT EXISTS \"ledger\" (\"account\" text, \"amount\" bigint, \"memo\" text, \"posted\" date, PRIMARY KEY (\"account\", \"posted\"))",
+      "CREATE TABLE IF NOT EXISTS \"ledger\" (\"account\" text COLLATE \"C\", \"amount\" bigint, \"memo\" text COLLATE \"C\", \"posted\" date, PRIMARY KEY (\"account\", \"posted\"))",
       "CREATE INDEX IF NOT EXISTS \"ledger_amount\" ON \"ledger\" (\"amount\")",
-      "CREATE INDEX IF NOT EXISTS \"ledger_memo\" ON \"ledger\" (\"memo\", \"amount\")",
+      "CREATE INDEX IF NOT EXISTS \"ledger_memo\" ON \"ledger\" (\"memo\" COLLATE \"C\", \"amount\")",
       "CREATE INDEX IF NOT EXISTS \"ledger_posted_brin\" ON \"ledger\" USING brin (\"posted\")"
     ],
-    "why": "A B-tree renders exactly the bytes every earlier map produced, with no USING clause, whether the method is absent or written out; BRIN renders USING brin. Statements in code point order of the index name, and the document lists them out of order."
+    "why": "A B-tree renders with no USING clause, whether the method is absent or written out, and its text column with the reads' collation; BRIN renders USING brin. Statements in code point order of the index name, and the document lists them out of order."
   },
   {
     "materialization": "Ledger@pg",

@@ -108,25 +108,38 @@ def initial(
     added: int = 1,
     budget_ms: int = 60000,
     remove: bool = False,
+    text: bool = False,
 ) -> Iterator[Build]:
     """A source-only map in force, a process writing on it, an operator, and a build authorization.
 
     ``kept`` gives the map in force a physical design of its own (contract 5), which the next map
     must carry unchanged; without it the next map raises the contract from 4 to 5, because the
     first index is where a physical design first appears. ``remove`` makes it an index change
-    (protocol 2): the next map drops that index in force and adds ``added`` new ones.
+    (protocol 2): the next map drops that index in force and adds ``added`` new ones. ``text``
+    gives the entity a nullable text field, ``note``, and builds the index on it (PostgreSQL).
     """
     assert kept or not remove, "only an index in force can be removed"
+    assert engine == "postgres" or not text, "the text index case is PostgreSQL's"
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     with runtime_roles("postgres") as pg, runtime_roles("clickhouse") as ch:
         roles = {"postgres": pg, "clickhouse": ch}
         sde.clear_registry()
 
-        @sde.entity
-        class Event:
-            id: int
-            value: sde.Int32
+        if text:
+
+            @sde.entity
+            class Event:
+                id: int
+                value: sde.Int32
+                note: str | None
+
+        else:
+
+            @sde.entity
+            class Event:
+                id: int
+                value: sde.Int32
 
         model = sde.build_model(Event)
         key = Ed25519PrivateKey.generate()
@@ -150,6 +163,8 @@ def initial(
                 }
             },
         }
+        if text:
+            layout["columns"]["Event"]["note"] = "text"
         if kept:
             layout["indexes"] = [KEPT[engine]]
         current = signed(
@@ -188,11 +203,12 @@ def initial(
         prepared = deepcopy(current)
         prepared["contract"], prepared["map_version"] = 5, 2
         design = prepared["groups"]["Event"]["source"]["layout"]
+        shapes = [{"columns": ["note"]}] if text else ADDED[engine]
         design["indexes"] = [
             *([] if remove else design.get("indexes", [])),
             *(
                 {"entity": "Event", "name": sde.index_build_name(identity, position), **shape}
-                for position, shape in enumerate(ADDED[engine][:added], start=1)
+                for position, shape in enumerate(shapes[:added], start=1)
             ),
         ]
         if not design["indexes"]:
@@ -230,6 +246,18 @@ def pg_indexes(role: Roles) -> dict[str, tuple[bool, bool, str, str]]:
         (TABLE,),
     ).fetchall()
     return {str(row[0]): (bool(row[1]), bool(row[2]), str(row[3]), str(row[4])) for row in rows}
+
+
+def pg_collations(role: Roles, name: str) -> list[str]:
+    """The collation of each column of an index, ``""`` for a type that has none."""
+    row = role.operator._cx.execute(
+        "SELECT ARRAY(SELECT coalesce(co.collname, '') FROM unnest(i.indcollation) "
+        "WITH ORDINALITY k(oid, pos) LEFT JOIN pg_collation co ON co.oid = k.oid ORDER BY k.pos) "
+        "FROM pg_index i WHERE i.indexrelid = to_regclass(%s)",
+        ('"' + name + '"',),
+    ).fetchone()
+    assert row is not None, name
+    return list(row[0])
 
 
 def ch_indexes(role: Roles) -> dict[str, str]:
@@ -528,6 +556,25 @@ def test_kept_indexes_stay_and_several_new_ones_build(engine: str, tmp_path: Pat
 
 
 # --- recovery ----------------------------------------------------------------------------------
+
+def test_on_a_table_from_before_a_text_column_is_built_in_the_reads_collation(
+    tmp_path: Path,
+) -> None:
+    """The table as a library from before 2 October 2026 created it: text in the default collation.
+
+    The library's reads compare ``("note" COLLATE "C")``, so an index the build gives the column
+    in the table's own collation would serve none of them. The operator renders the column from
+    the map it builds; the table's collation is not what it reads.
+    """
+    with initial("postgres", tmp_path, text=True) as build:
+        build.role.operator._cx.execute(
+            f'ALTER TABLE {TABLE} ALTER COLUMN "note" TYPE text COLLATE "default"'
+        )
+        receipt = build.operator.index(build.plan).as_record()
+        assert receipt["outcome"] == "built"
+        assert_built(build)
+        assert pg_collations(build.role, build.names[0]) == ["C"]
+
 
 CHECKPOINTS = [
     "index_prepared",

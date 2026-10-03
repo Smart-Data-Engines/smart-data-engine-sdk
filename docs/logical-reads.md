@@ -56,8 +56,13 @@ Decimal, UUID, text and date/time keys are supported, as are binary keys in Post
 JSON and floating-point ordering are refused in this API's current scope. Finite float bounds
 can be used in filters; a range excludes NaN as unordered.
 
-Text uses UTF-8 byte order, with explicit PostgreSQL COLLATE "C". UUID uses the same canonical
-order on both engines, including ClickHouse's explicit toString(UUID) expression.
+Text uses UTF-8 byte order, with explicit PostgreSQL COLLATE "C". PostgreSQL uses an index for
+these reads only in that collation, so the library creates text columns, and the text columns of
+every index, COLLATE "C". A table created before 2 October 2026 has the default collation, and its
+primary key serves none of these reads ([format contract](format-contract.md) §7a). UUID uses the
+same canonical order on both engines, including ClickHouse's explicit toString(UUID) expression for
+order and ranges. A UUID equality compares natively in ClickHouse, `id = toUUID(...)`, which selects
+the same rows and lets the primary key skip granules; through toString it read every granule.
 Existing migration key_range / nth_key ordering and row-count checkpoints are unchanged.
 Decimal projections preserve the declared scale and use exact text transfer before host decoding;
 this also avoids losing digits under a reduced Python Decimal context.

@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from .._operator_deadline import DeadlineInterrupt
 from ..errors import MigrationRefused
+from ..layout import POSTGRES_TYPES
 from ..physical import CLICKHOUSE_METHODS, POSTGRES_METHODS, index_method
 from ..schema import _skip_index_type, clickhouse_index_clause, postgres_index_target
 from ._operator import NativeOperator, TableIdentity
@@ -90,14 +91,21 @@ class NativeIndexBuild:
         ):
             time.sleep(POLL_SECONDS)
 
-    def build(self, table: TableIdentity, index: Mapping[str, Any]) -> None:
-        """Bring the index to ``ready`` without pausing the table's writers."""
+    def build(
+        self, table: TableIdentity, index: Mapping[str, Any], columns: Mapping[str, str]
+    ) -> None:
+        """Bring the index to ``ready`` without pausing the table's writers.
+
+        ``columns`` is the entity's layout columns, from the map being built: PostgreSQL renders a
+        text column with the collation the library's reads use, and builds again an index of ours
+        that an earlier library left without it.
+        """
         self.settle(table, index)
         status, reason = self.inspect(table, index)
         if status == "foreign":
             raise MigrationRefused(reason)
         if self.dialect == "postgres":
-            self._pg_build(table, index, status)
+            self._pg_build(table, index, status, columns)
         else:
             self._ch_build(table, index, status)
         if self.status(table, index) != "ready":
@@ -223,14 +231,45 @@ class NativeIndexBuild:
             )
         return ("ready" if usable else "unfinished"), ""
 
-    def _pg_build(self, table: TableIdentity, index: Mapping[str, Any], status: Status) -> None:
-        if status == "ready":
+    def _pg_build(
+        self,
+        table: TableIdentity,
+        index: Mapping[str, Any],
+        status: Status,
+        columns: Mapping[str, str],
+    ) -> None:
+        if status == "ready" and not self._pg_text_collation_stale(index, columns):
             return
-        if status == "unfinished":
-            # Our own leftover of an interrupted build: never valid again by itself, and kept by
-            # IF NOT EXISTS. Removed without blocking writers, then built again.
+        if status != "absent":
+            # Our own index, in one of two states that are no use. Unfinished: the leftover of an
+            # interrupted build, never valid again by itself and kept by IF NOT EXISTS. Ready with a
+            # text column outside the reads' collation: built for this map by a library from
+            # before 2 October 2026 and resumed by this one, valid and unusable by a single read.
+            # Either way removed without blocking writers, then built again.
             self.native.command(f"DROP INDEX CONCURRENTLY {self.quote(str(index['name']))}")
-        self.native.command(f"CREATE INDEX CONCURRENTLY {postgres_index_target(index, table.name)}")
+        self.native.command(
+            f"CREATE INDEX CONCURRENTLY {postgres_index_target(index, table.name, columns)}"
+        )
+
+    def _pg_text_collation_stale(
+        self, index: Mapping[str, Any], columns: Mapping[str, str]
+    ) -> bool:
+        """Whether a text column of this ready index has a collation other than ``C``.
+
+        A ready index is plain and of exactly the declared columns (:meth:`_pg_status`), so its
+        collations line up with them one for one.
+        """
+        rows = self.native.rows(
+            "SELECT ARRAY(SELECT coalesce(co.collname, '') FROM unnest(i.indcollation) "
+            "WITH ORDINALITY k(oid, pos) LEFT JOIN pg_collation co ON co.oid = k.oid "
+            "ORDER BY k.pos) FROM pg_index i WHERE i.indexrelid = to_regclass(%s)",
+            [self.quote(str(index["name"]))],
+        )
+        collations = [str(collation) for collation in rows[0][0]] if rows else []
+        return any(
+            columns.get(str(column)) == POSTGRES_TYPES["string"] and collation != "C"
+            for column, collation in zip(index["columns"], collations, strict=False)
+        )
 
     # --- ClickHouse --------------------------------------------------------------------------
 

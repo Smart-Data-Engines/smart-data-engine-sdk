@@ -4,7 +4,7 @@
     "dialect": "postgres",
     "fixed": false,
     "statements": [
-      "CREATE TABLE IF NOT EXISTS \"ledger\" (\"account\" text, \"amount\" bigint, \"memo\" text, \"posted\" date, PRIMARY KEY (\"posted\", \"account\"))"
+      "CREATE TABLE IF NOT EXISTS \"ledger\" (\"account\" text COLLATE \"C\", \"amount\" bigint, \"memo\" text COLLATE \"C\", \"posted\" date, PRIMARY KEY (\"posted\", \"account\"))"
     ],
     "why": "PRIMARY KEY in the physical order the layout gives, not the declared one. The key is still the model's - the same two columns, so the same uniqueness and the same `get` - and only which prefix the index can seek by has moved."
   },

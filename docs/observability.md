@@ -60,6 +60,7 @@ one keeps working; the values are in `record.sde_fields` rather than interpolate
 - `sde.schema.applied`
 - `sde.schema.extra_columns`
 - `sde.schema.physical_mismatch`
+- `sde.schema.text_collation`
 - `sde.telemetry.dropped`
 - `sde.telemetry.storage_rejected`
 - `sde.telemetry.storage_unavailable`
@@ -85,6 +86,14 @@ in performance is not an outage this library is allowed to cause. `prepare_schem
 differences, because that is where a person can act on them. On ClickHouse a runtime login without
 `SELECT` on `system.data_skipping_indices` reports declared indexes as *unverified* rather than
 failing to start — see [runtime roles](runtime-roles.md).
+
+`sde.schema.text_collation` is a report too, and it names an index rather than a difference. A
+PostgreSQL table created before 2 October 2026 has text columns in the default collation. Its
+primary key, and any declared index created the same way, cannot serve a scan, count or summary of
+this library, all of which compare text in `COLLATE "C"`. The event is emitted once per such index,
+with the table, the index, the text columns and the remedy, a staging into a fresh copy or an
+administrator's `ALTER COLUMN`. Why it is not a mismatch, and what each remedy costs, is in
+[the format contract](format-contract.md) §7a.
 
 ## What is not here
 

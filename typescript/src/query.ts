@@ -224,6 +224,13 @@ function expression(column: ReadColumn, dialect: string): string {
 function comparison(column: ReadColumn, operator: string, value: unknown, dialect: string, parameter: (value: unknown) => string): string {
   let term = expression(column, dialect)
   if (value === null) return term + ' IS NULL'
+  if (column.type === 'uuid' && dialect === 'clickhouse' && operator === '=') {
+    // Equality compares the native value. `toString` is there for the order a range or a page
+    // follows, which ClickHouse's own uuid order is not; equality does not depend on it, and a
+    // condition on `toString` cannot prune the primary key - measured on 24.8: 25 of 25 granules
+    // read for one id, 1 of 25 with the native comparison.
+    return QUOTE[dialect]!(column.name) + ' = toUUID(' + parameter(value) + ')'
+  }
   let bound: string
   if (column.type.startsWith('decimal(')) {
     const parts = column.type.slice('decimal('.length, -1).split(',').map(Number)
