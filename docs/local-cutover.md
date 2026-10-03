@@ -29,8 +29,11 @@ merge to main; use the reviewed distribution artifact when qualifying a deployme
 - Direct runtime logins with SELECT and INSERT on the declared tables and the prepared map
   bookkeeping table. Runtime has no role memberships, ownership, schema CREATE, mutation/DDL,
   grant-option, PUBLIC, wildcard or column grants. Supply every runtime login through its own probe.
-  An undeclared table grantee is refused. Database administrators are trusted operators, not
-  application accounts; this protocol does not revoke administrative powers.
+  Any other principal with a grant covering a table of the operation is refused, roles included,
+  and the refusal names it. An administrator is not: a PostgreSQL superuser, or a ClickHouse user
+  with a direct global `ACCESS MANAGEMENT` ([runtime roles](runtime-roles.md#the-operators-login-and-the-principals-beside-it)).
+  Database administrators are trusted operators, not application accounts; this protocol does not
+  revoke administrative powers.
 
 The operator compares native server, database and table identities. Different aliases that resolve
 to the same physical table are refused before repair. A migrating table cannot also serve an
