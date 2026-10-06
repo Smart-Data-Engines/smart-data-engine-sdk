@@ -111,6 +111,35 @@ TEST(Recorder, CountsWriteRowsBySecondAndOnlyForWritesThatSucceeded) {
   EXPECT_EQ(window->features("Event").write_burstiness, 7.0 * 3.0 / 12.0);
 }
 
+TEST(Window, TheSpanCoversEverySecondAWriteLandedIn) {
+  // `max(1, duration, last + 1)`: a window whose clock closed it before the second its last write
+  // landed in - a clock the caller supplies need not agree with the order of calls - still counts
+  // that second. Four rows in second 5 of a three-second window: six seconds, burstiness six.
+  sde::Window late;
+  late.started_ns = 0;
+  late.ended_ns = 3'000'000'000;
+  late.shapes.push_back(sde::ShapeStats{"w", "Event", "Event", "write", 1, 4, 0, {}, {}});
+  late.shapes.back().latency.record(1000);
+  late.write_seconds["Event"][5] = 4;
+  EXPECT_EQ(late.features("Event").write_burstiness, 4.0 * 6.0 / 4.0);
+}
+
+TEST(Recorder, ReportsTheEqualityFieldsOfAFilterSortedAndOnce) {
+  const sde::Model model = events();
+  sde::Recorder recorder(model);
+  const auto& scan = shape_of(model, "full_scan");
+  const sde::Filter filter{{"id", "at", "id"}, std::nullopt};
+  recorder.record(scan, 1000, 1, false, &filter);
+  const sde::Filter same{{"at", "id"}, std::nullopt};
+  recorder.record(scan, 1000, 1, false, &same);
+  const auto window = recorder.roll();
+  ASSERT_TRUE(window.has_value());
+  const sde::Json records = window->shape_records(model, "Event");
+  ASSERT_EQ(records.as_array().size(), 1U);
+  EXPECT_EQ(sde::dump_json(*records.as_array()[0].find("filtered_on")),
+            R"([{"equal":["at","id"],"calls":2}])");
+}
+
 TEST(Recorder, StorageSamplesAreCheckedAndKeptForADay) {
   const sde::Model model = events();
   std::int64_t now = 0;
