@@ -8,6 +8,12 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
+measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
+`telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
+atomic counters, swapped at a roll that waits for the writes begun on the old block. Its concurrency
+is tested under ThreadSanitizer in CI.
+
 **New: a C++ library, Tier 0 with hashing** ([`cpp/README.md`](cpp/README.md)). It declares models
 and computes their versions and shapes, reads and writes the neutral declaration, loads placement
 maps of contracts 1 to 6 with their signatures and key sets, and routes operations. It has no

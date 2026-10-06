@@ -13,7 +13,7 @@ namespace sde {
 /// model, its version and shapes, map parsing, signatures, routing and the error semantics; Tier 1
 /// adds telemetry, Tier 2 the engines. docs/implementations.md states the same number, and a test
 /// there holds the two together.
-inline constexpr int TIER = 0;
+inline constexpr int TIER = 1;
 
 /// Whether this library offers name hashing (section 2a). A mode rather than a tier: a library that
 /// offers it must pass every `hashing/` vector, whatever its tier.

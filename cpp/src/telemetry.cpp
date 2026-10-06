@@ -96,7 +96,9 @@ GroupFeatures with_missing(GroupFeatures features, std::initializer_list<const c
 int Histogram::bucket_of(std::int64_t nanoseconds) noexcept {
   if (nanoseconds < BUCKET_BASE_NS) return 0;
   const auto micros = static_cast<std::uint64_t>(nanoseconds / BUCKET_BASE_NS);
-  const int length = std::bit_width(micros);
+  // A cast, not an assignment: before LWG 3656, which GCC 12's library predates, bit_width
+  // returned the operand's own unsigned type.
+  const auto length = static_cast<int>(std::bit_width(micros));
   return std::min(BUCKET_COUNT - 1, length);
 }
 
