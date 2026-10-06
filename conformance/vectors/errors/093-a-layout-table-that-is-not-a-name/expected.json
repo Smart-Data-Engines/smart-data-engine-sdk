@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "must be a table name",
+  "stage": "map",
+  "why": "Python compared str(table) with its reserved names and TypeScript the value as it came, so 5 was a table name in one library and not in the other."
+}

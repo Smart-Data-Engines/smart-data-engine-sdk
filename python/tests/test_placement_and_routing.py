@@ -399,3 +399,31 @@ def test_by_id_still_guards_the_path_that_load_now_makes_unreachable() -> None:
     )
     with pytest.raises(MapError, match="has no materialisation"):
         placement.by_id("event@nowhere")
+
+
+def test_a_copy_that_is_the_source_under_another_name_is_refused_without_a_model() -> None:
+    """Explicit layouts have their tables without a model, so the rule needs none.
+
+    This library checked it only when a model was given, and TypeScript before the copies'
+    fan-out; both check it at one point of section 8a now. No vector can reach the no-model path:
+    every map-stage case loads with its model.
+    """
+    model = _model()
+    raw = _map(model)
+    raw["groups"]["Event"]["derived"][0]["engine"] = "pg-main"
+    for kwargs in ({}, {"model": model}):
+        with pytest.raises(MapError, match="is in the same engine as the source and reuses"):
+            sde.load_map(copy.deepcopy(raw), **kwargs)
+
+
+def test_a_write_shape_routed_at_the_source_says_nothing_new() -> None:
+    """Only a write routed at a *copy* is refused (`errors/100`); naming the source is accepted."""
+    model = _model()
+    shapes = {s.kind: s for s in sde.enumerate_shapes(model)}
+    raw = _map(model)
+    raw["routing"] = {shapes["write"].id: "event@pg", shapes["full_scan"].id: "event@ch"}
+    placement = sde.load_map(raw, model=model)
+    assert sde.resolve(placement, shapes["write"]).id == "event@pg"
+    raw["routing"] = {shapes["write"].id: "event@ch"}
+    with pytest.raises(MapError, match="Writes go to the source whatever this table says"):
+        sde.load_map(raw, model=model)

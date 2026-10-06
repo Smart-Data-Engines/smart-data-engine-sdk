@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "32-digit lowercase hexadecimal project_id",
+  "stage": "map",
+  "why": "A project id is compared byte for byte with the one configured locally. Accepting uppercase in the map would make two spellings of one project two projects."
+}

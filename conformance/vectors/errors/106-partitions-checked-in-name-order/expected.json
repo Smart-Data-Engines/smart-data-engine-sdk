@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "partition_by['Line'] must be exactly",
+  "stage": "map",
+  "why": "The same rule for partitions: two defects, the one in name order is named."
+}

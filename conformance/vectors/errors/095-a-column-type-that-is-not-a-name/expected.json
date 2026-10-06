@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "must be a type name",
+  "stage": "map",
+  "why": "A column's type is rendered into DDL. A number there failed in the client's engine, at CREATE TABLE, instead of when the map arrived."
+}

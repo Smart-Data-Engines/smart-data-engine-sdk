@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "match": "'nullable' is true or false",
+  "stage": "model",
+  "why": "Python read this as truthy and TypeScript as `=== true`, so `1` made a field optional in one library and required in the other: one declaration, two model versions, and a row one library stored and the other refused."
+}

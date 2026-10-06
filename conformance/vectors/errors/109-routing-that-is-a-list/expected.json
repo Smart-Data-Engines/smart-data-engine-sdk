@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "'routing' must be a mapping from shape id to materialisation id",
+  "stage": "map",
+  "why": "TypeScript accepted an array as an object and read its indexes as shape ids. An empty list, false or null still says no routing, as it always has."
+}
