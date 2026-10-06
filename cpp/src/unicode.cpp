@@ -40,6 +40,38 @@ std::size_t utf8_sequence_length(std::string_view text, std::size_t pos) noexcep
   return 0;
 }
 
+char32_t decode_sequence(std::string_view text, std::size_t pos, std::size_t length) noexcept {
+  const auto byte = [&](std::size_t i) { return static_cast<char32_t>(static_cast<unsigned char>(text[pos + i])); };
+  switch (length) {
+    case 1:
+      return byte(0);
+    case 2:
+      return ((byte(0) & 0x1FU) << 6U) | (byte(1) & 0x3FU);
+    case 3:
+      return ((byte(0) & 0x0FU) << 12U) | ((byte(1) & 0x3FU) << 6U) | (byte(2) & 0x3FU);
+    default:
+      return ((byte(0) & 0x07U) << 18U) | ((byte(1) & 0x3FU) << 12U) | ((byte(2) & 0x3FU) << 6U) |
+             (byte(3) & 0x3FU);
+  }
+}
+
+std::optional<std::u32string> decode_utf8(std::string_view text) {
+  std::u32string out;
+  out.reserve(text.size());
+  for (std::size_t pos = 0; pos < text.size();) {
+    const std::size_t length = utf8_sequence_length(text, pos);
+    if (length == 0) return std::nullopt;
+    out.push_back(decode_sequence(text, pos, length));
+    pos += length;
+  }
+  return out;
+}
+
+bool is_decimal_digit(char32_t code_point) noexcept {
+  if (code_point < 0x80) return code_point >= U'0' && code_point <= U'9';
+  return utf8proc_category(static_cast<utf8proc_int32_t>(code_point)) == UTF8PROC_CATEGORY_ND;
+}
+
 void append_code_point_unchecked(std::string& out, std::uint32_t cp) {
   if (cp < 0x80) {
     out.push_back(static_cast<char>(cp));

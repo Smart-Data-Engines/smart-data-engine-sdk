@@ -94,10 +94,11 @@ class MigrationRefused : public SdeError {
   ~MigrationRefused() override;
 };
 
-/// A logical read the library refuses before any engine is called.
-class QueryRefused : public SdeError {
+/// A logical read the library refuses before any engine is called. A `ModelPlanningError`, as in
+/// the reference: a read the model's structure rules out is a planning error of the caller's.
+class QueryRefused : public ModelPlanningError {
  public:
-  using SdeError::SdeError;
+  using ModelPlanningError::ModelPlanningError;
   ~QueryRefused() override;
 };
 
