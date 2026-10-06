@@ -43,6 +43,17 @@ def normalized(column: ReadColumn, value: Any) -> Any:
     return str(value)
 
 
+INVISIBLE = frozenset(
+    "\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+
+
+def visible(document: str) -> str:
+    """Whitespace a reader cannot see, as an escape: the same JSON, and a file one can review."""
+    return "".join(f"\\u{ord(c):04x}" if c in INVISIBLE else c for c in document)
+
+
 def outcome(case: dict[str, Any]) -> dict[str, Any]:
     try:
         if case["kind"] == "summary":
@@ -244,12 +255,42 @@ def main() -> None:
             },
         ),
         ("wide-precision-refused", {"kind": "summary", "type": "decimal(57,18)", "record": {}}),
+        # One rule in every library for text that the libraries' runtimes read in different ways,
+        # each found on 6 October 2026 by a differential run of the C++ library against this one.
+        # ISO 8601's ranges, whatever `fromisoformat` accepts: every CPython reads an offset by its
+        # total, so `+10:60` was eleven hours here and refused by TypeScript.
+        (
+            "offset-part-out-of-range-refused",
+            {**base, "options": {"bounds": {"field": "at", "low": "2026-09-14T10:00:00+10:60"}}},
+        ),
+        # CPython 3.14 reads 24:00 as the next midnight; 3.11 to 3.13 and TypeScript refuse it.
+        (
+            "hour-twenty-four-refused",
+            {**base, "options": {"bounds": {"field": "at", "low": "2026-09-14T24:00:00"}}},
+        ),
+        # Unicode's White_Space around a decimal: U+0085 was refused by TypeScript's `trim()`.
+        (
+            "decimal-white-space",
+            {**base, "options": {"bounds": {"field": "amount", "low": "\u00851.5\u3000"}}},
+        ),
+        # U+001C is not White_Space: Python's `str.strip()` removed it.
+        (
+            "decimal-separator-refused",
+            {**base, "options": {"bounds": {"field": "amount", "low": "\x1c1.5"}}},
+        ),
+        # Nor is U+FEFF: TypeScript's `trim()` removed it.
+        (
+            "decimal-byte-order-mark-refused",
+            {**base, "options": {"bounds": {"field": "amount", "low": "\ufeff1.5"}}},
+        ),
     ]
     for index, (name, case) in enumerate(cases, 1):
         expected = outcome(case)
         folder = ROOT / "conformance/vectors/query" / f"{index:03d}-{name}"
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "case.json").write_text(json.dumps(case, ensure_ascii=False, indent=2) + "\n")
+        (folder / "case.json").write_text(
+            visible(json.dumps(case, ensure_ascii=False, indent=2)) + "\n"
+        )
         (folder / "expected.json").write_text(
             json.dumps(expected, ensure_ascii=False, indent=2) + "\n"
         )
