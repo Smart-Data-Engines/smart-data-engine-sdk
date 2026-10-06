@@ -147,8 +147,9 @@ std::optional<std::string> verify_signature(const Json& document, const PublicKe
 /// Verifies a signature block over a payload, and reports which of the caller's keys did it: its
 /// name, or nothing for a bare key. Every key is tried; `key_id` only orders the attempts, because
 /// the signature block is outside what is signed and anybody can edit it.
-std::optional<std::string> detail::verify_payload(const Json& signature, const PublicKeys& public_keys,
-                                                  const std::function<std::string()>& payload_of) {
+std::optional<std::string> detail::verify_payload(
+    const Json& signature, const PublicKeys& public_keys,
+    const std::function<std::string()>& payload_of) {
   const Json* alg = signature.is_object() ? signature.find("alg") : nullptr;
   if (alg == nullptr || !alg->is_string() || alg->as_string() != "ed25519") {
     throw MapError("only ed25519 signatures are understood");

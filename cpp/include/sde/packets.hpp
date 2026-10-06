@@ -96,8 +96,8 @@ class CutoverPlan {
 };
 
 /// Verifies a cutover authorization and its three candidate maps exactly (`MigrationRefused`): no
-/// I/O, no reservation, no activation, no watermark. A map or encoding refusal inside it is reported
-/// as `cutover document refused: ...`.
+/// I/O, no reservation, no activation, no watermark. A map or encoding refusal inside it is
+/// reported as `cutover document refused: ...`.
 [[nodiscard]] CutoverPlan load_cutover_plan(const Json& raw, const Model& model,
                                             const std::string& project_id,
                                             const PublicKeys& public_keys);
