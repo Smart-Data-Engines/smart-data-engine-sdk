@@ -336,13 +336,32 @@ Seven refusals, all `DeclarationError`, and all of them tightenings under §11:
 7. `relations` has at most one entry per (`from`, `name`), and every `from` and `to` is a declared
    entity.
 
+**And every value has the shape this section writes, or the document is refused.** The two libraries
+coerced a value of another shape, or failed with their runtime's own error rather than this one, and
+the third library - which has to give a value a type before it can read it - met each of those. One
+value read two ways is one declaration with two model versions, so each is a refusal now, with the
+message fragment every library gives (`errors/083`-`088`):
+
+- `nullable` is `true` or `false`. Python read it as truthy and TypeScript as `=== true`, so `1` made
+  a field optional in one library and required in the other;
+- `residency` is a string or null;
+- `relations` is a list, and each relation an object of three strings, `name`, `from` and `to`. A
+  missing `to` was a `KeyError` in one library and a lookup of `undefined` in the other;
+- `atomic` is a list of groups, each a list of **two or more distinct** entity names, and **no
+  entity is in two groups**. Section 4 merges atomicity transitively; a document whose groups overlap
+  is refused rather than merged, because the loaders copied groups into the IR as written - another
+  `model_version` than the same atomicity declared as one group, which is what a library's own
+  `neutral_declaration` writes;
+- `cost_ceiling` is exactly `{"amount", "currency"}`, both strings - for the decorator path as well,
+  which checked only that the two keys were there.
+
 A field and a relation on one entity **may** share a name, and the rule that would have refused it
 was written and then deleted: §2a says the digest collision between them is intended, and
 `hashing/003-reserved-object-keys` declares exactly that shape. It is legal because a relation does
 not reach a layout under its own name — it reaches it as `<relation>_<target key field>` — so there
-is no column for it to collide with. Our TypeScript library refuses it in `buildModel` today, which
-means the model that vector pins cannot be declared through that library's own front door. That check
-is the one that should go.
+is no column for it to collide with. The TypeScript library used to refuse it in `buildModel`, so the
+model that vector pins could not be declared through that library's own front door; the check is
+gone.
 
 **The IR is not this document, and the difference is one key.** They are close enough to be
 confused: an IR entity has `name`, `fields`, `pii` and `residency` in the same places, and differs
@@ -648,7 +667,9 @@ implementation wrote exactly that.
 Rules a library must enforce, all of them refusals rather than warnings, because this document decides
 where data is written:
 
-- `contract` must equal the version the library implements. Not "at least" — equal.
+- `contract` is in the range the library reads, `MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`, and
+  refused outside it in either direction (above). This bullet said "equal, not at least" until
+  6 October 2026, two contracts after the range replaced equality.
 - `model_version` must equal the version of the declared model. A mismatch is refused, never
   reconciled.
 - `map_version` must be present and a positive integer. Both libraries used to read it as
@@ -661,6 +682,17 @@ where data is written:
 - Every `derived` materialisation **must** carry `lag_budget_ms`. Without it nobody can tell a healthy
   copy from one that is hours behind.
 - Materialisation ids are unique within a group.
+- **Every value has the shape this section writes** (`errors/089`-`097`), found when a third library
+  had to give each one a type before it could read it. The two before it coerced or failed with their
+  runtime's own error, and `str(True)` is `"True"` in Python where `String(true)` is `"true"` in
+  JavaScript, so a materialisation id written as `true` named two different copies:
+  - a group's `source` and each `derived` entry is an object, and `derived` is a list or absent;
+  - a materialisation's `id` and `engine` are strings;
+  - `lag_budget_ms` is an integer of milliseconds, zero or more;
+  - a layout's `tables` map an entity to a non-empty table name, and its `columns`, when present and
+    not null, map an entity to an object of column name to non-empty type name.
+- `groups` is a non-empty object (`errors/108`): a map that places nothing is refused, with a model
+  or without one.
 - Every group in the model must be placed.
 - **No group may be placed that the model does not have.** The converse of the rule above, and it
   needs saying separately: checking one direction reads as checking both. Python fell through to a
@@ -685,11 +717,21 @@ where data is written:
   rather than "no tables in this layout". The Python library separates the two with
   `schema_is_fixed(dialect)`; an implementation may spell it differently, since it never reaches a
   byte of the format.
-- `routing` is optional. A shape with no entry routes to the source.
-- **A derived materialisation carries an explicit layout, never `{"auto": true}`.** `auto` derives the
-  *normalised* layout, which is the source's shape - so a derived copy asking for it would be a second
-  copy of the source in another engine, paying for storage and lag to answer questions the source
-  already answers. What a derived materialisation is *for* is a different physical shape, and the
+- `routing` is optional. A shape with no entry routes to the source. Absent, null, `false`, `0` and
+  an empty list or object all say "no routing", as they always did; anything else must be an object
+  (`errors/109`).
+- **A copy may not be the source under another name.** A derived materialisation in the source's
+  engine may not reuse any of the source's tables: its lag would always read zero, and a read routed
+  to it would silently be a read of the source (`errors/101`). Checked whenever the tables are known
+  - after `{"auto": true}` layouts are derived, with a model, and on explicit layouts without one -
+  where Python had checked it only with a model and TypeScript before the copies' fan-out.
+- **A derived materialisation is meant to carry an explicit layout.** `auto` derives the *normalised*
+  layout, which is the source's shape - so a derived copy asking for it is a second copy of the source
+  in another engine, paying for storage and lag to answer questions the source already answers. The
+  libraries accept it nonetheless - in the source's own engine it is refused as the source under
+  another name, above - and the control plane never writes `auto` at all. Until 6 October 2026 this
+  bullet said "never", as a rule a library enforces, and no library did. What a derived
+  materialisation is *for* is a different physical shape, and the
   Python library derives one with `denormalized_layout()`: one wide table at the root entity's grain,
   with intra-group relations flattened in under `<relation>_<field>` - the same convention the foreign
   key uses, so a client reading their own analytical table knows where a column came from.
@@ -705,6 +747,11 @@ where data is written:
 - **Every `routing` value must name a materialisation of the shape's own group**, and every key must
   be a shape this model produces. Checked when the map is loaded, not when the shape is first
   routed — see §8.
+- **A write shape is never routed at a copy** (`errors/100`). Section 8 sends `write` and
+  `bulk_write` to the source before the table is consulted, so an entry sending one elsewhere can only
+  be a planner that believes something untrue. The control plane refuses to issue such an entry; a
+  library refuses to load one, when it has the model that says which shapes are writes. An entry
+  naming the source says nothing new and is accepted.
 
 ### Signing
 
@@ -1353,21 +1400,39 @@ depends on how the caller's JSON parser preserves keys.
 
 **The map stage:**
 
-1. the document is an object; `contract` is in range; `model_version` matches; `map_version` is a
+1. the document is an object; `contract` is in range; every string of the payload is NFC scalar
+   text (§7f); from contract 4 the `project_id`; `model_version` matches; `map_version` is a
    positive integer;
-2. `require_signature`, then the signature itself. Before the structure, deliberately: a document
-   whose origin cannot be established is not worth a detailed reading, and the refusal a client needs
-   is the one about the key rather than the one about the seventh group;
-3. every group, **in name order**, and within a group: the source, then the derived copies in
-   document order (an array's order is the document's), then id uniqueness, then `also_write`.
-   Within one materialisation's layout: reserved table names, then - below contract 5 -
-   `partition_by` before `key_order`, and from contract 5 `key_order`, then `partition_by`, each
-   entity in name order, then `indexes` in document order (§7i);
-4. group coverage, both directions (§7);
-5. the physical design rules that need the model (§7i): groups in name order, materialisations in
+2. `require_signature`, then the signature itself: the block and its `alg`, its value as base64, the
+   configured keys (an empty set, a key of the wrong length), the payload's canonical form, then
+   verification. Before the structure, deliberately: a document whose origin cannot be established
+   is not worth a detailed reading, and the refusal a client needs is the one about the key rather
+   than the one about the seventh group;
+3. `groups` is a non-empty object; then every group, **in name order**, and within a group: its
+   shape and `source`, the write generation, the source, then the derived copies in document order
+   (an array's order is the document's), then id uniqueness, then `also_write`. Within one
+   materialisation: its shape and its `id`, `engine` and `layout` keys, the lag budget's presence,
+   the layout, and then the values of `id`, `engine` and the lag budget. Within the layout: its
+   tables as names, each entity in name order, then the reserved table names, then the columns in
+   name order, then - below contract 5 - `partition_by` before `key_order`, and from contract 5
+   `key_order`, then `partition_by`, each entity in name order, then `indexes` in document order
+   (§7i);
+4. the shape of `routing`, when it says anything;
+5. with a model, group coverage, both directions (§7); without one, a layout asking to be derived;
+6. a copy that is the source under another name, groups in name order;
+7. the physical design rules that need the model (§7i): groups in name order, materialisations in
    document order within a group, entities in name order within a layout - the key permutation
    before the partition rules for one entity;
-6. `routing`, entries **in shape-id order**.
+8. `routing`, entries **in shape-id order**: every value a declared id, and then, with a model,
+   every key a shape of this model, its target in the shape's own group, and a write shape's target
+   the source;
+9. from contract 4, the reserved write-epoch column and drain table (§7d);
+10. from contract 4, the payload's canonical form, safe integers included (§7d).
+
+Three of these orderings were different in the TypeScript library until the third library chose
+between the two, and each has a case with two defects: coverage before a layout is derived
+(`errors/110`), the shape of `routing` before coverage (`errors/111`), and the configured keys before
+the payload is encoded (`errors/112`).
 
 **The session stage** — Tier 2 only, and it exists because §7's fifth `also_write` refusal needs the
 adapters:
@@ -1526,7 +1591,11 @@ the refusal's own text must contain, compared literally and case-sensitively. Th
 part of this contract, which is deliberate and was earned: a refusal of an incompatible contract
 version once rendered a literal `{CONTRACT}` in Python and the number in TypeScript, and no vector
 reached it because the suite compared encodings and that path produces only a diagnostic. A library
-may say more than `match` and in any language it likes; it may not say less.
+may say more than `match` and in any language it likes; it may not say less. Literally means
+literally: until 6 October 2026 both reference runners compiled `match` as a regular expression,
+four write-stage cases were written for that (`Thing\.amount`), and the C++ runner, comparing as
+this paragraph says, could not pass them. The cases say `Thing.amount` now and every runner compares
+a substring.
 
 An `errors/` case carries a `stage`. `model` cases feed `model.json` to the model builder; `map`
 cases build the model **first, outside the assertion**, then feed `map.json` to the map loader with

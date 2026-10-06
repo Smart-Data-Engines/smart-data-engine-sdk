@@ -8,6 +8,32 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Tightened: a model and a map have the shapes the contract writes** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md) §4a, §7, §8a). Writing the C++ library found
+values the two libraries read two ways, or failed on with their runtime's own error. Each is refused
+now, alike in all three, with a vector (`errors/083`-`112`, `routing/003`):
+- in a declaration: `nullable` that is not a boolean; `residency` that is not a string; a relation
+  that is not three strings; atomic groups that overlap, repeat a member or have one; a
+  `cost_ceiling` that is not exactly `{amount, currency}` strings, from either front door;
+- in a map:
+  - a materialisation that is not an object, or whose `id` or `engine` is not a string;
+  - a lag budget that is not a non-negative integer;
+  - layout tables and columns that are not names and types;
+  - `derived` that is not a list, and `groups` that is empty;
+  - `routing` that is a non-empty non-object;
+  - an uppercase `project_id`;
+  - from contract 4, an integer past 2^53 - 1;
+  - a signed map with no canonical form, now a map error rather than the encoder's.
+- in routing: a write shape routed at a copy, which the control plane already refused to issue;
+- a copy in the source's engine reusing its tables is refused without a model too, and Python and
+  TypeScript refuse it at one point (§8a);
+- a signature value is base64 as Python 3.12 reads it. TypeScript decoded any value and refused
+  later, as a signature that does not verify.
+
+A hand-written map or declaration that relied on a coercion is refused with the rule it breaks.
+Every runner compares a vector's `match` literally, as §10 says; four write-stage cases had been
+written for regular expressions.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
