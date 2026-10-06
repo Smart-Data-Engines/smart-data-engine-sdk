@@ -91,6 +91,8 @@ const std::vector<std::pair<std::string, std::string>> kDecimalQueries = {
     {"1e9223372036854775807", "!invalid decimal query value"},
     {"1e00000000000000000000000001", "10"},
     {"-12345678901234567890.123456789", "-12345678901234567890.123456789"},
+    {"123e999999999999999998", "!invalid decimal query value"},
+    {"0.5e1000000000000000000", "!decimal query values may use at most 76 digits"},
 };
 // timestamptz: sde.query.query_value of the reference, text in, normalised text or "!" + refusal out
 const std::vector<std::pair<std::string, std::string>> kTimestampTzQueries = {
@@ -179,7 +181,6 @@ const std::vector<std::pair<std::string, std::string>> kUuidQueries = {
     {"00112233-4455-6677-8899-aabbccddeefg", "!a UUID query value must be UUID or canonical UUID text"},
     {"urn:uuid:00112233-4455-6677-8899-aabbccddeeff", "!a UUID query value must be UUID or canonical UUID text"},
 };
-
 void check(const char* type, const std::vector<std::pair<std::string, std::string>>& table) {
   const sde::ReadColumn column{"f", type};
   for (const auto& [text, want] : table) {
@@ -226,6 +227,7 @@ TEST(QueryValue, AcceptsEachTypesHostValues) {
   EXPECT_EQ(accepted("decimal(12,2)", sde::Decimal("1e75")), std::string("1") + std::string(75, '0'));
   EXPECT_EQ(accepted("decimal(12,2)", sde::Decimal("1e76")), "!decimal query values may use at most 76 digits");
   EXPECT_EQ(accepted("int32", std::int64_t{-2147483648}), "-2147483648");
+  EXPECT_EQ(accepted("int32", std::int64_t{2147483647}), "2147483647");
   EXPECT_EQ(accepted("uuid", sde::Uuid("00112233-4455-6677-8899-AABBCCDDEEFF")),
             "00112233-4455-6677-8899-aabbccddeeff");
   EXPECT_EQ(accepted("date", sde::Date(2026, 10, 6)), "2026-10-06");
