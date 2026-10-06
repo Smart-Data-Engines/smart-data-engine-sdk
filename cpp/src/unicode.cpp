@@ -1,7 +1,9 @@
 #include "sde/unicode.hpp"
 
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <vector>
 
 #include <utf8proc.h>
 
@@ -107,6 +109,125 @@ std::string nfc(std::string_view text) {
 bool is_nfc(std::string_view text) {
   if (!is_scalar_text(text)) return false;
   return nfc(text) == text;
+}
+
+namespace {
+
+// Case_Ignorable is the general categories Mn, Me, Cf, Lm and Sk plus the Word_Break classes
+// MidLetter, MidNumLet and Single_Quote (DerivedCoreProperties.txt). These are the latter. Probed
+// from Python 3.12's `str.lower()`, character by character, rather than copied from a table: it is
+// that function the table names have to agree with.
+constexpr std::uint32_t kWordBreakIgnorable[] = {0x0027, 0x002E, 0x003A, 0x00B7, 0x0387, 0x055F,
+                                                 0x05F4, 0x2018, 0x2019, 0x2024, 0x2027, 0xFE13,
+                                                 0xFE52, 0xFE55, 0xFF07, 0xFF0E, 0xFF1A};
+
+// Cased is Ll, Lu and Lt plus Other_Lowercase and Other_Uppercase. Final_Sigma only asks whether a
+// character that is not case-ignorable is cased, so these are the members of the two Other_ lists
+// that are not modifier letters (Lm, which is case-ignorable). Probed the same way.
+struct Range {
+  std::uint32_t first;
+  std::uint32_t last;
+};
+constexpr Range kOtherCased[] = {{0x00AA, 0x00AA},   {0x00BA, 0x00BA},   {0x2160, 0x217F},
+                                 {0x24B6, 0x24E9},   {0x1F130, 0x1F149}, {0x1F150, 0x1F169},
+                                 {0x1F170, 0x1F189}};
+
+bool case_ignorable(std::uint32_t code_point) {
+  switch (utf8proc_category(static_cast<utf8proc_int32_t>(code_point))) {
+    case UTF8PROC_CATEGORY_MN:
+    case UTF8PROC_CATEGORY_ME:
+    case UTF8PROC_CATEGORY_CF:
+    case UTF8PROC_CATEGORY_LM:
+    case UTF8PROC_CATEGORY_SK:
+      return true;
+    default:
+      break;
+  }
+  for (const std::uint32_t c : kWordBreakIgnorable) {
+    if (c == code_point) return true;
+  }
+  return false;
+}
+
+bool cased(std::uint32_t code_point) {
+  switch (utf8proc_category(static_cast<utf8proc_int32_t>(code_point))) {
+    case UTF8PROC_CATEGORY_LL:
+    case UTF8PROC_CATEGORY_LU:
+    case UTF8PROC_CATEGORY_LT:
+      return true;
+    default:
+      break;
+  }
+  for (const Range& range : kOtherCased) {
+    if (code_point >= range.first && code_point <= range.last) return true;
+  }
+  return false;
+}
+
+std::vector<std::uint32_t> scalar_code_points(std::string_view text) {
+  if (!is_scalar_text(text)) {
+    throw CanonicalError(
+        "text that is not well-formed UTF-8 of Unicode scalar values has no lowercase; "
+        "case-mapping bytes that are not text would invent characters");
+  }
+  std::vector<std::uint32_t> out;
+  std::size_t pos = 0;
+  while (pos < text.size()) {
+    const std::size_t length = detail::utf8_sequence_length(text, pos);
+    utf8proc_int32_t code_point = 0;
+    utf8proc_iterate(reinterpret_cast<const utf8proc_uint8_t*>(text.data() + pos),
+                     static_cast<utf8proc_ssize_t>(length), &code_point);
+    out.push_back(static_cast<std::uint32_t>(code_point));
+    pos += length;
+  }
+  return out;
+}
+
+/// Unicode's Final_Sigma condition (chapter 3, table 3-17): a cased letter before the sigma and
+/// none after it, case-ignorable characters skipped on both sides.
+bool final_sigma(const std::vector<std::uint32_t>& code_points, std::size_t at) {
+  bool after_cased = false;
+  for (std::size_t j = at; j-- > 0;) {
+    if (!case_ignorable(code_points[j])) {
+      after_cased = cased(code_points[j]);
+      break;
+    }
+  }
+  if (!after_cased) return false;
+  for (std::size_t k = at + 1; k < code_points.size(); ++k) {
+    if (!case_ignorable(code_points[k])) return !cased(code_points[k]);
+  }
+  return true;
+}
+
+}  // namespace
+
+std::string to_lower(std::string_view text) {
+  if (is_ascii(text)) {
+    std::string out(text);
+    for (char& c : out) {
+      if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return out;
+  }
+  const std::vector<std::uint32_t> code_points = scalar_code_points(text);
+  std::string out;
+  out.reserve(text.size());
+  for (std::size_t i = 0; i < code_points.size(); ++i) {
+    const std::uint32_t c = code_points[i];
+    if (c == 0x0130) {
+      // The one unconditional lowercase mapping SpecialCasing.txt adds to the simple ones: the dot
+      // stays, as a combining character.
+      detail::append_code_point_unchecked(out, 0x0069);
+      detail::append_code_point_unchecked(out, 0x0307);
+    } else if (c == 0x03A3) {
+      detail::append_code_point_unchecked(out, final_sigma(code_points, i) ? 0x03C2 : 0x03C3);
+    } else {
+      detail::append_code_point_unchecked(
+          out, static_cast<std::uint32_t>(utf8proc_tolower(static_cast<utf8proc_int32_t>(c))));
+    }
+  }
+  return out;
 }
 
 int compare_code_points(std::string_view left, std::string_view right) noexcept {

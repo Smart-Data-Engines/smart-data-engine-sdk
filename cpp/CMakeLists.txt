@@ -58,6 +58,11 @@ add_library(sde
   src/model.cpp
   src/neutral.cpp
   src/hashing.cpp
+  src/python_compat.cpp
+  src/physical.cpp
+  src/layout.cpp
+  src/placement.cpp
+  src/routing.cpp
 )
 add_library(sde::sde ALIAS sde)
 target_compile_features(sde PUBLIC cxx_std_20)

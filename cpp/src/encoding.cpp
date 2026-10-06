@@ -63,6 +63,55 @@ std::optional<std::string> base64_decode(std::string_view text) {
   return out;
 }
 
+std::optional<std::string> base64_decode_as_python(std::string_view text) {
+  std::string out;
+  int quantum = 0;  // sextets read of the current four
+  std::uint32_t left = 0;
+  int pads = 0;
+  bool padding = false;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (c == '=') {
+      padding = true;
+      if (i == 0) return std::nullopt;  // leading padding
+      if (quantum >= 2 && quantum + ++pads >= 4) {
+        // A complete pad sequence ends the input, and nothing may follow it.
+        if (i + 1 < text.size()) return std::nullopt;
+        return out;
+      }
+      continue;
+    }
+    const int value = sextet(c);
+    if (value < 0) return std::nullopt;  // not base64 data, whitespace included
+    if (padding) return std::nullopt;    // data after a padding character
+    pads = 0;
+    const auto bits = static_cast<std::uint32_t>(value);
+    switch (quantum) {
+      case 0:
+        left = bits;
+        quantum = 1;
+        break;
+      case 1:
+        out.push_back(static_cast<char>(((left << 2U) | (bits >> 4U)) & 0xFFU));
+        left = bits & 0x0FU;
+        quantum = 2;
+        break;
+      case 2:
+        out.push_back(static_cast<char>(((left << 4U) | (bits >> 2U)) & 0xFFU));
+        left = bits & 0x03U;
+        quantum = 3;
+        break;
+      default:
+        out.push_back(static_cast<char>(((left << 6U) | bits) & 0xFFU));
+        left = 0;
+        quantum = 0;
+        break;
+    }
+  }
+  if (quantum != 0) return std::nullopt;  // one sextet too many, or the padding is missing
+  return out;
+}
+
 std::string base64_encode(std::string_view bytes) {
   std::string out;
   out.reserve((bytes.size() + 2) / 3 * 4);

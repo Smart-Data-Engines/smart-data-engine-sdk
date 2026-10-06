@@ -183,6 +183,14 @@ class ModelBuilder {
 /// `DeclarationError` naming what is wrong, never an exception from a lookup.
 [[nodiscard]] Model load_neutral_model(const Json& declaration);
 [[nodiscard]] Model load_neutral_model(std::string_view json_text);
+// Text, not a JSON string value: without these a literal or a `std::string` would convert to
+// both `std::string_view` and `Json`, and a string value is never a model anyway.
+[[nodiscard]] inline Model load_neutral_model(const char* json_text) {
+  return load_neutral_model(std::string_view(json_text));
+}
+[[nodiscard]] inline Model load_neutral_model(const std::string& json_text) {
+  return load_neutral_model(std::string_view(json_text));
+}
 
 /// The model as that neutral declaration, so a client declaring in C++ never writes their model a
 /// second time for the control plane. Not the IR: the two differ exactly where a key is written.
