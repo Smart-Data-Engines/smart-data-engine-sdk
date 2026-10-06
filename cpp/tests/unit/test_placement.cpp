@@ -280,6 +280,76 @@ TEST(LoadMap, ABadKeyIsTheCallersConfiguration) {
                  "says it was signed with 'k9'");
 }
 
+/// A contract-5 map with one explicit layout of two tables, loaded without a model, so only the
+/// rules checkable from the document run.
+std::string physical_map(const std::string& layout_extra) {
+  return R"({"contract": 5, "model_version": "m", "map_version": 1, "project_id": ")" +
+         std::string(32, 'a') +
+         R"(", "groups": {"G": {"write_epoch": 1, "source": {"id": "G@pg", "engine": "pg",
+             "layout": {"tables": {"A": "a", "B": "b"}, "columns": {"A": {"x": "bigint"}})" +
+         layout_extra + "}}}}}";
+}
+
+TEST(LoadMap, EntitiesOfAPhysicalDesignAreCheckedInNameOrder) {
+  // Two defects, written B first: the refusal names A, because section 8a orders by name and a
+  // parser need not keep the document's order.
+  EXPECT_REFUSED(physical_map(R"(, "key_order": {"B": [], "A": []})"), sde::LoadOptions{},
+                 "key_order['A'] must be a non-empty list of column names");
+  EXPECT_REFUSED(
+      physical_map(R"(, "partition_by": {"B": {"field": "x"}, "A": {"field": "x"}})"),
+      sde::LoadOptions{}, "partition_by['A'] must be exactly");
+}
+
+TEST(LoadMap, IndexBoundsAreInclusiveAtBothEnds) {
+  const auto index = [](const std::string& body) {
+    return physical_map(R"(, "indexes": [)" + body + "]");
+  };
+  const sde::PlacementMap at_ceiling = sde::load_map(
+      index(R"({"entity": "A", "name": "i", "columns": ["x"], "method": "minmax", "granularity": 1024},
+               {"entity": "A", "name": "s", "columns": ["x"], "method": "set", "granularity": 1,
+                "max_rows": 65536})"));
+  const auto& indexes = at_ceiling.placement_of("G").source.layout.indexes;
+  ASSERT_EQ(indexes.size(), 2U);
+  EXPECT_EQ(indexes[0].granularity, 1024);
+  EXPECT_EQ(indexes[1].max_rows, 65536);
+  EXPECT_REFUSED(index(R"({"entity": "A", "name": "i", "columns": ["x"], "method": "minmax",
+                           "granularity": 1025})"),
+                 sde::LoadOptions{}, "needs an integer granularity from 1 to 1024; found 1025");
+  EXPECT_REFUSED(index(R"({"entity": "A", "name": "s", "columns": ["x"], "method": "set",
+                           "granularity": 1, "max_rows": 65537})"),
+                 sde::LoadOptions{}, "needs an integer max_rows from 1 to 65536; found 65537");
+  EXPECT_REFUSED(index(R"({"entity": "A", "name": "i", "columns": ["x"], "method": "bloom_filter",
+                           "granularity": true})"),
+                 sde::LoadOptions{}, "found True");
+}
+
+TEST(LoadMap, AProjectIdIsThirtyTwoLowercaseHexDigits) {
+  const auto with_project = [](const std::string& project) {
+    return R"({"contract": 4, "model_version": "m", "map_version": 1, "project_id": ")" + project +
+           R"(", "groups": {"G": {"write_epoch": 1, "source": {"id": "G@pg", "engine": "pg",
+               "layout": {"tables": {"A": "a"}}}}}})";
+  };
+  EXPECT_EQ(sde::load_map(with_project(std::string(32, 'f'))).project_id(), std::string(32, 'f'));
+  EXPECT_REFUSED(with_project(std::string(32, 'F')), sde::LoadOptions{},
+                 "contract 4 requires a 32-digit lowercase hexadecimal project_id");
+  EXPECT_REFUSED(with_project(std::string(31, 'a')), sde::LoadOptions{}, "32-digit lowercase");
+  EXPECT_REFUSED(with_project(std::string(33, 'a')), sde::LoadOptions{}, "32-digit lowercase");
+  EXPECT_REFUSED(with_project(std::string(31, 'a') + "g"), sde::LoadOptions{}, "32-digit lowercase");
+}
+
+TEST(LoadMap, AnEmptyPartitionByBelowContractFiveSaysNothing) {
+  // The control plane emitted `partition_by` when non-empty and nothing rendered it; an empty one
+  // never meant anything, and the reference reads it as absent (errors/037 is the non-empty case).
+  for (const char* empty : {"{}", "null", "false"}) {
+    const std::string text = R"({"contract": 4, "model_version": "m", "map_version": 1, "project_id": ")" +
+                             std::string(32, 'a') +
+                             R"(", "groups": {"G": {"write_epoch": 1, "source": {"id": "G@pg",
+                                 "engine": "pg", "layout": {"tables": {"A": "a"}, "partition_by": )" +
+                             empty + "}}}}}";
+    EXPECT_TRUE(sde::load_map(text).placement_of("G").source.layout.partition_by.empty()) << empty;
+  }
+}
+
 TEST(PlacementMap, AskingForWhatTheMapDoesNotHaveIsAMapError) {
   const sde::Model model = events();
   const sde::PlacementMap map = sde::load_map(std::string_view(map_with(model, kSource)), with(model));
