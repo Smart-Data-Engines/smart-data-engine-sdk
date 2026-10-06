@@ -197,8 +197,8 @@ std::string name_of(const Json& index) {
 }
 
 Json first(const Json::Array& items, std::size_t count) {
-  return Json(Json::Array(items.begin(),
-                          items.begin() + static_cast<std::ptrdiff_t>(std::min(count, items.size()))));
+  const auto end = items.begin() + static_cast<std::ptrdiff_t>(std::min(count, items.size()));
+  return Json(Json::Array(items.begin(), end));
 }
 
 // ── Cutover ─────────────────────────────────────────────────────────────────────────────────────
@@ -232,7 +232,8 @@ CheckedCutover check_cutover(const Json& raw, const Model& model, const std::str
     refuse("unsupported cutover plan protocol");
   }
   out.protocol = static_cast<int>(*protocol);
-  if (const Json& kind = *body.find("kind"); !kind.is_string() || kind.as_string() != "sde-cutover") {
+  if (const Json& kind = *body.find("kind");
+      !kind.is_string() || kind.as_string() != "sde-cutover") {
     refuse("unsupported cutover document kind");
   }
   out.plan_id = hex(body.find("plan_id"), 32, "plan_id", kCutover);
@@ -398,7 +399,9 @@ CheckedStaging check_staging(const Json& raw, const Model& model, const std::str
   out.protocol = static_cast<int>(*protocol);
   out.stage_id = hex(body.find("stage_id"), 32, "stage_id", kStaging);
   out.project_id = hex(body.find("project_id"), 32, "project_id", kStaging);
-  if (out.project_id != project_id) refuse("staging authorization belongs to another local project");
+  if (out.project_id != project_id) {
+    refuse("staging authorization belongs to another local project");
+  }
   const Json& group = *body.find("group");
   if (!group.is_string() || group.as_string().empty()) {
     refuse("staging group must be a nonempty string");
@@ -865,7 +868,8 @@ IndexPlan load_index_plan(const Json& raw, const Model& model, const std::string
     plan.protocol_ = checked.protocol;
     plan.build_budget_ms_ = checked.build_budget_ms;
     // From the loaded maps, in their order, not from the document's dictionaries.
-    const std::vector<Index>& after = plan.prepared_.placement_of(plan.group_).source.layout.indexes;
+    const std::vector<Index>& after =
+        plan.prepared_.placement_of(plan.group_).source.layout.indexes;
     plan.added_.assign(after.begin() + static_cast<std::ptrdiff_t>(checked.kept), after.end());
     for (const Index& index : plan.current_.placement_of(plan.group_).source.layout.indexes) {
       if (checked.removed.contains(index.name)) plan.removed_.push_back(index);
