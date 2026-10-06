@@ -216,6 +216,8 @@ it is about the format.
 | The JSON parser loses a number's lexical form, again | Rust: `serde_json` decodes to `i64`/`u64`/`f64` unless the `arbitrary_precision` feature is on, and it is off by default | Same hazard as Go's `json.Number` and Java's `BigDecimal`, and the same vector finds it: `canonical/005`. Worth knowing that the fix is a feature flag rather than a different call |
 | Map iteration order is randomised, again | Rust: `HashMap` seeds its hasher per process | §8a's ordering rules bind here exactly as they do in Go. `BTreeMap` sidesteps it and is the right default for anything that reaches a document |
 | A skipped suite still runs its body | Node: `describe.skipIf` evaluates its callback, because it has to register the tests it then skips | An engine constructed at that level parses a DSN that is not there and takes the file down at collection, with a refusal that reads like a real one. Build the connection in the hook |
+| A runtime's `strip()` is not a rule | Python's `str.strip()` removes U+001C-U+001F; JavaScript's `trim()` removes U+FEFF and keeps U+0085 | The two libraries accepted different decimal text, with no test failing in either: each agreed with its own runtime. Strip the set `logical-reads.md` names - Unicode's `White_Space` - and nothing your standard library adds. `query/026`-`028` |
+| The reference's interpreter can change its answer | CPython 3.14's `datetime.fromisoformat` reads `24:00:00` as the next midnight; 3.11-3.13 refuse it. Every version reads an offset by its total, so `+10:60` is eleven hours | A library that delegates validation to a parser inherits that parser's version history. Check the ranges yourself before parsing. `query/024`, `025` |
 
 ## Measuring your overhead
 
