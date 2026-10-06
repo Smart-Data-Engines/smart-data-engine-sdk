@@ -142,6 +142,11 @@ class Session {
   void transaction(const std::function<void()>& body) { transaction({}, body); }
 
  private:
+  friend struct BackfillProgress backfill(Session& session, const std::string& group,
+                                          const struct BackfillOptions& options);
+  friend struct VerifyReport verify(Session& session, const std::string& group,
+                                    const struct VerifyOptions& options);
+
   struct Admission {
     std::set<std::string> declared;
     std::vector<std::string> required;  ///< code point order: the order a refusal names
