@@ -52,10 +52,6 @@ inline constexpr std::string_view ORDERBOOK_NULLABLE[] = {"sequence_number"};
 /// `decimal(...)` are refused rather than answered: "cannot store" is a claim about an engine.
 [[nodiscard]] bool can_store(std::string_view neutral, std::string_view dialect);
 
-/// Whether the engine imposes its schema instead of accepting one (the orderbook engine): its
-/// layout renders no DDL, and "no statements" there means nothing to run.
-[[nodiscard]] bool schema_is_fixed(std::string_view dialect) noexcept;
-
 /// One entity's columns in the neutral vocabulary, in the reference's order: declared fields in
 /// name order, then `<relation>_<target key field>` for every relation from it, by relation name.
 using NeutralColumns = std::vector<std::pair<std::string, std::string>>;

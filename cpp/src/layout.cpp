@@ -13,6 +13,11 @@ namespace {
 
 using detail::python_repr;
 
+/// The engines whose schema is fixed in their own source. `schema_is_fixed` in `sde/schema.hpp` is
+/// the public question and refuses a dialect it does not know; this one answers for the dialects a
+/// layout has already been typed for.
+bool fixed_schema(std::string_view dialect) noexcept { return dialect == "orderbook"; }
+
 struct TypeName {
   std::string_view neutral;
   std::string_view native;
@@ -147,7 +152,6 @@ bool can_store(std::string_view neutral, std::string_view dialect) {
   return true;
 }
 
-bool schema_is_fixed(std::string_view dialect) noexcept { return dialect == "orderbook"; }
 
 std::map<std::string, NeutralColumns> group_columns(const Model& model, const Group& group) {
   std::map<std::string, NeutralColumns> out;
@@ -201,7 +205,7 @@ std::vector<std::string> stored_types(const Model& model, const Group& group) {
 std::optional<std::string> fixed_schema_mismatch(
     const std::map<std::string, NeutralColumns>& columns, std::string_view dialect,
     const std::map<std::string, std::set<std::string>>& nullable) {
-  if (!schema_is_fixed(dialect)) return std::nullopt;
+  if (!fixed_schema(dialect)) return std::nullopt;
 
   if (columns.size() != 1) {
     std::vector<std::string> entities;
@@ -301,7 +305,7 @@ PhysicalLayout default_layout(const Model& model, const Group& group, std::strin
   const std::map<std::string, NeutralColumns> neutral = group_columns(model, group);
 
   PhysicalLayout layout;
-  if (schema_is_fixed(dialect)) {
+  if (fixed_schema(dialect)) {
     if (auto mismatch = fixed_schema_mismatch(neutral, dialect, group_nullable(model, group))) {
       throw DeclarationError(*mismatch);
     }

@@ -8,6 +8,20 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: values, DDL and read plans in the C++ library, the first part of Tier 2**
+([`cpp/README.md`](cpp/README.md)). `sde::Value` holds one host type per neutral type, with an exact
+`sde::Decimal` and microsecond timestamps. `sde::schema_statements` renders a layout's DDL and
+`sde::compatibility_views` the views on a target. `sde::plan_read` checks a read and normalises its
+values; `sde::numeric_summary` computes an exact summary, with the mean rounded half to even.
+- It passes every `schema/` and `query/` vector; the library stays at Tier 1 until it takes part in
+  a migration.
+- Its answers were compared with the reference's own on 240,000 random inputs. The comparison
+  found text the two other libraries read in two ways: the whitespace around a decimal, an offset
+  part past 59, and 24:00. Each now has one rule, held by `query/024`-`028`, which this library
+  takes as well.
+- `sde::QueryRefused` is a `sde::ModelPlanningError`, as in the reference, and `sde::schema_is_fixed`
+  refuses a dialect it does not know rather than answering `false`.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of

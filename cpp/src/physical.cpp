@@ -50,20 +50,42 @@ std::vector<std::string> effective_key(std::string_view where, std::string_view 
                                        const std::map<std::string, std::vector<std::string>>& key_order) {
   const auto found = key_order.find(std::string(entity));
   if (found == key_order.end()) return key;
-  std::vector<std::string> ordered = found->second;
+  if (auto refusal = detail::key_order_refusal(where, entity, key, found->second)) {
+    throw MapError(*refusal);
+  }
+  return found->second;
+}
+
+namespace detail {
+
+std::optional<std::string> key_order_refusal(std::string_view where, std::string_view entity,
+                                             const std::vector<std::string>& key,
+                                             const std::vector<std::string>& ordered) {
   std::vector<std::string> a = ordered;
   std::vector<std::string> b = key;
   std::sort(a.begin(), a.end());
   std::sort(b.begin(), b.end());
-  if (a != b) {
-    throw MapError(std::string(where) + ": key_order[" + detail::python_repr(entity) + "] is " +
-                   detail::python_repr(ordered) + " and the key is " + detail::python_repr(key) +
-                   ". A key order must be a permutation of the key.");
-  }
-  return ordered;
+  if (a == b) return std::nullopt;
+  return std::string(where) + ": key_order[" + python_repr(entity) + "] is " +
+         python_repr(ordered) + " and the key is " + python_repr(key) +
+         ". A key order must be a permutation of the key.";
 }
 
-namespace detail {
+std::optional<std::string> partition_key_refusal(std::string_view where, std::string_view entity,
+                                                 const std::vector<std::string>& key,
+                                                 const Partition& partition) {
+  if (std::find(key.begin(), key.end(), partition.field) != key.end()) return std::nullopt;
+  return std::string(where) + ": partition_by[" + python_repr(entity) + "] partitions on " +
+         python_repr(std::string_view(partition.field)) + ", outside the key " + python_repr(key) +
+         "; duplicates of one key would survive merges in two partitions.";
+}
+
+std::string_view partition_function(std::string_view granularity) noexcept {
+  if (granularity == "day") return "toDate";
+  if (granularity == "month") return "toYYYYMM";
+  if (granularity == "year") return "toYear";
+  return {};
+}
 
 std::map<std::string, std::vector<std::string>> parse_key_order(const Json& raw,
                                                                  const std::string& where,

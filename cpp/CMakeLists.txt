@@ -65,6 +65,10 @@ add_library(sde
   src/routing.cpp
   src/telemetry.cpp
   src/recorder.cpp
+  src/bignum.cpp
+  src/value.cpp
+  src/schema.cpp
+  src/query.cpp
 )
 add_library(sde::sde ALIAS sde)
 target_compile_features(sde PUBLIC cxx_std_20)
