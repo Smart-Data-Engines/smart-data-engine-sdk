@@ -4,13 +4,14 @@
 #include <string>
 
 #include "sde/json.hpp"
+#include "sde/version.hpp"
 
 namespace sde::testing_support {
 
-/// The highest tier this build of the library claims (format contract section 9). Vectors of a
-/// higher tier are counted as outside it - by an assertion on exactly which they are - never
-/// skipped silently.
-inline constexpr int kTier = 0;
+/// The highest tier this build of the library claims (format contract section 9), as the library
+/// declares it. An `errors/` case at a stage that needs engines passes as outside the claim, and
+/// only at those stages: the runner fails on any stage it does not know.
+inline constexpr int kTier = sde::TIER;
 
 void run_map_stage(const std::filesystem::path& directory, const sde::Json& expected,
                    const std::string& error, const std::string& match);

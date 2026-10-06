@@ -42,6 +42,7 @@ add_executable(sde_conformance
   conformance/test_hashing.cpp
   conformance/test_signature.cpp
   conformance/test_routing.cpp
+  conformance/test_families.cpp
 )
 target_link_libraries(sde_conformance PRIVATE sde_test_support GTest::gtest_main)
 gtest_discover_tests(sde_conformance DISCOVERY_MODE PRE_TEST)

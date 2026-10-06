@@ -1,11 +1,25 @@
 # Changelog
 
-The two libraries are released separately, one tag per language: `python-v*` to PyPI and
-`typescript-v*` to npm ([`docs/publishing.md`](docs/publishing.md) §5). A shared version number does
-not make them agree. What does is the conformance suite and
+The Python and TypeScript libraries are released separately, one tag per language: `python-v*` to
+PyPI and `typescript-v*` to npm ([`docs/publishing.md`](docs/publishing.md) §5). The C++ library is
+not released yet; it is built from this repository. A shared version number does not make them
+agree. What does is the conformance suite and
 [`conformance/contract-version.txt`](conformance/contract-version.txt).
 
 ## Unreleased
+
+**New: a C++ library, Tier 0 with hashing** ([`cpp/README.md`](cpp/README.md)). It declares models
+and computes their versions and shapes, reads and writes the neutral declaration, loads placement
+maps of contracts 1 to 6 with their signatures and key sets, and routes operations. It has no
+engine adapters yet. It is built with CMake from this repository (GCC 12 or Clang 16 at the oldest,
+OpenSSL 3, utf8proc) and is on no package registry.
+- It passes every vector of its tier.
+- Where the other two libraries coerce a value or fail with their runtime's own error, it refuses
+  with the contract's. Those inputs are listed in
+  [`docs/implementing.md`](docs/implementing.md#the-third-implementation-c), to become rules in every
+  library.
+- Four required checks join the ruleset, nineteen in all: `cpp (gcc-12)`, `cpp (clang-16)`,
+  `cpp-sanitizers` and CodeQL's `analyze (c-cpp)`.
 
 **Fixed: the local operator beside the engine's administrator** (Python,
 [`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).

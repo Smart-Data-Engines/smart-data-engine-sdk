@@ -36,8 +36,9 @@ void run_engine_stage(const std::filesystem::path& directory, const sde::Json& /
                       const std::string& stage, const std::string& /*error*/,
                       const std::string& /*match*/) {
   if (kTier < 2) {
-    // Tier 2 only (section 8a): this build claims a lower tier, so the case is outside it. The count
-    // of such cases is asserted separately, so nothing else can hide here.
+    // Tier 2 only (section 8a): this build claims a lower tier, so the case is outside it. Only the
+    // session and write stages reach here; the caller fails on a stage it does not know, so no other
+    // case can pass this way.
     SUCCEED() << directory.filename() << " is a " << stage << "-stage case, Tier 2";
     return;
   }

@@ -279,6 +279,52 @@ def test_the_typescript_row_names_the_adapters_it_actually_has() -> None:
         )
 
 
+def test_the_cpp_row_agrees_with_the_library() -> None:
+    """The C++ row against the library's own constants, read out of its headers.
+
+    The same claim in two places as the TypeScript row, and two more cells besides: the contract
+    range, from the constants the loader enforces and against the reference's, and the compiler
+    floors, against the matrix that builds with them. A floor the README names and CI does not
+    compile with is a claim nobody checks.
+    """
+    include = ROOT / "cpp" / "include" / "sde"
+    version = (include / "version.hpp").read_text()
+    tier = re.search(r"inline constexpr int TIER = (\d+);", version)
+    hashing = re.search(r"inline constexpr bool HASHING = (true|false);", version)
+    assert tier and hashing, "the C++ library no longer declares TIER and HASHING"
+    model = (include / "model.hpp").read_text()
+    ir = re.search(r"inline constexpr int IR_CONTRACT = (\d+);", model)
+    placement = (include / "placement.hpp").read_text()
+    floor = re.search(r"inline constexpr int MAP_CONTRACT_FLOOR = (\d+);", placement)
+    ceiling = re.search(r"inline constexpr int MAP_CONTRACT = (\d+);", placement)
+    assert ir and floor and ceiling, "the C++ headers no longer declare their contract versions"
+
+    _, language, tier_cell, hashing_cell, ir_cell, map_cell, engines = _row("sde")
+    assert tier_cell == tier.group(1)
+    assert hashing_cell == ("yes" if hashing.group(1) == "true" else "no")
+    assert ir_cell == ir.group(1) == str(sde.CONTRACT)
+    en_dash = "\N{EN DASH}"
+    assert map_cell == f"{floor.group(1)}{en_dash}{ceiling.group(1)}", map_cell
+    assert (int(floor.group(1)), int(ceiling.group(1))) == (
+        sde.MAP_CONTRACT_FLOOR,
+        sde.MAP_CONTRACT,
+    ), "the C++ library reads another range of map contracts than the reference"
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    matrix = re.search(r"\n  cpp:\n(?:.*\n)*?        compiler: \[([^\]]+)\]", workflow)
+    assert matrix, "the cpp job no longer names its compilers in a matrix"
+    built = sorted(name.strip() for name in matrix.group(1).split(","))
+    floors = re.findall(r"(GCC|Clang) (\d+)\+", language)
+    named = sorted(f"{family.lower()}-{major}" for family, major in floors)
+    assert named == built, f"the row names {named} and CI builds with {built}"
+
+    # Engines: the adapters present, which below Tier 2 is none - and then the cell says so.
+    engines_dir = ROOT / "cpp" / "src" / "engines"
+    adapters = sorted(p.stem for p in engines_dir.glob("*.cpp")) if engines_dir.is_dir() else []
+    cell = [] if engines == "none" else sorted(n.strip().strip("`") for n in engines.split(","))
+    assert cell == adapters, (cell, adapters)
+
+
 def test_the_typescript_core_reaches_no_driver() -> None:
     """The claim the whole no-account mode rests on, from this side of the fence.
 

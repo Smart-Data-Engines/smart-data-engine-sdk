@@ -439,6 +439,92 @@ jobs:
             console.log(report.numPassedTests + " passed, none skipped")
           '
 
+  cpp:
+    # The C++ library: its unit tests and every vector family of the tier it claims, in its own
+    # GoogleTest runner, with every warning an error. One job per compiler family, each at the
+    # oldest version cpp/README.md names: C++20 support is what differs between a floor and the
+    # newest release, and a floor nobody compiles against is a claim rather than a fact. The newest
+    # Clang runs in cpp-sanitizers below.
+    #
+    # ubuntu-24.04 rather than -latest, because that image carries both floors; when it goes, the
+    # floors move with a deliberate edit here and in the README, not with the runner.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-12, clang-16]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libssl-dev libutf8proc-dev g++-12 clang-16
+
+      - name: configure
+        env:
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          case "$COMPILER" in
+            gcc-12) cc=gcc-12; cxx=g++-12 ;;
+            clang-16) cc=clang-16; cxx=clang++-16 ;;
+            *) echo "no compiler for $COMPILER"; exit 1 ;;
+          esac
+          # For the client build below as well, which configures a project of its own.
+          echo "CC=$cc" >> "$GITHUB_ENV"
+          echo "CXX=$cxx" >> "$GITHUB_ENV"
+          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
+            -DCMAKE_C_COMPILER="$cc" -DCMAKE_CXX_COMPILER="$cxx"
+
+      - name: build, every warning an error
+        run: cmake --build cpp/build
+
+      - name: the unit tests and every vector family of the library's tier
+        # test_families.cpp fails on a family it has never heard of, so a family added to
+        # conformance/ cannot pass here by being ignored.
+        run: ctest --test-dir cpp/build --output-on-failure
+
+      - name: a client's build, against the installed package
+        # find_package(sde) is how somebody else's build sees this library, and nothing above
+        # exercises it: the suite links the target from inside the same build. Installed, then the
+        # example is configured as a project of its own and run.
+        run: |
+          cmake --install cpp/build --prefix "$RUNNER_TEMP/sde"
+          cmake -S cpp/examples -B "$RUNNER_TEMP/client" -G Ninja \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sde"
+          cmake --build "$RUNNER_TEMP/client"
+          "$RUNNER_TEMP/client/sde_example_route"
+
+  cpp-sanitizers:
+    # The same suite under AddressSanitizer and UndefinedBehaviorSanitizer, built with the newest
+    # Clang the runner has and stopping at the first report. A parser of documents somebody else
+    # wrote is where an out-of-bounds read hides behind a green test, and undefined behaviour is what
+    # the next optimiser turns into a different answer.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libssl-dev libutf8proc-dev clang
+
+      - name: configure
+        run: |
+          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
+            -DSDE_SANITIZE=address,undefined -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: build
+        run: cmake --build cpp/build
+
+      - name: the suite, under both sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir cpp/build --output-on-failure
+
   contract:
     runs-on: ubuntu-latest
     steps:

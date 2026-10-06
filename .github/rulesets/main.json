@@ -75,6 +75,15 @@
             "context": "orderbook"
           },
           {
+            "context": "cpp (gcc-12)"
+          },
+          {
+            "context": "cpp (clang-16)"
+          },
+          {
+            "context": "cpp-sanitizers"
+          },
+          {
             "context": "analyze (python)"
           },
           {
@@ -82,6 +91,9 @@
           },
           {
             "context": "analyze (actions)"
+          },
+          {
+            "context": "analyze (c-cpp)"
           },
           {
             "context": "CodeQL"

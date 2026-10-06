@@ -104,4 +104,6 @@ install(FILES
 if(SDE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
+  add_subdirectory(examples)
+  add_test(NAME example.route COMMAND sde_example_route)
 endif()
