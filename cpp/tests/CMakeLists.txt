@@ -32,7 +32,11 @@ target_link_libraries(sde_unit_tests PRIVATE sde_test_support GTest::gtest_main
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)
 
 add_executable(sde_conformance
+  conformance/stages.cpp
   conformance/test_canonical.cpp
+  conformance/test_model.cpp
+  conformance/test_errors.cpp
+  conformance/test_hashing.cpp
 )
 target_link_libraries(sde_conformance PRIVATE sde_test_support GTest::gtest_main)
 gtest_discover_tests(sde_conformance DISCOVERY_MODE PRE_TEST)

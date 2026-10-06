@@ -55,6 +55,9 @@ add_library(sde
   src/canonical.cpp
   src/crypto.cpp
   src/encoding.cpp
+  src/model.cpp
+  src/neutral.cpp
+  src/hashing.cpp
 )
 add_library(sde::sde ALIAS sde)
 target_compile_features(sde PUBLIC cxx_std_20)
