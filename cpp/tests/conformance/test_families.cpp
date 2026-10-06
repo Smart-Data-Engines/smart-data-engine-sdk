@@ -30,7 +30,7 @@ const std::map<std::string, int>& tier_of_family() {
 const std::set<std::string>& run_here() {
   static const std::set<std::string> families = {"canonical", "model",   "routing",   "errors",
                                                  "signature", "hashing", "telemetry", "schema",
-                                                 "query"};
+                                                 "query",     "migration"};
   return families;
 }
 

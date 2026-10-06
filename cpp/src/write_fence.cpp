@@ -5,6 +5,7 @@
 #include <string>
 
 #include "python_compat.hpp"
+#include "write_fence_internal.hpp"
 #include "sde/errors.hpp"
 #include "sde/placement.hpp"
 
@@ -84,9 +85,9 @@ std::string without_leading_zeros(std::string_view digits) {
   return first == std::string_view::npos ? std::string("0") : std::string(digits.substr(first));
 }
 
-/// The reference's `_predicate`: normalises only this library's own predicate grammar, keeping
-/// quoted identifiers and their spaces, and names anything else `<unrecognized>`.
-std::string predicate(std::string_view raw) {
+}  // namespace
+
+std::string detail::fence_predicate(std::string_view raw) {
   std::string_view value = python_strip(raw);
   if (starts_with(value, "CHECK")) value = python_strip(value.substr(5));
   value = without_not_valid(value);
@@ -128,6 +129,8 @@ std::string predicate(std::string_view raw) {
   if (pos != value.size()) return "<unrecognized>";
   return column + std::string(operation) + without_leading_zeros(digits);
 }
+
+namespace {
 
 /// `int(text)` of ASCII digits, as an epoch: refused past the safe range like any other epoch.
 std::int64_t epoch_digits(std::string_view digits) {
@@ -236,7 +239,7 @@ FenceState fence_state(const FenceMetadata& metadata) {
   for (const auto& [name, raw] : metadata.constraints) {
     if (!starts_with(name, FENCE_PREFIX)) continue;
     const std::string_view suffix = std::string_view(name).substr(FENCE_PREFIX.size());
-    const std::string normalised = predicate(raw);
+    const std::string normalised = detail::fence_predicate(raw);
     std::string expected;
     if (matches_hex_suffix(suffix, "owner_")) {
       owners.emplace_back(suffix.substr(6));

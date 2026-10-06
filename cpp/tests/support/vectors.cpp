@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <typeinfo>
 
 #include "sde/errors.hpp"
 
@@ -80,6 +81,23 @@ bool is_instance(const std::exception& error, std::string_view class_name) {
   ADD_FAILURE() << "the runner does not know the error class " << class_name
                 << "; an unknown class is a failure, never a pass";
   return false;
+}
+
+std::string exact_class(const std::exception& error) {
+  const std::type_info& type = typeid(error);
+  if (type == typeid(sde::SdeError)) return "SdeError";
+  if (type == typeid(sde::CanonicalError)) return "CanonicalError";
+  if (type == typeid(sde::DeclarationError)) return "DeclarationError";
+  if (type == typeid(sde::ModelPlanningError)) return "ModelPlanningError";
+  if (type == typeid(sde::BulkWriteRefused)) return "BulkWriteRefused";
+  if (type == typeid(sde::MapError)) return "MapError";
+  if (type == typeid(sde::MapRolledBack)) return "MapRolledBack";
+  if (type == typeid(sde::EngineError)) return "EngineError";
+  if (type == typeid(sde::ResourceBusy)) return "ResourceBusy";
+  if (type == typeid(sde::ResourceClosed)) return "ResourceClosed";
+  if (type == typeid(sde::MigrationRefused)) return "MigrationRefused";
+  if (type == typeid(sde::QueryRefused)) return "QueryRefused";
+  return {};
 }
 
 void expect_refusal(const std::function<void()>& body, std::string_view class_name,
