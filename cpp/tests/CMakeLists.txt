@@ -36,6 +36,7 @@ add_executable(sde_unit_tests
   unit/test_schema.cpp
   unit/test_write_fence.cpp
   unit/test_session.cpp
+  unit/test_packets.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main
   OpenSSL::Crypto)
