@@ -20,10 +20,12 @@
 
 #include "encoding.hpp"
 #include "sde/canonical.hpp"
+#include "sde/migration.hpp"
 #include "sde/model.hpp"
 #include "sde/placement.hpp"
 #include "sde/session.hpp"
 #include "sde/telemetry.hpp"
+#include "sde/verification.hpp"
 #include "sde/testing/memory.hpp"
 #include "sde/version.hpp"
 #include "sde/watermark.hpp"
@@ -39,14 +41,13 @@ using Engines = std::map<std::string, std::unique_ptr<MemoryEngine>>;
 
 /// The drivers this runner has, by the document that selects them, and the ones still to come.
 const std::vector<std::string>& written_drivers() {
-  static const std::vector<std::string> drivers = {"fencing", "watermark", "operations", "bulk",
-                                                   "generation"};
+  static const std::vector<std::string> drivers = {
+      "fencing", "watermark", "operations", "bulk", "generation", "backfill", "verify",
+      "verification", "frozen"};
   return drivers;
 }
 const std::vector<std::string>& pending_drivers() {
-  static const std::vector<std::string> drivers = {"backfill", "verify",  "verification",
-                                                   "frozen",   "staging", "index",
-                                                   "cutover"};
+  static const std::vector<std::string> drivers = {"staging", "index", "cutover"};
   return drivers;
 }
 
@@ -221,6 +222,18 @@ void drive_generation(const std::filesystem::path& directory, const sde::Model& 
               }
             }
           });
+        } else if (op == "backfill") {
+          sde::BackfillOptions backfill;
+          backfill.chunk_rows = 3;
+          (void)sde::backfill(session, action.find("group")->as_string(), backfill);
+        } else if (op == "verify") {
+          sde::VerifyOptions verify;
+          verify.chunk_rows = 3;
+          verify.at = action.find("at")->as_string();
+          const sde::VerifyReport report =
+              sde::verify(session, action.find("group")->as_string(), verify);
+          EXPECT_EQ(report.matched(), action.find("matched")->as_bool());
+          EXPECT_EQ(report.as_record(), *action.find("report"));
         } else {
           ADD_FAILURE() << "unknown generation fixture operation " << op;
         }
@@ -322,6 +335,129 @@ void drive_bulk(const std::filesystem::path& directory, const sde::Model& model,
   const std::string bytes = sde::canonical_bytes(metrics);
   EXPECT_EQ(sde::Bytes{std::vector<std::uint8_t>(bytes.begin(), bytes.end())}.to_hex(),
             want.find("metrics_hex")->as_string());
+}
+
+// --- backfill.json, verify.json, verification.json, frozen.json -------------------------------
+
+sde::BackfillOptions backfill_options(const sde::Json* options) {
+  sde::BackfillOptions out;
+  if (options == nullptr) return out;
+  if (const sde::Json* chunk = options->find("chunk_rows")) out.chunk_rows = *chunk->to_int64();
+  if (const sde::Json* stop = options->find("stop_after"); stop != nullptr && !stop->is_null()) {
+    out.stop_after = *stop->to_int64();
+  }
+  return out;
+}
+
+void drive_backfill(const std::filesystem::path& directory, const sde::Model& model,
+                    const sde::PlacementMap& map, Engines& engines) {
+  const sde::Json want = read_json(directory / "backfill.json");
+  sde::Session session(model, map, pointers(engines));
+  const std::string& group = want.find("group")->as_string();
+  const sde::BackfillOptions options = backfill_options(want.find("options"));
+  if (const sde::Json* error = want.find("error")) {
+    expect_refusal([&] { (void)sde::backfill(session, group, options); }, error->as_string(),
+                   want.find("match")->as_string());
+    return;
+  }
+  EXPECT_EQ(sde::backfill(session, group, options).as_record(), *want.find("progress"))
+      << "the backfill progress differs from the vector";
+}
+
+void drive_verify(const std::filesystem::path& directory, const sde::Model& model,
+                  const sde::PlacementMap& map, Engines& engines) {
+  const sde::Json want = read_json(directory / "verify.json");
+  sde::Session session(model, map, pointers(engines));
+  sde::VerifyOptions options;
+  if (const sde::Json* given = want.find("options")) {
+    if (const sde::Json* chunk = given->find("chunk_rows")) options.chunk_rows = *chunk->to_int64();
+  }
+  const sde::VerifyReport report = sde::verify(session, want.find("group")->as_string(), options);
+  // `at` is a clock reading, so the vector carries a placeholder: a vector holding an instant
+  // would expire.
+  sde::Json record = report.as_record();
+  record.set("at", "<any>");
+  EXPECT_EQ(record, *want.find("report"));
+  EXPECT_EQ(report.matched(), want.find("matched")->as_bool());
+  sde::Json differences = sde::Json::array();
+  for (const sde::Difference& difference : report.differences) {
+    sde::Json item = sde::Json::object();
+    item.set("entity", difference.entity);
+    item.set("table", difference.table);
+    item.set("key", sde::testing::row_to_json(difference.key));
+    sde::Json columns = sde::Json::array();
+    for (const std::string& column : difference.columns) columns.as_array().push_back(column);
+    item.set("columns", std::move(columns));
+    differences.as_array().push_back(std::move(item));
+  }
+  EXPECT_EQ(differences, *want.find("differences"))
+      << "the differences differ. These hold the client's own key values and are deliberately "
+         "absent from the record that crosses the boundary.";
+}
+
+void drive_verification(const std::filesystem::path& directory, const sde::Model& model,
+                        const sde::PlacementMap& map, Engines& engines) {
+  const sde::Json want = read_json(directory / "verification.json");
+  sde::SessionOptions session_options;
+  session_options.project_id = project_of(want);
+  sde::Session session(model, map, pointers(engines), session_options);
+  const auto compare = [&] {
+    sde::VerifyOptions options;
+    options.request = sde::VerificationRequest::from_record(*want.find("request"));
+    options.at = want.find("at")->as_string();
+    const sde::Json* chunk = want.find("chunk_rows");
+    options.chunk_rows = chunk == nullptr ? 3 : *chunk->to_int64();
+    return sde::verify(session, want.find("group")->as_string(), options);
+  };
+  if (const sde::Json* error = want.find("error")) {
+    expect_refusal([&] { (void)compare(); }, error->as_string(), want.find("match")->as_string());
+    return;
+  }
+  const sde::VerifyReport report = compare();
+  EXPECT_EQ(report.as_record(), *want.find("report"));
+  EXPECT_EQ(report.matched(), want.find("matched")->as_bool());
+}
+
+void drive_frozen(const std::filesystem::path& directory, const sde::Model& model,
+                  const sde::PlacementMap& map, Engines& engines) {
+  const sde::Json want = read_json(directory / "frozen.json");
+  bind_generation_metadata(engines, *want.find("engine_generations"), true);
+  const std::string project = want.find("project_id")->as_string();
+  const sde::InspectionContext context(model, map, pointers(engines), project);
+  const sde::VerificationRequest request =
+      sde::VerificationRequest::from_record(*want.find("request"));
+  std::map<std::string, std::int64_t> epochs;
+  for (const auto& [id, epoch] : want.find("epochs")->as_object()) {
+    epochs[id] = sde::epoch_from_json(epoch);
+  }
+  const std::string hold = want.find("hold_id")->as_string();
+  sde::FrozenOptions options;
+  options.chunk_rows = 3;
+  options.at = want.find("at")->as_string();
+  const auto invoke = [&] {
+    return sde::verify_frozen(context, want.find("group")->as_string(), request, hold, epochs,
+                              options);
+  };
+  if (const sde::Json* error = want.find("error")) {
+    expect_refusal([&] { (void)invoke(); }, error->as_string(), want.find("match")->as_string());
+  } else {
+    const sde::Json* retry = want.find("retry");
+    const int runs = retry != nullptr && retry->as_bool() ? 2 : 1;
+    for (int run = 0; run < runs; ++run) {
+      const sde::FrozenVerifyReport report = invoke();
+      sde::Json record = report.as_record();
+      EXPECT_GE(report.elapsed_ms, 0);
+      record.set("elapsed_ms", "<measured>");
+      EXPECT_EQ(record, *want.find("report"));
+      for (const sde::FrozenTable& barrier : report.barriers) {
+        const sde::FenceState state =
+            engines.at(barrier.engine)->write_fence(barrier.table, project).state();
+        EXPECT_NE(std::find(state.holds.begin(), state.holds.end(), hold), state.holds.end())
+            << "the barrier is not held on " << barrier.engine << "." << barrier.table;
+      }
+    }
+  }
+  EXPECT_EQ(engines.begin()->second->recorded().as_json(), read_json(directory / "calls.json"));
 }
 
 // --- watermark.json -----------------------------------------------------------------------------
@@ -452,17 +588,11 @@ TEST_P(MigrationVector, TakesPartAsTheVectorSays) {
   const sde::PlacementMap map = load_case_map(directory, model);
   Engines engines = sde::testing::engines_from(read_json(directory / "engines.json"));
   if (*driver == "generation") {
-    // Two of these cases act through a backfill or a verify, which the migration driver brings.
-    const sde::Json want = read_json(directory / "generation.json");
-    if (const sde::Json* actions = want.find("actions")) {
-      for (const sde::Json& action : actions->as_array()) {
-        const std::string& op = action.find("op")->as_string();
-        if ((op == "backfill" || op == "verify") && sde::TIER < 2) {
-          GTEST_SKIP() << "a " << op << " action, which the migration driver brings";
-        }
-      }
-    }
     drive_generation(directory, model, map, engines);
+    return;
+  }
+  if (*driver == "frozen") {
+    drive_frozen(directory, model, map, engines);
     return;
   }
   if (*driver == "bulk") {
@@ -470,6 +600,9 @@ TEST_P(MigrationVector, TakesPartAsTheVectorSays) {
     return;
   }
   if (*driver == "watermark") drive_watermark(directory, map, engines);
+  if (*driver == "backfill") drive_backfill(directory, model, map, engines);
+  if (*driver == "verify") drive_verify(directory, model, map, engines);
+  if (*driver == "verification") drive_verification(directory, model, map, engines);
   if (*driver == "operations") drive_operations(directory, model, map, engines);
   if (has_file(directory / "calls.json")) {
     // One sequence for the whole engine set: the guarantee that a row reaches the source before
