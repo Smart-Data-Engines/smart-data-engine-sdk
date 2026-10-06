@@ -78,9 +78,11 @@ compiled language. It reads, checks and measures: models and their versions, sha
 declaration, placement maps of contracts 1 to 6 with their signatures, routing, and the telemetry
 window of §6a. Its recorder takes no lock on an operation's path - a window is a block of atomic
 counters, swapped at a roll - which is a claim about memory ordering, so CI runs its threads under
-ThreadSanitizer. Of Tier 2 it has the parts that need no engine - values, the DDL of §7a and the
-read plans and exact summaries of the `query/` vectors - and it passes every `schema/` and `query/`
-vector; the tier moves to 2 when it takes part in a migration. It has no engine adapters yet, so the
+ThreadSanitizer. Of Tier 2 it has values, the DDL of §7a, the read plans and exact summaries of
+the `query/` vectors, and the session: writes, fan-out, transactions, write generations, write
+fences and the forward-only check, against an engine interface whose capabilities are data. It
+passes every `schema/` and `query/` vector, the session and write stages of `errors/`, and the
+`migration/` cases of those parts; the tier moves to 2 with backfill, verification and packets. It has no engine adapters yet, so the
 engines cell says `none`, and it makes no network call. The adapters are planned in the order the other two have them - PostgreSQL,
 ClickHouse, then our orderbook engine - and each moves the cell when it round-trips, not before.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;

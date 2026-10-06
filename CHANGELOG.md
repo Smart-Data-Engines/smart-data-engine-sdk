@@ -8,6 +8,17 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: the session in the C++ library** ([`cpp/README.md`](cpp/README.md)). `sde::Session` opens
+against `sde::Engine`s with the reference's checks. It writes and batches, fans writes out to copies
+after the commit, reads by key and by plan, and keeps a transaction to one group. It stamps and
+checks write generations, holds `sde::WriteFence`s and refuses a signed map that goes backwards. An
+adapter's optional abilities are data on the value (`Engine::capabilities()`). The in-memory engine
+of the `migration/` vectors is `sde::testing::MemoryEngine`, in a target of its own.
+- It passes the session and write stages of `errors/` and the `migration/` cases of fences,
+  generations, batches, fan-out and the forward-only check. The tier stays 1 until backfill and
+  verification.
+- A log sink that throws can no longer fail a map load; the C++ loader called it unguarded.
+
 **New: values, DDL and read plans in the C++ library, the first part of Tier 2**
 ([`cpp/README.md`](cpp/README.md)). `sde::Value` holds one host type per neutral type, with an exact
 `sde::Decimal` and microsecond timestamps. `sde::schema_statements` renders a layout's DDL and

@@ -525,9 +525,10 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: ctest --test-dir cpp/build --output-on-failure
 
-      - name: the recorder's threads, under ThreadSanitizer
+      - name: the recorder's and the session's threads, under ThreadSanitizer
         # The recorder takes no lock on an operation's path, so the claim that a roll racing writes
-        # loses nothing is a claim about memory ordering. A sanitizer of its own, because it cannot
+        # loses nothing is a claim about memory ordering; a session hands itself to one thread at a
+        # time through an atomic owner, which is another. A sanitizer of its own, because it cannot
         # share a build with the two above.
         env:
           TSAN_OPTIONS: halt_on_error=1
@@ -535,7 +536,7 @@ jobs:
           cmake -S cpp -B cpp/build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
             -DSDE_SANITIZE=thread -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           cmake --build cpp/build-tsan --target sde_unit_tests
-          cpp/build-tsan/tests/sde_unit_tests --gtest_filter='Recorder.*' --gtest_repeat=20
+          cpp/build-tsan/tests/sde_unit_tests --gtest_filter='Recorder.*:Session.ASecondThread*' --gtest_repeat=20
 
   contract:
     runs-on: ubuntu-latest

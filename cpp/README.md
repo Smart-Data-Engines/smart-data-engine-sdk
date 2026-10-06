@@ -17,7 +17,8 @@ they are.
 | Name hashing (§2a) | yes |
 | Telemetry (Tier 1): the recorder, windows and the window document of §6a | yes |
 | Values, the DDL of §7a, read plans and exact summaries (Tier 2, the part without engines) | yes |
-| Sessions and migration participation (Tier 2) | not yet |
+| Sessions (Tier 2): writes and batches, fan-out to copies, point and logical reads, transactions, write generations, write fences and the forward-only check, against an engine interface with an in-memory engine | yes |
+| Migration participation (Tier 2): backfill, verification, verification requests and packets | not yet |
 | Engines - PostgreSQL, ClickHouse, the orderbook engine (Tier 2) | not yet |
 
 Until Tier 2, this library reads, checks and measures; it does not connect to anything. It makes no
@@ -125,7 +126,24 @@ keeps working for as long as its keys are configured.
   `sde::PageLimit`, which no `bool` converts to, so `limit = true` does not compile where the
   reference refuses it at run time (`query/012`). `sde::numeric_summary` decodes an engine's summary
   exactly, however wide the total, and rounds the mean half to even.
-- **Nothing is logged unless you pass a sink** (`LoadOptions::log`). Events are named from the
+- **An engine is an `sde::Engine`, and what it can do besides is data on the value**
+  (`sde/engine.hpp`). `capabilities()` returns which optional interfaces the adapter implements -
+  logical reads, counts, summaries, batches, the forward-only bookkeeping, migration, write fences,
+  a schema check, storage sizes - and an empty pointer means it does not take part, which a session
+  reports by name rather than discovering at a call.
+- **A session is opened, checked, and then routes** (`sde/session.hpp`). Its constructor refuses a
+  map naming an engine nobody supplied, a fan-out that would truncate a value between two dialects,
+  write generations the engines do not enforce, and a signed map older than one the engines have
+  seen; an unsigned map costs no call at all. A write reaches the source, then every copy the map
+  fans out to - after the commit, inside a transaction - and a copy's failure is logged and counted,
+  never the caller's. A transaction is one group's, refused when it would span two. One thread uses
+  a session at a time, and a second thread is refused (`sde::ResourceBusy`) rather than raced. The
+  model, the map and the engines must outlive it.
+- **An in-memory engine for tests** (`sde/testing/memory.hpp`, target `sde::testing`): the engine
+  the `migration/` vectors run against, which records every call in one sequence across engines.
+  Link it in your adapter's tests, never in production.
+- **Nothing is logged unless you pass a sink** (`LoadOptions::log`, `SessionOptions::log`), and a
+  sink that throws cannot fail an operation. Events are named from the
   reference's closed vocabulary (`sde.map.loaded`, `sde.map.rejected`) and carry structure, never a
   row's values.
 - **It is stricter than the two other libraries in a few places** where they coerce a value or fail

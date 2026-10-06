@@ -325,6 +325,22 @@ def test_the_cpp_row_agrees_with_the_library() -> None:
     assert cell == adapters, (cell, adapters)
 
 
+def test_the_cpp_log_vocabulary_is_the_references() -> None:
+    """Every event name the C++ library emits is one this library emits too.
+
+    A closed vocabulary exists so that an alert built on a name works for every language. A name
+    that exists only in one library is one nobody's alert matches, and the C++ list is read out of
+    its header rather than restated here.
+    """
+    header = (ROOT / "cpp" / "include" / "sde" / "log.hpp").read_text()
+    block = re.search(r"LOG_EVENTS\[\] = \{(.*?)\};", header, re.S)
+    assert block, "the C++ library no longer declares LOG_EVENTS"
+    names = re.findall(r'"(sde\.[a-z_.]+)"', block.group(1))
+    assert names, "LOG_EVENTS is empty"
+    assert sorted(set(names) - set(sde.logging.EVENTS)) == []
+    assert len(names) == len(set(names)), "an event is listed twice"
+
+
 def test_the_typescript_core_reaches_no_driver() -> None:
     """The claim the whole no-account mode rests on, from this side of the fence.
 
