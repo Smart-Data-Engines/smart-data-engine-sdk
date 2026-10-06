@@ -8,6 +8,16 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Tightened: one rule for a read value written as text** (both libraries,
+[`docs/logical-reads.md`](docs/logical-reads.md#values-written-as-text)). A decimal or a timestamp
+given as text in a filter, a bound or a position is read alike in every library, with a vector for
+each case (`query/024`-`028`):
+- around a decimal, Unicode's `White_Space` is accepted and nothing else. Python stops stripping
+  U+001C-U+001F; TypeScript stops stripping U+FEFF and starts stripping U+0085;
+- a timestamp keeps ISO 8601's ranges in every part. Python refuses an offset part past 59, which
+  it used to fold into the total (`+10:60` was eleven hours), and `24:00`, which CPython 3.14 reads
+  as the next midnight.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
