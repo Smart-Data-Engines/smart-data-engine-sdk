@@ -256,20 +256,35 @@ def build_model(
 
     atomic = _normalise_atomic(decls, known)
 
-    if cost_ceiling is not None:
-        missing = {"amount", "currency"} - set(cost_ceiling)
-        if missing:
-            raise DeclarationError(
-                f"cost_ceiling is missing {sorted(missing)}; it is "
-                '{"amount": "500.00", "currency": "EUR"} with the amount as a string'
-            )
-
     return assemble(
         entities=tuple(specs),
         relations=tuple(relations),
         atomic=atomic,
-        cost_ceiling=cost_ceiling,
+        cost_ceiling=checked_cost_ceiling(cost_ceiling),
     )
+
+
+def checked_cost_ceiling(raw: Any) -> dict[str, str] | None:
+    """``{"amount", "currency"}``, both strings, and nothing else - for both front doors.
+
+    The decorator path checked only that both keys were there and the neutral path checked nothing,
+    so `{"amount": 500}` reached the IR as a number from one door and a third key from the other.
+    A float there is refused by the canonical encoder much later, as a canonical error about a path
+    the client never wrote.
+    """
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, Mapping)
+        or set(raw) != {"amount", "currency"}
+        or not all(isinstance(raw[key], str) for key in ("amount", "currency"))
+    ):
+        raise DeclarationError(
+            'cost_ceiling is {"amount": "500.00", "currency": "EUR"} - exactly those two keys, '
+            "with the amount as a string, because money is a decimal and the canonical encoding "
+            f"has no floating point; this one is {raw!r}"
+        )
+    return dict(raw)
 
 
 def neutral_declaration(model: LogicalModel) -> dict[str, Any]:

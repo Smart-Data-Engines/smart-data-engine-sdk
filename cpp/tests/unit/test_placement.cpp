@@ -2,6 +2,7 @@
 /// overload, number spellings, and the refusals this library makes that the two reference libraries
 /// do not yet (the third implementation's findings, to become shared vectors).
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -215,6 +216,20 @@ TEST(LoadMap, ACopyInTheSourcesEngineMayNotBeTheSource) {
   EXPECT_EQ(map.placement_of("Event").by_id("Event@pg2").layout.tables.at("Event"), "event");
 }
 
+TEST(LoadMap, ACopyThatIsTheSourceIsRefusedWithoutAModelToo) {
+  // Explicit layouts have their tables without a model, so the rule needs none (section 8a, step
+  // 6). No shared vector reaches this path: every map-stage case loads with its model.
+  const sde::Model model = events();
+  const std::string shadow = map_with(
+      model, R"("source": {"id": "Event@pg", "engine": "pg", "layout": {"tables": {"Event": "e"}}},
+               "derived": [{"id": "Event@pg2", "engine": "pg", "layout": {"tables": {"Event": "e"}},
+                            "lag_budget_ms": 0}])");
+  EXPECT_REFUSED(shadow, sde::LoadOptions{},
+                 "materialisation 'Event@pg2' is in the same engine as the source and reuses its "
+                 "tables ['e']");
+  EXPECT_REFUSED(shadow, with(model), "is in the same engine as the source and reuses its tables");
+}
+
 TEST(LoadMap, ALegacyMapWithoutACanonicalFormLoadsWithoutAFingerprint) {
   const sde::Model model = events();
   const sde::PlacementMap legacy =
@@ -359,26 +374,56 @@ TEST(PlacementMap, AskingForWhatTheMapDoesNotHaveIsAMapError) {
   EXPECT_EQ(map.placement_of("Event").source.layout.table_for("Event"), "event");
 }
 
-TEST(Resolve, WritesGoToTheSourceWhateverTheRoutingSays) {
-  const sde::Model model = events();
+/// The map from `map_with` plus a ClickHouse copy, with every shape `route` picks routed to the copy.
+std::string routed_map(const sde::Model& model,
+                       const std::function<bool(const sde::OperationShape&)>& route) {
   std::string routing = R"(, "routing": {)";
   bool first = true;
   for (const sde::OperationShape& shape : model.shapes()) {
+    if (!route(shape)) continue;
     routing += std::string(first ? "" : ", ") + "\"" + shape.id + "\": \"Event@ch\"";
     first = false;
   }
   routing += "}";
-  const std::string text = map_with(
-      model, kSource + R"(, "derived": [{"id": "Event@ch", "engine": "ch",
+  return map_with(model, kSource + R"(, "derived": [{"id": "Event@ch", "engine": "ch",
                                          "layout": {"tables": {"Event": "event_wide"}},
                                          "lag_budget_ms": 1000}])",
-      routing);
-  const sde::PlacementMap map = sde::load_map(std::string_view(text), with(model));
+                  routing);
+}
+
+TEST(Resolve, ReadsFollowTheTableAndWhatMustBeFreshDoesNot) {
+  const sde::Model model = events();
+  const sde::PlacementMap map = sde::load_map(
+      routed_map(model, [](const auto& shape) { return !sde::is_write_kind(shape.kind); }),
+      with(model));
   for (const sde::OperationShape& shape : model.shapes()) {
-    const std::string& got = sde::resolve(map, shape).id;
-    EXPECT_EQ(got, sde::is_write_kind(shape.kind) ? "Event@pg" : "Event@ch") << shape.kind;
+    EXPECT_EQ(sde::resolve(map, shape).id, sde::is_write_kind(shape.kind) ? "Event@pg" : "Event@ch")
+        << shape.kind;
     EXPECT_EQ(sde::resolve(map, shape, {true, false}).id, "Event@pg");
     EXPECT_EQ(sde::resolve(map, shape, {false, true}).id, "Event@pg");
+  }
+}
+
+TEST(LoadMap, AWriteShapeRoutedAtACopyIsRefused) {
+  // Writes go to the source whatever the table says (section 8), so an entry sending one elsewhere
+  // is a planner believing something untrue - refused at load, as the control plane refuses to
+  // issue it. With the loader holding this, resolve's own first rule can no longer be reached
+  // through a loaded map; it stays, as section 8's first rule, and is recorded as unmutatable.
+  const sde::Model model = events();
+  EXPECT_REFUSED(routed_map(model, [](const auto&) { return true; }), with(model),
+                 "which is not the source. Writes go to the source whatever this table says");
+  // Routed at the source, a write entry says nothing wrong, only nothing new.
+  std::string to_source = R"(, "routing": {)";
+  bool first = true;
+  for (const sde::OperationShape& shape : model.shapes()) {
+    if (!sde::is_write_kind(shape.kind)) continue;
+    to_source += std::string(first ? "" : ", ") + "\"" + shape.id + "\": \"Event@pg\"";
+    first = false;
+  }
+  to_source += "}";
+  const sde::PlacementMap map = sde::load_map(map_with(model, kSource, to_source), with(model));
+  for (const sde::OperationShape& shape : model.shapes()) {
+    EXPECT_EQ(sde::resolve(map, shape).id, "Event@pg");
   }
 }
 

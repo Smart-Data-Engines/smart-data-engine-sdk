@@ -975,8 +975,8 @@ def test_enrollment_persists_the_verified_input_snapshot(tmp_path: Path, monkeyp
         document = plan.as_record()["before"]
         original = placement._verify_signature
 
-        def change_caller(raw: Any, keys: Any) -> Any:
-            result = original(raw, keys)
+        def change_caller(raw: Any, keys: Any, **options: Any) -> Any:
+            result = original(raw, keys, **options)
             document["map_version"] = 99
             return result
 

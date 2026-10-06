@@ -367,7 +367,34 @@ export function buildModel(
     })
   }
 
-  return assemble(specs, relations, normaliseAtomic(entities), options.costCeiling ?? null)
+  return assemble(specs, relations, normaliseAtomic(entities), checkedCostCeiling(options.costCeiling))
+}
+
+/**
+ * `{"amount", "currency"}`, both strings, and nothing else - for both front doors.
+ *
+ * The type says so to a caller who reads types; a model built from JSON was never checked at all,
+ * so `{"amount": 500}` reached the IR as a number and was refused much later by the canonical
+ * encoder, as an error about a path the client never wrote.
+ */
+export function checkedCostCeiling(raw: unknown): CostCeiling | null {
+  if (raw === undefined || raw === null) return null
+  const keys = typeof raw === 'object' && !Array.isArray(raw) ? Object.keys(raw).sort() : []
+  const value = raw as Record<string, unknown>
+  if (
+    keys.length !== 2 ||
+    keys[0] !== 'amount' ||
+    keys[1] !== 'currency' ||
+    typeof value['amount'] !== 'string' ||
+    typeof value['currency'] !== 'string'
+  ) {
+    throw new DeclarationError(
+      'cost_ceiling is {"amount": "500.00", "currency": "EUR"} - exactly those two keys, with the ' +
+        'amount as a string, because money is a decimal and the canonical encoding has no ' +
+        `floating point; this one is ${JSON.stringify(raw)}`,
+    )
+  }
+  return { amount: value['amount'] as string, currency: value['currency'] as string }
 }
 
 /**
