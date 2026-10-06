@@ -24,6 +24,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 |---|---|---|---|---|---|---|
 | `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
 | `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
+| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 0 | yes | 1 | 1–6 | none |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
@@ -72,8 +73,24 @@ service writes the data and TypeScript reads or migrates it: the previous conver
 digits and could report a corrupt copy as matching. [Exact timestamps](timestamps.md) documents the
 API change and the live tests with an independent Python writer and reader.
 
-The tier in the table above is checked against the library's own `TIER` constant by a test, because a
-list that says one thing while the code says another is the failure requirement 17.6 exists to
+**C++ reached Tier 0 on 6 October 2026, with hashing**, the first library here in a compiled
+language. It reads and checks: models and their versions, shapes, the neutral declaration, placement maps of contracts
+1 to 6 with their signatures, and routing. It has no engine adapters yet, so the engines cell says
+`none`, and it makes no network call. The adapters are planned in the order the other two have them
+- PostgreSQL, ClickHouse, then our orderbook engine - and each moves the cell when it round-trips,
+not before. Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package
+registry; it is built from this repository.
+
+Two things about it differ from the other two by design. **Its refusals are typed and its messages
+are the reference's**: the contract's error classes as an exception hierarchy, and a value in a
+message written as Python's `repr` writes it, so one defect reads the same in three languages.
+**It is stricter where the other two coerce or fail with their runtime's own error** - a
+materialisation id that is a number, a lag budget written as a string, a layout's table that is not
+a name. Each is a finding in [`implementing.md`](implementing.md#the-third-implementation-c), to be
+made a rule of the contract in every library rather than a property of one.
+
+The tier in the table above is checked against each library's own `TIER` constant by a test, because
+a list that says one thing while the code says another is the failure requirement 17.6 exists to
 prevent, and prose does not fail.
 
 **`pip install smart-data-engine-sdk` installs `0.1.1`**, a patch release of 28 September 2026 that

@@ -129,7 +129,10 @@ def test_every_measurement_is_reported_on_the_front_page(language: str, _suffix:
     obligation is the report, not its title, and a test named for the title claimed more than it
     checked.
     """
-    sections = README.read_text(encoding="utf-8").split("\n### ")
+    # Split on both heading levels. Split on `###` alone, a subsection ran on through the next `##`
+    # section to the next `###`, and the Rust report passed on "asserts those measurements" in the
+    # orderbook CI paragraph below it - found when a fifth section ended it and the check went red.
+    sections = re.split(r"\n#{2,3} ", README.read_text(encoding="utf-8"))
     named = [s for s in sections if language in s and "measurement" in s.lower()]
     assert named, (
         f"no section of the front page reports the {language} measurement. It is recorded in "

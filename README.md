@@ -115,15 +115,16 @@ current releases, `smart-data-engine-sdk` 0.1.1 and `@smart-data-engines/sde` 0.
 distinguishes this demo from production qualification.
 
 
-What does not exist yet is a library in any other language: `java/` and `rust/` are the next two and
-neither directory is here. The day one of them appears, the test over this page fails until the row
+What does not exist yet is a library in any other language than these three: `java/` and `rust/`
+are the next two and neither directory is here. The day one of them appears, the test over this page fails until the row
 below has been rewritten.
 
 | Library | Tier | Status |
 |---|---|---|
 | [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, ClickHouse and the orderbook engine, plus hashing | reference implementation |
 | [`typescript/`](typescript/) | 0, 1 and 2 for PostgreSQL and ClickHouse, plus hashing | passes the same vectors, byte for byte |
-| `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has two implementations, which is what made it safe to invite them |
+| [`cpp/`](cpp/) | 0, plus hashing; engines next | passes every vector of its tier; built from source with CMake |
+| `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has three implementations, which is what made it safe to invite them |
 
 That qualification used to say something different, and the change is the point of it. Until
 6 September 2026 the `telemetry/`, `schema/` and `migration/` vector sets named in
@@ -278,7 +279,25 @@ table of that name and `CREATE TABLE IF NOT EXISTS` never parsed the body, and t
 zero-row results from *failed* reads averaged into cardinality, and `partition_by` — in the format
 from the beginning, emitted by the control plane, rendered by nobody, and now refused on both sides.
 
-The Rust code is not in this repository either, for the same reason the Go code is not.
+The Rust code was a measurement too, and it is not in this repository either, for the same reason
+the Go code is not.
+
+### What the fifth implementation found
+
+**C++**, on 6 October 2026, and this one stays: [`cpp/`](cpp/) is a supported library at Tier 0 with
+hashing, its engines next. It is a different measurement from the two above, and says so. The
+reference's source was open while it was written, because a library that must give the same answers
+and the same messages on documents the vectors never show it is a port of behaviour, not only of the
+contract.
+
+Every vector of its tier passed. What it found is where the reference's behaviour is an accident of
+its runtime rather than a rule. A materialisation id written as `true` is the string `"True"` in
+Python and `"true"` in TypeScript, so one map names two different copies. A lag budget written as a
+string is accepted by both. And seven rules no vector can see - a mutation removing each one left
+every vector green, among them a write routed at a copy rather than the source. C++ refuses each
+of those with the contract's own error, and the list is in
+[`docs/implementing.md`](docs/implementing.md#the-third-implementation-c), to become a vector and a
+rule in every library.
 
 ## What happens when something fails
 
@@ -298,7 +317,8 @@ cd typescript && npm install && cd ..
 make pg-up && make check
 ```
 
-`make check` runs both languages. It does not stop at the first failure across them on purpose: if
+`make check` runs all three languages; the C++ library needs CMake, Ninja, OpenSSL 3 and utf8proc
+([`cpp/README.md`](cpp/README.md)). It does not stop at the first failure across them on purpose: if
 Python and TypeScript have both drifted, you want to see both, because the fix is usually in the
 contract rather than in either library.
 

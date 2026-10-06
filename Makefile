@@ -7,22 +7,23 @@
 PY := python/.venv/bin
 
 .PHONY: help check python-check python-test python-lint python-types ts-check ts-test ts-types \
-        conformance tls-check clean pg-up pg-down ch-up ch-down engines-up engines-down
+        cpp-build cpp-check conformance tls-check clean pg-up pg-down ch-up ch-down engines-up engines-down
 
 help:
 	@echo "check         everything CI runs"
 	@echo "python-check  lint, types and tests for the Python library"
 	@echo "ts-check      types and tests for the TypeScript library"
+	@echo "cpp-check     build (warnings are errors) and test the C++ library"
 	@echo "conformance   run the shared vectors in every language that has them"
 	@echo "tls-check     isolated TLS engines; set TLS_SCRATCH and optional TLS_DOCKER_FLAGS=--sudo"
 	@echo "engines-up    start both engines the integration slices need"
 	@echo "engines-down  stop them"
 	@echo "pg-up/ch-up   start one of them"
 
-# Both languages, and deliberately not stopping at the first failure across them: if Python and
-# TypeScript have both drifted from the contract you want to see both, because the fix is usually in
+# Every language, and deliberately not stopping at the first failure across them: if two libraries
+# have drifted from the contract you want to see both, because the fix is usually in
 # the contract rather than in either library.
-check: python-check ts-check
+check: python-check ts-check cpp-check
 
 python-check: python-lint python-types python-test
 
@@ -55,9 +56,19 @@ tls-check: ts-types
 	@test -n "$(TLS_SCRATCH)" || { echo "Set TLS_SCRATCH to a new test directory"; exit 1; }
 	$(PY)/python tools/qualify_tls.py --scratch "$(TLS_SCRATCH)" $(TLS_DOCKER_FLAGS)
 
-conformance:
+conformance: cpp-build
 	cd python && .venv/bin/python -m pytest tests/test_conformance.py -v
 	cd typescript && npx vitest run tests/conformance.test.ts
+	cpp/build/check/tests/sde_conformance
+
+# A build directory of its own, so a developer's `cpp/build` with another generator or compiler is
+# left alone.
+cpp-build:
+	cmake -S cpp -B cpp/build/check -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON
+	cmake --build cpp/build/check
+
+cpp-check: cpp-build
+	ctest --test-dir cpp/build/check --output-on-failure
 
 # The integration slice runs against a real PostgreSQL rather than a fake, because a fake would agree
 # with whatever this library believes about types, quoting and transactions - which is exactly the set

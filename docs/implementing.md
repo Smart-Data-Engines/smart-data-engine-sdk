@@ -426,6 +426,71 @@ either would be a claim of support nobody is maintaining, plus a fourth and fift
 keep in step with every change to this document.
 
 
+### The third implementation: C++
+
+On 6 October 2026 a C++ library reached Tier 0 with hashing, and unlike the Go and Rust measurements
+it stays: it is a supported library ([`implementations.md`](implementations.md)). It is also not the
+same kind of measurement. The reference's source was open the whole time, because a library that has
+to give the same answers and the same messages on documents the vectors never show it is a port of
+behaviour, not only of this document. What it measured is therefore where the reference's behaviour
+is a rule, and where it is an accident of its runtime.
+
+**Result: every vector of the claimed tier passed** - all of `canonical/`, `model/`, `routing/`,
+`signature/` and `hashing/`, and the 76 `errors/` cases at the model and map stages. The other six are
+at the session and write stages, which need engines; the runner passes them as outside the claim at
+those two stages only, and fails on any stage it does not know. Thirty-one source mutations
+followed. Four survived every vector and every unit test, and a fifth survived the unit tests because
+each of their cases was also refused by a later check; all five are fatal now. The vectors could not
+see these:
+
+- entities of `key_order` and `partition_by` checked in document order, where §8a says name order;
+- the upper bounds of an index's `granularity` and `max_rows` (only the lower ones are pinned);
+- an uppercase `project_id`;
+- an empty `partition_by` below contract 5, which the reference reads as absent;
+- a write shape routed at a derived copy: §8 sends it to the source anyway, no vector routes one, and
+  nothing refuses the entry at load;
+- the shadowing refusal, which has no vector at all;
+- padding inside a signature value's quantum, which Python refuses and TypeScript decodes.
+
+**Where the two references coerce, or fail with their runtime's own error, this library refuses
+with the contract's.** Each of these is accepted, or crashes, somewhere in the other two:
+
+- a neutral `atomic` group that overlaps another, repeats a member or has one member;
+- `nullable` that is not a boolean;
+- a `cost_ceiling` that is not exactly `{amount, currency}` strings;
+- a relation without `from` or `to`;
+- a `residency` that is not a string;
+- a materialisation `id` or `engine` that is not a string (`str(True)` is `"True"` in one language
+  and `String(true)` is `"true"` in the other);
+- a `lag_budget_ms` that is negative, fractional or a string;
+- a layout table that is not a name, and `columns` that is not an object of type names;
+- `derived` that is not a list;
+- a materialisation that is not an object;
+- a signed map whose payload has no canonical form, which both references let out of the loader as
+  their canonical encoder's error rather than a map error.
+
+Two smaller divergences between the references themselves came out of choosing which to follow:
+- a signature block that is not an object gets a different message in each;
+- a key set's names sort by code point in Python and by UTF-16 unit in TypeScript.
+
+One finding is about the suite's own documentation. This page says a `match` is a substring
+compared literally, both reference runners compile it as a regular expression, and four `errors/`
+vectors write `Thing\.amount` - which only a regular expression reads as `Thing.amount`.
+
+Each of these becomes a vector and a rule in every library in its own change. Until then, this
+library is stricter on exactly these inputs, and says so in its README.
+
+What the vectors do not exercise at all was compared with the reference directly, and agreed
+everywhere:
+- the full Unicode lowercase under an auto layout's table names, on all 1,112,064 scalar code points;
+- the final sigma on 300,000 generated strings, against Python and JavaScript both;
+- `snake_case` on 100,025 names against Python's and the TypeScript library's;
+- signature base64 against Python 3.12's `b64decode(validate=True)` on 449,593 strings, every one up
+  to six characters over a hostile alphabet among them;
+- a value written into a message, against Python's `repr`, on 100,000 generated strings and numbers;
+- the whole message of every refusal at the model and map stages, all 76 of them, against the
+  reference's own: identical, apart from one function name spelled the C++ way.
+
 ### Verification-request protocol check
 
 On 12 September 2026 a standalone Go checker implemented section 7b from its description and

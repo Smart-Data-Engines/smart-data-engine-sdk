@@ -1,6 +1,6 @@
 name: CodeQL
 
-# Two languages and the workflows themselves. The languages are here because this repository is the
+# Three languages and the workflows themselves. The languages are here because this repository is the
 # public half of a product whose whole pitch is "read the code and check the privacy claim yourself" -
 # an analysis that never runs would make that invitation weaker than it sounds.
 #
@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python, javascript-typescript, actions]
+        language: [python, javascript-typescript, actions, c-cpp]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -40,9 +40,11 @@ jobs:
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
         with:
           languages: ${{ matrix.language }}
-          # No build: both languages are interpreted and `actions` is configuration. A build mode
-          # here would only be a place for a build to fail.
-          build-mode: none
+          # No build for Python and TypeScript, which are interpreted, or for `actions`, which is
+          # configuration: a build mode there would only be a place for a build to fail. C and C++
+          # are analysed from a real build of the library, so the analysis sees what a client
+          # compiles rather than what an extractor guesses without the compiler's flags.
+          build-mode: ${{ matrix.language == 'c-cpp' && 'manual' || 'none' }}
           # No `queries:` line, which means the default suite: security queries only, tuned for
           # precision. That is a decision with a scar behind it rather than a default accepted out of
           # laziness. In the engine repository `security-and-quality` fired a quality query 29 times
@@ -51,6 +53,14 @@ jobs:
           # manual resolution. A required analysis that reports things we will not act on does not
           # add safety, it adds the habit of clicking past findings. Widen this to
           # `security-extended` once a few months of runs have been clean.
+
+      - name: Build the C++ library for the analysis
+        if: matrix.language == 'c-cpp'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libutf8proc-dev
+          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDE_BUILD_TESTS=OFF
+          cmake --build cpp/build
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
