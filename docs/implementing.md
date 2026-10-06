@@ -487,7 +487,9 @@ everywhere:
 - `snake_case` on 100,025 names against Python's and the TypeScript library's;
 - signature base64 against Python 3.12's `b64decode(validate=True)` on 449,593 strings, every one up
   to six characters over a hostile alphabet among them;
-- a value written into a message, against Python's `repr`, on 100,000 generated strings and numbers.
+- a value written into a message, against Python's `repr`, on 100,000 generated strings and numbers;
+- the whole message of every refusal at the model and map stages, all 76 of them, against the
+  reference's own: identical, apart from one function name spelled the C++ way.
 
 ### Verification-request protocol check
 

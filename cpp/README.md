@@ -121,4 +121,6 @@ it. Both were compared with the reference directly, and agreed everywhere:
 - the lowercase on all 1,112,064 scalar code points against Python's `str.lower()`;
 - the final sigma on 300,000 generated strings against Python and JavaScript;
 - `snake_case` on 100,025 names against Python's and the TypeScript library's;
-- base64 on 449,593 strings, every one up to six characters over a hostile alphabet among them.
+- base64 on 449,593 strings, every one up to six characters over a hostile alphabet among them;
+- the whole message of every model- and map-stage refusal in `errors/`, all 76: identical to the
+  reference's, apart from one function name spelled the C++ way.

@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "model_internal.hpp"
+#include "python_compat.hpp"
 #include "sde/canonical.hpp"
 #include "sde/errors.hpp"
 
@@ -51,16 +52,10 @@ bool well_formed_decimal(std::string_view type) noexcept {
   return numeral_at_most(scale, digits);      // 0 <= scale <= digits
 }
 
-std::string in_quotes(std::string_view text) { return "'" + std::string(text) + "'"; }
+// Names and lists in messages are written as the reference's `repr` writes them.
+std::string in_quotes(std::string_view text) { return detail::python_repr(text); }
 
-std::string list_of(const std::vector<std::string>& names) {
-  std::string out = "[";
-  for (std::size_t i = 0; i < names.size(); ++i) {
-    if (i != 0) out += ", ";
-    out += in_quotes(names[i]);
-  }
-  return out + "]";
-}
+std::string list_of(const std::vector<std::string>& names) { return detail::python_repr(names); }
 
 Json string_array(const std::vector<std::string>& names) {
   Json::Array out;

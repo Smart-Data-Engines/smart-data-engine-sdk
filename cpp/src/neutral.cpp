@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "model_internal.hpp"
+#include "python_compat.hpp"
 #include "sde/errors.hpp"
 #include "sde/model.hpp"
 
@@ -14,18 +15,14 @@ namespace sde {
 
 namespace {
 
-std::string in_quotes(std::string_view text) { return "'" + std::string(text) + "'"; }
+// Values in messages are written as the reference's `repr` writes them, so one defect reads the
+// same in every library; an absent member is `None`, as `dict.get` makes it.
+std::string in_quotes(std::string_view text) { return detail::python_repr(text); }
 
-std::string describe(const Json& value) {
-  switch (value.kind()) {
-    case Json::Kind::null: return "null";
-    case Json::Kind::boolean: return value.as_bool() ? "true" : "false";
-    case Json::Kind::number: return value.as_number().lexeme;
-    case Json::Kind::string: return in_quotes(value.as_string());
-    case Json::Kind::array: return "an array";
-    case Json::Kind::object: return "an object";
-  }
-  return "a value";
+std::string describe(const Json& value) { return detail::python_repr(value); }
+
+std::string describe(const Json* value) {
+  return value == nullptr ? std::string("None") : detail::python_repr(*value);
 }
 
 /// The shapes a person can plausibly hand the loader, named rather than crashed on. The first is
@@ -35,7 +32,7 @@ void check_shape(const Json& raw, const std::string& name) {
   const Json* fields = raw.find("fields");
   if (fields == nullptr || !fields->is_array()) {
     throw DeclarationError(name + ": 'fields' is a list, and this one is " +
-                           (fields == nullptr ? std::string("absent") : describe(*fields)));
+                           describe(fields));
   }
   for (const Json& field : fields->as_array()) {
     const Json* field_name = field.find("name");
@@ -176,7 +173,7 @@ Model load_neutral_model(const Json& data) {
     const Json* raw_name = raw.find("name");
     if (raw_name == nullptr || !raw_name->is_string() || raw_name->as_string().empty()) {
       throw DeclarationError("an entity needs a name, and this one has " +
-                             (raw_name == nullptr ? std::string("none") : describe(*raw_name)));
+                             describe(raw_name));
     }
     const std::string& name = raw_name->as_string();
     check_shape(raw, name);

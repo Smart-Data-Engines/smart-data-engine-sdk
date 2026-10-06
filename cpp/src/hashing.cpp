@@ -6,6 +6,7 @@
 #include <set>
 
 #include "crypto.hpp"
+#include "python_compat.hpp"
 #include "sde/errors.hpp"
 #include "sde/unicode.hpp"
 
@@ -13,7 +14,7 @@ namespace sde {
 
 namespace {
 
-std::string in_quotes(std::string_view text) { return "'" + std::string(text) + "'"; }
+std::string in_quotes(std::string_view text) { return detail::python_repr(text); }
 
 }  // namespace
 
