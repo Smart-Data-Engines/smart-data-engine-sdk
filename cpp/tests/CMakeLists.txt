@@ -30,6 +30,10 @@ add_executable(sde_unit_tests
   unit/test_layout.cpp
   unit/test_placement.cpp
   unit/test_telemetry.cpp
+  unit/test_bignum.cpp
+  unit/test_value.cpp
+  unit/test_query.cpp
+  unit/test_schema.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support GTest::gtest_main
   OpenSSL::Crypto)
