@@ -235,6 +235,12 @@ TEST(LoadMap, ASignedMapWithoutACanonicalFormIsAMapError) {
   sde::LoadOptions options = with(model);
   options.public_keys = sde::PublicKeys::bare(std::string(32, '\x01'));
   EXPECT_REFUSED(signed_map, options, "its payload has no canonical form");
+  // The keys are checked before the payload is encoded, as in the references: a key pasted a byte
+  // short is the caller's configuration whatever the map carries.
+  options.public_keys = sde::PublicKeys::bare(std::string(31, '\x01'));
+  EXPECT_REFUSED(signed_map, options, "the public key '(unnamed)' is 31 bytes");
+  options.public_keys = sde::PublicKeys::named({});
+  EXPECT_REFUSED(signed_map, options, "an empty set of public keys");
 }
 
 TEST(LoadMap, SignatureValuesAreDecodedAsTheReferenceDecodesThem) {
