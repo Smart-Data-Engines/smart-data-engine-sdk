@@ -189,6 +189,11 @@ Recorder::Block* Recorder::enter() noexcept {
   // and then waits for the count to reach zero, so either it sees us and waits, or we see the swap
   // and move to the new block. Both are sequentially consistent, which is what makes "either"
   // exhaustive. Blocks live as long as the recorder, so a stale pointer is never freed memory.
+  //
+  // Recorded as unmutatable rather than left to look like coverage: dropping the re-check survives
+  // every test. The write it misplaces needs a roll between the first load and the increment, and
+  // is lost only if no later roll reads the spare block - a window a few instructions wide, which
+  // the threaded test crosses without hitting. The argument above is what holds it.
   for (;;) {
     Block* block = current_.load(std::memory_order_seq_cst);
     block->writers.fetch_add(1, std::memory_order_seq_cst);
