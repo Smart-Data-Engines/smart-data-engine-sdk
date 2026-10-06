@@ -163,14 +163,15 @@ void bind_generation_metadata(Engines& engines, const sde::Json& metadata, bool 
       backend->constraints[prefix + "min_" + epoch] = column + " >= " + epoch;
       backend->constraints[prefix + "max_" + epoch] = column + " <= " + epoch;
       if (record) {
-        backend->on_call = [&engine, name = name](const sde::Json& call) {
+        backend->on_call = [&engine, engine_name = name](const sde::Json& call) {
           const auto& items = call.as_array();
           sde::Json arguments = sde::Json::object();
           arguments.set("table", items.at(1));
           sde::Json rest = sde::Json::array();
           for (std::size_t i = 2; i < items.size(); ++i) rest.as_array().push_back(items[i]);
           arguments.set("arguments", std::move(rest));
-          engine.recorded().note(name, "fence_" + items.at(0).as_string(), std::move(arguments));
+          engine.recorded().note(engine_name, "fence_" + items.at(0).as_string(),
+                                 std::move(arguments));
         };
       }
       backends.emplace(table, std::move(backend));

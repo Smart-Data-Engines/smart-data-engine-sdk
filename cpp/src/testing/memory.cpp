@@ -24,9 +24,6 @@ struct Sortable {
   std::variant<std::int64_t, double> number;
   std::string text;
 
-  friend bool operator==(const Sortable& left, const Sortable& right) {
-    return (left <=> right) == std::weak_ordering::equivalent;
-  }
   friend std::weak_ordering operator<=>(const Sortable& left, const Sortable& right) {
     if (left.kind != right.kind) return left.kind <=> right.kind;
     const auto* a = std::get_if<std::int64_t>(&left.number);
