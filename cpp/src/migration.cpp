@@ -693,11 +693,9 @@ FrozenVerifyReport verify_frozen(const InspectionContext& context, const std::st
     if (offered.fences == nullptr || offered.schema == nullptr) {
       throw MigrationRefused("frozen comparison requires native write fences and schema checks");
     }
-    Keys keys;
-    for (const auto& [entity, unused] : material->layout.tables) {
-      keys[entity] = context.model().entity(entity).key;
-    }
-    (void)offered.schema->validate_schema(material->layout, keys);
+    // The columns only, as the reference asks: a comparison needs the tables the map describes,
+    // and reads nothing of their physical design.
+    (void)offered.schema->validate_schema(material->layout, Keys{});
     std::vector<std::string> tables;
     for (const auto& [entity, table] : material->layout.tables) tables.push_back(table);
     std::sort(tables.begin(), tables.end());

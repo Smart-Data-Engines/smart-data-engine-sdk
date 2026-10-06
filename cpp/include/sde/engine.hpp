@@ -119,7 +119,10 @@ class Fencable {
 
 /// A check of the tables against a layout that creates nothing: how a session started past its
 /// first release learns that a table differs from the declared design. An engine with write
-/// generations must offer it; one without may.
+/// generations must offer it; one without may. It refuses (`EngineError`) a table missing a column
+/// the layout names or holding it as another type. Given the keys, it also returns how each table's
+/// key and indexes differ from the design; given none, it checks the columns and reads nothing
+/// else, as the reference does when it is passed no keys.
 class SchemaValidator {
  public:
   virtual ~SchemaValidator() = default;
