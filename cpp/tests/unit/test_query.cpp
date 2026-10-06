@@ -194,6 +194,27 @@ TEST(QueryValue, WallClockTextAsTheReferenceReadsIt) { check("timestamp", kTimes
 TEST(QueryValue, DateTextAsTheReferenceReadsIt) { check("date", kDateQueries); }
 TEST(QueryValue, UuidTextAsTheReferenceReadsIt) { check("uuid", kUuidQueries); }
 
+TEST(QueryValue, TheRulesOfTheSharedReadVectors) {
+  // `query/024` to `028`, ahead of the reference by one pull request: Unicode's `White_Space` may
+  // surround a decimal and nothing else may - not U+001C, which Python's `str.strip()` removed, nor
+  // U+FEFF, which JavaScript's `trim()` removed - and a timestamp keeps ISO 8601's ranges whatever a
+  // runtime's own parser accepts: every CPython read `+10:60` as eleven hours, and 3.14 reads 24:00.
+  const auto value = [](const char* type, const std::string& text) {
+    return outcome(sde::ReadColumn{"f", type}, sde::Value(text));
+  };
+  EXPECT_EQ(value("decimal(12,2)", "\xc2\x85" "1.5" "\xe3\x80\x80"), "1.5");
+  EXPECT_EQ(value("decimal(12,2)", "\t\n\v\f\r 1.5 \xe2\x80\xa8\xe2\x80\xa9"), "1.5");
+  EXPECT_EQ(value("decimal(12,2)", "\x1c" "1.5"), "!invalid decimal query value");
+  EXPECT_EQ(value("decimal(12,2)", "1.5" "\x1f"), "!invalid decimal query value");
+  EXPECT_EQ(value("decimal(12,2)", "\xef\xbb\xbf" "1.5"), "!invalid decimal query value");
+  EXPECT_EQ(value("decimal(12,2)", "\xe2\x80\x8b" "1.5"), "!invalid decimal query value");
+  EXPECT_EQ(value("timestamptz", "2026-09-14T10:00:00+10:60"), "!invalid timestamp query value");
+  EXPECT_EQ(value("timestamptz", "2026-09-14T10:00:00-08:60"), "!invalid timestamp query value");
+  EXPECT_EQ(value("timestamptz", "2026-09-14T10:00:00+00:00:60"), "!invalid timestamp query value");
+  EXPECT_EQ(value("timestamp", "2026-09-14T24:00:00"), "!invalid timestamp query value");
+  EXPECT_EQ(value("timestamptz", "2026-09-14T10:00:00+23:59:59"), "2026-09-13T10:00:01.000000Z");
+}
+
 TEST(QueryValue, EachTypeRefusesTheWrongKindByName) {
   const auto refused = [](const char* type, const sde::Value& value) {
     return outcome(sde::ReadColumn{"f", type}, value);
