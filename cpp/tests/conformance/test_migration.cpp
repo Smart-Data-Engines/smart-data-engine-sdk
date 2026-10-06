@@ -22,6 +22,7 @@
 #include "sde/canonical.hpp"
 #include "sde/migration.hpp"
 #include "sde/model.hpp"
+#include "sde/packets.hpp"
 #include "sde/placement.hpp"
 #include "sde/session.hpp"
 #include "sde/telemetry.hpp"
@@ -42,12 +43,12 @@ using Engines = std::map<std::string, std::unique_ptr<MemoryEngine>>;
 /// The drivers this runner has, by the document that selects them, and the ones still to come.
 const std::vector<std::string>& written_drivers() {
   static const std::vector<std::string> drivers = {
-      "fencing", "watermark", "operations", "bulk", "generation", "backfill", "verify",
-      "verification", "frozen"};
+      "fencing", "watermark", "operations", "bulk",    "generation", "backfill",
+      "verify",  "verification", "frozen",   "staging", "index",       "cutover"};
   return drivers;
 }
 const std::vector<std::string>& pending_drivers() {
-  static const std::vector<std::string> drivers = {"staging", "index", "cutover"};
+  static const std::vector<std::string> drivers;
   return drivers;
 }
 
@@ -555,6 +556,145 @@ void drive_operations(const std::filesystem::path& directory, const sde::Model& 
   }
 }
 
+// --- cutover.json, staging.json, index.json: signed packets ------------------------------------
+
+sde::PublicKeys case_keys(const std::filesystem::path& directory) {
+  std::map<std::string, std::string> keys;
+  const sde::Json encoded = read_json(directory / "keys.json");
+  for (const auto& [name, value] : encoded.as_object()) {
+    const auto decoded = sde::detail::base64_decode(value.as_string());
+    EXPECT_TRUE(decoded.has_value()) << "a key in keys.json is not base64";
+    if (decoded) keys.emplace(name, *decoded);
+  }
+  return sde::PublicKeys::named(std::move(keys));
+}
+
+/// A packet refused as the vector says: exactly the named class, not a subclass of it, and the
+/// rule's words when the vector names them (the older staging vectors name only the class).
+void expect_packet_refused(const std::function<void()>& load, const sde::Json& want) {
+  const std::string& named = want.find("error")->as_string();
+  try {
+    load();
+  } catch (const std::exception& error) {
+    EXPECT_EQ(exact_class(error), named) << error.what();
+    if (const sde::Json* match = want.find("match")) {
+      EXPECT_NE(std::string_view(error.what()).find(match->as_string()), std::string_view::npos)
+          << "the message must contain \"" << match->as_string() << "\": " << error.what();
+    }
+    return;
+  }
+  ADD_FAILURE() << "the packet was accepted; the vector expects " << named;
+}
+
+/// The bytes a plan hands to an operator to publish, loaded as the map they are: an operator
+/// publishes exactly the map that was signed, or the plan is wrong about what it authorises.
+std::optional<std::string> published_fingerprint(const std::string& payload,
+                                                 const sde::Model& model,
+                                                 const sde::PublicKeys& keys) {
+  sde::LoadOptions options;
+  options.model = &model;
+  options.public_keys = keys;
+  options.require_signature = true;
+  return sde::load_map(std::string_view(payload), options).fingerprint();
+}
+
+std::string text(const sde::Json& document, std::string_view key) {
+  return document.find(key)->as_string();
+}
+
+void drive_cutover(const std::filesystem::path& directory, const sde::Model& model) {
+  const sde::Json raw = read_json(directory / "plan.json");
+  const sde::Json want = read_json(directory / "cutover.json");
+  const sde::PublicKeys keys = case_keys(directory);
+  const std::string project = text(want, "project_id");
+  if (want.contains("error")) {
+    expect_packet_refused([&] { (void)sde::load_cutover_plan(raw, model, project, keys); }, want);
+    return;
+  }
+  const sde::CutoverPlan plan = sde::load_cutover_plan(raw, model, project, keys);
+  EXPECT_EQ(plan.fingerprint(), text(want, "plan_fingerprint"));
+  EXPECT_EQ(plan.verified_with(), text(want, "verified_with"));
+  EXPECT_EQ(plan.source_epoch(), want.find("source_epoch")->to_int64());
+  EXPECT_EQ(plan.maintenance_epoch(), want.find("maintenance_epoch")->to_int64());
+  EXPECT_EQ(plan.activation_epoch(), want.find("activation_epoch")->to_int64());
+  EXPECT_EQ(plan.as_record(), raw);
+  plan.check_current(plan.before());
+  const sde::Json& fingerprints = *want.find("candidate_fingerprints");
+  EXPECT_EQ(plan.before().fingerprint(), text(fingerprints, "before"));
+  EXPECT_EQ(plan.success().fingerprint(), text(fingerprints, "success"));
+  EXPECT_EQ(plan.abort().fingerprint(), text(fingerprints, "abort"));
+  for (const char* outcome : {"success", "abort"}) {
+    EXPECT_EQ(published_fingerprint(plan.candidate_payload(outcome), model, keys),
+              text(fingerprints, outcome))
+        << outcome;
+  }
+}
+
+void drive_staging(const std::filesystem::path& directory, const sde::Model& model) {
+  const sde::Json raw = read_json(directory / "plan.json");
+  const sde::Json want = read_json(directory / "staging.json");
+  const sde::PublicKeys keys = case_keys(directory);
+  const std::string project = text(want, "project_id");
+  if (want.contains("error")) {
+    expect_packet_refused([&] { (void)sde::load_staging_plan(raw, model, project, keys); }, want);
+    return;
+  }
+  const sde::StagingPlan plan = sde::load_staging_plan(raw, model, project, keys);
+  EXPECT_EQ(plan.fingerprint(), text(want, "stage_fingerprint"));
+  EXPECT_EQ(plan.verified_with(), text(want, "verified_with"));
+  EXPECT_EQ(plan.as_record(), raw);
+  plan.check_current(plan.current());
+  const sde::Json& fingerprints = *want.find("map_fingerprints");
+  EXPECT_EQ(plan.current().fingerprint(), text(fingerprints, "current"));
+  EXPECT_EQ(plan.prepared().fingerprint(), text(fingerprints, "prepared"));
+  std::map<std::string, std::string> tables;
+  for (const auto& [entity, table] : want.find("tables")->as_object()) {
+    tables.emplace(entity, table.as_string());
+  }
+  EXPECT_EQ(plan.prepared().placement_of(plan.group()).derived.at(0).layout.tables, tables);
+  EXPECT_EQ(published_fingerprint(plan.prepared_payload(), model, keys),
+            text(fingerprints, "prepared"));
+}
+
+void drive_index(const std::filesystem::path& directory, const sde::Model& model) {
+  const sde::Json raw = read_json(directory / "plan.json");
+  const sde::Json want = read_json(directory / "index.json");
+  const sde::PublicKeys keys = case_keys(directory);
+  const std::string project = text(want, "project_id");
+  if (want.contains("error")) {
+    expect_packet_refused([&] { (void)sde::load_index_plan(raw, model, project, keys); }, want);
+    return;
+  }
+  const sde::IndexPlan plan = sde::load_index_plan(raw, model, project, keys);
+  EXPECT_EQ(plan.fingerprint(), text(want, "index_fingerprint"));
+  EXPECT_EQ(plan.verified_with(), text(want, "verified_with"));
+  EXPECT_EQ(plan.as_record(), raw);
+  EXPECT_EQ(plan.build_budget_ms(), want.find("build_budget_ms")->to_int64());
+  plan.check_current(plan.current());
+  const sde::Json& fingerprints = *want.find("map_fingerprints");
+  EXPECT_EQ(plan.current().fingerprint(), text(fingerprints, "current"));
+  EXPECT_EQ(plan.prepared().fingerprint(), text(fingerprints, "prepared"));
+  std::vector<std::string> added;
+  for (const sde::Index& index : plan.added()) added.push_back(index.name);
+  std::vector<std::string> wanted;
+  for (const sde::Json& name : want.find("added")->as_array()) wanted.push_back(name.as_string());
+  EXPECT_EQ(added, wanted);
+  for (std::size_t i = 0; i < wanted.size(); ++i) {
+    EXPECT_EQ(sde::index_build_name(plan.index_id(), static_cast<std::int64_t>(i + 1)), wanted[i]);
+  }
+  // Protocol 2 removes indexes in force; a vector that names none removes none.
+  EXPECT_EQ(plan.protocol(), raw.find("protocol")->to_int64());
+  std::vector<std::string> removed;
+  for (const sde::Index& index : plan.removed()) removed.push_back(index.name);
+  std::vector<std::string> gone;
+  if (const sde::Json* named = want.find("removed")) {
+    for (const sde::Json& name : named->as_array()) gone.push_back(name.as_string());
+  }
+  EXPECT_EQ(removed, gone);
+  EXPECT_EQ(published_fingerprint(plan.prepared_payload(), model, keys),
+            text(fingerprints, "prepared"));
+}
+
 // --- the family ---------------------------------------------------------------------------------
 
 std::optional<std::string> driver_of(const std::filesystem::path& directory) {
@@ -585,6 +725,19 @@ TEST_P(MigrationVector, TakesPartAsTheVectorSays) {
     return;
   }
   const sde::Model model = sde::load_neutral_model(read_json(directory / "model.json"));
+  // A packet carries its maps; it has no map in force and no engine.
+  if (*driver == "cutover") {
+    drive_cutover(directory, model);
+    return;
+  }
+  if (*driver == "staging") {
+    drive_staging(directory, model);
+    return;
+  }
+  if (*driver == "index") {
+    drive_index(directory, model);
+    return;
+  }
   const sde::PlacementMap map = load_case_map(directory, model);
   Engines engines = sde::testing::engines_from(read_json(directory / "engines.json"));
   if (*driver == "generation") {
