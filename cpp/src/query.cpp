@@ -59,8 +59,8 @@ Decimal query_decimal(const Value& value) {
   if (text == nullptr) {
     throw QueryRefused("decimal query values require Decimal, integer or decimal text");
   }
-  // The pattern is matched after `strip()`, and `Decimal()` strips the same whitespace itself.
-  const auto parts = detail::decimal_parts(detail::python_strip(*text));
+  // Unicode's `White_Space` may surround the text; nothing else may.
+  const auto parts = detail::decimal_parts(detail::strip_white_space(*text));
   if (!parts) throw QueryRefused("invalid decimal query value");
   const detail::DecimalCounts counts = detail::decimal_counts(*parts);
   // What CPython's `Decimal` refuses to construct, before the planner's own limit is reached.

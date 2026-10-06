@@ -357,41 +357,4 @@ Json integral_numbers(const Json& value) {
   }
 }
 
-
-bool python_space(char32_t code_point) noexcept {
-  switch (code_point) {
-    case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D:
-    case 0x1C: case 0x1D: case 0x1E: case 0x1F: case 0x20:
-    case 0x85: case 0xA0: case 0x1680:
-    case 0x2000: case 0x2001: case 0x2002: case 0x2003: case 0x2004: case 0x2005:
-    case 0x2006: case 0x2007: case 0x2008: case 0x2009: case 0x200A:
-    case 0x2028: case 0x2029: case 0x202F: case 0x205F: case 0x3000:
-      return true;
-    default:
-      return false;
-  }
-}
-
-std::string_view python_strip(std::string_view text) noexcept {
-  std::size_t begin = 0;
-  while (begin < text.size()) {
-    const std::size_t length = utf8_sequence_length(text, begin);
-    if (length == 0 || !python_space(decode_sequence(text, begin, length))) break;
-    begin += length;
-  }
-  std::size_t end = text.size();
-  while (end > begin) {
-    // The last sequence starts at the last byte that is not a continuation byte.
-    std::size_t start = end - 1;
-    while (start > begin && end - start < 4 &&
-           (static_cast<unsigned char>(text[start]) & 0xC0U) == 0x80U) {
-      --start;
-    }
-    const std::size_t length = utf8_sequence_length(text, start);
-    if (length != end - start || !python_space(decode_sequence(text, start, length))) break;
-    end = start;
-  }
-  return text.substr(begin, end - begin);
-}
-
 }  // namespace sde::detail
