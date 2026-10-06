@@ -52,13 +52,14 @@ class Signer {
     unsigned char signature[64];
     std::size_t length = sizeof signature;
     EXPECT_EQ(EVP_DigestSignInit(context.get(), nullptr, nullptr, nullptr, key_.get()), 1);
-    EXPECT_EQ(EVP_DigestSign(context.get(), signature, &length,
-                             reinterpret_cast<const unsigned char*>(message.data()), message.size()),
-              1);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(message.data());
+    EXPECT_EQ(EVP_DigestSign(context.get(), signature, &length, bytes, message.size()), 1);
     return {reinterpret_cast<const char*>(signature), length};
   }
 
-  [[nodiscard]] sde::PublicKeys keys() const { return sde::PublicKeys::named({{"k", public_key()}}); }
+  [[nodiscard]] sde::PublicKeys keys() const {
+    return sde::PublicKeys::named({{"k", public_key()}});
+  }
 
   /// The document signed as the control plane signs it: over its canonical bytes without the block.
   [[nodiscard]] sde::Json signed_document(sde::Json document) const {
@@ -156,7 +157,8 @@ TEST_F(CutoverPacket, AnIntegralNumberIsAnIntegerHoweverItIsWritten) {
 
 TEST_F(CutoverPacket, AnOutcomeIsSuccessOrAbort) {
   const sde::CutoverPlan plan = load(resigned(base.packet));
-  EXPECT_EQ(plan.candidate_payload("success"), sde::canonical_bytes(at(plan.as_record(), {"success"})));
+  EXPECT_EQ(plan.candidate_payload("success"),
+            sde::canonical_bytes(at(plan.as_record(), {"success"})));
   EXPECT_NE(plan.candidate_payload("success"), plan.candidate_payload("abort"));
   EXPECT_EQ(refusal([&] { (void)plan.candidate_payload("rollback"); }),
             "cutover outcome must be success or abort");
@@ -190,7 +192,8 @@ TEST_F(CutoverPacket, AMapOrEncodingRefusalInsideItIsTheCutovers) {
             0U);
   sde::Json wrong_model = base.packet;
   at(wrong_model, {"success"}).set("model_version", "0000000000000000");
-  EXPECT_EQ(refusal([&] { (void)load(resigned(wrong_model)); }).rfind("cutover document refused: ", 0),
+  EXPECT_EQ(refusal([&] { (void)load(resigned(wrong_model)); })
+                .rfind("cutover document refused: ", 0),
             0U);
 }
 
@@ -303,6 +306,209 @@ TEST(PacketNames, ABuiltIndexIsItsBuildAndItsPosition) {
   }
   EXPECT_EQ(refusal([&] { (void)sde::index_build_name(std::string(31, '6'), 1); }),
             "index build index_id must be 32 lowercase hexadecimal digits");
+}
+
+TEST_F(CutoverPacket, ItsOwnRulesRefuseBeforeAnyKeyIsTried) {
+  // Rules of the packet no cutover vector pins. The packet is signed again after each change, so
+  // the refusal is the rule's and not the signature's.
+  const auto refused = [&](const std::function<void(sde::Json&)>& edit) {
+    sde::Json packet = resigned(base.packet);
+    edit(packet);
+    return refusal([&] { (void)load(signer.signed_document(packet)); });
+  };
+  EXPECT_EQ(refused([](sde::Json& p) { p.set("kind", "sde-stage"); }),
+            "unsupported cutover document kind");
+  EXPECT_EQ(refused([](sde::Json& p) { p.set("group", ""); }),
+            "cutover group must be a nonempty string");
+  EXPECT_EQ(refused([](sde::Json& p) { p.set("group", 7); }),
+            "cutover group must be a nonempty string");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              p.set("pause_budget_ms", sde::Json::from_lexeme("9007199254740992"));
+            }),
+            "cutover pause_budget_ms must be a positive safe integer");
+}
+
+TEST_F(CutoverPacket, ASignatureBlockIsExactlyItsFieldsAndItsCanonicalText) {
+  // The block is outside what is signed, so a member added to it or another spelling of the same
+  // 64 bytes would still verify. Both are refused as the block's own defect.
+  const sde::Json packet = resigned(base.packet);
+  sde::Json noted = packet;
+  noted.find("signature")->set("note", "added after signing");
+  EXPECT_EQ(refusal([&] { (void)load(noted); }),
+            "cutover signatures have missing or unknown fields");
+
+  // 64 bytes are 88 characters ending in "==", and the character before the padding carries four
+  // bits nothing reads: set one, and the text still decodes to the bytes that were signed.
+  constexpr std::string_view kAlphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  sde::Json respelled = packet;
+  std::string value = respelled.find("signature")->find("value")->as_string();
+  ASSERT_EQ(value.size(), 88U);
+  const std::size_t digit = kAlphabet.find(value[85]);
+  ASSERT_EQ(digit % 16, 0U) << "a canonical encoder leaves the unused bits zero";
+  value[85] = kAlphabet[digit + 1];
+  const std::string& signed_value = packet.find("signature")->find("value")->as_string();
+  ASSERT_EQ(sde::detail::base64_decode_as_python(value),
+            sde::detail::base64_decode_as_python(signed_value));
+  respelled.find("signature")->set("value", value);
+  EXPECT_EQ(refusal([&] { (void)load(respelled); }),
+            "cutover signatures must use ed25519 and canonical base64");
+}
+
+/// A candidate map rewritten to contract 3: no project, no generation. It loads as a map, and a
+/// packet refuses it by the contract its protocol rests on.
+sde::Json as_contract_3(sde::Json document) {
+  document.set("contract", 3);
+  (void)document.erase("project_id");
+  for (auto& group : document.find("groups")->as_object()) {
+    (void)group.second.erase("write_epoch");
+  }
+  return document;
+}
+
+TEST_F(CutoverPacket, ItsMapsCarryGenerations) {
+  sde::Json packet = base.packet;
+  for (const char* name : {"before", "success", "abort"}) {
+    packet.set(name, as_contract_3(*packet.find(name)));
+  }
+  EXPECT_EQ(refusal([&] { (void)load(resigned(packet)); }),
+            "cutover protocol 1 requires placement map contract 4 or later");
+}
+
+TEST_F(StagingPacket, ItsMapsCarryGenerations) {
+  sde::Json packet = base.packet;
+  for (const char* name : {"current", "prepared"}) {
+    packet.set(name, as_contract_3(*packet.find(name)));
+  }
+  EXPECT_EQ(refusal([&] { (void)load(resigned(packet)); }),
+            "staging protocol 1 requires map contract 4 or later");
+}
+
+/// The map a plan starts from, loaded without its signature: the same fingerprint, which excludes
+/// the signature, and not the signed document a plan names.
+sde::PlacementMap unsigned_copy(const sde::Json& document, const sde::Model& model) {
+  sde::Json bare = document;
+  (void)bare.erase("signature");
+  sde::LoadOptions options;
+  options.model = &model;
+  return sde::load_map(bare, options);
+}
+
+TEST_F(StagingPacket, StartsOnlyFromTheSignedMapItNames) {
+  const sde::StagingPlan plan = load(resigned(base.packet));
+  const sde::PlacementMap bare = unsigned_copy(at(plan.as_record(), {"current"}), base.model);
+  ASSERT_EQ(bare.fingerprint(), plan.current().fingerprint());
+  EXPECT_EQ(refusal([&] { plan.check_current(bare); }),
+            "staging authorization does not name the signed current map");
+}
+
+TEST_F(IndexPacket, StartsOnlyFromTheSignedMapItNames) {
+  const Case base = vector_case("143-index-build-adds-a-btree-in-place");
+  const sde::IndexPlan plan = load(base);
+  const sde::PlacementMap bare = unsigned_copy(at(plan.as_record(), {"current"}), base.model);
+  ASSERT_EQ(bare.fingerprint(), plan.current().fingerprint());
+  EXPECT_EQ(refusal([&] { plan.check_current(bare); }),
+            "index build authorization does not name the signed current map");
+}
+
+TEST_F(StagingPacket, ItsOwnRulesRefuseBeforeAnyKeyIsTried) {
+  // Rules no staging vector pins by their words: the staging vectors name the class only.
+  const auto refused = [&](const std::function<void(sde::Json&)>& edit) {
+    sde::Json packet = base.packet;
+    edit(packet);
+    return refusal([&] { (void)load(resigned(packet)); });
+  };
+  EXPECT_EQ(refused([](sde::Json& p) { p.set("kind", "sde-cutover"); }),
+            "unsupported staging authorization kind or protocol");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              at(p, {"current", "groups", "Event", "source", "layout"}).set("columns",
+                                                                            sde::Json::object());
+            }),
+            "staging maps need explicit physical layouts");
+}
+
+TEST_F(IndexPacket, ANewIndexCannotTakeTheNameOfAnIndexInForce) {
+  // `index/175` reuses a table's name; an index's is checked as well. The Order group keeps its
+  // own table name here and declares an index under the name the build would add, the same in both
+  // maps, so nothing but the reuse is refused.
+  Case base = vector_case("175-index-build-cannot-reuse-a-name-in-force");
+  const std::string taken = sde::index_build_name(base.packet.find("index_id")->as_string(), 1);
+  for (const char* name : {"current", "prepared"}) {
+    sde::Json& layout = at(base.packet, {name, "groups", "Order", "source", "layout"});
+    layout.find("tables")->set("Order", "orders");
+    sde::Json index = sde::Json::object();
+    index.set("entity", "Order");
+    index.set("name", taken);
+    sde::Json columns = sde::Json::array();
+    columns.as_array().push_back("placed_at");
+    index.set("columns", std::move(columns));
+    sde::Json indexes = sde::Json::array();
+    indexes.as_array().push_back(std::move(index));
+    layout.set("indexes", std::move(indexes));
+  }
+  EXPECT_EQ(refusal([&] { (void)load(base); }),
+            "an index build cannot reuse a name the current map uses");
+}
+
+TEST_F(StagingPacket, EachRuleOfTheGroupsShapeHasItsOwnRefusal) {
+  // The staging vectors name the class only, and these three rules refuse overlapping inputs, so
+  // each is reached here on its own, with its own words.
+  const auto refused = [&](const std::function<void(sde::Json&)>& edit) {
+    sde::Json packet = base.packet;
+    edit(packet);
+    return refusal([&] { (void)load(resigned(packet)); });
+  };
+  // A current group mid-migration: it already has a maintained copy.
+  EXPECT_EQ(refused([](sde::Json& p) {
+              sde::Json& group = at(p, {"current", "groups", "Event"});
+              const sde::Json& prepared = at(p, {"prepared", "groups", "Event"});
+              group.set("derived", *prepared.find("derived"));
+              group.set("also_write", *prepared.find("also_write"));
+            }),
+            "staging begins with a source-only group");
+  // A prepared copy nobody writes to: no fan-out keeps it current.
+  EXPECT_EQ(refused([](sde::Json& p) {
+              (void)at(p, {"prepared", "groups", "Event"}).erase("also_write");
+            }),
+            "staging prepares exactly one maintained copy");
+  // An empty list of copies loads as none, and is still not the shape of a source-only group.
+  EXPECT_EQ(refused([](sde::Json& p) {
+              at(p, {"current", "groups", "Event"}).set("derived", sde::Json::array());
+            }),
+            "staging group shape is not source-only to one maintained copy");
+}
+
+TEST_F(StagingPacket, ALayoutCoversExactlyTheGroupsEntities) {
+  // Columns for an entity the group does not have, in both maps alike, so that the source is still
+  // the one in force and only the coverage is wrong.
+  sde::Json packet = base.packet;
+  for (const char* name : {"current", "prepared"}) {
+    sde::Json ghost = sde::Json::object();
+    ghost.set("x", "text");
+    at(packet, {name, "groups", "Event", "source", "layout", "columns"}).set("Ghost", ghost);
+  }
+  EXPECT_EQ(refusal([&] { (void)load(resigned(packet)); }),
+            "staging layouts must cover exactly the group's entities");
+}
+
+TEST_F(StagingPacket, AFreshNameIsNotOneTheCurrentMapUses) {
+  // Another group's table already holds the name the copy's first entity would take: the same in
+  // both maps, so that group is unaffected and only the collision is refused.
+  sde::Json packet = base.packet;
+  const std::string taken = sde::staging_table_name(packet.find("stage_id")->as_string(), 1);
+  for (const char* name : {"current", "prepared"}) {
+    at(packet, {name, "groups", "Order", "source", "layout", "tables"}).set("Order", taken);
+  }
+  EXPECT_EQ(refusal([&] { (void)load(resigned(packet)); }),
+            "staging cannot reuse a current physical name");
+}
+
+TEST_F(CutoverPacket, ATerminalSourceIsNamed) {
+  // A map loads a materialisation with an empty id; the map a cutover publishes may not have one.
+  sde::Json packet = base.packet;
+  at(packet, {"success", "groups", "Event", "source"}).set("id", "");
+  EXPECT_EQ(refusal([&] { (void)load(resigned(packet)); }),
+            "cutover terminal source must have a nonempty string id");
 }
 
 }  // namespace
