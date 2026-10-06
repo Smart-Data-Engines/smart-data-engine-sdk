@@ -50,6 +50,9 @@ TEST(Base64AsPython, RefusesWhatTheReferenceRefuses) {
   EXPECT_FALSE(base64_decode_as_python("Zm9vZ"));     // one sextet too many
   EXPECT_FALSE(base64_decode_as_python("=Zm9"));      // leading padding
   EXPECT_FALSE(base64_decode_as_python("Zg=v"));      // data after a padding character
+  // ... even when it completes the quantum, which is the case nothing else refuses.
+  EXPECT_FALSE(base64_decode_as_python("Zm=9v"));
+  EXPECT_FALSE(base64_decode_as_python("Z=m9v"));
   EXPECT_FALSE(base64_decode_as_python("Zg==Zg=="));  // data after a complete pad sequence
   EXPECT_FALSE(base64_decode_as_python("Zm8=="));     // a pad sequence then more padding
   EXPECT_FALSE(base64_decode_as_python("Zm9v\n"));    // whitespace
