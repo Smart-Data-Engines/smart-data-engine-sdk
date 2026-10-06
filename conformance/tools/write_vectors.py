@@ -104,7 +104,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
         "ModelPlanningError",
         save(FULL),
         save({"id": "t-2", "label": "second", "note": None}),
-        r"Thing\.amount is required and this row leaves it out",
+        "Thing.amount is required and this row leaves it out",
         ACCEPTED_ONE,
         "The case that wrote a value nobody chose. ClickHouse filled the missing integer with 0 "
         "and returned it on every read; PostgreSQL stored NULL in a column the model says never "
@@ -116,7 +116,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
         "ModelPlanningError",
         save(FULL),
         save({"amount": None, "id": "t-2", "label": "second", "note": None}),
-        r"Thing\.amount is required and this row gives it null",
+        "Thing.amount is required and this row gives it null",
         ACCEPTED_ONE,
         "PostgreSQL stored this null; ClickHouse's driver refused it with a message about a column "
         "type. One model, two outcomes, and neither was the library's decision. `note` is null in "
@@ -127,7 +127,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
         "ModelPlanningError",
         save(FULL),
         save({"amount": 2, "id": None, "label": "second", "note": None}),
-        r"Thing\.id is required and this row gives it null",
+        "Thing.id is required and this row gives it null",
         ACCEPTED_ONE,
         "A key field is required whether or not it is declared nullable, and this model declares "
         "it nullable, which the loader accepts: a row without its key cannot be read back by it.",
@@ -137,7 +137,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
         "ModelPlanningError",
         save(FULL),
         save({"amount": 2, "colour": "red", "id": "t-2", "label": "second", "note": None}),
-        r"Thing declares no field colour",
+        "Thing declares no field colour",
         ACCEPTED_ONE,
         "Refused by name before an engine is called. It used to reach the engine, which refused it "
         "in its own words - or, with hashed identifiers, was refused here in one language and sent "
@@ -153,7 +153,7 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
                 {"amount": 4, "id": "t-4", "label": None, "note": "kept"},
             ]
         ),
-        r"row 1: Thing\.label is required and this row gives it null",
+        "row 1: Thing.label is required and this row gives it null",
         [{"engine": "pg-main", "call": "insert_many", "table": "thing", "rows": 2}],
         "A batch already refused a row that left a required field out; it let a null through. The "
         "whole batch is refused, row 0 included, because a batch is checked before anything is "

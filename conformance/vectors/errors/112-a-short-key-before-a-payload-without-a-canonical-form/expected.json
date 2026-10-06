@@ -1,0 +1,10 @@
+{
+  "error": "MapError",
+  "match": "is 31 bytes and an Ed25519 public key is 32",
+  "stage": "map",
+  "why": "The keys are the caller's configuration and are checked before the document's payload is encoded, so a key pasted a byte short is named as that rather than as a map with no canonical form. TypeScript encoded first.",
+  "load": {
+    "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    "require_signature": true
+  }
+}

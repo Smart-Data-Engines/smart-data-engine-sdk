@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "is in the same engine as the source and reuses its tables",
+  "stage": "map",
+  "why": "Its lag would always read zero and a read routed to it would be a read of the source. Python checked this only with a model and TypeScript before the copies' fan-out; now after coverage, with or without one, and it has a vector."
+}

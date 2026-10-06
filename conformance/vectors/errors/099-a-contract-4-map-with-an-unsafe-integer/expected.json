@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "canonically encodable",
+  "stage": "map",
+  "why": "Past 2^53 - 1 JavaScript reads a nearby double, so one document is signed over one number and read as another. Section 7d refuses unsafe numbers from contract 4; TypeScript did and Python encoded any integer."
+}

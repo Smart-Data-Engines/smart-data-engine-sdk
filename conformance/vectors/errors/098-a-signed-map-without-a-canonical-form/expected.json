@@ -1,0 +1,10 @@
+{
+  "error": "MapError",
+  "match": "its payload has no canonical form",
+  "stage": "map",
+  "why": "A signature covers canonical bytes, so a payload with none cannot carry a valid one. Both loaders let their encoder's error out instead of a map error. Below contract 4 an unsigned map with such an annotation still loads, without a fingerprint.",
+  "load": {
+    "public_key": "eoAUc+0ZkRiFyx/zMmZYeTErCq1VJtKyyDoGxeyMKGw=",
+    "require_signature": true
+  }
+}

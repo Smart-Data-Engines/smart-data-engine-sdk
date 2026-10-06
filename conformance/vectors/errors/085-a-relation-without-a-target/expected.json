@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "match": "each a string, not",
+  "stage": "model",
+  "why": "Python raised a bare KeyError out of its loader and TypeScript looked up `undefined` among the entity names: the same document, two runtime errors, neither the contract's. A relation is three strings."
+}

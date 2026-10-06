@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "match": "atomic groups overlap on",
+  "stage": "model",
+  "why": "Section 4 merges atomicity transitively, and the loaders copied the groups as written, so these two groups reached the IR unmerged: another model_version than the same atomicity declared as one group, which is what neutral_declaration writes."
+}

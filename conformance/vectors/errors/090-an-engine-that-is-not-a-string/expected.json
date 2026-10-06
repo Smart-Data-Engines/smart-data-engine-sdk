@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "an engine is named by a string",
+  "stage": "map",
+  "why": "An engine is looked up by name among the adapters a session holds. A number coerced to text is a name nobody wrote."
+}

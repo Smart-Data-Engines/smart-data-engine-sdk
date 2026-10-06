@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "key_order['Line'] must be a non-empty list of column names",
+  "stage": "map",
+  "why": "Two defects, written Order first. Section 8a checks a layout's entities in name order, so the refusal names Line in every library, whatever order its parser keeps."
+}

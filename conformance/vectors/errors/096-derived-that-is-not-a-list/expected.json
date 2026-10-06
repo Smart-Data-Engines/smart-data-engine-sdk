@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "'derived' is a list of materialisations",
+  "stage": "map",
+  "why": "Python iterated an object's keys as materialisations and TypeScript called .map on it. An array, or absent."
+}

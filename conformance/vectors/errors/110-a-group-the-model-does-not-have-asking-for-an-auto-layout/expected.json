@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "the map places groups this model does not have",
+  "stage": "map",
+  "why": "Coverage comes before a layout is derived. TypeScript derived it first, found no members for the group and said no model was supplied - with the model in hand."
+}

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "columns maps an entity to an object of column name",
+  "stage": "map",
+  "why": "Python read `[]`, `false` and `0` as no columns and turned a list of pairs into columns; TypeScript took whatever arrived. Absent or null says no columns."
+}

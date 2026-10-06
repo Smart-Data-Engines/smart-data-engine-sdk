@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "Writes go to the source whatever this table says",
+  "stage": "map",
+  "why": "Section 8 sends a write to the source before the table is consulted, so this entry can only be a planner believing something untrue. The control plane refuses to issue it; a hand-written map met nothing, and no vector routed a write at all."
+}
