@@ -6,7 +6,7 @@ implementation of [the format contract](../docs/format-contract.md), after Pytho
 and TypeScript, and it is held to the same shared vectors in [`conformance/`](../conformance) as
 they are.
 
-**Status: Tier 1 and hashing** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
+**Status: Tier 2 and hashing, with no engine adapter yet** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
 
 | | |
 |---|---|
@@ -18,12 +18,15 @@ they are.
 | Telemetry (Tier 1): the recorder, windows and the window document of §6a | yes |
 | Values, the DDL of §7a, read plans and exact summaries (Tier 2, the part without engines) | yes |
 | Sessions (Tier 2): writes and batches, fan-out to copies, point and logical reads, transactions, write generations, write fences and the forward-only check, against an engine interface with an in-memory engine | yes |
-| Migration participation (Tier 2): backfill, verification, verification requests and packets | not yet |
+| Migration participation (Tier 2): backfill, verification and verification requests, the comparison under write barriers, and the signed cutover, staging and index build packets | yes |
 | Engines - PostgreSQL, ClickHouse, the orderbook engine (Tier 2) | not yet |
 
-Until Tier 2, this library reads, checks and measures; it does not connect to anything. It makes no
-network call. The recorder reads a monotonic clock, or the one you give it, and that is the only
-state kept between calls.
+Tier 2 is the vectors of §9 - `schema/`, `query/` and `migration/` - and this library passes all of
+them against the engine interface and its in-memory engine. It has no adapter for a real engine yet,
+so it does not connect to anything and makes no network call: an application cannot use it against
+PostgreSQL, ClickHouse or the orderbook engine until those adapters exist, in that order. The
+recorder reads a monotonic clock, or the one you give it, and that is the only state kept between
+calls.
 
 ## Requirements
 
@@ -139,6 +142,18 @@ keeps working for as long as its keys are configured.
   never the caller's. A transaction is one group's, refused when it would span two. One thread uses
   a session at a time, and a second thread is refused (`sde::ResourceBusy`) rather than raced. The
   model, the map and the engines must outlive it.
+- **A migration is taken part in, never decided** (`sde/migration.hpp`, `sde/verification.hpp`).
+  `sde::backfill` copies a group's rows to the copies its map fans writes out to, a chunk at a time
+  in key order: the chunk first, then the marker that counts it, so a crash between the two costs a
+  recopy and never a lost chunk, and the next call resumes. `sde::verify` compares the copies with
+  the source - in chunks below the marker, and above it by the rows a copy is missing - and confirms
+  every row missing from a copy with a point read before reporting it. A `sde::VerificationRequest` binds a comparison
+  to the control plane's request, the locally configured project, the map's fingerprint and the
+  group, and `sde::verify_frozen` compares under named write barriers it checks before and after.
+- **Signed packets are decoded and authorised, never executed** (`sde/packets.hpp`).
+  `sde::load_cutover_plan`, `sde::load_staging_plan` and `sde::load_index_plan` check every rule of
+  §7g, §7h and §7j against the model, the project and the keys, and give an operator the maps and
+  index definitions it acts on and the exact bytes it publishes. A plan exists only as loaded.
 - **An in-memory engine for tests** (`sde/testing/memory.hpp`, target `sde::testing`): the engine
   the `migration/` vectors run against, which records every call in one sequence across engines.
   Link it in your adapter's tests, never in production.
@@ -169,4 +184,9 @@ it. Both were compared with the reference directly, and agreed everywhere:
   reference's `sde.query` - decimal text up to and past libmpdec's exponent limits, ISO timestamps
   with every part in and out of range, dates, UUIDs, and summaries with totals of up to 40 digits:
   identical, message for message, once the reference took the rules of `query/024`-`028`. Before
-  that, every difference was one of those two rules, and they are the reason the vectors exist.
+  that, every difference was one of those two rules, and they are the reason the vectors exist;
+- the three packet loaders on 102,384 signed packets, made by changing every accepted packet
+  vector at each of its paths and in random pairs, and signing them again so that each change reaches
+  the rule it is about: the same outcome, fingerprint, record and message in every case except three
+  named classes - this library's stricter map loader, the reference failing with its runtime's own
+  error, and integers past 64 bits, which §1 requires this library to refuse.

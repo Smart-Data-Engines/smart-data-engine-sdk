@@ -24,7 +24,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 |---|---|---|---|---|---|---|
 | `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
 | `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
-| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 1 | yes | 1 | 1–6 | none |
+| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 2 | yes | 1 | 1–6 | none |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
@@ -73,18 +73,21 @@ service writes the data and TypeScript reads or migrates it: the previous conver
 digits and could report a corrupt copy as matching. [Exact timestamps](timestamps.md) documents the
 API change and the live tests with an independent Python writer and reader.
 
-**C++ reached Tier 0 and Tier 1 in October 2026, with hashing**, the first library here in a
-compiled language. It reads, checks and measures: models and their versions, shapes, the neutral
+**C++ reached Tier 0 and Tier 1 in October 2026, with hashing, and Tier 2 on 7 October**, the first
+library here in a compiled language. It reads, checks and measures: models and their versions, shapes, the neutral
 declaration, placement maps of contracts 1 to 6 with their signatures, routing, and the telemetry
 window of §6a. Its recorder takes no lock on an operation's path - a window is a block of atomic
 counters, swapped at a roll - which is a claim about memory ordering, so CI runs its threads under
-ThreadSanitizer. Of Tier 2 it has values, the DDL of §7a, the read plans and exact summaries of
-the `query/` vectors, and the session: writes, fan-out, transactions, write generations, write
-fences and the forward-only check, against an engine interface whose capabilities are data. It
-passes every `schema/` and `query/` vector, the session and write stages of `errors/`, and the
-`migration/` cases of those parts; the tier moves to 2 with backfill, verification and packets. It has no engine adapters yet, so the
-engines cell says `none`, and it makes no network call. The adapters are planned in the order the other two have them - PostgreSQL,
-ClickHouse, then our orderbook engine - and each moves the cell when it round-trips, not before.
+ThreadSanitizer. Its Tier 2 is values, the DDL of §7a, the read plans and exact summaries of the
+`query/` vectors, the session - writes, fan-out, transactions, write generations, write fences and
+the forward-only check - and taking part in a migration: backfill, verification and its requests,
+the comparison under write barriers, and the signed cutover, staging and index build packets. It
+passes every `schema/`, `query/` and `migration/` vector against an engine interface whose
+capabilities are data, and the library's own in-memory engine. **The tier is the vectors, and the
+engines cell is separate:** it has no adapter for a real engine yet, so the cell says `none`, it
+makes no network call, and an application cannot use it against an engine today. The adapters are
+planned in the order the other two have them - PostgreSQL, ClickHouse, then our orderbook engine -
+and each moves the cell when it round-trips, not before.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 

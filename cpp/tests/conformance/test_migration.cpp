@@ -5,8 +5,8 @@
 /// scanning a whole table and filtering in memory would satisfy every number and be unusable on a
 /// real one. The fixture is the library's own in-memory engine, never one written here.
 ///
-/// A case names its driver by the document it carries. Until this library claims Tier 2, a case
-/// whose driver is not written yet is skipped by name; from Tier 2 on, the same case fails.
+/// A case names its driver by the document it carries, and a case that names none this runner
+/// knows fails: a family grows by a driver, never by a case that passes unread.
 
 #include <algorithm>
 #include <functional>
@@ -28,7 +28,6 @@
 #include "sde/telemetry.hpp"
 #include "sde/verification.hpp"
 #include "sde/testing/memory.hpp"
-#include "sde/version.hpp"
 #include "sde/watermark.hpp"
 #include "sde/write_fence.hpp"
 #include "support/vectors.hpp"
@@ -40,15 +39,11 @@ using sde::testing::MemoryEngine;
 
 using Engines = std::map<std::string, std::unique_ptr<MemoryEngine>>;
 
-/// The drivers this runner has, by the document that selects them, and the ones still to come.
+/// The drivers this runner has, by the document that selects them.
 const std::vector<std::string>& written_drivers() {
   static const std::vector<std::string> drivers = {
       "fencing", "watermark", "operations", "bulk",    "generation", "backfill",
       "verify",  "verification", "frozen",   "staging", "index",       "cutover"};
-  return drivers;
-}
-const std::vector<std::string>& pending_drivers() {
-  static const std::vector<std::string> drivers;
   return drivers;
 }
 
@@ -526,7 +521,9 @@ void drive_operations(const std::filesystem::path& directory, const sde::Model& 
   sde::Json got = sde::Json::object();
   for (const auto& [name, engine] : engines) {
     sde::Json tables = sde::Json::object();
-    for (const auto& [table, rows] : engine->tables) tables.set(table, sorted_rows(table_json(rows)));
+    for (const auto& [table, rows] : engine->tables) {
+      tables.set(table, sorted_rows(table_json(rows)));
+    }
     got.set(name, std::move(tables));
   }
   sde::Json expected = read_json(directory / "tables.json");
@@ -698,10 +695,8 @@ void drive_index(const std::filesystem::path& directory, const sde::Model& model
 // --- the family ---------------------------------------------------------------------------------
 
 std::optional<std::string> driver_of(const std::filesystem::path& directory) {
-  for (const auto* drivers : {&written_drivers(), &pending_drivers()}) {
-    for (const std::string& driver : *drivers) {
-      if (has_file(directory / (driver + ".json"))) return driver;
-    }
+  for (const std::string& driver : written_drivers()) {
+    if (has_file(directory / (driver + ".json"))) return driver;
   }
   return std::nullopt;
 }
@@ -712,14 +707,6 @@ TEST_P(MigrationVector, TakesPartAsTheVectorSays) {
   const auto directory = vectors_root() / "migration" / GetParam();
   const std::optional<std::string> driver = driver_of(directory);
   ASSERT_TRUE(driver.has_value()) << "the case names no driver this runner knows";
-  if (std::find(pending_drivers().begin(), pending_drivers().end(), *driver) !=
-      pending_drivers().end()) {
-    if (sde::TIER < 2) {
-      GTEST_SKIP() << "the " << *driver << " driver is not written yet; this library claims Tier "
-                   << sde::TIER << ", so the case is above it";
-    }
-    FAIL() << "this library claims Tier 2 and has no " << *driver << " driver";
-  }
   if (*driver == "fencing") {
     drive_fencing(directory);
     return;

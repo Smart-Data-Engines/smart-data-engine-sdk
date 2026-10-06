@@ -491,6 +491,53 @@ everywhere:
 - the whole message of every refusal at the model and map stages, all 76 of them, against the
   reference's own: identical, apart from one function name spelled the C++ way.
 
+#### Tier 2, and the packets no vector signs again
+
+On 7 October 2026 the C++ library passed every `schema/`, `query/` and `migration/` vector, and the
+`errors/` cases at the session and write stages, and claims Tier 2 with no engine adapter: the tier
+is the vectors of §9, and [`implementations.md`](implementations.md) keeps the engines in a column
+of their own. Its runner checks a refusal's exact class, where both reference runners accept a
+subclass.
+
+The signed packets of §7g, §7h and §7j carry their own refusal order, and a vector can pin only one
+defect at a time. So the three loaders were compared with the reference's on 102,384 packets: every
+accepted packet vector, changed at each of its paths - a member removed, another type or a
+neighbouring value put in its place, a member added - and in random pairs, so that two defects meet
+and the order between them is compared too. A change inside a candidate map signs that map and then
+the packet again with a key made for the run, so it reaches the rule it is about instead of stopping
+at a signature. Outcome, fingerprint, record, epochs, payload and the whole message agreed in every
+case outside three classes:
+
+- **this library's map loader is stricter**, as the previous section lists. The reference accepted
+  342 staging packets whose prepared copy declares a column type that is not a type name (`null`,
+  `true`, `{}`), an engine that is not a string or a lag budget that is not a non-negative integer,
+  and an operator would have been handed each of them;
+- **the reference failed with its runtime's own error**: its cutover loader let 1,704 `TypeError`s,
+  `ValueError`s and `AttributeError`s from a malformed layout out as themselves, its staging and
+  index loaders 819 `AttributeError`s, and in 3,567 more cases those two put the runtime's text into
+  the refusal (`'int' object is not iterable`);
+- **an integer past 64 bits**, which §1 requires a language with 64-bit integers to refuse rather
+  than truncate, where the reference went on to the packet's next rule, or accepted it (21 times).
+
+One divergence between the two references came out of it. The reference's staging refusals that
+come from helpers it shares with the cutover packet name a cutover - `cutover stage_id must be 32
+lowercase hexadecimal digits` for a staging - and TypeScript's name a staging. The staging vectors
+pin the class only, apart from two, so neither runner saw it. This library names the packet it
+refuses, as TypeScript does.
+
+Mutation testing followed: 121 source mutations of backfill, verification, its requests, the
+comparison under barriers and the three packets, each a rule removed or loosened, and three controls
+that must survive. The first run left 37 alive, and every one was a rule nothing reached. Most
+staging vectors pin their class only, and several rules refuse an input that a later rule refuses
+as well, with a message of its own, so removing either one left the class right. Each now has a unit test -
+ported from the reference's own tests where it has one - and kills its mutation, except two that
+no input reaches: a cutover's check that its one copy is written to, behind the verification
+request, which already refuses a map without that fan-out; and its check of the terminal map's
+engine, behind the comparison of the whole materialisation, engine included. Both stay, as in the
+reference. One rule changed on the way: the comparison under barriers asked an engine to check its
+tables with the keys, so a real adapter would also have read the physical design; it now checks the
+columns alone, as the reference does.
+
 ### Verification-request protocol check
 
 On 12 September 2026 a standalone Go checker implemented section 7b from its description and

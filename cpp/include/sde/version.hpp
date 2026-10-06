@@ -11,9 +11,10 @@ namespace sde {
 
 /// The highest capability tier this library passes (format contract section 9). Tier 0 is the
 /// model, its version and shapes, map parsing, signatures, routing and the error semantics; Tier 1
-/// adds telemetry, Tier 2 the engines. docs/implementations.md states the same number, and a test
-/// there holds the two together.
-inline constexpr int TIER = 1;
+/// adds telemetry; Tier 2 schema creation, logical reads and summaries, and taking part in a
+/// migration. Which engines a library round-trips is a separate claim, made per adapter.
+/// docs/implementations.md states the same number, and a test there holds the two together.
+inline constexpr int TIER = 2;
 
 /// Whether this library offers name hashing (section 2a). A mode rather than a tier: a library that
 /// offers it must pass every `hashing/` vector, whatever its tier.
