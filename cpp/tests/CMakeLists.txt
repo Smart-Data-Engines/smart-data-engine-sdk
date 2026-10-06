@@ -29,6 +29,7 @@ add_executable(sde_unit_tests
   unit/test_python_compat.cpp
   unit/test_layout.cpp
   unit/test_placement.cpp
+  unit/test_telemetry.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support GTest::gtest_main
   OpenSSL::Crypto)
@@ -43,6 +44,7 @@ add_executable(sde_conformance
   conformance/test_signature.cpp
   conformance/test_routing.cpp
   conformance/test_families.cpp
+  conformance/test_telemetry.cpp
 )
 target_link_libraries(sde_conformance PRIVATE sde_test_support GTest::gtest_main)
 gtest_discover_tests(sde_conformance DISCOVERY_MODE PRE_TEST)

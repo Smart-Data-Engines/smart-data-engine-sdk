@@ -6,7 +6,7 @@ implementation of [the format contract](../docs/format-contract.md), after Pytho
 and TypeScript, and it is held to the same shared vectors in [`conformance/`](../conformance) as
 they are.
 
-**Status: Tier 0 and hashing** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
+**Status: Tier 1 and hashing** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
 
 | | |
 |---|---|
@@ -15,11 +15,12 @@ they are.
 | Placement maps, contracts 1 to 6: signatures and key sets, write generations, physical design, groups without a generation | yes |
 | Routing (§8) | yes |
 | Name hashing (§2a) | yes |
-| Telemetry (Tier 1) | not yet |
+| Telemetry (Tier 1): the recorder, windows and the window document of §6a | yes |
 | Engines - PostgreSQL, ClickHouse, the orderbook engine (Tier 2) | not yet |
 
-Until Tier 2, this library reads and checks; it does not connect to anything. It makes no network
-call, reads no clock and keeps no state between calls.
+Until Tier 2, this library reads, checks and measures; it does not connect to anything. It makes no
+network call. The recorder reads a monotonic clock, or the one you give it, and that is the only
+state kept between calls.
 
 ## Requirements
 
@@ -102,6 +103,11 @@ keeps working for as long as its keys are configured.
   defect reads the same in all three libraries.
 - **A `Model` and a `PlacementMap` are immutable once built.** Share them between threads freely.
   Only `load_map` makes a `PlacementMap`, so holding one means every rule of §7 was checked.
+- **`sde::Recorder` takes no lock on an operation's path.** A window is a block of per-shape
+  slots of atomic counters, and `roll()` swaps the block, waits for the writes begun on the old one
+  and reads it: a write racing a roll lands in the next window, never half in one. Recording never
+  throws; what it cannot record it drops and counts (`rejected()`). The window document is
+  `Window::as_record(model)`, the same §6a document the other two libraries write, number for number.
 - **Nothing is logged unless you pass a sink** (`LoadOptions::log`). Events are named from the
   reference's closed vocabulary (`sde.map.loaded`, `sde.map.rejected`) and carry structure, never a
   row's values.

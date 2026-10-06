@@ -63,6 +63,8 @@ add_library(sde
   src/layout.cpp
   src/placement.cpp
   src/routing.cpp
+  src/telemetry.cpp
+  src/recorder.cpp
 )
 add_library(sde::sde ALIAS sde)
 target_compile_features(sde PUBLIC cxx_std_20)
