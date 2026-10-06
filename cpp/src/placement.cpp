@@ -837,7 +837,7 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
       fields.set("signed", map.signed_);
       fields.set("forward_only", map.signed_);
       fields.set("key", map.verified_with_ ? Json(*map.verified_with_) : Json(nullptr));
-      options.log("sde.map.loaded", fields);
+      detail::emit(options.log, "sde.map.loaded", fields);
     }
     return map;
   } catch (const MapError& error) {
@@ -845,7 +845,7 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
       Json fields = Json::object();
       fields.set("error", "MapError");
       fields.set("reason", truncated(error.what()));
-      options.log("sde.map.rejected", fields);
+      detail::emit(options.log, "sde.map.rejected", fields);
     }
     throw;
   }
@@ -863,7 +863,7 @@ PlacementMap load_map(std::string_view json_text, const LoadOptions& options) {
       Json fields = Json::object();
       fields.set("error", "MapError");
       fields.set("reason", truncated(refusal.what()));
-      options.log("sde.map.rejected", fields);
+      detail::emit(options.log, "sde.map.rejected", fields);
     }
     throw refusal;
   }

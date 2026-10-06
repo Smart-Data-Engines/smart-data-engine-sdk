@@ -69,6 +69,12 @@ add_library(sde
   src/value.cpp
   src/schema.cpp
   src/query.cpp
+  src/log.cpp
+  src/write_fence.cpp
+  src/watermark.cpp
+  src/migration.cpp
+  src/generation.cpp
+  src/session.cpp
 )
 add_library(sde::sde ALIAS sde)
 target_compile_features(sde PUBLIC cxx_std_20)
@@ -88,8 +94,22 @@ target_compile_definitions(sde PRIVATE
 target_link_libraries(sde
   PRIVATE OpenSSL::Crypto utf8proc::utf8proc $<BUILD_INTERFACE:sde_build_flags>)
 
+# --- the in-memory engine, for the migration vectors and for anybody's adapter tests -------------
+# A target of its own: an application links it in its tests, never in production.
+add_library(sde_testing src/testing/memory.cpp)
+add_library(sde::testing ALIAS sde_testing)
+target_compile_features(sde_testing PUBLIC cxx_std_20)
+set_target_properties(sde_testing PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME testing)
+target_include_directories(sde_testing
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(sde_testing PUBLIC sde PRIVATE $<BUILD_INTERFACE:sde_build_flags>)
+
 # --- installation: find_package(sde CONFIG) -------------------------------------------------------
-install(TARGETS sde EXPORT sdeTargets
+install(TARGETS sde sde_testing EXPORT sdeTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -10,6 +10,7 @@
 ///   (section 7d: `2.0` is `2` before signing and fingerprinting). Which spellings are integral is
 ///   decided by the double Python's `float()` makes of them, so it is decided the same way here.
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,6 +35,18 @@ namespace sde::detail {
 }
 /// `repr()` of a list of strings.
 [[nodiscard]] std::string python_repr(const std::vector<std::string>& texts);
+
+/// `str.isspace()` for one code point, which is also what `\s` matches in a pattern over text: the
+/// 29 Python reads as whitespace (Unicode's `White_Space` plus the separators U+001C to U+001F).
+/// For reading what the reference reads with Python's own rules - an engine's constraint text - and
+/// not a rule of the contract, which names Unicode's property instead (`strip_white_space`).
+[[nodiscard]] bool python_space(char32_t code_point) noexcept;
+
+/// The byte length of a Python whitespace code point at `pos`, or 0 when there is none.
+[[nodiscard]] std::size_t python_space_at(std::string_view text, std::size_t pos) noexcept;
+
+/// `text.strip()`. Stops at an ill-formed byte, which is not whitespace.
+[[nodiscard]] std::string_view python_strip(std::string_view text) noexcept;
 
 /// `type(value).__name__`: `NoneType`, `bool`, `int`, `float`, `str`, `list`, `dict`.
 [[nodiscard]] std::string python_type_name(const Json& value);
