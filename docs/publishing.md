@@ -573,6 +573,18 @@ release bumps from there to whatever number it takes. A release of one language 
 language on: after `python-v0.1.1`, Python went to `0.1.2.dev0` and TypeScript, not released,
 stayed on `0.1.1-dev.0`.
 
+**Which number.** In 0.x the minor is the compatibility line, because both registries' default
+ranges stop there:
+- `npm install` saves `^0.1.0`, which accepts 0.1.x and not 0.2.0;
+- pip's `~=0.1.1` means `>=0.1.1, ==0.1.*`.
+
+So a release that changes what a caller depends on bumps the minor. That covers an API, a refusal of
+input that used to be accepted, and a document an earlier library cannot read. A patch release
+carries fixes that change nothing a caller relies on.
+- `0.1.1` was a patch: index recovery waited for an interrupted statement.
+- `0.2.0` was not: rows the model forbids began to be refused, a function gained a required argument,
+  and contract 6 maps appeared.
+
 **The tags are per-language, and the reason is not tidiness.** One shared tag would publish an
 artefact byte-identical to its predecessor, with an empty changelog, every time the *other* language
 moved — at a version number neither registry ever hands back. What makes the two libraries agree is

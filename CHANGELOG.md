@@ -55,6 +55,26 @@ OpenSSL 3, utf8proc) and is on no package registry.
 - Four required checks join the ruleset, nineteen in all: `cpp (gcc-12)`, `cpp (clang-16)`,
   `cpp-sanitizers` and CodeQL's `analyze (c-cpp)`.
 
+## `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0
+
+Our own L2 orderbook engine becomes the third engine of both libraries, under placement map
+contract 6. On the way there, a design evaluation and a general test of the whole product on a test
+host found defects that are fixed here:
+- rows the model forbids reached the engines;
+- the library's reads used no index on a text column;
+- the local operator refused to work beside a ClickHouse administrator.
+
+**Why 0.2.0 and not a patch.** Both libraries change things a caller depends on. The version number
+has to say so to version ranges: npm's `^0.1.0` and pip's `~=0.1.1` both stop below 0.2.0, so an
+application moves on when it decides to (§5.1 of [`docs/publishing.md`](docs/publishing.md)). What
+changes for a caller:
+- **A row the model does not allow is refused before any engine.** PostgreSQL used to store NULL in a
+  required field, and ClickHouse stored `0` or `""` for one left out. Such a write now raises.
+- **`sde.fixed_schema_mismatch` takes a required `nullable` argument** (Python).
+- **A contract-6 map is refused by 0.1.x**, and a group on the orderbook engine needs one.
+- **PostgreSQL tables are created with text columns `COLLATE "C"`.** A table created by 0.1.x keeps
+  its collation, and Python names it with the remedy.
+
 **Fixed: the local operator beside the engine's administrator** (Python,
 [`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).
 On ClickHouse the operator refused every operation when the server's administrator was not its own
