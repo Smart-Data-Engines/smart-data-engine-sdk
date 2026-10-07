@@ -52,6 +52,20 @@ std::string_view failure_class(const std::exception& error) {
   return "EngineError";
 }
 
+/// The reference lets its driver's error through where an operation adds no words of its own, as
+/// the schema check does. Here that is an `EngineError` with the same text, so nothing outside the
+/// contract's classes leaves the adapter.
+template <typename Body>
+auto as_engine_error(const Body& body) -> decltype(body()) {
+  try {
+    return body();
+  } catch (const ServerError& error) {
+    throw EngineError(error.what());
+  } catch (const TransportFailure&) {
+    throw EngineError(std::string(kNotReplayed));
+  }
+}
+
 /// `[...]` of literals: how the reference's driver binds a list.
 std::string array_literal(const std::vector<std::string>& items) {
   std::string out = "[";
@@ -264,15 +278,19 @@ std::vector<PhysicalFinding> ClickHouseEngine::ensure_schema(const PhysicalLayou
   fields.set("engine", "clickhouse");
   fields.set("statements", static_cast<std::int64_t>(statements.size()));
   detail::emit(options_.log, "sde.schema.applied", fields);
-  verify_schema(layout);
-  return physical_findings(layout, keys);
+  return as_engine_error([&] {
+    verify_schema(layout);
+    return physical_findings(layout, keys);
+  });
 }
 
 std::vector<PhysicalFinding> ClickHouseEngine::validate_schema(const PhysicalLayout& layout,
                                                                const Keys& keys) {
   const Use use(*this);
-  verify_schema(layout);
-  return keys.empty() ? std::vector<PhysicalFinding>{} : physical_findings(layout, keys);
+  return as_engine_error([&] {
+    verify_schema(layout);
+    return keys.empty() ? std::vector<PhysicalFinding>{} : physical_findings(layout, keys);
+  });
 }
 
 std::vector<PhysicalFinding> ClickHouseEngine::physical_findings(const PhysicalLayout& layout,
@@ -312,7 +330,7 @@ std::vector<PhysicalFinding> ClickHouseEngine::physical_findings(const PhysicalL
                     array_literal(indexed))
                  .rows;
     } catch (const ServerError& error) {
-      if (error.code() != 497) throw EngineError(error.what());
+      if (error.code() != 497) throw;
       // Unverified, not matching: a session reports it, a person provisioning refuses on it.
       unreadable =
           "unverified: this login cannot read system.data_skipping_indices "

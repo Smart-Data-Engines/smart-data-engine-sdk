@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include "engines/postgres/connection.hpp"
+#include "live/capture.hpp"
 #include "live/live.hpp"
 #include "live/postgres.hpp"
 #include "sde/canonical.hpp"
@@ -37,6 +38,8 @@
 namespace {
 
 using sde::live::Admin;
+using sde::live::Captured;
+using sde::live::refusal;
 using sde::live::Roles;
 using sde::live::Scope;
 
@@ -89,28 +92,6 @@ sde::PlacementMap readings_map(const sde::Model& model, bool design, int version
                        options);
 }
 
-struct Captured {
-  std::vector<std::pair<std::string, sde::Json>> events;
-  [[nodiscard]] sde::LogSink sink() {
-    return [this](std::string_view event, const sde::Json& fields) {
-      events.emplace_back(std::string(event), fields);
-    };
-  }
-  /// The events of one name, each as canonical JSON.
-  [[nodiscard]] std::vector<std::string> of(std::string_view name) const {
-    std::vector<std::string> out;
-    for (const auto& [event, fields] : events) {
-      if (event == name) out.push_back(sde::canonical_bytes(fields));
-    }
-    return out;
-  }
-  [[nodiscard]] std::vector<std::string> names() const {
-    std::vector<std::string> out;
-    for (const auto& [event, fields] : events) out.push_back(event);
-    return out;
-  }
-};
-
 /// `sde.schema.text_collation` as the reference writes it for one index.
 std::string collation_event(const std::string& table, const std::string& index,
                             const std::vector<std::string>& columns) {
@@ -122,17 +103,6 @@ std::string collation_event(const std::string& table, const std::string& index,
   fields.set("columns", std::move(named));
   fields.set("remedy", kRemedy);
   return sde::canonical_bytes(fields);
-}
-
-template <typename Error>
-std::string refusal(const std::function<void()>& body) {
-  try {
-    body();
-  } catch (const Error& error) {
-    return error.what();
-  }
-  ADD_FAILURE() << "nothing was refused";
-  return "";
 }
 
 class PostgresSchema : public ::testing::Test {
