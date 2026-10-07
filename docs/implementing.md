@@ -556,7 +556,13 @@ and agreed in class and text. Two things for whoever writes the next adapter ove
   for writers in its `ALTER TABLE`, so removing the `LOCK TABLE` leaves that test green. The lock is
   what proves the table quiet on a retry, when the constraint exists, no DDL runs, and a delete - which
   no `CHECK` refuses - still holds the table. The C++ suite tests that case, the reference's adapter
-  waits in it too, and the same test is a finding for the other two libraries.
+  waits in it too, and the same test is a finding for the other two libraries;
+- **the reference applies its connection bound when the DSN does not contain the word.** It tests
+  `"connect_timeout" not in dsn`, so a DSN that merely mentions it - in an application name, a
+  password - loses the bound: against a host that accepts and never answers, measured, its connect
+  was still waiting after 20 s, where the plain DSN gave up at 10. TypeScript matches the parameter,
+  and this library hands libpq its default before the DSN, so only a `connect_timeout` the DSN sets
+  overrides it; a live test holds the mentioned case at ten seconds.
 
 ### Verification-request protocol check
 

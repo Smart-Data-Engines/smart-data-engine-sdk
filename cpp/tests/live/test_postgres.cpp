@@ -285,6 +285,20 @@ TEST_F(PostgresLive, ATimeoutTheCallerChoseWinsOverOurs) {
   EXPECT_LT(Clock::now() - started, std::chrono::seconds(7));
 }
 
+TEST_F(PostgresLive, ADsnThatOnlyMentionsTheTimeoutIsStillBounded) {
+  // The reference looks for the word in the whole DSN, so one that merely mentions it - here in the
+  // application name - loses the bound: measured, its connect was still waiting after 20 s. libpq
+  // reads the DSN's parameters, so here only a connect_timeout parameter counts.
+  sde::live::SilentServer silent;
+  sde::PostgresEngine engine(sde::live::with_parameter(sde::live::with_port(dsn_, silent.port()),
+                                                       "application_name=connect_timeout_probe"));
+  const auto started = Clock::now();
+  EXPECT_THROW(engine.connect(), sde::EngineError);
+  const auto elapsed = Clock::now() - started;
+  EXPECT_GE(elapsed, std::chrono::seconds(9));
+  EXPECT_LE(elapsed, std::chrono::seconds(15));
+}
+
 TEST_F(PostgresLive, ACutConnectionReachesTheCallerAndNothingIsRetried) {
   const sde::Model model = every_type();
   const std::string application = "sde_cpp_live_" + sde::live::fresh(8);
