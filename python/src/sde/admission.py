@@ -111,6 +111,12 @@ def _decimal(kind: str) -> Check:
             raise Misfit("a value that is not an exact decimal") from None
         sign, digits, exponent = number.as_tuple()
         assert isinstance(exponent, int)  # finite, by exact_decimal
+        if number is value and exponent == -scale and not (sign and not any(digits)):
+            # The common case on every write: a `Decimal` already at the column's scale. It is the
+            # form an engine receives, so only its integer digits are left to check.
+            if any(digits) and len(digits) + exponent > whole:
+                raise Misfit(f"more than {whole} integer digits")
+            return value
         if any(digits):
             # Trailing zeros say nothing about the value: 1.230 fits two fractional digits.
             length = len(digits)
