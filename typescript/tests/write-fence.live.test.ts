@@ -162,6 +162,87 @@ it.skipIf(PG === undefined)('PostgreSQL drains an open source transaction before
 }, 15_000)
 
 
+it.skipIf(PG === undefined)('PostgreSQL holds a retried barrier until a writer holding the table commits', async () => {
+  // A retry finds its constraint in place, so its ALTER TABLE has nothing to wait for: only the
+  // drain's LOCK TABLE holds it. The test above passed with that lock removed, because its first
+  // barrier waits in the ALTER. Finding 17 of the C++ port, whose test of the same case this is.
+  await fixture('postgres', async (engine, namespace, table) => {
+    const quote = QUOTE['postgres'] as (name: string) => string
+    const fence = engine.writeFence(table, { projectId: PROJECT })
+    await fence.prepare(1)
+    await engine.insert(table, { id: 1, [WRITE_EPOCH_COLUMN]: 1 })
+    expect((await fence.freeze(HOLD)).closed).toBe(true)
+    const writer = new Client({ connectionString: PG as string })
+    const observer = new Client({ connectionString: PG as string })
+    await writer.connect(); await observer.connect()
+    let pending: Promise<unknown> | undefined
+    let settled = false
+    try {
+      await writer.query('BEGIN')
+      // A DELETE writes no row the closed barrier could refuse, and holds the table to commit.
+      await writer.query(`DELETE FROM ${quote(namespace)}.${quote(table)} WHERE id = 1`)
+      pending = fence.freeze(HOLD).then(
+        (state) => { settled = true; return { closed: state.closed } },
+        (error: unknown) => { settled = true; return { error } },
+      )
+      const deadline = Date.now() + 5000
+      let observed = false
+      while (Date.now() < deadline && !settled) {
+        const result = await observer.query('SELECT wait_event_type FROM pg_stat_activity WHERE application_name=$1', [namespace])
+        if (result.rows.some((row) => row.wait_event_type === 'Lock')) { observed = true; break }
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      expect(settled, 'the retried barrier returned while a writer held the table').toBe(false)
+      expect(observed).toBe(true)
+      await writer.query('COMMIT')
+      expect(await pending).toEqual({ closed: true })
+      expect(await engine.count(table)).toBe(0)
+    } finally {
+      await writer.query('ROLLBACK')
+      await pending
+      await writer.end(); await observer.end()
+    }
+  })
+}, 15_000)
+
+it.skipIf(PG === undefined)('PostgreSQL fences guard an ordinary table whose reserved column is the fence\'s own', async () => {
+  // What the fence's metadata refuses. The reference had no test of any of it; the C++ port tested
+  // each case and both reference libraries answered every one the same way (finding 18).
+  await fixture('postgres', async (engine, namespace) => {
+    const quote = QUOTE['postgres'] as (name: string) => string
+    const name = (table: string): string => `${quote(namespace)}.${quote(table)}`
+    const raw = new Client({ connectionString: PG as string })
+    await raw.connect()
+    try {
+      await raw.query(`CREATE TABLE ${name('parent')} (id bigint PRIMARY KEY)`)
+      await raw.query(`CREATE TABLE ${name('child')} () INHERITS (${name('parent')})`)
+      await raw.query(`CREATE VIEW ${name('shown')} AS SELECT id FROM ${name('parent')}`)
+      for (const table of ['parent', 'child', 'shown']) {
+        await expect(engine.writeFence(table, { projectId: PROJECT }).state())
+          .rejects.toThrow('write fences support ordinary PostgreSQL tables without inheritance')
+      }
+      await expect(engine.writeFence('absent', { projectId: PROJECT }).state())
+        .rejects.toThrow('write-fence table does not exist')
+      const definitions = ['integer NOT NULL DEFAULT 0', 'bigint DEFAULT 0', 'bigint NOT NULL DEFAULT 1',
+        'bigint NOT NULL', 'bigint NOT NULL GENERATED ALWAYS AS (0) STORED']
+      for (const [index, definition] of definitions.entries()) {
+        await raw.query(`CREATE TABLE ${name('c' + index)} (id bigint PRIMARY KEY, ${quote(WRITE_EPOCH_COLUMN)} ${definition})`)
+        await expect(engine.writeFence('c' + index, { projectId: PROJECT }).state())
+          .rejects.toThrow('the reserved write-epoch column has an incompatible definition')
+      }
+      await raw.query(`CREATE TABLE ${name('own')} (id bigint PRIMARY KEY, ${quote(WRITE_EPOCH_COLUMN)} bigint NOT NULL DEFAULT 0)`)
+      expect((await engine.writeFence('own', { projectId: PROJECT }).state()).column).toBe('valid')
+      await raw.query(`CREATE TABLE ${name('plain')} (id bigint PRIMARY KEY)`)
+      await expect(engine.transaction(() => engine.writeFence('plain', { projectId: PROJECT }).prepare(1)))
+        .rejects.toThrow('write-fence DDL cannot run inside an application transaction')
+      // Nothing was changed by the refused call: the table has no reserved column.
+      expect((await engine.writeFence('plain', { projectId: PROJECT }).state()).column).toBe('absent')
+    } finally {
+      await raw.end()
+    }
+  })
+}, 15_000)
+
 it.skipIf(CH === undefined)('confirms the drain intent even when HTTP defaults enable async insertion', async () => {
   await fixture('clickhouse', async (engine, namespace, table) => {
     await engine.writeFence(table, { projectId: PROJECT }).prepare(1)
