@@ -1,0 +1,82 @@
+[
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 1,
+      "amount": "1.230"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 2,
+      "amount": "1E+3"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 3,
+      "amount": "-0.00"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 4,
+      "amount": " .5 "
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 5,
+      "amount": 7
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 6,
+      "at": "2026-11-09T11:30:15.123456+02:00"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 7,
+      "wall": "2026-11-09T11:30:15.123456+02:00"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 8,
+      "wall": "2026-11-09 09:30:15"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 9,
+      "token": "0E984725-C51C-4BF4-9960-E1C80E27ABA0"
+    }
+  },
+  {
+    "op": "save",
+    "entity": "Value",
+    "values": {
+      "id": 10,
+      "day": "2026-10-07"
+    }
+  }
+]

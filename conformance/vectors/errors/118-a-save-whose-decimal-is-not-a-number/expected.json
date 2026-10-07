@@ -1,0 +1,30 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Entry\\.amount is decimal\\(12,2\\) and this row gives it a value that is not an exact decimal",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Entry",
+      "values": {
+        "amount": "1.230",
+        "at": null,
+        "count": 1,
+        "day": "2026-10-07",
+        "id": "e-1"
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Entry",
+      "values": {
+        "amount": "NaN",
+        "at": null,
+        "count": 1,
+        "day": "2026-10-07",
+        "id": "e-2"
+      }
+    }
+  },
+  "why": "PostgreSQL stored NaN in a numeric(12,2) column and ClickHouse refused it; JavaScript's NaN reached ClickHouse as 0.00. A decimal is an exact, finite number, written as a decimal filter is."
+}
