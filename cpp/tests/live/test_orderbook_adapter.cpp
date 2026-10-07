@@ -388,6 +388,12 @@ TEST(OrderbookAdapter, ABatchBecomesUpdatesInTheOrderTheyFirstAppear) {
                                    "MINSERT BTCUSDT binance ask 2 1000\n100 3 1\n101 3 1",
                                    "MINSERT BTCUSDT binance bid 2 1000\n99 3 1\n98 3 1",
                                    "INSERT BTCUSDT binance bid 97 3 1 2000"}));
+  // First appearance, not the books' order: a later bid before an earlier ask goes first.
+  rig.fake.forget_commands();
+  rig.engine->insert_many(kTable, {row({{"timestamp_ns", integer(3000)}, {"price", integer(96)}}),
+                                   row({{"side", text("ask")}, {"timestamp_ns", integer(500)}})});
+  EXPECT_EQ(rig.fake.writes(), (std::vector<std::string>{"INSERT BTCUSDT binance bid 96 3 1 3000",
+                                                          "INSERT BTCUSDT binance ask 5000000 3 1 500"}));
 }
 
 TEST(OrderbookAdapter, UpdatesGoInRoundTripsOfSixtyFour) {
@@ -566,11 +572,15 @@ TEST(OrderbookAdapter, AReadThatMatchesNothingAsksNothing) {
   sde::ReadOptions prices = reading(book());
   prices.bounds = sde::Range{"price", integer(10), integer(10)};
   EXPECT_TRUE(rig.engine->select_rows(kTable, plan(prices)).empty());
-  // Nothing can match, so the book's name is not even checked, as in the reference.
+  // Nothing can match, so the book's name is not even checked, as in the reference: for a side that
+  // is neither, and for an empty range of time.
   EXPECT_TRUE(rig.engine->select_rows(kTable, plan(reading({{"symbol", text("bad name")},
                                                             {"exchange", text("x")},
                                                             {"side", text("mid")}})))
                   .empty());
+  sde::ReadOptions nowhere = reading({{"symbol", text("bad name")}, {"exchange", text("x")}});
+  nowhere.bounds = sde::Range{"timestamp_ns", integer(5), integer(5)};
+  EXPECT_TRUE(rig.engine->select_rows(kTable, plan(nowhere)).empty());
   // A key no row can have is answered without asking: a negative time, a side that is neither.
   EXPECT_FALSE(rig.engine->get(kTable, key_of(row({{"timestamp_ns", integer(-1)}}))).has_value());
   EXPECT_FALSE(rig.engine->get(kTable, key_of(row({{"side", text("mid")}}))).has_value());
