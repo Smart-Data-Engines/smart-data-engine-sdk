@@ -398,6 +398,16 @@ jobs:
           npm ci
           npm run build
 
+      # Built before the Python slices: the trading example's C++ half runs in them, and so under
+      # both sanitizers.
+      - name: build the C++ library, under AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libssl-dev libutf8proc-dev libpq-dev clang
+          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
+            -DSDE_SANITIZE=address,undefined -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build cpp/build
+
       - name: the orderbook slices, in-process and over TCP, plain and with TLS
         working-directory: python
         env:
@@ -405,6 +415,9 @@ jobs:
           SDE_ORDERBOOK_TCP: 127.0.0.1:59090
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+          SDE_CPP_TRADING: ${{ github.workspace }}/cpp/build/examples/sde_example_trading
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           export OB_LIB_PATH="$GITHUB_WORKSPACE/engine/build/liborderbook_shared.so"
           export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
@@ -417,14 +430,6 @@ jobs:
       # The C++ adapter against the same two servers, under both sanitizers - its TLS runs over
       # OpenSSL calls of its own - and a book written by it and read by the reference, and the
       # other way round, with this job's interpreter as the reference.
-      - name: build the C++ library, under AddressSanitizer and UndefinedBehaviorSanitizer
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            libssl-dev libutf8proc-dev libpq-dev clang
-          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
-            -DSDE_SANITIZE=address,undefined -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build cpp/build
-
       - name: the C++ orderbook slice, plain and with TLS, and beside the reference
         # With CI=true a test without its variable fails rather than skips, and a label that
         # matched nothing fails too.

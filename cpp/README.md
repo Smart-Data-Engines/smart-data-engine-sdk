@@ -179,6 +179,18 @@ map needs the keys it may be verified with - `sde::PublicKeys::bare(key)` for on
 `map.verified_with()` says which one verified it. There is no expiry anywhere in this library: a map
 keeps working for as long as its keys are configured.
 
+A whole application on all three engines is [`examples/trading/trading.cpp`](examples/trading/trading.cpp):
+[`examples/trading`](../examples/trading/README.md) - a desk's book depth, market trades, orders and
+fills - in C++, with the same commands, arguments and traffic as the Python program there, so either
+one verifies the other's runs. It reads the signed map and its keys from files, each engine's DSN
+from the environment, and `model.json` from its working directory; it links `sde::postgres`,
+`sde::clickhouse` and `sde::orderbook`, and OpenSSL for the name-based UUIDs of its traffic. This
+build makes it `examples/sde_example_trading`, and so does a client build of `cpp/examples` against
+the installed package. The SDK's `orderbook` CI job runs it under both sanitizers against the three
+engines: it provisions them, the reference reads back every row of its run and it reads back every
+row of the reference's, and its telemetry window of the traffic is the reference's
+(`python/tests/test_orderbook_trading_example.py`).
+
 ## What to expect from it
 
 - **Every refusal is an exception of the contract's classes**: `sde::DeclarationError` for a model,
