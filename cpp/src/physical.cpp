@@ -433,12 +433,7 @@ std::optional<std::vector<std::string>> parse_identifier_list(std::string_view t
   // or more reads `a, b` on all of them (measured). One pair around the whole of a list is the same
   // list, and only a list may be inside it: no name outside backticks holds a parenthesis, so a pair
   // that is not the outermost - `(a) + (b)` - leaves text that is not one.
-  if (const auto inner = parenthesised(text)) {
-    auto names = parse_names(*inner);
-    if (!names || names->empty()) return std::nullopt;
-    return names;
-  }
-  return parse_names(text);
+  return parse_names(parenthesised(text).value_or(text));
 }
 
 namespace {
