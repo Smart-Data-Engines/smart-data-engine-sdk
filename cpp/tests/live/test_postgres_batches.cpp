@@ -1,7 +1,7 @@
-/// The forward-only bookkeeping and native batches against a real PostgreSQL: `max()` over an
-/// empty table, an append-only watermark, one statement per batch inside savepoints. Ported from
-/// the reference's `test_rollback_protection_live.py` and `test_bulk_live.py`. Copies between
-/// engines, PostgreSQL's own among them, are `test_copies.cpp`.
+/// Native batches against a real PostgreSQL, where they differ from ClickHouse's: one statement a
+/// batch, conflicts and nested rollbacks inside savepoints, and a JSON value that is the document.
+/// Ported from the PostgreSQL-only cases of the reference's `test_bulk_live.py`; what both engines
+/// share is `test_bookkeeping.cpp`, and copies are `test_copies.cpp`.
 ///
 ///     SDE_POSTGRES_DSN=postgresql://postgres:sde@127.0.0.1:55432/sde ctest -L live
 
@@ -32,100 +32,6 @@ namespace {
 using sde::live::Admin;
 using sde::live::Roles;
 using sde::live::Scope;
-
-// --- the forward-only bookkeeping ---------------------------------------------------------------
-
-class PostgresWatermark : public ::testing::Test {
- protected:
-  void SetUp() override {
-    SDE_REQUIRE_DSN("SDE_POSTGRES_DSN", dsn_);
-    scope_ = std::make_unique<Scope>(dsn_);
-    engine_ = std::make_unique<sde::PostgresEngine>(scope_->dsn());
-    engine_->connect();
-  }
-
-  /// A signed contract-1 map of the model's every group in this engine, at `version`.
-  sde::PlacementMap signed_map(int version) {
-    std::string groups;
-    for (const sde::Group& group : model_.groups()) {
-      groups += (groups.empty() ? "\"" : ", \"") + group.name + R"(": {"source": {"id": ")" +
-                group.name + R"(@e", "engine": "e", "layout": {"auto": true}}})";
-    }
-    sde::LoadOptions options;
-    options.model = &model_;
-    options.public_keys = signer_.keys();
-    return sde::load_map(signer_.signed_document(sde::parse_json(
-                             R"({"contract": 1, "model_version": ")" + model_.version() +
-                             R"(", "map_version": )" + std::to_string(version) + R"(, "groups": {)" +
-                             groups + "}}")),
-                         options);
-  }
-
-  /// Opens a session on the map of `version`, which records it or refuses it.
-  sde::WatermarkCheck open(int version) {
-    const sde::PlacementMap map = signed_map(version);
-    const sde::Session session(model_, map, {{"e", engine_.get()}});
-    return session.rollback_protection();
-  }
-
-  std::int64_t rows() {
-    return std::stoll(*Admin(scope_->dsn())
-                           .rows("SELECT count(*) FROM \"" + std::string(sde::WATERMARK_TABLE) +
-                                 "\"")
-                           .at(0)
-                           .at(0));
-  }
-
-  std::string dsn_;
-  std::unique_ptr<Scope> scope_;
-  std::unique_ptr<sde::PostgresEngine> engine_;
-  sde::Model model_ = sde::load_neutral_model(R"({"entities": [{"name": "Reading", "fields": [
-      {"name": "id", "type": "uuid"}, {"name": "station", "type": "string"}], "key": ["id"]}]})");
-  sde::testing_support::Signer signer_{"the PostgreSQL watermark tests"};
-};
-
-TEST_F(PostgresWatermark, AnEmptyEngineReportsNoWatermarkAndCreatesTheTable) {
-  // max() over nothing: PostgreSQL's null comes back as "nothing has been applied".
-  EXPECT_FALSE(engine_->map_watermark().has_value());
-  // The table exists now, and asking again is the ordinary path on every restart.
-  EXPECT_FALSE(engine_->map_watermark().has_value());
-  EXPECT_EQ(rows(), 0);
-}
-
-TEST_F(PostgresWatermark, TheWatermarkAdvancesAndARollbackIsRefused) {
-  EXPECT_EQ(open(4).protection, "enforced");
-  EXPECT_EQ(engine_->map_watermark(), 4);
-  (void)open(9);
-  EXPECT_EQ(engine_->map_watermark(), 9);
-  try {
-    (void)open(8);
-    ADD_FAILURE() << "an older map was accepted";
-  } catch (const sde::MapRolledBack& error) {
-    EXPECT_NE(std::string(error.what()).find("version 9 has already been applied"),
-              std::string::npos)
-        << error.what();
-  }
-  // Equal is allowed, and the watermark does not move.
-  (void)open(9);
-  EXPECT_EQ(engine_->map_watermark(), 9);
-}
-
-TEST_F(PostgresWatermark, TheDocumentedEscapeActuallyWorks) {
-  // The refusal tells an operator to delete the rows above the version they want. It has to work:
-  // a message naming a remedy that does not is worse than one naming none.
-  (void)open(9);
-  EXPECT_THROW((void)open(5), sde::MapRolledBack);
-  Admin(scope_->dsn())
-      .run("DELETE FROM \"" + std::string(sde::WATERMARK_TABLE) + "\" WHERE map_version > 5");
-  EXPECT_EQ(open(5).protection, "enforced");
-  EXPECT_EQ(engine_->map_watermark(), 5);
-}
-
-TEST_F(PostgresWatermark, TheBookkeepingHoldsOneRowPerVersionAndNotPerStart) {
-  for (const int version : {1, 2, 2, 2, 3}) (void)open(version);
-  EXPECT_EQ(rows(), 3);
-  EXPECT_EQ(engine_->map_watermark(), 3);
-}
 
 // --- native batches -----------------------------------------------------------------------------
 
@@ -177,20 +83,6 @@ class PostgresBatches : public ::testing::Test {
   void SetUp() override { SDE_REQUIRE_DSN("SDE_POSTGRES_DSN", dsn_); }
   std::string dsn_;
 };
-
-TEST_F(PostgresBatches, OneNativeBatchKeepsEveryRowAndEveryMicrosecond) {
-  Batches batches(dsn_, "timestamptz");
-  std::vector<sde::Row> values;
-  for (int i = 0; i < 1000; ++i) {
-    values.push_back({{"id", std::int64_t{i}}, {"value", instant(i)}});
-  }
-  batches.session->save_many("Event", values);
-  EXPECT_EQ(batches.provisioning->count(batches.table), 1000U);
-  EXPECT_EQ(batches.provisioning->key_range(batches.table, {"id"}, std::nullopt, std::nullopt,
-                                            std::nullopt),
-            values);
-  EXPECT_EQ(batches.session->get("Event", {{"id", std::int64_t{999}}}), values.back());
-}
 
 TEST_F(PostgresBatches, ABatchIsOneStatementAndKeepsConflictsAndNestedRollbacks) {
   Batches batches(dsn_, "timestamptz");
@@ -253,19 +145,6 @@ TEST_F(PostgresBatches, AJsonValueInABatchIsTheDocument) {
   });
   EXPECT_EQ(batches.provisioning->get(batches.table, {{"id", std::int64_t{1}}})->at("value"), nested);
   EXPECT_EQ(batches.provisioning->get(batches.table, {{"id", std::int64_t{2}}})->at("value"), listed);
-}
-
-TEST_F(PostgresBatches, ABadBatchNeverReachesTheServer) {
-  Batches batches(dsn_, "timestamptz");
-  EXPECT_THROW(batches.session->save_many(
-                   "Event", {{{"id", std::int64_t{1}}, {"value", instant(0)}}, {{"id", std::int64_t{2}}}}),
-               sde::BulkWriteRefused);
-  EXPECT_EQ(batches.provisioning->count(batches.table), 0U);
-  EXPECT_THROW(batches.runtime->insert_many(
-                   batches.table, {{{"a b", std::int64_t{1}}, {"c", std::int64_t{2}}},
-                                   {{"a", std::int64_t{1}}, {"b c", std::int64_t{2}}}}),
-               sde::BulkWriteRefused);
-  EXPECT_EQ(batches.provisioning->count(batches.table), 0U);
 }
 
 }  // namespace

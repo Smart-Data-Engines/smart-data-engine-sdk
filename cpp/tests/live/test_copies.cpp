@@ -28,6 +28,8 @@
 #include <gtest/gtest.h>
 
 #include "live/live.hpp"
+#include "live/sides.hpp"
+#include "sde/layout.hpp"
 #include "sde/errors.hpp"
 #include "sde/json.hpp"
 #include "sde/migration.hpp"
@@ -39,159 +41,23 @@
 #include "sde/verification.hpp"
 #include "sde/write_fence.hpp"
 
-#ifdef SDE_LIVE_POSTGRES
-#include "live/postgres.hpp"
-#include "sde/postgres.hpp"
-#endif
-#ifdef SDE_LIVE_CLICKHOUSE
-#include "live/clickhouse.hpp"
-#include "sde/clickhouse.hpp"
-#endif
-
 namespace {
 
 const std::string kSource = "mig_src";
 const std::string kTarget = "mig_dst";
 const std::string kProject(32, '1');
 
-/// One engine of a pair, in a namespace of its own - a schema or a database - dropped with it.
-class Side {
- public:
-  virtual ~Side() = default;
-  [[nodiscard]] virtual std::string dialect() const = 0;
-  [[nodiscard]] virtual sde::Engine& engine() = 0;
-  /// A fresh adapter on the same namespace, as an operator re-running a job has.
-  virtual void reconnect() = 0;
-  /// Rows out of a table by hand: deliberate damage is the only way to test a gate.
-  virtual void remove(const std::string& table, const std::string& where) = 0;
-  virtual void drop(const std::string& table) = 0;
-  /// The engine's type for `int32`, `string` and `timestamptz`.
-  [[nodiscard]] virtual std::string type_of(const std::string& neutral) const = 0;
+using sde::live::across;
+using sde::live::Direction;
+using sde::live::direction_name;
+using sde::live::directions;
+using sde::live::Side;
+using sde::live::side_of;
 
-  sde::Migratable& migration() { return *engine().capabilities().migration; }
-};
-
-#ifdef SDE_LIVE_POSTGRES
-class PostgresSide final : public Side {
- public:
-  explicit PostgresSide(const std::string& dsn) : scope_(dsn) { reconnect(); }
-  [[nodiscard]] std::string dialect() const override { return "postgres"; }
-  sde::Engine& engine() override { return *engine_; }
-  void reconnect() override {
-    engine_ = std::make_unique<sde::PostgresEngine>(scope_.dsn());
-    engine_->connect();
-  }
-  void remove(const std::string& table, const std::string& where) override {
-    (void)sde::live::Admin(scope_.dsn()).run("DELETE FROM \"" + table + "\" WHERE " + where);
-  }
-  void drop(const std::string& table) override {
-    (void)sde::live::Admin(scope_.dsn()).run("DROP TABLE \"" + table + "\"");
-  }
-  [[nodiscard]] std::string type_of(const std::string& neutral) const override {
-    if (neutral == "int32") return "integer";
-    if (neutral == "string") return "text";
-    return "timestamptz";
-  }
-
- private:
-  sde::live::Scope scope_;
-  std::unique_ptr<sde::PostgresEngine> engine_;
-};
-#endif
-
-#ifdef SDE_LIVE_CLICKHOUSE
-class ClickHouseSide final : public Side {
- public:
-  explicit ClickHouseSide(const std::string& dsn) : scope_(dsn) { reconnect(); }
-  [[nodiscard]] std::string dialect() const override { return "clickhouse"; }
-  sde::Engine& engine() override { return *engine_; }
-  void reconnect() override {
-    engine_ = std::make_unique<sde::ClickHouseEngine>(scope_.dsn());
-    engine_->connect();
-  }
-  void remove(const std::string& table, const std::string& where) override {
-    // A lightweight delete, waited for, as the reference's test deletes.
-    scope_.admin().run("DELETE FROM `" + table + "` WHERE " + where + " SETTINGS mutations_sync = 2");
-  }
-  void drop(const std::string& table) override {
-    scope_.admin().run("DROP TABLE `" + table + "` SYNC");
-  }
-  [[nodiscard]] std::string type_of(const std::string& neutral) const override {
-    if (neutral == "int32") return "Int32";
-    if (neutral == "string") return "String";
-    return "DateTime64(6, 'UTC')";
-  }
-
- private:
-  sde::live::ClickHouseScope scope_;
-  std::unique_ptr<sde::ClickHouseEngine> engine_;
-};
-#endif
-
-std::unique_ptr<Side> side_of(const std::string& dialect) {
-#ifdef SDE_LIVE_POSTGRES
-  if (dialect == "postgres") {
-    std::string dsn;
-    if (const auto found = sde::live::dsn_from("SDE_POSTGRES_DSN")) dsn = *found;
-    return dsn.empty() ? nullptr : std::make_unique<PostgresSide>(dsn);
-  }
-#endif
-#ifdef SDE_LIVE_CLICKHOUSE
-  if (dialect == "clickhouse") {
-    std::string dsn;
-    if (const auto found = sde::live::dsn_from("SDE_CLICKHOUSE_DSN")) dsn = *found;
-    return dsn.empty() ? nullptr : std::make_unique<ClickHouseSide>(dsn);
-  }
-#endif
-  return nullptr;
+/// The engine's own type for a neutral one, as its default layout renders it.
+std::string type_of(const Side& side, const std::string& neutral) {
+  return sde::column_type(neutral, side.dialect());
 }
-
-/// Where a group goes: from `source` to `target`, through one adapter or two.
-struct Direction {
-  std::string source;
-  std::string target;
-  bool two = false;
-};
-
-void PrintTo(const Direction& direction, std::ostream* out) {
-  *out << direction.source << " to " << direction.target
-       << (direction.two ? ", two adapters" : ", one adapter");
-}
-
-std::string name_of(const ::testing::TestParamInfo<Direction>& info) {
-  const auto short_name = [](const std::string& dialect) {
-    return dialect == "postgres" ? std::string("Postgres") : std::string("ClickHouse");
-  };
-  std::string name = short_name(info.param.source) + "To" + short_name(info.param.target);
-  if (info.param.source == info.param.target) name += info.param.two ? "TwoAdapters" : "OneAdapter";
-  return name;
-}
-
-std::vector<Direction> directions() {
-  std::vector<Direction> out;
-#ifdef SDE_LIVE_POSTGRES
-  out.push_back({"postgres", "postgres", false});
-  out.push_back({"postgres", "postgres", true});
-#endif
-#ifdef SDE_LIVE_CLICKHOUSE
-  out.push_back({"clickhouse", "clickhouse", false});
-  out.push_back({"clickhouse", "clickhouse", true});
-#endif
-#if defined(SDE_LIVE_POSTGRES) && defined(SDE_LIVE_CLICKHOUSE)
-  out.push_back({"postgres", "clickhouse", true});
-  out.push_back({"clickhouse", "postgres", true});
-#endif
-  return out;
-}
-
-/// The skip, or in CI the failure, for an engine whose DSN is not set.
-#define SDE_REQUIRE_SIDE(side, dialect)                                                      \
-  do {                                                                                       \
-    if (!(side)) {                                                                           \
-      if (::sde::live::in_ci()) FAIL() << "the " << (dialect) << " DSN is not set in CI";   \
-      GTEST_SKIP() << "set the " << (dialect) << " DSN to run this direction";             \
-    }                                                                                        \
-  } while (false)
 
 // --- copies of a group --------------------------------------------------------------------------
 
@@ -220,8 +86,8 @@ class Copies : public ::testing::TestWithParam<Direction> {
 
   sde::PlacementMap copying() {
     const auto columns = [&](const Side& side) {
-      return R"({"Reading": {"tenant": ")" + side.type_of("int32") + R"(", "seq": ")" +
-             side.type_of("int32") + R"(", "station": ")" + side.type_of("string") + R"("}})";
+      return R"({"Reading": {"tenant": ")" + type_of(side, "int32") + R"(", "seq": ")" +
+             type_of(side, "int32") + R"(", "station": ")" + type_of(side, "string") + R"("}})";
     };
     sde::LoadOptions options;
     options.model = model_.get();
@@ -402,7 +268,7 @@ TEST_P(Copies, TheMeasuredLagOfACopyIsARealServersWrite) {
   EXPECT_EQ(target().migration().count(kTarget), 10U);
 }
 
-INSTANTIATE_TEST_SUITE_P(Directions, Copies, ::testing::ValuesIn(directions()), name_of);
+INSTANTIATE_TEST_SUITE_P(Directions, Copies, ::testing::ValuesIn(directions()), direction_name);
 
 // --- a moment in the key ------------------------------------------------------------------------
 
@@ -421,8 +287,8 @@ TEST_P(MomentKeyedCopies, ABackfillResumesAndVerifiesExactMoments) {
       {"name": "value", "type": "int32"}], "key": ["station", "at"]}]})");
   const auto material = [&](const Side& side, const std::string& name) {
     return R"({"id": ")" + name + R"(", "engine": ")" + name + R"(", "layout": {"tables": {"Reading": ")" +
-           name + R"(_readings"}, "columns": {"Reading": {"station": ")" + side.type_of("string") +
-           R"(", "at": ")" + side.type_of("timestamptz") + R"(", "value": ")" + side.type_of("int32") +
+           name + R"(_readings"}, "columns": {"Reading": {"station": ")" + type_of(side, "string") +
+           R"(", "at": ")" + type_of(side, "timestamptz") + R"(", "value": ")" + type_of(side, "int32") +
            R"("}}}})";
   };
   std::string copy = material(*target, "copy");
@@ -473,16 +339,7 @@ TEST_P(MomentKeyedCopies, ABackfillResumesAndVerifiesExactMoments) {
   }
 }
 
-std::vector<Direction> across() {
-  std::vector<Direction> out;
-#if defined(SDE_LIVE_POSTGRES) && defined(SDE_LIVE_CLICKHOUSE)
-  out.push_back({"postgres", "clickhouse", true});
-  out.push_back({"clickhouse", "postgres", true});
-#endif
-  return out;
-}
-
-INSTANTIATE_TEST_SUITE_P(Across, MomentKeyedCopies, ::testing::ValuesIn(across()), name_of);
+INSTANTIATE_TEST_SUITE_P(Across, MomentKeyedCopies, ::testing::ValuesIn(across()), direction_name);
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(MomentKeyedCopies);
 
 }  // namespace
