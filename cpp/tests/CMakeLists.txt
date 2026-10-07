@@ -108,8 +108,8 @@ if(TARGET sde_clickhouse)
   endif()
   target_sources(sde_live_tests PRIVATE live/test_clickhouse.cpp live/test_clickhouse_schema.cpp
     live/test_clickhouse_types.cpp live/test_clickhouse_reads.cpp live/test_clickhouse_fences.cpp
-    live/test_clickhouse_storage.cpp)
-  target_link_libraries(sde_live_tests PRIVATE sde_clickhouse)
+    live/test_clickhouse_storage.cpp live/test_clickhouse_tls.cpp)
+  target_link_libraries(sde_live_tests PRIVATE sde_clickhouse OpenSSL::SSL)
 endif()
 # What runs against whichever adapters are built: copies in every direction they allow, and the
 # agreement of two engines on one value, which needs both.
