@@ -33,6 +33,7 @@ inline constexpr std::string_view LOG_EVENTS[] = {
     "sde.schema.text_collation",
     "sde.schema.physical_mismatch",
     "sde.write.failed",
+    "sde.orderbook.flushed",
     "sde.migration.divergence",
     "sde.migration.backfill_progress",
     "sde.telemetry.storage_unavailable",
