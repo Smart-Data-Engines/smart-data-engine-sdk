@@ -113,11 +113,15 @@ TEST_F(PostgresStorage, ARuntimeSessionMeasuresItsGroupAndTheWindowCarriesIt) {
   ASSERT_TRUE(window.has_value());
   const sde::Json record = window->as_record(model);
   const sde::Json& body = *record.find("groups")->find("Event");
-  EXPECT_EQ(sde::dump_json(*body.find("total_bytes")), std::to_string(size.total_bytes));
+  const sde::Json* carried = body.find("total_bytes");
+  ASSERT_NE(carried, nullptr) << "the window does not carry the size";
+  EXPECT_EQ(sde::dump_json(*carried), std::to_string(size.total_bytes));
   for (const sde::Json& missing : body.find("missing")->as_array()) {
     EXPECT_NE(missing.as_string(), "total_bytes");
   }
-  EXPECT_GE(std::stod(sde::dump_json(*body.find("write_burstiness"))), 1.0);
+  const sde::Json* burstiness = body.find("write_burstiness");
+  ASSERT_NE(burstiness, nullptr);
+  EXPECT_GE(std::stod(sde::dump_json(*burstiness)), 1.0);
 }
 
 TEST_F(PostgresStorage, AGroupWhoseTableIsGoneIsUnknownAndSaysWhy) {
