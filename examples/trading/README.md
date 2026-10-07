@@ -1,7 +1,7 @@
 # A trading firm's application on three engines
 
-A desk's market data and orders, written and read through the logical API in Python and in
-TypeScript. [`model.json`](model.json) declares four entities:
+A desk's market data and orders, written and read through the logical API in Python, TypeScript
+and C++. [`model.json`](model.json) declares four entities:
 - `DepthLevel` is L2 book depth, in exactly the shape our orderbook engine stores;
 - `MarketTrade` is the trades of each book;
 - `Order` and `Fill` must commit together, so they are one colocation group.
@@ -40,6 +40,11 @@ node trading.mjs verify $common --run $RUN2 --depth-run $RUN
   row without one fails verification.
 - `trading.mjs` is the TypeScript half: orders, fills and trades, plus a read of the depth the Python
   half wrote. It imports `@smart-data-engines/sde`.
+- [`cpp/examples/trading/trading.cpp`](../../cpp/examples/trading/trading.cpp) is the whole program
+  in C++: `provision`, `run` and `verify` with these arguments and this traffic, so `trading.py
+  verify` reads back a run it wrote, and it reads back a run `trading.py` wrote. It reads
+  `model.json` from its working directory, and exits 1 when `verify` found a difference and 2 on
+  anything else.
 
 Two properties of the orderbook engine shape the program:
 - A write is visible to another connection at the server's next flush tick (100 ms by default), or
@@ -48,5 +53,5 @@ Two properties of the orderbook engine shape the program:
 - The engine does not enforce its key, so two updates at one nanosecond of one side of one book make
   later reads refuse. The generator gives every update its own instant.
 
-The SDK runs this example on all three engines in CI
+The SDK runs this example on all three engines in CI, from all three libraries
 (`python/tests/test_orderbook_trading_example.py`).
