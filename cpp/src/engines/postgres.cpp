@@ -24,6 +24,7 @@
 #include "sde/placement.hpp"
 #include "sde/query.hpp"
 #include "sde/schema.hpp"
+#include "storage_internal.hpp"
 
 namespace sde {
 
@@ -703,7 +704,9 @@ std::map<std::string, std::pair<std::int64_t, std::int64_t>> PostgresEngine::sto
       out[std::string(result.text(row, 0))] = {number(1), number(2)};
     }
   } catch (const ServerError& error) {
-    throw EngineError("storage sizes could not be read: " + explain(error.what()));
+    const std::string message = "storage sizes could not be read: " + explain(error.what());
+    if (error.sqlstate() == "42501") throw detail::CatalogueRefused(message);
+    throw EngineError(message);
   }
   return out;
 }

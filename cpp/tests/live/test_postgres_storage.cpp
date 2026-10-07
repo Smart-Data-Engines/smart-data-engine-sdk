@@ -147,4 +147,50 @@ TEST_F(PostgresStorage, AGroupWhoseTableIsGoneIsUnknownAndSaysWhy) {
   EXPECT_EQ(measured.unavailable, (std::map<std::string, std::string>{{"Event", "missing_table"}}));
 }
 
+TEST_F(PostgresStorage, ASizeTheCatalogueRefusesIsRefusedNotFailed) {
+  // A login the catalogue refuses - SQLSTATE 42501 - is told apart from an engine that failed, as
+  // the reference tells them apart from its driver's error. The refusal is made by taking the size
+  // function from PUBLIC for the length of the test, which every login but a superuser feels.
+  Roles roles(dsn_);
+  Admin admin(dsn_);
+  struct Restore {
+    Admin& admin;
+    ~Restore() {
+      try {
+        (void)admin.run("GRANT EXECUTE ON FUNCTION pg_total_relation_size(regclass) TO PUBLIC");
+      } catch (...) {
+        ADD_FAILURE() << "pg_total_relation_size could not be given back to PUBLIC";
+      }
+    }
+  };
+  const sde::Model model = sde::load_neutral_model(
+      R"({"entities": [{"name": "Event", "fields": [{"name": "id", "type": "int64"}],
+                        "key": ["id"]}]})");
+  sde::LoadOptions options;
+  options.model = &model;
+  const sde::PlacementMap map = sde::load_map(
+      R"({"contract": 3, "model_version": ")" + model.version() + R"(", "map_version": 1,
+          "groups": {"Event": {"source": {"engine": "db", "id": "source", "layout": {
+          "tables": {"Event": "events"}, "columns": {"Event": {"id": "bigint"}}}}}}})",
+      options);
+  const auto provisioning = connected(roles.operator_dsn());
+  (void)provisioning->ensure_schema(map.placement_of("Event").source.layout, {{"Event", {"id"}}});
+  roles.grant("events");
+  const auto runtime = connected(roles.runtime_dsn());
+  sde::Session session(model, map, {{"db", runtime.get()}});
+  const Restore restore{admin};
+  (void)admin.run("REVOKE EXECUTE ON FUNCTION pg_total_relation_size(regclass) FROM PUBLIC");
+  const sde::StorageMeasurement measured = session.measure_storage();
+  EXPECT_TRUE(measured.sizes.empty());
+  EXPECT_EQ(measured.unavailable, (std::map<std::string, std::string>{{"Event", "refused"}}));
+  try {
+    (void)runtime->storage_sizes({"events"});
+    ADD_FAILURE() << "the size was read";
+  } catch (const sde::EngineError& error) {
+    EXPECT_EQ(std::string(error.what()),
+              "storage sizes could not be read: permission denied for function "
+              "pg_total_relation_size");
+  }
+}
+
 }  // namespace
