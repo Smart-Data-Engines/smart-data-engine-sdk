@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -119,6 +120,31 @@ def test_a_clickhouse_administrator_beside_the_operator_is_trusted() -> None:
             assert native.qualify(["events"], ["events", WATERMARK_TABLE]) == (held.username,)
 
 
+def test_a_hole_in_access_management_leaves_no_administrator() -> None:
+    """The whole group or no administrator: a user missing one member of it is refused.
+
+    A member granted per table, revoked on one, is a partial revoke on 24.8 as on 26.5 (measured),
+    whether the server lists the group as one row or member by member.
+    """
+    from test_runtime_privileges_live import outsider, runtime_roles
+
+    with runtime_roles("clickhouse") as held:
+        native = prepare(held)
+        name = held.namespace + "_almost"
+        with (
+            outsider(
+                "clickhouse",
+                name,
+                "GRANT ACCESS MANAGEMENT ON *.* TO {who}",
+                "GRANT SELECT, INSERT ON *.* TO {who}",
+                f"REVOKE CREATE ROW POLICY ON `{held.namespace}`.`events` FROM {{who}}",
+            ),
+            pytest.raises(sde.MigrationRefused, match="undeclared") as refused,
+        ):
+            native.qualify(["events"], ["events", WATERMARK_TABLE])
+        assert f"user {name} (" in str(refused.value), refused.value
+
+
 def test_a_global_reader_refuses_a_cutover_and_is_named() -> None:
     """Global SELECT without ACCESS MANAGEMENT - a monitoring or backup login - still refuses.
 
@@ -151,7 +177,12 @@ def test_administration_through_a_role_is_not_trusted() -> None:
             pytest.raises(sde.MigrationRefused, match="undeclared") as refused,
         ):
             native.qualify(["events"], ["events", WATERMARK_TABLE])
-        assert f"role {name} (ACCESS MANAGEMENT ON *.*)" in str(refused.value), refused.value
+        # The role is named with its global grants: `ACCESS MANAGEMENT ON *.*` on 24.8, the
+        # group's members from 26.5 on, which lists them one per row (measured).
+        named = re.search(rf"role {re.escape(name)} \(([^)]*)\)", str(refused.value))
+        assert named is not None, refused.value
+        rights = named.group(1).removesuffix(", ...").split(", ")
+        assert all(right.endswith(" ON *.*") for right in rights), refused.value
 
 
 def test_an_index_build_qualifies_its_logins_without_the_reader_rule(roles: Any) -> None:
