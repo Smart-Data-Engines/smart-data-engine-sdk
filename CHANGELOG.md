@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: the orderbook adapter's connection, as the C++ port found it** (Python,
+[`docs/orderbook.md`](docs/orderbook.md)).
+- A write with no connection was reported as a write that may have been stored. The adapter read
+  its connection inside the write's own `try`, so `insert` before `connect()` answered that the
+  engine did not confirm the write and logged `sde.write.failed`. `insert_many` failed with an
+  `AttributeError`, and after a lost connection it reported an unknown outcome for updates never
+  sent. Both now refuse with `not connected; call connect() first`, before anything is sent, as
+  TypeScript does.
+- `connect()` kept a connection the engine's client had closed. After an exchange that does not
+  finish, the client closes its connection and says why on every later call, and `connect()`
+  returned at once because a client was set. It pings the connection now and replaces a closed one.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
