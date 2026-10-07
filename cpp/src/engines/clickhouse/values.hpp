@@ -30,13 +30,18 @@ struct Answer {
   std::vector<std::vector<Value>> rows;
 };
 
-/// Reads `RowBinaryWithNamesAndTypes`. Refuses (`EngineError`) a type this library does not read,
-/// an integer past 64 bits where one was promised, and an answer that ends early.
+/// Reads `RowBinaryWithNamesAndTypes` as the reference's driver reads each type: an integer type of
+/// 128 or 256 bits as an exact decimal, `FixedString` as bytes, padding included, an enum as its
+/// name, a moment with a zone as an instant and one without as a wall-clock reading. Refuses
+/// (`EngineError`) a type this library does not read, a UInt64 past 2^63 - 1 and a moment finer
+/// than a microsecond - where the reference returns a Python int and cuts the nanoseconds - and an
+/// answer that ends early.
 [[nodiscard]] Answer decode_answer(std::string_view body);
 
 /// Writes rows as `RowBinaryWithNamesAndTypes` for columns of these types, each value as its
 /// column's type holds it. Refuses (`EngineError`) a value the column cannot hold without changing
-/// it - out of range, a decimal with more fractional digits than the column keeps, another kind.
+/// it - out of range, a decimal or a moment with more digits than the column keeps, an enum name the
+/// type does not declare, another kind - where the reference's driver cuts or stores 0.
 [[nodiscard]] std::string encode_rows(const std::vector<std::string>& names,
                                       const std::vector<std::string>& types,
                                       const std::vector<std::vector<Value>>& rows);

@@ -9,7 +9,9 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <variant>
+#include <vector>
 
 #include "bignum.hpp"
 #include "python_compat.hpp"
@@ -167,15 +169,18 @@ std::pair<bool, std::string> wide_integer(const char* data, std::size_t bytes, b
   return {negative, value.to_decimal()};
 }
 
-/// The other way: `digits` with a sign as `bytes` bytes of two's complement. Refuses a value that
-/// does not fit.
-std::string wide_bytes(bool negative, const std::string& digits, std::size_t bytes) {
+/// The other way: `digits` with a sign as `bytes` bytes of two's complement, or of an unsigned
+/// integer. Refuses a value that does not fit.
+std::string wide_bytes(bool negative, const std::string& digits, std::size_t bytes,
+                       bool is_signed = true) {
   BigUnsigned value = *BigUnsigned::from_decimal(digits);
   const BigUnsigned base(256);
   BigUnsigned whole(1);
   for (std::size_t i = 0; i < bytes; ++i) whole = whole * base;
   BigUnsigned half = divmod(whole, BigUnsigned(2)).first;
-  if (negative ? value > half : value >= half) {
+  const bool fits = is_signed ? (negative ? !(value > half) : value < half)
+                              : (!negative || value.is_zero()) && value < whole;
+  if (!fits) {
     throw EngineError("a value does not fit the column's " + std::to_string(bytes * 8) + " bits");
   }
   if (negative && !value.is_zero()) value = whole - value;
@@ -287,8 +292,11 @@ Value read_value(Reader& in, std::string_view type) {
   }
   if (type == "String") return in.string();
   if (const auto inside = wrapped(type, "FixedString")) {
-    const int size = number(*inside);
-    return std::string(in.take(static_cast<std::size_t>(size)), static_cast<std::size_t>(size));
+    // Bytes, as the reference's driver reads it: the padding is part of the value.
+    const auto size = static_cast<std::size_t>(number(*inside));
+    const char* start = in.take(size);
+    return Bytes{std::vector<std::uint8_t>(reinterpret_cast<const std::uint8_t*>(start),
+                                           reinterpret_cast<const std::uint8_t*>(start) + size)};
   }
   if (type == "UUID") {
     // Two 64-bit halves, each little-endian, the high one first.
@@ -420,7 +428,14 @@ void write_value(std::string& out, const Value& value, std::string_view type) {
     } else {
       cannot_hold(type);
     }
-    if (type == "Float32") return fixed<float>(out, static_cast<float>(number));
+    if (type == "Float32") {
+      // A finite number past what 32 bits hold would become an infinity: refused, as the
+      // reference's driver refuses it. Precision is the type's, as there.
+      if (std::isfinite(number) && std::fabs(number) > std::numeric_limits<float>::max()) {
+        cannot_hold(type);
+      }
+      return fixed<float>(out, static_cast<float>(number));
+    }
     return fixed<double>(out, number);
   }
   if (const auto decimal = decimal_type(type)) {
@@ -453,12 +468,63 @@ void write_value(std::string& out, const Value& value, std::string_view type) {
     cannot_hold(type);
   }
   if (const auto inside = wrapped(type, "FixedString")) {
+    // Bytes of exactly the column's size, or text no longer than it, padded with zero bytes: the
+    // reference's driver takes both, and refuses bytes of another size.
     const auto size = static_cast<std::size_t>(number(*inside));
+    if (const auto* bytes = std::get_if<Bytes>(&value)) {
+      if (bytes->data.size() != size) cannot_hold(type);
+      out.append(reinterpret_cast<const char*>(bytes->data.data()), size);
+      return;
+    }
     const auto* text = std::get_if<std::string>(&value);
     if (text == nullptr || text->size() > size) cannot_hold(type);
     out += *text;
     out.append(size - text->size(), '\0');
     return;
+  }
+  for (const auto& [name, bytes, is_signed] :
+       {std::tuple<std::string_view, std::size_t, bool>{"Int128", 16, true},
+        {"UInt128", 16, false},
+        {"Int256", 32, true},
+        {"UInt256", 32, false}}) {
+    if (type != name) continue;
+    // An integer: an int64, or a decimal written without a point.
+    std::string digits;
+    bool negative = false;
+    if (integer != nullptr) {
+      negative = *integer < 0;
+      digits = negative ? std::to_string(static_cast<std::uint64_t>(-(*integer + 1)) + 1)
+                        : std::to_string(*integer);
+    } else if (const auto* exact = std::get_if<Decimal>(&value); exact != nullptr && exact->scale() == 0) {
+      negative = exact->negative();
+      digits = exact->coefficient();
+    } else {
+      cannot_hold(type);
+    }
+    try {
+      out += wide_bytes(negative, digits, bytes, is_signed);
+    } catch (const EngineError&) {
+      cannot_hold(type);
+    }
+    return;
+  }
+  for (const auto& [prefix, bytes] : {std::pair<std::string_view, int>{"Enum8", 1}, {"Enum16", 2}}) {
+    const auto inside = wrapped(type, prefix);
+    if (!inside) continue;
+    // A name the type declares, or its number. The reference's driver writes 0 for a name or a
+    // number the type does not declare, which leaves a row no read can turn back into text.
+    const std::map<std::int64_t, std::string> names = enum_names(*inside);
+    std::optional<std::int64_t> code;
+    if (const auto* text = std::get_if<std::string>(&value)) {
+      for (const auto& [number_of, name_of] : names) {
+        if (name_of == *text) code = number_of;
+      }
+    } else if (integer != nullptr && names.contains(*integer)) {
+      code = *integer;
+    }
+    if (!code) cannot_hold(type);
+    if (bytes == 1) return fixed<std::int8_t>(out, static_cast<std::int8_t>(*code));
+    return fixed<std::int16_t>(out, static_cast<std::int16_t>(*code));
   }
   if (type == "UUID") {
     const auto* id = std::get_if<Uuid>(&value);
