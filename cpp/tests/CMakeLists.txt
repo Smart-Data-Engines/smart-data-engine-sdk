@@ -76,7 +76,10 @@ gtest_discover_tests(sde_conformance DISCOVERY_MODE PRE_TEST)
 # The adapters against real engines. Without a DSN each test is skipped, and says so; with CI=true
 # it fails instead, because a green job that ran nothing looks exactly like one that passed.
 if(TARGET sde_postgres)
-  add_executable(sde_live_tests live/test_postgres.cpp)
+  add_executable(sde_live_tests
+    live/test_postgres.cpp
+    live/test_postgres_schema.cpp
+  )
   target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing sde_postgres
     PostgreSQL::PostgreSQL GTest::gtest_main)
   gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
