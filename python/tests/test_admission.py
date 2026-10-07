@@ -65,6 +65,17 @@ def test_a_decimal_that_fits_reaches_the_engine_at_its_scale(given: Any, held: s
     assert format(got, "f") == held
 
 
+def test_a_decimal_already_at_its_scale_is_passed_on_as_it_is() -> None:
+    """The fast path of every write that gives a `Decimal`, and the three ways it could go wrong."""
+    given = Decimal("1.23")
+    assert admits("decimal(12,2)", given) is given
+    assert refusal("decimal(12,2)", Decimal("12345678901.23")) == "more than 10 integer digits"
+    # Negative zero is at the scale too, and still reaches the engine as zero.
+    assert str(admits("decimal(12,2)", Decimal("-0.00"))) == "0.00"
+    # A trailing zero past the scale is not the column's form.
+    assert str(admits("decimal(12,2)", Decimal("1.230"))) == "1.23"
+
+
 def test_an_integer_given_to_a_decimal_stays_the_integer() -> None:
     given = 7
     assert admits("decimal(12,2)", given) is given

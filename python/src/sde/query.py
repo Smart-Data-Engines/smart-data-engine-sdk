@@ -116,7 +116,8 @@ def exact_decimal(value: Any) -> Decimal:
     ):
         raise QueryRefused("invalid decimal query value")
     try:
-        number = Decimal(value)
+        # A `Decimal` is immutable, and a copy of one would cost every write that gives one.
+        number = value if type(value) is Decimal else Decimal(value)
     except InvalidOperation:
         raise QueryRefused("invalid decimal query value") from None
     if not number.is_finite():
