@@ -19,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -408,13 +409,15 @@ TEST_F(ClickHouseLive, AServerThatAcceptsAndStaysSilentIsBoundedByTheTimeout) {
 TEST_F(ClickHouseLive, AHandshakeThatNeverEndsIsBoundedAsAWhole) {
   // A server that answers byte by byte and never finishes is never silent, so the bound on silence
   // alone would wait for ever; the handshake is bounded as a whole by send_receive_timeout too.
-  sde::live::TrickleServer server(std::chrono::milliseconds(200));
-  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server.port()) +
+  std::optional<sde::live::TrickleServer> server(std::in_place, std::chrono::milliseconds(200));
+  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server->port()) +
                            "/default?send_receive_timeout=2");
   const auto started = Clock::now();
   auto opened = std::async(std::launch::async, [&] { return message_of([&] { ch.connect(); }); });
-  ASSERT_EQ(opened.wait_for(std::chrono::seconds(10)), std::future_status::ready)
-      << "the handshake was still waiting after ten seconds";
+  if (opened.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+    server.reset();  // the connection closes, and the handshake with it
+    FAIL() << "the handshake was still waiting after ten seconds";
+  }
   const double seconds = std::chrono::duration<double>(Clock::now() - started).count();
   EXPECT_EQ(opened.get(),
             "could not connect to ClickHouse: ClickHouse transport failed; the operation was not "
