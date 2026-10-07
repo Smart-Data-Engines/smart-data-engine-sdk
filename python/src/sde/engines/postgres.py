@@ -121,7 +121,9 @@ class PostgresEngine:
         without a bound it happens inside the caller's request path with nothing to time out.
 
         The default is only applied when the caller has not chosen one. A ``connect_timeout`` in
-        the DSN is their decision about their own network and this must not override it.
+        the DSN is their decision about their own network and this must not override it. A choice
+        is the key, read as libpq reads the DSN: until 7 October 2026 the word anywhere in the text
+        counted, and an application name that contained it left the connect unbounded.
         """
         if self._conn is not None and self._unusable:
             raise EngineError(
@@ -129,9 +131,9 @@ class PostgresEngine:
             )
         if self._conn is None:
             options: dict[str, Any] = {}
-            if "connect_timeout" not in self._dsn:
-                options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
             try:
+                if "connect_timeout" not in self._psycopg.conninfo.conninfo_to_dict(self._dsn):
+                    options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
                 self._conn = self._psycopg.connect(self._dsn, autocommit=True, **options)
                 self._conn.adapters.register_loader("float4", _float32_loader())
                 self._unusable = False
