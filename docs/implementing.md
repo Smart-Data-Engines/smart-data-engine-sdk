@@ -610,8 +610,21 @@ the next one:
   the fake put the code in the text. The adapter now says it by an error's type;
 - **libcurl checks a certificate's host name after the handshake.** Python's `ssl` checks it
   during, so a server sees a TLS alert from the reference and none from this library for another
-  host's certificate. What both guarantee - no application byte reaches an unverified peer - is
-  the claim to test.
+  host's certificate. libcurl 8.18 checks an expired chain and an unknown CA after it as well, where
+  8.5 checks them during. What all of them guarantee - no application byte reaches an unverified
+  peer - is the claim to test;
+- **the catalogue's text is a server release's.** From ClickHouse 26.5 the catalogue keeps the
+  parentheses of a single expression written in them: the one-column sort key every library renders
+  as `ORDER BY (id)` reads back `(id)` in `system.tables`, and a partition key or a skipping index's
+  expression written in parentheses likewise, where 26.4 and every earlier release - 24.8, 25.3,
+  25.8, 25.12, 26.3 measured - read `id`; a list of two or more reads `a, b` on all of them. The
+  reference's catalogue parser refuses the parentheses, so on 26.5 every table it created reads as
+  another design: a session reports a physical mismatch for each, and provisioning, staging and a
+  copy under a new generation refuse - its own slice fails there, and so did 30 live tests of this
+  library on 26.9 before its parser took one pair of parentheses around a whole list. The same
+  release changed the words of a refused read (`identifier 'missing'. In scope` for `'missing' in
+  scope`), so a test that compares a server's words asks the server for them. CI tested 24.8 alone;
+  it now runs this library's live tests against a current release too.
 
 #### The orderbook adapter, over the engine's own protocol
 

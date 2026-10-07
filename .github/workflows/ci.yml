@@ -504,6 +504,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+
+      # A current release beside the LTS above. From 26.5 the catalogue keeps the parentheses of a
+      # single expression written in them - `ORDER BY (id)` reads back `(id)` - and with 24.8 alone
+      # nothing here could see it; moved by a deliberate edit, like the LTS.
+      clickhouse-current:
+        image: clickhouse/clickhouse-server:26.9-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["18123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -542,6 +558,14 @@ jobs:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: ctest --test-dir cpp/build --output-on-failure -LE orderbook
+
+      - name: the live tests again, against a current ClickHouse
+        # Only the ClickHouse DSN moves: what new deployments start on, where the LTS is what most
+        # run.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:18123/sde
+        run: ctest --test-dir cpp/build --output-on-failure -L live -LE orderbook
 
       - name: a client's build, against the installed package
         # find_package(sde) is how somebody else's build sees this library, and nothing above
