@@ -100,6 +100,10 @@ export function authDigest(identity: string, secret: string, nonce: string): str
   return createHmac('sha256', Buffer.from(secret, 'utf8')).update(message).digest('hex')
 }
 
+/** The answers that are one line, and the prefix of a line a subscription pushes. */
+const LINE_ANSWERS = ['ERR ', 'PONG', 'PRIMARY', 'REPLICA', 'STANDALONE', 'MULTI_MASTER'] as const
+const PUSH = 'PUSH '
+
 export class WireConnection {
   private socket: Socket | null = null
   private buffer: Buffer = Buffer.alloc(0)
@@ -245,13 +249,44 @@ export class WireConnection {
     this.socket!.write(data, 'utf8')
   }
 
-  /** Skip the `PUSH ` lines a subscription would put in front of an answer. */
+  /** Whether the buffer begins with this ASCII text. */
+  private starts(text: string): boolean {
+    return this.buffer.length >= text.length && this.buffer.subarray(0, text.length).toString('latin1') === text
+  }
+
+  /** Skip the whole `PUSH ` lines a subscription would put in front of an answer. */
   private skipPushes(): void {
-    while (this.buffer.subarray(0, 5).toString('utf8') === 'PUSH ') {
+    while (this.starts(PUSH)) {
       const newline = this.buffer.indexOf('\n')
       if (newline === -1) return
       this.buffer = this.buffer.subarray(newline + 1)
     }
+  }
+
+  /**
+   * Where the answer at the front of the buffer ends; -1 while it, or a pushed line in front of it,
+   * is still arriving.
+   *
+   * Bytes that can begin neither are refused at once. This reader used to wait for sixteen bytes
+   * before judging them. A pushed row longer than that, still arriving, was then refused as an
+   * answer it could not read, and a few bytes that begin no answer were waited on until the
+   * timeout (finding 35 of the C++ port).
+   */
+  private answerEnd(): number {
+    if (this.starts(PUSH)) return -1
+    if (LINE_ANSWERS.some((start) => this.starts(start))) {
+      const newline = this.buffer.indexOf('\n')
+      return newline === -1 ? -1 : newline + 1
+    }
+    if (this.starts('OK')) {
+      const blank = this.buffer.indexOf('\n\n')
+      return blank === -1 ? -1 : blank + 2
+    }
+    const head = this.buffer.subarray(0, 16).toString('latin1')
+    if ([...LINE_ANSWERS, 'OK', PUSH].some((start) => start.startsWith(head))) return -1
+    throw new EngineError(
+      `an answer from ${this.where()} this client cannot read: ${this.buffer.subarray(0, 16).toString('utf8')}`,
+    )
   }
 
   /** One whole answer off the front of the buffer, waiting for the rest of it if it has not come. */
@@ -259,18 +294,7 @@ export class WireConnection {
     const deadline = Date.now() + this.options.timeoutMs
     for (;;) {
       this.skipPushes()
-      const head = this.buffer.subarray(0, 16).toString('utf8')
-      let end = -1
-      if (head.startsWith('ERR ') || head.startsWith('PONG') || head.startsWith('PRIMARY') ||
-          head.startsWith('REPLICA') || head.startsWith('STANDALONE') || head.startsWith('MULTI_MASTER')) {
-        const newline = this.buffer.indexOf('\n')
-        if (newline !== -1) end = newline + 1
-      } else if (head.startsWith('OK')) {
-        const blank = this.buffer.indexOf('\n\n')
-        if (blank !== -1) end = blank + 2
-      } else if (this.buffer.length >= 16) {
-        throw new EngineError(`an answer from ${this.where()} this client cannot read: ${head}`)
-      }
+      const end = this.answerEnd()
       if (end !== -1) {
         const raw = this.buffer.subarray(0, end).toString('utf8')
         this.buffer = this.buffer.subarray(end)
