@@ -8,6 +8,14 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: the trading example in C++** ([`cpp/examples/trading/trading.cpp`](cpp/examples/trading/trading.cpp)).
+[`examples/trading`](examples/trading/README.md) - book depth on the orderbook engine, orders and
+fills on PostgreSQL, market trades on ClickHouse, through one signed map - as a C++ program with the
+Python program's commands, arguments and traffic. In the `orderbook` CI job, under both sanitizers,
+it provisions the three engines; the reference reads back every row of its run, every field, and
+it reads back every row of the reference's; and its telemetry window of the traffic is the
+reference's, call for call, but for timings and sizes.
+
 **New: the orderbook adapter in the C++ library** ([`cpp/README.md`](cpp/README.md),
 [`docs/orderbook.md`](docs/orderbook.md#from-c)). `sde::OrderbookEngine`, over our engine's own
 text protocol on TCP or TLS 1.3, which the library speaks itself, as TypeScript does, in a target of
