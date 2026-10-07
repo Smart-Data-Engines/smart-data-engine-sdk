@@ -169,6 +169,7 @@ if(SDE_CLICKHOUSE)
 endif()
 if(SDE_ORDERBOOK)
   add_library(sde_orderbook
+    src/engines/orderbook.cpp
     src/engines/orderbook/dsn.cpp
     src/engines/orderbook/wire.cpp)
   add_library(sde::orderbook ALIAS sde_orderbook)

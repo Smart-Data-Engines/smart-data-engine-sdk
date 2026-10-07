@@ -117,6 +117,18 @@ if(TARGET sde_clickhouse)
     live/test_clickhouse_storage.cpp live/test_clickhouse_tls.cpp)
   target_link_libraries(sde_live_tests PRIVATE sde_clickhouse OpenSSL::SSL)
 endif()
+# The orderbook adapter against servers in this process that speak its protocol: no DSN needed.
+if(TARGET sde_orderbook)
+  if(NOT TARGET sde_live_tests)
+    find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
+    add_executable(sde_live_tests)
+    target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
+    gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
+  endif()
+  target_sources(sde_live_tests PRIVATE live/test_orderbook_wire.cpp live/test_orderbook_tls.cpp
+    live/test_orderbook_adapter.cpp)
+  target_link_libraries(sde_live_tests PRIVATE sde_orderbook OpenSSL::SSL)
+endif()
 # What runs against whichever adapters are built: copies in every direction they allow, and the
 # agreement of two engines on one value, which needs both.
 if(TARGET sde_live_tests)
