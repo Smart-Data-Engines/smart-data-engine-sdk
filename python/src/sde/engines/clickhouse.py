@@ -69,6 +69,7 @@ from ..explain import (
     QueryPlanRefused,
     replacing_merge_tree_finding,
 )
+from ..generation import EPOCH_COLUMN
 from ..logging import log
 from ..migration import key_columns, same_width
 from ..physical import (
@@ -567,7 +568,9 @@ class ClickHouseEngine:
                     f"usually precision, and a write that succeeds and comes back rounded is "
                     f"worse than one that fails."
                 )
-            extra = sorted(set(actual) - set(columns))
+            # The generation column is the library's own, added by provisioning for a map with
+            # write generations: naming it fired the event on every start of such a deployment.
+            extra = sorted(set(actual) - set(columns) - {EPOCH_COLUMN})
             if extra:
                 log("sde.schema.extra_columns", table=table, columns=extra)
 
