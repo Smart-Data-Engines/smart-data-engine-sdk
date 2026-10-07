@@ -8,6 +8,12 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: `sde.schema.extra_columns` named the library's own generation column** (Python). The event
+is for a column added outside SDE. From contract 4 a table carries `__sde_write_epoch`, which
+provisioning adds for a map with write generations, and every schema check named it. An alert on the
+event fired on every start of every such deployment, about a column that is ours. A column a client
+adds is still named.
+
 **Measured: what the C++ library costs per operation** ([`docs/implementing.md`](docs/implementing.md#measuring-your-overhead)).
 Requirement 3.5 gives the library one percent of an operation. Measured in C++ for the first time,
 a point read through the session cost 0.64 µs at the median built optimised, 2.5% of the cheapest

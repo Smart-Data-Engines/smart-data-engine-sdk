@@ -45,7 +45,8 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # extra_columns fires when a table the map describes has columns the map does not
         # name. Allowed rather than refused - a client may have added one outside SDE and
         # writes are unaffected - but logged, because the alternative to refusing is saying
-        # nothing, and a schema that has quietly diverged is worth one line.
+        # nothing, and a schema that has quietly diverged is worth one line. The library's own
+        # generation column is never one of them.
         "sde.schema.extra_columns",
         # text_collation names a PostgreSQL primary key or declared index on a text column whose
         # collation is not the reads' "C": a table from before 2 October 2026, which no scan,
