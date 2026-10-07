@@ -2,6 +2,7 @@
 // fills. The counterpart of examples/trading/trading.py - the same commands, arguments, engines
 // file and traffic - so a run written by either one is verified by the other.
 //
+//   sde_example_trading declare
 //   sde_example_trading provision COMMON
 //   sde_example_trading run       COMMON --run RUN [--books 4] [--updates 200] [--window WINDOW]
 //                                        [--workload feed|accounts]
@@ -12,8 +13,9 @@
 // The application names entities and fields - `DepthLevel`, `MarketTrade`, `Order`, `Fill` - and
 // never an engine or a table. Where each group lives is in the signed placement map; this program
 // reads it from a file, and the engines' credentials from its own environment, and connects to each
-// engine itself. The model is `model.json` in the working directory: examples/trading/model.json,
-// the declaration the Python and TypeScript halves read, so all three compute one model version.
+// engine itself. The model is declared here, in C++, and `declare` prints it in the neutral form for
+// the control plane: the declaration examples/trading/model.json holds for the Python and TypeScript
+// programs, so the three compute one model version, which is what lets each verify the others' runs.
 //
 // It exits 0 on success, 1 when `verify` found a difference, and 2 on anything else, with the
 // reason on stderr.
@@ -53,6 +55,50 @@
 #include "sde/value.hpp"
 
 namespace {
+
+/// The desk's model: book depth in exactly the orderbook engine's shape, the market's trades, and
+/// orders with their fills, which commit together. `Fill.order_id` comes from the relation.
+sde::Model trading_model() {
+  return sde::ModelBuilder{}
+      .entity({"DepthLevel",
+               {{"symbol", "string"},
+                {"exchange", "string"},
+                {"timestamp_ns", "int64"},
+                {"side", "string"},
+                {"level", "int32"},
+                {"price", "int64"},
+                {"quantity", "int64"},
+                {"order_count", "int32"},
+                {"sequence_number", "int64", true}},  // assigned by the orderbook server
+               {"symbol", "exchange", "timestamp_ns", "side", "level"}})
+      .entity({"MarketTrade",
+               {{"symbol", "string"},
+                {"exchange", "string"},
+                {"trade_id", "int64"},
+                {"price", "int64"},
+                {"quantity", "int64"},
+                {"at_ns", "int64"}},
+               {"symbol", "exchange", "trade_id"}})
+      .entity({"Order",
+               {{"id", "uuid"},
+                {"account", "string"},
+                {"symbol", "string"},
+                {"side", "string"},
+                {"qty", "decimal(18,8)"},
+                {"price", "decimal(18,8)"},
+                {"placed_at", "timestamptz"}},
+               {"id"}})
+      .entity({"Fill",
+               {{"id", "uuid"},
+                {"qty", "decimal(18,8)"},
+                {"price", "decimal(18,8)"},
+                {"at", "timestamptz"}},
+               {"id"}})
+      .relation("order", "Fill", "Order")
+      .atomic({"Order", "Fill"})
+      .cost_ceiling("2000.00", "EUR")
+      .build();
+}
 
 constexpr std::string_view EXCHANGE = "sde";
 constexpr std::int64_t T0 = 1'790'000'000'000'000'000;
@@ -129,11 +175,15 @@ struct Arguments {
 };
 
 Arguments parse(int argc, char** argv) {
-  if (argc < 2) throw Usage("usage: sde_example_trading provision|run|verify --map MAP ...");
+  if (argc < 2) throw Usage("usage: sde_example_trading declare|provision|run|verify ...");
   Arguments arguments{argv[1], {}};
-  const std::set<std::string, std::less<>> commands = {"provision", "run", "verify"};
+  const std::set<std::string, std::less<>> commands = {"declare", "provision", "run", "verify"};
   if (!commands.contains(arguments.command)) {
-    throw Usage("the command is provision, run or verify, not " + arguments.command);
+    throw Usage("the command is declare, provision, run or verify, not " + arguments.command);
+  }
+  if (arguments.command == "declare") {
+    if (argc != 2) throw Usage("declare takes no argument");
+    return arguments;
   }
   std::set<std::string, std::less<>> known = {"map", "keys", "project", "engines"};
   if (arguments.command != "provision") known.insert({"run", "books", "updates"});
@@ -340,8 +390,14 @@ sde::Row book_of(const Traffic& traffic, int index) {
   return {{"symbol", traffic.symbol(index)}, {"exchange", std::string(EXCHANGE)}};
 }
 
+/// The model as the control plane's `declare` reads it.
+int declare() {
+  std::cout << sde::dump_json(sde::neutral_declaration(trading_model())) << "\n";
+  return 0;
+}
+
 int provision(const Arguments& arguments) {
-  const sde::Model model = sde::load_neutral_model(read_file("model.json"));
+  const sde::Model model = trading_model();
   const sde::PlacementMap placed = placement(arguments, model);
   const Engines engines(arguments, placed, "provision");
   sde::prepare_schema(model, placed, engines.all(), arguments.at("project"));
@@ -352,7 +408,7 @@ int provision(const Arguments& arguments) {
 }
 
 int run(const Arguments& arguments) {
-  const sde::Model model = sde::load_neutral_model(read_file("model.json"));
+  const sde::Model model = trading_model();
   const sde::PlacementMap placed = placement(arguments, model);
   const Engines engines(arguments, placed, "runtime");
   sde::Recorder recorder(model);
@@ -432,7 +488,7 @@ std::vector<sde::Row> pages(sde::Session& session, std::string_view entity, cons
 }
 
 int verify(const Arguments& arguments) {
-  const sde::Model model = sde::load_neutral_model(read_file("model.json"));
+  const sde::Model model = trading_model();
   const sde::PlacementMap placed = placement(arguments, model);
   const Engines engines(arguments, placed, "runtime");
   sde::SessionOptions options;
@@ -517,6 +573,7 @@ int verify(const Arguments& arguments) {
 int main(int argc, char** argv) {
   try {
     const Arguments arguments = parse(argc, argv);
+    if (arguments.command == "declare") return declare();
     if (arguments.command == "provision") return provision(arguments);
     if (arguments.command == "run") return run(arguments);
     return verify(arguments);

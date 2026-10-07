@@ -230,8 +230,18 @@ def test_the_cpp_half_provisions_and_each_library_verifies_what_the_other_wrote(
     the tables decide.
     """
     assert CPP_TRADING
+    from sde.testing.loader import model_from_neutral
+
+    # The model is declared in C++, and `declare` prints it for the control plane: the declaration
+    # model.json holds for the other two, so one model version - what lets each verify the others.
+    declared = json.loads(
+        subprocess.run([CPP_TRADING, "declare"], capture_output=True, text=True, check=True).stdout
+    )
+    assert declared == json.loads((EXAMPLE / "model.json").read_text())
+    assert model_from_neutral(declared).version == model_from_neutral(
+        json.loads((EXAMPLE / "model.json").read_text())
+    ).version
     _signed_map(tmp_path)
-    shutil.copyfile(EXAMPLE / "model.json", tmp_path / "model.json")  # read from the working dir
     env = {
         **os.environ,
         **places,
