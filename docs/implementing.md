@@ -494,9 +494,9 @@ everywhere:
 #### Tier 2, and the packets no vector signs again
 
 On 7 October 2026 the C++ library passed every `schema/`, `query/` and `migration/` vector, and the
-`errors/` cases at the session and write stages, and claims Tier 2 with no engine adapter: the tier
-is the vectors of §9, and [`implementations.md`](implementations.md) keeps the engines in a column
-of their own. Its runner checks a refusal's exact class, where both reference runners accept a
+`errors/` cases at the session and write stages, and claimed Tier 2 before it had an engine adapter:
+the tier is the vectors of §9, and [`implementations.md`](implementations.md) keeps the engines in a
+column of their own. Its runner checks a refusal's exact class, where both reference runners accept a
 subclass.
 
 The signed packets of §7g, §7h and §7j carry their own refusal order, and a vector can pin only one
@@ -537,6 +537,26 @@ engine, behind the comparison of the whole materialisation, engine included. Bot
 reference. One rule changed on the way: the comparison under barriers asked an engine to check its
 tables with the keys, so a real adapter would also have read the physical design; it now checks the
 columns alone, as the reference does.
+
+#### The PostgreSQL adapter, against the reference on one server
+
+The first engine adapter, PostgreSQL over libpq, came the same day. Its live tests are the
+reference's PostgreSQL slice ported test by test, and wherever one compares a message the expected
+text was captured from the reference's adapter against the same server. The cases the reference does
+not test - fence DDL inside a transaction, a table with inheritance and a view, the reserved column
+made by hand in five other definitions, a group whose table is gone - ran against it the same way,
+and agreed in class and text. Two things for whoever writes the next adapter over libpq:
+
+- **the driver's defaults are part of the reference's behaviour.** psycopg gives the adapter a
+  connection timeout the DSN can override, UTF-8 whatever the DSN says, the server's message without
+  its severity, a class name for each SQLSTATE in `sde.write.failed`, and silence about a server's
+  notices. libpq prints every notice on stderr unless told otherwise, and every schema statement
+  after an application's first start raises one;
+- **the reference's own test of a barrier's wait cannot see the drain's lock.** The first freeze waits
+  for writers in its `ALTER TABLE`, so removing the `LOCK TABLE` leaves that test green. The lock is
+  what proves the table quiet on a retry, when the constraint exists, no DDL runs, and a delete - which
+  no `CHECK` refuses - still holds the table. The C++ suite tests that case, the reference's adapter
+  waits in it too, and the same test is a finding for the other two libraries.
 
 ### Verification-request protocol check
 

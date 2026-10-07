@@ -6,7 +6,7 @@ implementation of [the format contract](../docs/format-contract.md), after Pytho
 and TypeScript, and it is held to the same shared vectors in [`conformance/`](../conformance) as
 they are.
 
-**Status: Tier 2 and hashing, with no engine adapter yet** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
+**Status: Tier 2 and hashing, with the PostgreSQL adapter** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
 
 | | |
 |---|---|
@@ -19,14 +19,16 @@ they are.
 | Values, the DDL of §7a, read plans and exact summaries (Tier 2, the part without engines) | yes |
 | Sessions (Tier 2): writes and batches, fan-out to copies, point and logical reads, transactions, write generations, write fences and the forward-only check, against an engine interface with an in-memory engine | yes |
 | Migration participation (Tier 2): backfill, verification and verification requests, the comparison under write barriers, and the signed cutover, staging and index build packets | yes |
-| Engines - PostgreSQL, ClickHouse, the orderbook engine (Tier 2) | not yet |
+| Schema preparation: what a person provisioning a map runs before the application opens it | yes |
+| PostgreSQL (Tier 2), over libpq: schema, reads, writes, transactions, bookkeeping, migration, write fences, sizes, TLS | yes |
+| ClickHouse, the orderbook engine (Tier 2) | not yet |
 
 Tier 2 is the vectors of §9 - `schema/`, `query/` and `migration/` - and this library passes all of
-them against the engine interface and its in-memory engine. It has no adapter for a real engine yet,
-so it does not connect to anything and makes no network call: an application cannot use it against
-PostgreSQL, ClickHouse or the orderbook engine until those adapters exist, in that order. The
-recorder reads a monotonic clock, or the one you give it, and that is the only state kept between
-calls.
+them against the engine interface and its in-memory engine. The engines are separate: PostgreSQL is
+`sde::PostgresEngine`, in a target of its own, `sde::postgres`, which is the only part that links
+libpq - the core links no network library, and an application that places nothing in PostgreSQL
+carries none. ClickHouse and the orderbook engine follow, in that order. The recorder reads a
+monotonic clock, or the one you give it, and that is the only state kept between calls.
 
 ## Requirements
 
@@ -36,13 +38,15 @@ calls.
   the newest Clang.
 - OpenSSL 3 (`libcrypto`): SHA-256, HMAC-SHA256 and Ed25519.
 - utf8proc: NFC and case mapping.
+- libpq, for the PostgreSQL adapter only. `-DSDE_POSTGRES=OFF` builds without it, and without the
+  adapter.
 - GoogleTest, for the tests only. An installed one is used; otherwise CMake fetches 1.15.2, pinned by
   its archive's SHA-256.
 
 On Debian and Ubuntu:
 
 ```bash
-sudo apt-get install cmake ninja-build libssl-dev libutf8proc-dev
+sudo apt-get install cmake ninja-build libssl-dev libutf8proc-dev libpq-dev
 ```
 
 ## Build and test
@@ -58,6 +62,17 @@ with both sanitizers. The same three builds are presets, run from `cpp/`:
 `cmake --preset debug`, then `cmake --build --preset debug` and `ctest --preset debug`, and likewise
 `release` and `sanitizers`. The tests read the vectors in place from `conformance/vectors`, and a vector
 family this suite has never heard of fails the build's tests rather than passing unread.
+
+The live tests run the adapter against a real server, labelled `live`:
+
+```bash
+SDE_POSTGRES_DSN=postgresql://postgres:sde@127.0.0.1:55432/sde ctest --test-dir cpp/build -L live
+```
+
+`make engines-up` starts that server. Without the DSN each live test is skipped and says so; with
+`CI=true` it fails instead, because a green job that ran nothing looks exactly like one that passed.
+Each test works in a schema of its own, with a runtime login of its own where it needs one, and drops
+both. The TLS tests need no server: they talk to a certificate witness the suite runs itself.
 
 ## Use it
 
@@ -92,6 +107,23 @@ for (const sde::OperationShape& shape : model.shapes()) {
   const sde::Materialization& copy = sde::resolve(map, shape);
   // copy.engine, copy.layout.table_for(shape.entity), ...
 }
+```
+
+Against PostgreSQL, link `sde::postgres` as well. From contract 4 a session creates nothing, so a
+person provisioning the map prepares the schema first, on a login that may issue DDL, and the
+application opens its session on a runtime login that needs only its tables:
+
+```cpp
+sde::PostgresEngine provisioning(provisioning_dsn);
+provisioning.connect();
+sde::prepare_schema(model, map, {{"pg", &provisioning}}, project_id);
+
+sde::PostgresEngine engine(runtime_dsn);  // a DSN or URI; sslmode and sslrootcert as libpq reads them
+engine.connect();
+sde::SessionOptions options;
+options.project_id = project_id;  // the local enrollment's, never learned from the map
+sde::Session session(model, map, {{"pg", &engine}}, options);
+session.save("Order", {{"id", *sde::Uuid::parse(id)}, {"placed", now}, {"total", sde::Decimal("12.50")}});
 ```
 
 A map with no signature is valid: that is the no-account mode, documented and supported. A signed
@@ -161,6 +193,13 @@ keeps working for as long as its keys are configured.
   sink that throws cannot fail an operation. Events are named from the
   reference's closed vocabulary (`sde.map.loaded`, `sde.map.rejected`) and carry structure, never a
   row's values.
+- **The PostgreSQL adapter reports a failure and never works around it.** A failed write carries the
+  server's message as psycopg writes it, and `sde.write.failed` the class psycopg would raise; nothing
+  is retried, rerouted or reconnected. Opening a connection is bounded - ten seconds unless the DSN's
+  `connect_timeout` says otherwise - text is UTF-8 whatever the DSN says, and a server's notices are
+  dropped rather than printed. One thread uses an adapter at a time: a second is refused
+  (`sde::ResourceBusy`), and an adapter inherited across `fork` refuses everything
+  (`sde::ResourceClosed`).
 - **It is stricter than the two other libraries in a few places** where they coerce a value or fail
   with their runtime's own error: a materialisation's `id` and `engine` must be strings, a
   `lag_budget_ms` a non-negative integral number, a layout's tables and columns names and types,

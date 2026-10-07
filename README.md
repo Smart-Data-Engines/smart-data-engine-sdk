@@ -123,7 +123,7 @@ below has been rewritten.
 |---|---|---|
 | [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, ClickHouse and the orderbook engine, plus hashing | reference implementation |
 | [`typescript/`](typescript/) | 0, 1 and 2 for PostgreSQL and ClickHouse, plus hashing | passes the same vectors, byte for byte |
-| [`cpp/`](cpp/) | 0, 1 and 2, plus hashing; no engine adapter yet | passes every vector of its tiers; built from source with CMake |
+| [`cpp/`](cpp/) | 0, 1 and 2 for PostgreSQL, plus hashing | passes every vector of its tiers; built from source with CMake |
 | `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has three implementations, which is what made it safe to invite them |
 
 That qualification used to say something different, and the change is the point of it. Until
