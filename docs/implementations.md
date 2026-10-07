@@ -24,7 +24,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 |---|---|---|---|---|---|---|
 | `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `elasticsearch`, `orderbook`, `postgres` |
 | `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `elasticsearch`, `orderbook`, `postgres` |
-| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 2 | yes | 1 | 1–6 | none |
+| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 2 | yes | 1 | 1–6 | `postgres` |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
@@ -91,12 +91,12 @@ The Elasticsearch cases of `schema/` (`019` and `020`) are the other two librari
 leaves them out by name. It offers no `Session.search`, no book streams and no Elasticsearch
 adapter, so `search/`, `books/` and `documents/` are not its claim: those three go with a
 capability as well as the tier (format contract §9), and its `SEARCH`, `BOOK_STREAMS` and
-`ADAPTERS` constants say so. **The tier is the vectors, and the
-engines cell is separate:** it has no
-adapter for a real engine yet, so the cell says `none`, it makes no network call, and an
-application cannot use it against an engine today. The adapters are planned in the order the other
-two have them - PostgreSQL, ClickHouse, then our orderbook engine - and each moves the cell when it
-round-trips, not before.
+`ADAPTERS` constants say so. **The tier is the vectors, and the engines cell is separate:** an engine enters the cell when its adapter round-trips against a real
+server. The first is PostgreSQL, over libpq, in a target of its own (`sde::postgres`), so an
+application that places nothing there links no libpq and the core links no network library at all.
+Its live tests are the reference's PostgreSQL slice, ported, with every expected message captured
+from the reference against the same server. ClickHouse and our orderbook engine follow, in the order
+the other two have them, and each moves the cell when it round-trips, not before.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 
