@@ -198,6 +198,14 @@ row of the reference's, and its telemetry window of the traffic is the reference
   from `sde::SdeError`, which is a `std::runtime_error`. Their messages carry the reference's
   wording, and a value interpolated into one is written the way Python's `repr` writes it, so one
   defect reads the same in all three libraries.
+- **No value of yours is in what the library says.** A log event, a telemetry window and a refusal
+  the library makes name entities and fields, never a row's value; `tests/unit/test_invariants.cpp`
+  searches all three for values put in on purpose. What an engine says back is passed on in the
+  engine's words, and can quote what the engine holds - that text is the engine's, to its own
+  client, and stays in your process. The same file holds the other invariants: a map's parser reads
+  no date, the wall clock is read once, to stamp a verification report, and an unsigned map costs no
+  table and no query; and CTest reads the core's archive for a network symbol and finds none
+  (`invariant.*`).
 - **A `Model` and a `PlacementMap` are immutable once built.** Share them between threads freely.
   Only `load_map` makes a `PlacementMap`, so holding one means every rule of §7 was checked.
 - **`sde::Recorder` takes no lock on an operation's path.** A window is a block of per-shape
