@@ -42,8 +42,13 @@ add_executable(sde_unit_tests
   unit/test_verification.cpp
   unit/test_read_sql.cpp
   unit/test_provisioning.cpp
+  unit/test_log.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
+# The vocabulary test reads the library's sources and the reference's, as they are in the tree.
+target_compile_definitions(sde_unit_tests PRIVATE
+  SDE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../src"
+  SDE_REFERENCE_LOGGING="${CMAKE_CURRENT_SOURCE_DIR}/../../python/src/sde/logging.py")
 # An adapter's own logic - its codec, its SQL - is tested without its engine.
 if(TARGET sde_postgres)
   target_sources(sde_unit_tests PRIVATE unit/test_postgres_values.cpp)
