@@ -6,7 +6,7 @@ implementation of [the format contract](../docs/format-contract.md), after Pytho
 and TypeScript, and it is held to the same shared vectors in [`conformance/`](../conformance) as
 they are.
 
-**Status: Tier 2 and hashing, with the PostgreSQL adapter and the ClickHouse one in progress** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
+**Status: Tier 2 and hashing, with the PostgreSQL and ClickHouse adapters** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
 
 | | |
 |---|---|
@@ -21,7 +21,7 @@ they are.
 | Migration participation (Tier 2): backfill, verification and verification requests, the comparison under write barriers, and the signed cutover, staging and index build packets | yes |
 | Schema preparation: what a person provisioning a map runs before the application opens it | yes |
 | PostgreSQL (Tier 2), over libpq: schema, reads, writes, transactions, bookkeeping, migration, write fences, sizes, TLS | yes |
-| ClickHouse (Tier 2), over libcurl: schema, writes and point reads of every neutral type, counts, the transport's bounds; the rest of the reference's slice is being ported | in progress |
+| ClickHouse (Tier 2), over libcurl: schema and the physical design, reads, writes and batches, bookkeeping, migration, write fences, sizes, TLS | yes |
 | The orderbook engine (Tier 2) | not yet |
 
 Tier 2 is the vectors of §9 - `schema/`, `query/` and `migration/` - and this library passes all of
@@ -132,6 +132,19 @@ sde::Session session(model, map, {{"pg", &engine}}, options);
 session.save("Order", {{"id", *sde::Uuid::parse(id)}, {"placed", now}, {"total", sde::Decimal("12.50")}});
 ```
 
+Against ClickHouse, link `sde::clickhouse`, and the same holds. Its connection is a URI - the
+profile of [`docs/engine-connections.md`](../docs/engine-connections.md), shared with the other two
+libraries - and a runtime login needs `SELECT, INSERT` on its tables; `SELECT` on
+`system.data_skipping_indices` to verify a design's indexes rather than report them unverified, and
+on the size columns of `system.parts` for a session to measure its group:
+
+```cpp
+sde::ClickHouseEngine engine(  // https or clickhouses; ca_cert names the CA, read once
+    "clickhouses://app:secret@ch.internal:8443/analytics?ca_cert=%2Fetc%2Fsde%2Fca.pem");
+engine.connect();
+sde::Session session(model, map, {{"ch", &engine}}, options);
+```
+
 A map with no signature is valid: that is the no-account mode, documented and supported. A signed
 map needs the keys it may be verified with - `sde::PublicKeys::bare(key)` for one, or
 `sde::PublicKeys::named({{"k1", key1}, {"k2", key2}})` during a rotation, in which case
@@ -208,13 +221,19 @@ keeps working for as long as its keys are configured.
   (`sde::ResourceClosed`).
 - **The ClickHouse adapter never sends anything twice.** An exchange is one HTTP POST on a
   connection of its own, never reused, so a failed one is reported with its outcome unknown and is
-  not retried. Opening is bounded by the URI's `connect_timeout` (ten seconds), and every exchange by
-  `send_receive_timeout` (fifteen) of silence - a long query keeps the connection alive with
-  progress headers. There are no transactions, and `transaction` refuses before its body runs. Rows
-  travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it was,
-  and a value its column cannot hold - an integer out of range, a decimal with more digits than the
-  column keeps - is refused before anything is sent, where the reference's driver changes it
-  silently ([`docs/implementing.md`](../docs/implementing.md#the-third-implementation-c)).
+  not retried - measured with a proxy that drops the answer to an insert the server accepted: the
+  row is there once. The statement is the request's body, so no value of a row is ever part of a URL
+  a proxy would log. Opening is bounded by the URI's `connect_timeout` (ten seconds), and every
+  exchange by `send_receive_timeout` (fifteen) of silence - a long query keeps the connection alive
+  with progress headers. There are no transactions, and `transaction` refuses before its body runs.
+  Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
+  was, and a value its column cannot hold - an integer out of range, a decimal or a moment with more
+  digits than the column keeps, an enum name its type does not declare - is refused before
+  anything is sent, where the reference's driver changes it silently
+  ([`docs/implementing.md`](../docs/implementing.md#the-third-implementation-c)). Every read of a
+  table reads `FINAL`. A write barrier is a constraint and a drain - the table detached and attached
+  again, in an Atomic database, after a durable intent naming its UUID - so an interrupted drain is
+  resumed by name and attaches that table and no other.
 - **It is stricter than the two other libraries in a few places** where they coerce a value or fail
   with their runtime's own error: a materialisation's `id` and `engine` must be strings, a
   `lag_budget_ms` a non-negative integral number, a layout's tables and columns names and types,
@@ -239,6 +258,8 @@ it. Both were compared with the reference directly, and agreed everywhere:
   with every part in and out of range, dates, UUIDs, and summaries with totals of up to 40 digits:
   identical, message for message, once the reference took the rules of `query/024`-`028`. Before
   that, every difference was one of those two rules, and they are the reason the vectors exist;
+- the ClickHouse connection URI on 102,000 generated URIs against the reference's parser: the same
+  outcome, the same message and every field equal, the timeouts to the bit;
 - the three packet loaders on 102,384 signed packets, made by changing every accepted packet
   vector at each of its paths and in random pairs, and signing them again so that each change reaches
   the rule it is about: the same outcome, fingerprint, record and message in every case except three

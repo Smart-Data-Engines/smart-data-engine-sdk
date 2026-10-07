@@ -4,9 +4,9 @@ Connection URIs and CA files stay in the customer's application/operator environ
 not placement-map fields and must not be uploaded to the control plane. A signed map authenticates
 placement instructions; it does not authenticate the database server. Configure both boundaries.
 
-## ClickHouse: the same connection intent in Python and TypeScript
+## ClickHouse: the same connection intent in Python, TypeScript and C++
 
-Both SDKs parse this explicit URI profile before opening a connection:
+The SDKs parse this explicit URI profile before opening a connection:
 
 ```text
 https://USER:PASSWORD@db.example.com:8443/DATABASE?ca_cert=%2Fetc%2Fsde%2Froot-ca.pem
@@ -56,10 +56,12 @@ actual application environment. Neither SDK changes process-wide trust configura
 TypeScript adapter explicitly retains verification even if `NODE_TLS_REJECT_UNAUTHORIZED=0` is
 set elsewhere in the process.
 
-The initial ClickHouse handshake has a 15-second receive-inactivity default. Python retains this
-transport inactivity bound for later operations. TypeScript retains its existing unbounded query
-receive default; specifying `send_receive_timeout` bounds later request inactivity too. This
-explicit difference is about the native transports, not a guarantee on analytical query duration.
+The initial ClickHouse handshake has a 15-second receive-inactivity default. Python and C++ retain
+this transport inactivity bound for later operations; C++ also bounds the handshake as a whole by
+it, so a server that answers the handshake a byte at a time cannot hold it open. TypeScript retains
+its existing unbounded query receive default; specifying `send_receive_timeout` bounds later
+request inactivity too. This explicit difference is about the native transports, not a guarantee on
+analytical query duration.
 The connect timeout covers establishment of a new connection. Progress can extend a receive
 inactivity timer. Configure query execution limits at the server when the workload needs them.
 

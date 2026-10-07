@@ -8,20 +8,32 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
-**New, in progress: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
+**New: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
 `sde::ClickHouseEngine`, over ClickHouse's HTTP interface through libcurl, in a target of its own,
-`sde::clickhouse`, so an application that places nothing in ClickHouse carries no libcurl. Its
-connection URI is parsed as the reference parses it, rule for rule and message for message, compared
-on 102,000 URIs. An exchange is one POST on a connection of its own, never reused, so a failed one is
-reported with its outcome unknown and never sent again. Rows travel in `RowBinaryWithNamesAndTypes`
-both ways, so a date of year 1 or 9999 is the date it was.
-- A value its column cannot hold is refused before anything is sent. The reference's driver stores
-  `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24 - and
-  `Decimal("12345678901.23")` as 12345678901.20, without a word: recorded in
-  [`docs/implementing.md`](docs/implementing.md), as a rule for the contract.
-- So far its live tests cover the schema, writes and point reads of every neutral type, counts, and
-  the transport's failures and bounds, each message captured from the reference against the same
-  server; the rest of the reference's ClickHouse slice is being ported.
+`sde::clickhouse`, so an application that places nothing in ClickHouse carries no libcurl. It is the
+reference's adapter, method for method: schema with the catalogue's check and the physical design's
+findings, writes and batches, logical reads, counts and exact summaries, the forward-only
+bookkeeping, the migration operations, write barriers - a constraint and a drain bound to the
+table's UUID - storage sizes, and TLS against the CA the URI names, read once and pinned. Its
+connection URI is parsed as the reference parses it, rule for rule and message for message,
+compared on 102,000 URIs.
+- An exchange is one POST on a connection of its own, never reused: a failed one is reported with
+  its outcome unknown and never sent again, measured against a proxy that drops the answer to an
+  accepted insert. The statement is the body, never part of a URL.
+- Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
+  was. A value its column cannot hold is refused before anything is sent: the reference's driver
+  stores `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
+  - and `Decimal("12345678901.23")` as 12345678901.20, an enum name its type does not declare as 0,
+  and cuts a moment's fraction a column does not keep, each without a word: recorded in
+  [`docs/implementing.md`](docs/implementing.md), as rules for the contract.
+- Its live tests are the reference's ClickHouse slice, each message captured from the reference
+  against the same server; what the reference runs against both engines with one body runs here
+  with one body for each adapter built - copies in every direction, write generations, the frozen
+  comparison, the bookkeeping, and the two engines agreeing on one value. CI runs them against a
+  ClickHouse server at both compiler floors and under the sanitizers.
+- Fixed on the way, in the C++ library: a PostgreSQL size the catalogue refused was reported as
+  `failed` rather than `refused`, because the session looked for the SQLSTATE in a message that
+  never carries it.
 
 **New: the PostgreSQL adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
 `sde::PostgresEngine`, over libpq, in a target of its own, `sde::postgres`: the core still links no

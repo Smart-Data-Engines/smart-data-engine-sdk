@@ -89,9 +89,11 @@ server. The first is PostgreSQL, over libpq, in a target of its own (`sde::postg
 application that places nothing there links no libpq and the core links no network library at all.
 Its live tests are the reference's PostgreSQL slice, ported, with every expected message captured
 from the reference against the same server. The second is ClickHouse, over its HTTP interface
-through libcurl, likewise in a target of its own (`sde::clickhouse`): it round-trips every neutral
-type against a real server, and the rest of the reference's ClickHouse slice is being ported the
-same way. Our orderbook engine follows, and moves the cell when it round-trips, not before.
+through libcurl, likewise in a target of its own (`sde::clickhouse`), with the reference's
+ClickHouse slice ported the same way. What the reference runs against both engines with one body -
+copies in every direction, write generations, the frozen comparison, the bookkeeping, the
+agreement of the two engines on one value - runs here with one body too, for each adapter the
+build has. Our orderbook engine follows, and moves the cell when it round-trips, not before.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 

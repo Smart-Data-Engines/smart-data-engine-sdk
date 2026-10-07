@@ -588,7 +588,30 @@ the next one:
   stored in ClickHouse as 12345678901.20, where PostgreSQL refuses it with `numeric field
   overflow`. This library's ClickHouse adapter refuses both before sending anything. The fix that
   makes the engines agree belongs to the contract: admission (§8b) refusing a decimal with more
-  fractional or integer digits than its field declares, in every library.
+  fractional or integer digits than its field declares, in every library. The same driver cuts a
+  moment's fraction a `DateTime` or `DateTime64(3)` does not keep, stores an enum name its type
+  does not declare as 0 - a row no later read can print - and on reading cuts nanoseconds; none of
+  these is in a layout this library renders, all of them are in a table a hand-written map can
+  name;
+- **the statement is the request's body.** The reference's driver sends it there, and only an
+  INSERT that carries rows names its statement - which holds no value - in the URL. A URL is what a
+  proxy between the application and the server logs: the TypeScript library sends every statement
+  in one, a get's key and a read's filters with it, and so did this one until a test read the
+  request line;
+- **a drain's intent is written synchronously whatever the login's defaults.** A login can make
+  inserts asynchronous and unacknowledged by default; the intent row has to be in the table before
+  the DETACH it describes, or an interrupted drain has no record to resume by. The insert carries
+  `async_insert=0` and `wait_for_async_insert=1` itself, and a test holds it with a login whose
+  defaults say the opposite;
+- **a catalogue's refusal is the server's code, read where the code is.** The reference tells a
+  login refused a size from an engine that failed by its driver's error - SQLSTATE 42501, code 497.
+  This library looked for "42501" in the adapter's message, which carries the server's words and
+  never the code, and reported every PostgreSQL refusal as a failure; its unit test passed because
+  the fake put the code in the text. The adapter now says it by an error's type;
+- **libcurl checks a certificate's host name after the handshake.** Python's `ssl` checks it
+  during, so a server sees a TLS alert from the reference and none from this library for another
+  host's certificate. What both guarantee - no application byte reaches an unverified peer - is
+  the claim to test.
 
 ### Verification-request protocol check
 
