@@ -69,6 +69,7 @@ add_library(sde
   src/neutral.cpp
   src/hashing.cpp
   src/python_compat.cpp
+  src/python_url.cpp
   src/physical.cpp
   src/provisioning.cpp
   src/layout.cpp
