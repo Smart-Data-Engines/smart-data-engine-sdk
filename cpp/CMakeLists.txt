@@ -57,6 +57,7 @@ add_library(sde
   src/errors.cpp
   src/json.cpp
   src/unicode.cpp
+  src/bulk.cpp
   src/canonical.cpp
   src/crypto.cpp
   src/encoding.cpp

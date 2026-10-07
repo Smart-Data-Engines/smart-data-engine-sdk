@@ -51,7 +51,8 @@ target_compile_definitions(sde_unit_tests PRIVATE
   SDE_REFERENCE_LOGGING="${CMAKE_CURRENT_SOURCE_DIR}/../../python/src/sde/logging.py")
 # An adapter's own logic - its codec, its SQL - is tested without its engine.
 if(TARGET sde_postgres)
-  target_sources(sde_unit_tests PRIVATE unit/test_postgres_values.cpp)
+  target_sources(sde_unit_tests PRIVATE unit/test_postgres_values.cpp
+    unit/test_postgres_offline.cpp)
   target_link_libraries(sde_unit_tests PRIVATE sde_postgres)
 endif()
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)

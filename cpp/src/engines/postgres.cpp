@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "bulk.hpp"
 #include "engines/postgres/connection.hpp"
 #include "engines/postgres/fences.hpp"
 #include "engines/postgres/values.hpp"
@@ -76,9 +77,9 @@ std::vector<Row> rows_from(const Result& result) {
   return out;
 }
 
-/// The columns of a batch: every row's, in name order, and the same in each.
-std::vector<std::string> batch_columns(const std::vector<Row>& rows, std::string_view operation,
-                                       const std::string& table) {
+/// The columns of a chunk to copy: every row's, in name order, and the same in each.
+std::vector<std::string> copy_columns(const std::vector<Row>& rows, std::string_view operation,
+                                      const std::string& table) {
   if (rows.empty()) return {};
   std::vector<std::string> columns;
   for (const auto& [name, unused] : rows.front()) columns.push_back(name);
@@ -535,7 +536,9 @@ void PostgresEngine::insert(const std::string& table, const Row& values) {
 
 void PostgresEngine::insert_many(const std::string& table, const std::vector<Row>& rows) {
   const Use use(*this);
-  const std::vector<std::string> columns = batch_columns(rows, "batch insert", table);
+  // The session's own check, as the reference's adapter runs it: a caller can reach this
+  // without a session, and a batch is refused whole before the server sees any of it.
+  const std::vector<std::string> columns = detail::batch_columns(rows);
   if (columns.empty()) return;
   std::vector<std::string> quoted;
   for (const std::string& column : columns) quoted.push_back(quote(column));
@@ -794,7 +797,7 @@ void PostgresEngine::copy_in(const std::string& table, const std::vector<Row>& r
   const Use use(*this);
   // ON CONFLICT DO NOTHING is what makes a chunk idempotent, and idempotence what makes a backfill
   // resumable: the marker is written after the chunk, so a crash between them costs a recopy.
-  const std::vector<std::string> columns = batch_columns(rows, "copy_in", table);
+  const std::vector<std::string> columns = copy_columns(rows, "copy_in", table);
   if (columns.empty()) return;
   std::vector<std::string> quoted;
   for (const std::string& column : columns) quoted.push_back(quote(column));

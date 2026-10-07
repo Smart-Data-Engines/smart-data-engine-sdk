@@ -5,6 +5,7 @@
 #include <iterator>
 #include <string>
 
+#include "bulk.hpp"
 #include "generation.hpp"
 #include "session_use.hpp"
 #include "python_compat.hpp"
@@ -17,10 +18,9 @@ namespace sde {
 
 namespace {
 
+using detail::batch_columns;
+using detail::names_of;
 using detail::python_repr;
-
-constexpr std::size_t kMaxBatchRows = 1000;
-constexpr std::size_t kMaxBatchValues = 60'000;
 
 std::int64_t steady_ns() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -30,12 +30,6 @@ std::int64_t steady_ns() {
 
 std::map<std::string, std::string> as_map(const NeutralColumns& columns) {
   return std::map<std::string, std::string>(columns.begin(), columns.end());
-}
-
-std::vector<std::string> names_of(const Row& row) {
-  std::vector<std::string> names;
-  for (const auto& [name, unused] : row) names.push_back(name);
-  return names;
 }
 
 /// The reference names an exception by its class in a divergence line, never by its message: the
@@ -50,31 +44,6 @@ std::string error_class(const std::exception& error) {
   if (dynamic_cast<const MigrationRefused*>(&error) != nullptr) return "MigrationRefused";
   if (dynamic_cast<const SdeError*>(&error) != nullptr) return "SdeError";
   return "Exception";
-}
-
-/// The batch's field names, checked whole before any engine is called. Values are never in these
-/// messages.
-std::vector<std::string> batch_columns(const std::vector<Row>& rows, std::size_t extra_columns) {
-  if (rows.size() > kMaxBatchRows) {
-    throw BulkWriteRefused("a batch may contain at most " + std::to_string(kMaxBatchRows) + " rows");
-  }
-  std::vector<std::string> columns;
-  for (std::size_t i = 0; i < rows.size(); ++i) {
-    if (rows[i].empty()) {
-      throw BulkWriteRefused("each batch row must be a nonempty mapping with string fields");
-    }
-    std::vector<std::string> here = names_of(rows[i]);
-    if (i == 0) {
-      columns = std::move(here);
-      if (rows.size() * (columns.size() + extra_columns) > kMaxBatchValues) {
-        throw BulkWriteRefused("a batch may contain at most " + std::to_string(kMaxBatchValues) +
-                               " values, including generation");
-      }
-    } else if (here != columns) {
-      throw BulkWriteRefused("all batch rows must have the same fields");
-    }
-  }
-  return columns;
 }
 
 /// The first required field a row gives null, in code point order.
