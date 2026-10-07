@@ -29,6 +29,7 @@
 #include "live/clickhouse.hpp"
 #include "live/http_stub.hpp"
 #include "live/live.hpp"
+#include "physical_internal.hpp"
 #include "sde/clickhouse.hpp"
 #include "sde/errors.hpp"
 #include "sde/json.hpp"
@@ -177,7 +178,10 @@ TEST_F(ClickHouseLive, TheSchemaIsCreatedAndCreatingItAgainChangesNothing) {
       "AND name = 'event'");
   ASSERT_EQ(created.size(), 1U);
   EXPECT_EQ(created[0].find("engine")->as_string(), "ReplacingMergeTree");
-  EXPECT_EQ(created[0].find("sorting_key")->as_string(), "id")
+  // `id` up to ClickHouse 26.4, `(id)` from 26.5, which keeps the parentheses `ORDER BY (id)` was
+  // written with: the key is read as the library reads it, and has to be the declared one.
+  EXPECT_EQ(sde::detail::parse_identifier_list(created[0].find("sorting_key")->as_string()),
+            std::optional<std::vector<std::string>>(std::vector<std::string>{"id"}))
       << "ORDER BY has to be the declared key, or the table is unindexed";
 }
 
@@ -376,16 +380,25 @@ TEST_F(ClickHouseLive, AFailedReadIsReportedInTheServersWordsAsTheReferenceRepor
   const auto ch = engine(scope.dsn(), options);
   const sde::detail::clickhouse::Target target = sde::detail::clickhouse::parse_dsn(scope.dsn());
   const std::string url = "http://" + target.host + ":" + std::to_string(target.port);
+  // The server's own words, as the transport frames them, for the statement each call sends. They
+  // are asked of the server, because they change between releases: 24.8 writes "identifier
+  // 'missing' in scope", 26.9 "identifier 'missing'. In scope" (measured). The frame around them
+  // is this library's, and is held whole.
+  const auto server_says = [&](const std::string& sql) {
+    return message_of([&] { scope.admin().run(sql); });
+  };
+  const std::string get_refused = server_says("SELECT * FROM missing FINAL WHERE id = 1 LIMIT 1");
+  EXPECT_TRUE(get_refused.starts_with(
+      "Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown "
+      "table expression identifier 'missing'"))
+      << get_refused;
+  EXPECT_TRUE(get_refused.ends_with(" (UNKNOWN_TABLE) (version " + ch->server_version() +
+                                    " (official build)) (for url " + url + ")"))
+      << get_refused;
   EXPECT_EQ(message_of([&] { (void)ch->get("missing", {{"id", std::int64_t{1}}}); }),
-            "select from missing failed: Received ClickHouse exception, code: 60, server response: "
-            "Code: 60. DB::Exception: Unknown table expression identifier 'missing' in scope SELECT * "
-            "FROM missing FINAL WHERE id = 1 LIMIT 1. (UNKNOWN_TABLE) (version " +
-                ch->server_version() + " (official build)) (for url " + url + ")");
+            "select from missing failed: " + get_refused);
   EXPECT_EQ(message_of([&] { (void)ch->count("missing"); }),
-            "count on missing failed: Received ClickHouse exception, code: 60, server response: Code: "
-            "60. DB::Exception: Unknown table expression identifier 'missing' in scope SELECT count() "
-            "FROM missing FINAL. (UNKNOWN_TABLE) (version " +
-                ch->server_version() + " (official build)) (for url " + url + ")");
+            "count on missing failed: " + server_says("SELECT count() FROM missing FINAL"));
   const std::string written = message_of([&] { ch->insert("missing", {{"id", std::int64_t{1}}}); });
   EXPECT_TRUE(written.starts_with("insert into missing failed: Received ClickHouse exception, code: 60"))
       << written;
