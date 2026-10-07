@@ -16,6 +16,11 @@ std::string trimmed(std::string_view text) {
   return std::string(text);
 }
 
+/// A server's notice - `relation "x" already exists, skipping` on every schema statement after the
+/// first start - dropped, as psycopg drops it when no handler is registered. libpq's own processor
+/// prints it on the process's stderr, and a library that prints is a library people patch.
+void ignore_notice(void* /*argument*/, const char* /*message*/) {}
+
 }  // namespace
 
 std::string server_message(std::string_view libpq_text) {
@@ -46,6 +51,7 @@ Connection::Connection(const std::string& dsn) {
     connection_ = nullptr;
     throw EngineError("could not connect to PostgreSQL: connection failed: " + reason);
   }
+  (void)PQsetNoticeProcessor(connection_, &ignore_notice, nullptr);
 }
 
 Connection::~Connection() {
