@@ -200,4 +200,47 @@ TEST(ReadSql, BindsEachOccurrenceOfAPositionInStatementOrder) {
   EXPECT_EQ(bound, (std::vector<std::string>{"int64", "int64", "string", "int64"}));
 }
 
+/// Every placeholder as `$1`: these cases are about the text around them.
+std::string one(const sde::Value&) { return "$1"; }
+
+TEST(ReadSql, ADecimalComparisonUsesAtMostSeventySixDigits) {
+  // 76 digits is ClickHouse's Decimal256 and the cast both dialects compare in. A decimal(76,0)
+  // compared with a value of one fractional digit needs 77.
+  const std::vector<sde::ReadColumn> columns = {{"v", "decimal(76,0)"}};
+  const auto counted = [&](const char* value) {
+    sde::ReadOptions options;
+    options.where = sde::Row{{"v", value}};
+    options.paginate = false;
+    return sde::read_sql("t", sde::plan_read(columns, {"v"}, options), "postgres", one, true);
+  };
+  EXPECT_EQ(counted("1"), R"(SELECT CAST(count(*) AS text) AS sde_count FROM "t" WHERE )"
+                          R"(CAST("v" AS numeric(76,0)) = CAST($1 AS numeric(76,0)))");
+  try {
+    (void)counted("1.5");
+    ADD_FAILURE() << "a comparison of 77 digits was rendered";
+  } catch (const sde::QueryRefused& error) {
+    EXPECT_STREQ(error.what(), "decimal comparison requires more than 76 digits");
+  }
+}
+
+TEST(ReadSql, ADecimalSummarySumsAtTheColumnsScale) {
+  const sde::ReadColumn column{"v", "decimal(12,2)"};
+  sde::ReadOptions options;
+  options.paginate = false;
+  const sde::ReadPlan plan = sde::plan_read({column}, {"v"}, options);
+  EXPECT_EQ(sde::summary_sql("t", plan, column, "postgres", one),
+            R"(SELECT CAST(count(*) AS text) AS sde_count, CAST(count("v") AS text) AS )"
+            R"(sde_present, CAST(min("v") AS text) AS sde_min, CAST(max("v") AS text) AS sde_max, )"
+            R"(CAST(sum(CAST("v" AS numeric(76,2))) AS text) AS sde_total FROM "t")");
+}
+
+TEST(ReadSql, ADescendingPageContinuesBelowItsPosition) {
+  sde::ReadOptions options;
+  options.descending = true;
+  options.after = sde::Row{{"a", std::int64_t{7}}};
+  EXPECT_EQ(sde::read_sql("t", sde::plan_read({{"a", "int64"}}, {"a"}, options), "postgres", one),
+            R"(SELECT "a" FROM "t" WHERE ((("a" IS NULL OR "a" < $1))) ORDER BY "a" DESC NULLS )"
+            R"(LAST LIMIT $1)");
+}
+
 }  // namespace
