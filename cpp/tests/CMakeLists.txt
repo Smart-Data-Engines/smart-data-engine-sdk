@@ -84,8 +84,11 @@ if(TARGET sde_postgres)
     live/test_postgres_migration.cpp
     live/test_postgres_fences.cpp
     live/test_postgres_storage.cpp
+    live/test_postgres_tls.cpp
   )
+  # OpenSSL's TLS half for the certificate witness the TLS tests talk to; the library links none.
+  find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
   target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing sde_postgres
-    PostgreSQL::PostgreSQL GTest::gtest_main)
+    PostgreSQL::PostgreSQL OpenSSL::SSL GTest::gtest_main)
   gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
 endif()
