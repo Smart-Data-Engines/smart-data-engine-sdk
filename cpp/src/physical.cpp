@@ -3,6 +3,7 @@
 
 #include "physical_internal.hpp"
 #include "python_compat.hpp"
+#include "sde/engine.hpp"
 #include "sde/errors.hpp"
 #include "sde/physical.hpp"
 
@@ -28,6 +29,10 @@ std::vector<std::string> sorted_keys(const detail::Tables& tables) {
 }
 
 }  // namespace
+
+std::string PhysicalFinding::to_string() const {
+  return table + ": " + aspect + " is " + found + " and the map declares " + declared;
+}
 
 const std::string& PhysicalLayout::table_for(std::string_view entity) const {
   const auto found = tables.find(std::string(entity));
