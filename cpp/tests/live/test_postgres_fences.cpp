@@ -192,6 +192,66 @@ TEST_F(PostgresFence, ABarrierWaitsForTheWriterHoldingTheTable) {
   EXPECT_THROW(insert(2, 1), sde::EngineError);
 }
 
+TEST_F(PostgresFence, FenceDdlIsRefusedInsideAnApplicationTransaction) {
+  // DDL on the application's connection would commit or roll back with the application's work.
+  engine_->transaction([&] {
+    try {
+      (void)fence().prepare(1);
+      ADD_FAILURE() << "a fence was installed inside an application transaction";
+    } catch (const sde::MigrationRefused& error) {
+      EXPECT_STREQ(error.what(), "write-fence DDL cannot run inside an application transaction");
+    }
+  });
+  EXPECT_FALSE(fence().state().complete());
+}
+
+TEST_F(PostgresFence, AFenceIsForAnOrdinaryTableAlone) {
+  Admin admin(scope_->dsn());
+  (void)admin.run("CREATE TABLE parent (id bigint PRIMARY KEY)");
+  (void)admin.run("CREATE TABLE child () INHERITS (parent)");
+  (void)admin.run("CREATE VIEW shown AS SELECT id FROM parent");
+  for (const std::string& table : std::vector<std::string>{"parent", "child", "shown"}) {
+    try {
+      (void)engine_->write_fence(table, kProject).state();
+      ADD_FAILURE() << table << " was fenced";
+    } catch (const sde::MigrationRefused& error) {
+      EXPECT_STREQ(error.what(),
+                   "write fences support ordinary PostgreSQL tables without inheritance")
+          << table;
+    }
+  }
+  try {
+    (void)engine_->write_fence("absent", kProject).state();
+    ADD_FAILURE() << "a table that does not exist was fenced";
+  } catch (const sde::EngineError& error) {
+    EXPECT_STREQ(error.what(), "write-fence table does not exist");
+  }
+}
+
+TEST_F(PostgresFence, AReservedColumnOfAnotherDefinitionIsRefused) {
+  Admin admin(scope_->dsn());
+  int n = 0;
+  for (const std::string& definition :
+       std::vector<std::string>{"integer NOT NULL DEFAULT 0", "bigint DEFAULT 0",
+                                "bigint NOT NULL DEFAULT 1", "bigint NOT NULL",
+                                "bigint NOT NULL GENERATED ALWAYS AS (0) STORED"}) {
+    const std::string table = "conflict_" + std::to_string(++n);
+    (void)admin.run("CREATE TABLE " + table + " (id bigint PRIMARY KEY, \"" + kEpoch + "\" " +
+                    definition + ")");
+    try {
+      (void)engine_->write_fence(table, kProject).state();
+      ADD_FAILURE() << definition << " was taken for the reserved column";
+    } catch (const sde::MigrationRefused& error) {
+      EXPECT_STREQ(error.what(), "the reserved write-epoch column has an incompatible definition")
+          << definition;
+    }
+  }
+  // The reserved definition itself, made by hand, is the reserved column.
+  (void)admin.run("CREATE TABLE reserved (id bigint PRIMARY KEY, \"" + kEpoch +
+                  "\" bigint NOT NULL DEFAULT 0)");
+  EXPECT_EQ(engine_->write_fence("reserved", kProject).state().column, sde::ColumnState::valid);
+}
+
 TEST_F(PostgresFence, AnOpenSessionNeverInheritsANewSessionsGeneration) {
   const sde::Model model = records();
   const sde::PlacementMap first = generation_map(model, kTable);
