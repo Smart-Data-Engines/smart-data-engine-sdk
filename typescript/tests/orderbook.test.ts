@@ -288,6 +288,14 @@ describe('writing', () => {
     await expect(engine.insert(ORDERBOOK_TABLE, row({ __sde_write_epoch: 2 }))).rejects.toThrow('carries no write generation')
     await expect(engine.insert(ORDERBOOK_TABLE, row({ quantity: -1n }))).rejects.toThrow('quantity -1 is outside')
     await expect(engine.insert(ORDERBOOK_TABLE, row({ symbol: 'BTC USD' }))).rejects.toThrow('cannot be used as a symbol')
+    // What does not print, as the reference's `str.isprintable()` decides it: a zero-width space, a
+    // left-to-right mark, a right-to-left override, a byte-order mark, private use, a soft hyphen, a
+    // line separator, an ideographic space, a no-break space, NEL and a tag character.
+    for (const hidden of ['\u200b', '\u200e', '\u202e', '\ufeff', '\ue000', '\u00ad', '\u2028', '\u3000',
+      '\u00a0', '\u0085', '\u{e0001}']) {
+      await expect(engine.insert(ORDERBOOK_TABLE, row({ symbol: `BTC${hidden}USDT` }))).rejects.toThrow('cannot be used as a symbol')
+      await expect(engine.insert(ORDERBOOK_TABLE, row({ exchange: `bin${hidden}ance` }))).rejects.toThrow('cannot be used as')
+    }
     await expect(engine.insert(ORDERBOOK_TABLE, row({ timestamp_ns: 1.5 }))).rejects.toThrow('must be an integer')
     await expect(engine.insert('another', row())).rejects.toThrow('has one table')
     expect(server.rows).toHaveLength(1)
