@@ -12,9 +12,11 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <libpq-fe.h>
 
 #include "engines/postgres/connection.hpp"
 #include "live/live.hpp"
+#include "live/postgres.hpp"
 #include "sde/errors.hpp"
 #include "sde/json.hpp"
 #include "sde/model.hpp"
@@ -26,16 +28,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-/// Statements the tests set up and clean up with, on a connection of their own.
-class Admin {
- public:
-  explicit Admin(const std::string& dsn) : connection_(dsn) {}
-  sde::detail::postgres::Result run(const std::string& sql) { return connection_.execute(sql); }
-  void drop(const std::string& table) { (void)run("DROP TABLE IF EXISTS \"" + table + "\""); }
-
- private:
-  sde::detail::postgres::Connection connection_;
-};
+using sde::live::Admin;
 
 class PostgresLive : public ::testing::Test {
  protected:
@@ -123,6 +116,31 @@ TEST_F(PostgresLive, EveryNeutralTypeRoundTripsThroughARealServer) {
   }
   session.save(entity_, empty);
   EXPECT_EQ(session.get(entity_, {{"id", std::int64_t{2}}}), empty);
+}
+
+TEST_F(PostgresLive, TheServersNoticesAreNeverPrinted) {
+  // libpq prints a server's notice on stderr unless told otherwise; psycopg drops it when nobody
+  // registered a handler, and a library given no sink says nothing. Every schema statement after
+  // the first start raises one: `relation ... already exists, skipping`.
+  const sde::Model model = every_type();
+  const sde::PlacementMap map = placed(model);
+  sde::PostgresEngine engine(dsn_);
+  engine.connect();
+  sde::Session session(model, map, {{"pg", &engine}});
+  session.ensure_schema();
+  ::testing::internal::CaptureStderr();
+  session.ensure_schema();
+  EXPECT_EQ(::testing::internal::GetCapturedStderr(), "");
+
+  // The control: the same statement on a connection with libpq's own processor is printed, so the
+  // capture above could have seen one.
+  PGconn* plain = PQconnectdb(dsn_.c_str());
+  ASSERT_EQ(PQstatus(plain), CONNECTION_OK) << PQerrorMessage(plain);
+  ::testing::internal::CaptureStderr();
+  PQclear(PQexec(plain, ("CREATE TABLE IF NOT EXISTS \"" + table_ + "\" (id bigint)").c_str()));
+  const std::string printed = ::testing::internal::GetCapturedStderr();
+  PQfinish(plain);
+  EXPECT_NE(printed.find("already exists, skipping"), std::string::npos) << printed;
 }
 
 TEST_F(PostgresLive, AFailedWriteIsReportedInTheServersWordsAndLogged) {
