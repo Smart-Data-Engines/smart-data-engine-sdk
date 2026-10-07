@@ -181,6 +181,38 @@ int digit_value(char32_t code_point) noexcept {
   return static_cast<int>((code_point - start) % 10);
 }
 
+/// Whether a decimal number `from_chars` found past the double range is above it rather than below:
+/// the decimal exponent of its first significant digit is positive. Not the sign of the written
+/// exponent - `0.000...01` is below the range with none, and `99...9e-10` above it with a negative
+/// one. The number is `digits[.digits][e[sign]digits]` and not zero, or it would be in range.
+bool above_the_range(std::string_view number) {
+  const std::size_t e = number.find_first_of("eE");
+  long long exponent = 0;
+  if (e != std::string_view::npos) {
+    std::size_t i = e + 1;
+    const bool minus = number[i] == '-';
+    if (number[i] == '+' || number[i] == '-') ++i;
+    // Saturated: an exponent of a billion is past either end whatever the digits before it.
+    for (; i < number.size(); ++i) {
+      exponent = std::min(exponent * 10 + (number[i] - '0'), 1'000'000'000LL);
+    }
+    if (minus) exponent = -exponent;
+  }
+  const std::string_view mantissa = number.substr(0, e);
+  const std::size_t point = mantissa.find('.');
+  const std::string_view whole = mantissa.substr(0, point);
+  const std::size_t first = whole.find_first_not_of('0');
+  long long magnitude = 0;
+  if (first != std::string_view::npos) {
+    magnitude = static_cast<long long>(whole.size() - first) - 1;
+  } else {
+    const std::string_view fraction =
+        point == std::string_view::npos ? std::string_view() : mantissa.substr(point + 1);
+    magnitude = -static_cast<long long>(fraction.find_first_not_of('0')) - 1;
+  }
+  return magnitude + exponent > 0;
+}
+
 }  // namespace
 
 Split urlsplit(std::string_view url) {
@@ -559,10 +591,9 @@ double float_of(std::string_view text) {
   double value = 0;
   const auto [end, problem] = std::from_chars(number.data(), number.data() + number.size(), value);
   if (problem == std::errc::result_out_of_range) {
-    // An exponent past the range: Python's parser gives an infinity, or zero below it.
-    const std::size_t exponent = number.find_first_of("eE");
-    const bool small = exponent != std::string_view::npos && number[exponent + 1] == '-';
-    value = small ? 0.0 : std::numeric_limits<double>::infinity();
+    // Past the double range one way or the other: Python's parser gives an infinity above it and
+    // zero below it.
+    value = above_the_range(number) ? std::numeric_limits<double>::infinity() : 0.0;
   } else if (problem != std::errc() || end != number.data() + number.size()) {
     throw PythonValueError{};
   }
