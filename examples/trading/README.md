@@ -42,9 +42,9 @@ node trading.mjs verify $common --run $RUN2 --depth-run $RUN
   half wrote. It imports `@smart-data-engines/sde`.
 - [`cpp/examples/trading/trading.cpp`](../../cpp/examples/trading/trading.cpp) is the whole program
   in C++: `provision`, `run` and `verify` with these arguments and this traffic, so `trading.py
-  verify` reads back a run it wrote, and it reads back a run `trading.py` wrote. It reads
-  `model.json` from its working directory, and exits 1 when `verify` found a difference and 2 on
-  anything else.
+  verify` reads back a run it wrote, and it reads back a run `trading.py` wrote. It declares the
+  model in C++, and `declare` prints it for the control plane: it is `model.json`, document for
+  document. It exits 1 when `verify` found a difference and 2 on anything else.
 
 Two properties of the orderbook engine shape the program:
 - A write is visible to another connection at the server's next flush tick (100 ms by default), or

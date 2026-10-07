@@ -182,8 +182,10 @@ keeps working for as long as its keys are configured.
 A whole application on all three engines is [`examples/trading/trading.cpp`](examples/trading/trading.cpp):
 [`examples/trading`](../examples/trading/README.md) - a desk's book depth, market trades, orders and
 fills - in C++, with the same commands, arguments and traffic as the Python program there, so either
-one verifies the other's runs. It reads the signed map and its keys from files, each engine's DSN
-from the environment, and `model.json` from its working directory; it links `sde::postgres`,
+one verifies the other's runs. It declares its model with `sde::ModelBuilder`, and `declare` prints
+the neutral declaration the control plane's `declare` takes - `examples/trading/model.json`,
+document for document. It reads the signed map and its keys from files and each engine's DSN from
+the environment; it links `sde::postgres`,
 `sde::clickhouse` and `sde::orderbook`, and OpenSSL for the name-based UUIDs of its traffic. This
 build makes it `examples/sde_example_trading`, and so does a client build of `cpp/examples` against
 the installed package. The SDK's `orderbook` CI job runs it under both sanitizers against the three
