@@ -1,12 +1,14 @@
 """``examples/trading`` on all three engines, as a client runs it: provision, run, verify - from
-Python, and from TypeScript for orders, fills and trades, each reading what the other wrote.
+Python, from TypeScript for orders, fills and trades, and from C++ for all of it, each library
+reading what another wrote.
 
 The map is the one the control plane issues for this model when the orderbook takes the depth:
 placement map contract 6, ``DepthLevel`` on the orderbook with no write generation, ``Fill`` (with
 ``Order``) on PostgreSQL and ``MarketTrade`` on ClickHouse with theirs. Signed here with a key of
 the test's own. Runs in the SDK's ``orderbook`` CI job, which has all three engines and Node;
-locally, with ``SDE_ORDERBOOK_TCP`` and both DSNs, and the TypeScript library built
-(``npm run build``).
+locally, with ``SDE_ORDERBOOK_TCP`` and both DSNs, the TypeScript library built
+(``npm run build``) and, for the C++ half, ``SDE_CPP_TRADING`` naming the built example
+(``cpp/build/examples/sde_example_trading``).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "examples" / "trading"
 POSTGRES = os.environ.get("SDE_POSTGRES_DSN")
 CLICKHOUSE = os.environ.get("SDE_CLICKHOUSE_DSN")
+CPP_TRADING = os.environ.get("SDE_CPP_TRADING")
 PROJECT = "2" * 32
 
 pytestmark = pytest.mark.skipif(
@@ -180,3 +183,100 @@ def test_the_trading_example_provisions_runs_and_verifies_from_both_libraries(
     )
     assert seen["mismatches"] == []
     assert seen["verified"] == {"trades": 60, "orders": 3, "fills": 6, "depth": 300}
+
+
+# What a window says that neither the clock nor the rows already in a table decide: a run's shapes,
+# calls, errors and filters, and the proportions computed from them.
+TIMING_OR_DATA = {
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "result_cardinality_p50",
+    "result_cardinality_p99",
+    "rows",
+    "total_bytes",
+    "index_to_table_ratio",
+    "write_burstiness",
+}
+
+
+def _behaviour(window: dict[str, Any]) -> dict[str, Any]:
+    groups = {}
+    for name, group in window["groups"].items():
+        kept = {key: value for key, value in group.items() if key not in TIMING_OR_DATA}
+        kept["shapes"] = sorted(
+            (
+                {key: value for key, value in shape.items() if key not in TIMING_OR_DATA}
+                for shape in group["shapes"]
+            ),
+            key=lambda shape: str(shape["id"]),
+        )
+        groups[name] = kept
+    return {**{key: value for key, value in window.items() if key != "groups"}, "groups": groups}
+
+
+@pytest.mark.skipif(
+    not CPP_TRADING,
+    reason="set SDE_CPP_TRADING to the built C++ example (cpp/build/examples/sde_example_trading)",
+)
+def test_the_cpp_half_provisions_and_each_library_verifies_what_the_other_wrote(
+    places: dict[str, str], tmp_path: Path
+) -> None:
+    """The C++ program is a third client of the same signed map, holding its own connections.
+
+    It provisions the three engines, writes a run that the reference reads back row by row, every
+    field, and reads back a run the reference wrote: one traffic, derived from the run id in both
+    programs - name-based UUIDs, exact decimals, microsecond instants. And its telemetry window of
+    that traffic is the reference's, call for call, except what the clock and the rows already in
+    the tables decide.
+    """
+    assert CPP_TRADING
+    _signed_map(tmp_path)
+    shutil.copyfile(EXAMPLE / "model.json", tmp_path / "model.json")  # read from the working dir
+    env = {
+        **os.environ,
+        **places,
+        "TRADING_PG_ADMIN_DSN": places["TRADING_PG_DSN"],
+        "TRADING_CH_ADMIN_DSN": places["TRADING_CH_DSN"],
+    }
+    common = ["--map", "map.json", "--keys", "keys.json", "--project", PROJECT]
+    common += ["--engines", "engines.json"]
+    sizes = ["--books", "2", "--updates", "30"]
+    cpp = [CPP_TRADING]
+    python = [sys.executable, str(EXAMPLE / "trading.py")]
+    assert _run([*cpp, "provision", *common], env, tmp_path)["provisioned"] == [
+        "ch-main",
+        "ob-main",
+        "pg-main",
+    ]
+
+    written = uuid4().hex
+    workload = ["--workload", "accounts"]
+    _run([*cpp, "run", *common, "--run", written, *sizes, "--window", "cpp.json", *workload],
+         env, tmp_path)
+    read = _run([*python, "verify", *common, "--run", written, *sizes], env, tmp_path)
+    assert read["mismatches"] == []
+    assert read["verified"] == {"depth": 300, "trades": 60, "orders": 3, "fills": 6}
+
+    other = uuid4().hex
+    _run([*python, "run", *common, "--run", other, *sizes, "--window", "python.json", *workload],
+         env, tmp_path)
+    seen = _run([*cpp, "verify", *common, "--run", other, *sizes], env, tmp_path)
+    assert seen["mismatches"] == []
+    assert seen["verified"] == {"depth": 300, "trades": 60, "orders": 3, "fills": 6}
+    # And the C++ verify is a check that can fail: one step more than was written is a difference.
+    longer = subprocess.run(
+        [*cpp, "verify", *common, "--run", other, "--books", "2", "--updates", "31"],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=600,
+    )
+    assert longer.returncode == 1, longer.stdout + longer.stderr
+    assert "depth differs (150 of 155 rows)" in longer.stdout
+
+    of_cpp = json.loads((tmp_path / "cpp.json").read_text())
+    of_python = json.loads((tmp_path / "python.json").read_text())
+    assert _behaviour(of_cpp) == _behaviour(of_python)
+    assert {"equal": ["account"], "calls": 9} in [
+        entry
+        for shape in of_cpp["groups"]["Fill"]["shapes"]
+        if shape["entity"] == "Order"
+        for entry in shape.get("filtered_on", ())
+    ]
