@@ -405,6 +405,24 @@ TEST_F(ClickHouseLive, AServerThatAcceptsAndStaysSilentIsBoundedByTheTimeout) {
   EXPECT_LT(elapsed, std::chrono::seconds(20));
 }
 
+TEST_F(ClickHouseLive, AHandshakeThatNeverEndsIsBoundedAsAWhole) {
+  // A server that answers byte by byte and never finishes is never silent, so the bound on silence
+  // alone would wait for ever; the handshake is bounded as a whole by send_receive_timeout too.
+  sde::live::TrickleServer server(std::chrono::milliseconds(200));
+  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default?send_receive_timeout=2");
+  const auto started = Clock::now();
+  auto opened = std::async(std::launch::async, [&] { return message_of([&] { ch.connect(); }); });
+  ASSERT_EQ(opened.wait_for(std::chrono::seconds(10)), std::future_status::ready)
+      << "the handshake was still waiting after ten seconds";
+  const double seconds = std::chrono::duration<double>(Clock::now() - started).count();
+  EXPECT_EQ(opened.get(),
+            "could not connect to ClickHouse: ClickHouse transport failed; the operation was not "
+            "replayed and its outcome may be unknown");
+  EXPECT_GE(seconds, 1.8);
+  EXPECT_LT(seconds, 5.0);
+}
+
 TEST_F(ClickHouseLive, AWrongPasswordRevealsNothingTheServerSaid) {
   const std::string wrong = sde::live::with_login(dsn_, "default", "not-the-password");
   EXPECT_EQ(message_of([&] { sde::ClickHouseEngine(wrong).connect(); }),

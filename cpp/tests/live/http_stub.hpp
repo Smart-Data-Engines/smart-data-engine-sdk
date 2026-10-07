@@ -12,6 +12,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -101,6 +103,60 @@ class ScriptedServer {
   int port_ = 0;
   mutable std::mutex mutex_;
   std::vector<std::string> requests_;
+  std::thread worker_;
+};
+
+/// A server that answers every request with a 200 whose chunked body never ends: one byte every
+/// `every`, until the object is destroyed. Never silent, never finished - what a bound on silence
+/// alone cannot stop.
+class TrickleServer {
+ public:
+  explicit TrickleServer(std::chrono::milliseconds every) : every_(every) {
+    listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ::bind(listener_, reinterpret_cast<sockaddr*>(&address), sizeof address);
+    socklen_t length = sizeof address;
+    ::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &length);
+    port_ = ntohs(address.sin_port);
+    ::listen(listener_, 8);
+    worker_ = std::thread([this] { serve(); });
+  }
+  ~TrickleServer() {
+    stopping_ = true;
+    ::shutdown(listener_, SHUT_RDWR);
+    ::close(listener_);
+    worker_.join();
+  }
+  TrickleServer(const TrickleServer&) = delete;
+  TrickleServer& operator=(const TrickleServer&) = delete;
+  [[nodiscard]] int port() const noexcept { return port_; }
+
+ private:
+  void serve() {
+    const int socket = ::accept(listener_, nullptr, nullptr);
+    if (socket < 0) return;
+    char buffer[65536];
+    std::string request;
+    while (request.find("\r\n\r\n") == std::string::npos) {
+      const ssize_t got = ::recv(socket, buffer, sizeof buffer, 0);
+      if (got <= 0) break;
+      request.append(buffer, static_cast<std::size_t>(got));
+    }
+    const std::string head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    bool open = ::send(socket, head.data(), head.size(), MSG_NOSIGNAL) > 0;
+    while (open && !stopping_) {
+      std::this_thread::sleep_for(every_);
+      open = ::send(socket, "1\r\nx\r\n", 6, MSG_NOSIGNAL) > 0;
+    }
+    ::close(socket);
+  }
+
+  std::chrono::milliseconds every_;
+  int listener_ = -1;
+  int port_ = 0;
+  std::atomic<bool> stopping_{false};
   std::thread worker_;
 };
 
