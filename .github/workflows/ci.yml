@@ -414,6 +414,29 @@ jobs:
             -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
 
+      # The C++ adapter against the same two servers, under both sanitizers - its TLS runs over
+      # OpenSSL calls of its own - and a book written by it and read by the reference, and the
+      # other way round, with this job's interpreter as the reference.
+      - name: build the C++ library, under AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libssl-dev libutf8proc-dev libpq-dev clang
+          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
+            -DSDE_SANITIZE=address,undefined -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build cpp/build
+
+      - name: the C++ orderbook slice, plain and with TLS, and beside the reference
+        # With CI=true a test without its variable fails rather than skips, and a label that
+        # matched nothing fails too.
+        env:
+          SDE_ORDERBOOK_TCP: 127.0.0.1:59090
+          SDE_PYTHON: python
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
+          ctest --test-dir cpp/build -L orderbook --output-on-failure --no-tests=error
+
       # The TypeScript adapter against the same two servers, and the same book written by one
       # library and read by the other in both directions: the Python half is this job's own
       # interpreter, which has the SDK and, on its path, the engine's client.
@@ -512,10 +535,13 @@ jobs:
         # test_families.cpp fails on a family it has never heard of, so a family added to
         # conformance/ cannot pass here by being ignored. The live tests, labelled `live`, are the
         # adapters against the servers above.
+        # The orderbook slice needs an engine, which only the `orderbook` job builds: it runs
+        # there, by its label. The orderbook adapter's own tests, against a fake engine in the
+        # process, run here with the rest.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
-        run: ctest --test-dir cpp/build --output-on-failure
+        run: ctest --test-dir cpp/build --output-on-failure -LE orderbook
 
       - name: a client's build, against the installed package
         # find_package(sde) is how somebody else's build sees this library, and nothing above
@@ -585,7 +611,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
-        run: ctest --test-dir cpp/build --output-on-failure
+        run: ctest --test-dir cpp/build --output-on-failure -LE orderbook
 
       - name: the recorder's and the session's threads, under ThreadSanitizer
         # The recorder takes no lock on an operation's path, so the claim that a roll racing writes
