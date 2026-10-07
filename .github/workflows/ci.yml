@@ -453,8 +453,8 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [gcc-12, clang-16]
-    # The live tests of the PostgreSQL adapter run against this server; with CI=true, which Actions
-    # sets, a live test without its DSN fails rather than skips.
+    # The live tests of the PostgreSQL and ClickHouse adapters run against these servers; with
+    # CI=true, which Actions sets, a live test without its DSN fails rather than skips.
     services:
       postgres:
         image: postgres:15-alpine
@@ -467,6 +467,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        # 127.0.0.1, not localhost: see the TypeScript job's note on the alpine image's wget.
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -497,9 +511,10 @@ jobs:
       - name: the unit tests, every vector family of the library's tier, and the live tests
         # test_families.cpp fails on a family it has never heard of, so a family added to
         # conformance/ cannot pass here by being ignored. The live tests, labelled `live`, are the
-        # adapter against the server above.
+        # adapters against the servers above.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: ctest --test-dir cpp/build --output-on-failure
 
       - name: a client's build, against the installed package
@@ -519,8 +534,8 @@ jobs:
     # wrote is where an out-of-bounds read hides behind a green test, and undefined behaviour is what
     # the next optimiser turns into a different answer.
     runs-on: ubuntu-latest
-    # The live tests too: libpq calls back into this library's code, and the threads of a barrier
-    # test meet the adapter's usage gate. With CI=true a live test without its DSN fails.
+    # The live tests too: libpq and libcurl call back into this library's code, and the threads of
+    # a barrier test meet the adapters' usage gates. With CI=true a live test without its DSN fails.
     services:
       postgres:
         image: postgres:15-alpine
@@ -533,6 +548,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        # 127.0.0.1, not localhost: see the TypeScript job's note on the alpine image's wget.
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -555,6 +584,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
         run: ctest --test-dir cpp/build --output-on-failure
 
       - name: the recorder's and the session's threads, under ThreadSanitizer
