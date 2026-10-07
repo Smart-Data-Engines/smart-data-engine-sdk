@@ -68,12 +68,13 @@ class ClickHouseAdmin {
   detail::clickhouse::Http http_;
 };
 
-/// A database of its own, Atomic, dropped with the object.
+/// A database of its own, Atomic unless another engine is named, dropped with the object.
 class ClickHouseScope {
  public:
-  explicit ClickHouseScope(std::string dsn, const std::string& prefix = "sde_live_")
+  explicit ClickHouseScope(std::string dsn, const std::string& prefix = "sde_live_",
+                           const std::string& engine = "Atomic")
       : dsn_(std::move(dsn)), root_(dsn_), name_(prefix + fresh(12)) {
-    root_.run("CREATE DATABASE `" + name_ + "` ENGINE = Atomic");
+    root_.run("CREATE DATABASE `" + name_ + "` ENGINE = " + engine);
   }
   ~ClickHouseScope() {
     try {
