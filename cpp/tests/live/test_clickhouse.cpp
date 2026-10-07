@@ -353,6 +353,21 @@ TEST_F(ClickHouseLive, AKeyNamingAColumnTheLayoutLacksIsRefused) {
   EXPECT_NE(refused.find("names columns the layout does not have"), std::string::npos) << refused;
 }
 
+TEST_F(ClickHouseLive, ACopiedChunkOfTwoShapesIsRefusedBeforeAnyRowIsSent) {
+  // A chunk comes from one table; rows of two column sets are a caller assembling it from two.
+  const ClickHouseScope scope(dsn_);
+  scope.admin().run("CREATE TABLE t (id Int64, a String, b String) ENGINE = ReplacingMergeTree "
+                    "ORDER BY id");
+  const auto ch = engine(scope.dsn());
+  EXPECT_EQ(message_of([&] {
+              ch->copy_in("t", {{{"id", std::int64_t{1}}, {"a", std::string("x")}},
+                                {{"id", std::int64_t{2}}, {"b", std::string("y")}}});
+            }),
+            "copy_in into t was given rows with different columns (['a', 'id'] and ['b', 'id']). "
+            "A chunk comes from one table, so this is a caller assembling it from two.");
+  EXPECT_EQ(ch->count("t"), 0U);
+}
+
 TEST_F(ClickHouseLive, AFailedReadIsReportedInTheServersWordsAsTheReferenceReportsIt) {
   const ClickHouseScope scope(dsn_);
   std::vector<std::pair<std::string, sde::Json>> events;
