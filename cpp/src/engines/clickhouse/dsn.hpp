@@ -25,10 +25,9 @@ struct Target {
   bool secure = false;
   std::optional<std::string> ca_cert;
   double connect_timeout = kConnectTimeoutSeconds;
+  /// Bounds every exchange's silence, the handshake's included, as the reference's driver bounds
+  /// its reads. (The TypeScript library bounds only its handshake unless the URI sets it.)
   double send_receive_timeout = kHandshakeTimeoutSeconds;
-  /// Whether the URI chose `send_receive_timeout`: only then does it bound every exchange, rather
-  /// than the handshake alone.
-  bool receive_timeout_supplied = false;
 
   [[nodiscard]] std::string_view interface() const noexcept { return secure ? "https" : "http"; }
 };

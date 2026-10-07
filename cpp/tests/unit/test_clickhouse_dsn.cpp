@@ -167,7 +167,8 @@ TEST(ClickHouseDsn, TheDefaultsAndTheOptions) {
   EXPECT_EQ(plain.password, "");
   EXPECT_EQ(plain.port, 8123);
   EXPECT_FALSE(plain.secure);
-  EXPECT_FALSE(plain.receive_timeout_supplied);
+  EXPECT_DOUBLE_EQ(plain.connect_timeout, 10.0);
+  EXPECT_DOUBLE_EQ(plain.send_receive_timeout, 15.0);
   const Target chosen = parse_dsn(
       "clickhouse://u:p%40ss@[::1]:9440/my%20db?secure=true&verify=true&ca_cert=%2Fetc%2Fca.pem"
       "&connect_timeout=.5&send_receive_timeout=2e1");
@@ -179,7 +180,6 @@ TEST(ClickHouseDsn, TheDefaultsAndTheOptions) {
   EXPECT_EQ(chosen.ca_cert, "/etc/ca.pem");
   EXPECT_DOUBLE_EQ(chosen.connect_timeout, 0.5);
   EXPECT_DOUBLE_EQ(chosen.send_receive_timeout, 20.0);
-  EXPECT_TRUE(chosen.receive_timeout_supplied);
 }
 
 }  // namespace
