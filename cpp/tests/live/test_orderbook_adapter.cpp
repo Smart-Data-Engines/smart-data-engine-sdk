@@ -749,11 +749,11 @@ TEST(OrderbookAdapter, AQueryAnsweredWithAnythingButStandardRowsIsRefusedInTheCl
             "*`, or read the response with a client that reads columns by name."},
            {"timestamp_ns\tprice\tquantity\torder_count\tside\tlevel\tsequence_number\n1\tx\t1\t1\t0\t0\t1\n",
             "invalid literal for int() with base 10: 'x'"}}) {
-    sde::live::ProtocolServer server([header = header](sde::live::Peer& peer) {
+    sde::live::ProtocolServer server([columns = header](sde::live::Peer& peer) {
       if (!peer.send(sde::live::kGreeting) || !peer.line()) return;
       (void)peer.send("OK\ncapabilities: insert_event_time\n\n");
       if (!peer.line()) return;
-      (void)peer.send("OK\n" + header + "\n");
+      (void)peer.send("OK\n" + columns + "\n");
       (void)peer.drain(std::chrono::milliseconds(200));
     });
     sde::OrderbookEngine engine("orderbook://127.0.0.1:" + std::to_string(server.port()));
