@@ -488,16 +488,18 @@ Address ip_address(std::string_view text) {
 double float_of(std::string_view text) {
   const std::optional<std::u32string> code_points = decode_utf8(text);
   if (!code_points) throw PythonValueError{};
-  // `_PyUnicode_TransformDecimalAndSpaceToASCII`: whitespace a space, a decimal digit its ASCII
-  // digit, anything else outside ASCII a character no number has.
+  // `_PyUnicode_TransformDecimalAndSpaceToASCII`: below U+007F a character as it is, whitespace
+  // past it a space, a decimal digit its ASCII digit, anything else a character no number has. So
+  // U+001C to U+001F, which `str.isspace()` calls whitespace, stay themselves, and the strip below,
+  // which is C's, keeps them.
   std::string ascii_text;
   for (const char32_t c : *code_points) {
-    if (python_space(c)) {
-      ascii_text += ' ';
-    } else if (c >= 0x80 && is_decimal_digit(c)) {
-      ascii_text += static_cast<char>('0' + digit_value(c));
-    } else if (c < 0x80) {
+    if (c < 0x7F) {
       ascii_text += static_cast<char>(c);
+    } else if (python_space(c)) {
+      ascii_text += ' ';
+    } else if (is_decimal_digit(c)) {
+      ascii_text += static_cast<char>('0' + digit_value(c));
     } else {
       throw PythonValueError{};
     }
@@ -515,10 +517,12 @@ double float_of(std::string_view text) {
     previous = c;
   }
   if (previous == '_') throw PythonValueError{};
-  // `float_from_string_inner`: spaces at either end, then the whole of the rest a number.
+  // `float_from_string_inner`: `Py_ISSPACE` at either end - a space, a tab, a line feed, a vertical
+  // tab, a form feed, a carriage return - then the whole of the rest a number.
+  const auto c_space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
   std::string_view body = plain;
-  while (!body.empty() && body.front() == ' ') body.remove_prefix(1);
-  while (!body.empty() && body.back() == ' ') body.remove_suffix(1);
+  while (!body.empty() && c_space(body.front())) body.remove_prefix(1);
+  while (!body.empty() && c_space(body.back())) body.remove_suffix(1);
   if (body.empty()) throw PythonValueError{};
   bool negative = false;
   std::string_view number = body;
