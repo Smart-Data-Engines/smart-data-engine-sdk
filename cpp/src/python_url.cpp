@@ -82,22 +82,6 @@ std::size_t ill_formed_subpart(std::string_view bytes, std::size_t pos) noexcept
   return length;
 }
 
-/// CPython's UTF-8 decoder with `errors="replace"`.
-std::string decode_replacing(std::string_view bytes) {
-  std::string out;
-  std::size_t i = 0;
-  while (i < bytes.size()) {
-    const std::size_t length = utf8_sequence_length(bytes, i);
-    if (length != 0) {
-      out.append(bytes.substr(i, length));
-      i += length;
-      continue;
-    }
-    i += ill_formed_subpart(bytes, i);
-    out += "\xEF\xBF\xBD";
-  }
-  return out;
-}
 
 /// `_check_bracketed_host`: an IPvFuture literal, or an IPv6 address - never an IPv4 one.
 void check_bracketed_host(std::string_view host) {
@@ -517,25 +501,37 @@ Address ip_address(std::string_view text) {
   return ipv6(text) ? Address::v6 : Address::none;
 }
 
-double float_of(std::string_view text) {
+namespace {
+
+/// `_PyUnicode_TransformDecimalAndSpaceToASCII`, which `float()` and `int()` both apply first:
+/// below U+007F a character as it is, whitespace past it a space, a decimal digit its ASCII digit,
+/// anything else a character no number has. So U+001C to U+001F, which `str.isspace()` calls
+/// whitespace, stay themselves, and the C strip after it keeps them.
+std::string ascii_number_text(std::string_view text) {
   const std::optional<std::u32string> code_points = decode_utf8(text);
   if (!code_points) throw PythonValueError{};
-  // `_PyUnicode_TransformDecimalAndSpaceToASCII`: below U+007F a character as it is, whitespace
-  // past it a space, a decimal digit its ASCII digit, anything else a character no number has. So
-  // U+001C to U+001F, which `str.isspace()` calls whitespace, stay themselves, and the strip below,
-  // which is C's, keeps them.
-  std::string ascii_text;
+  std::string out;
   for (const char32_t c : *code_points) {
     if (c < 0x7F) {
-      ascii_text += static_cast<char>(c);
+      out += static_cast<char>(c);
     } else if (python_space(c)) {
-      ascii_text += ' ';
+      out += ' ';
     } else if (is_decimal_digit(c)) {
-      ascii_text += static_cast<char>('0' + digit_value(c));
+      out += static_cast<char>('0' + digit_value(c));
     } else {
       throw PythonValueError{};
     }
   }
+  return out;
+}
+
+/// `Py_ISSPACE`: a space, a tab, a line feed, a vertical tab, a form feed, a carriage return.
+bool c_space(char c) noexcept { return c == ' ' || (c >= '\t' && c <= '\r'); }
+
+}  // namespace
+
+double float_of(std::string_view text) {
+  const std::string ascii_text = ascii_number_text(text);
   // `_Py_string_to_number_with_underscores`: an underscore only between two digits.
   std::string plain;
   char previous = '\0';
@@ -551,7 +547,6 @@ double float_of(std::string_view text) {
   if (previous == '_') throw PythonValueError{};
   // `float_from_string_inner`: `Py_ISSPACE` at either end - a space, a tab, a line feed, a vertical
   // tab, a form feed, a carriage return - then the whole of the rest a number.
-  const auto c_space = [](char c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
   std::string_view body = plain;
   while (!body.empty() && c_space(body.front())) body.remove_prefix(1);
   while (!body.empty() && c_space(body.back())) body.remove_suffix(1);
@@ -598,6 +593,59 @@ double float_of(std::string_view text) {
     throw PythonValueError{};
   }
   return negative ? -value : value;
+}
+
+std::string decode_replacing(std::string_view bytes) {
+  std::string out;
+  std::size_t i = 0;
+  while (i < bytes.size()) {
+    const std::size_t length = utf8_sequence_length(bytes, i);
+    if (length != 0) {
+      out.append(bytes.substr(i, length));
+      i += length;
+      continue;
+    }
+    i += ill_formed_subpart(bytes, i);
+    out += "\xEF\xBF\xBD";
+  }
+  return out;
+}
+
+
+PythonInt int_of(std::string_view text) {
+  const std::string ascii_text = ascii_number_text(text);
+  // `PyLong_FromString` in base 10, then `long_from_string_base`.
+  std::string_view rest = ascii_text;
+  while (!rest.empty() && c_space(rest.front())) rest.remove_prefix(1);
+  PythonInt out;
+  if (!rest.empty() && (rest.front() == '+' || rest.front() == '-')) {
+    out.negative = rest.front() == '-';
+    rest.remove_prefix(1);
+  }
+  if (!rest.empty() && rest.front() == '_') throw PythonValueError{};  // a leading underscore
+  std::string digits;
+  std::size_t counted = 0;
+  char previous = '\0';
+  std::size_t i = 0;
+  for (; i < rest.size() && ((rest[i] >= '0' && rest[i] <= '9') || rest[i] == '_'); ++i) {
+    if (rest[i] == '_') {
+      if (previous == '_') throw PythonValueError{};  // two underscores
+    } else {
+      ++counted;
+      digits += rest[i];
+    }
+    previous = rest[i];
+  }
+  if (previous == '_') throw PythonValueError{};  // a trailing underscore
+  if (i == 0) throw PythonValueError{};             // no digits
+  while (i < rest.size() && c_space(rest[i])) ++i;
+  if (i != rest.size()) throw PythonValueError{};  // anything after, a NUL included
+  // The limit counts every digit, leading zeros too, and only once the text is otherwise valid.
+  if (counted > 4300) throw PythonIntLimit{counted};
+  const std::size_t first = digits.find_first_not_of('0');
+  out.digits = first == std::string::npos ? "0" : digits.substr(first);
+  if (out.digits == "0") out.negative = false;
+  return out;
 }
 
 }  // namespace sde::detail::python_url
