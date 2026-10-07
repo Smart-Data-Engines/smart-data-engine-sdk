@@ -6,7 +6,8 @@
 /// the StartupMessage and closes. It is not a database: libpq sends StartupMessage only after it
 /// has verified the server's certificate, so seeing one is the witness that verification passed,
 /// and its absence that the certificate was refused. The reference's `tls_certificates.py` and
-/// `pg_endpoint`, in C++.
+/// `pg_endpoint`, in C++ - and its `http_endpoint`, an HTTPS witness for ClickHouse: TLS, then one
+/// HTTP request, which arrives only after the client verified the certificate.
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -22,6 +23,7 @@
 #include <openssl/x509v3.h>
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -31,7 +33,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "live/live.hpp"
@@ -308,6 +312,209 @@ class PostgresTlsEndpoint {
   std::atomic<bool> stopping_{false};
   mutable std::mutex mutex_;
   Observed observed_;
+  std::thread worker_;
+};
+
+/// What an HTTPS witness saw: connections, the handshakes that failed, and every request that
+/// arrived over TLS, whole.
+struct HttpsObserved {
+  int tcp = 0;
+  int tls_errors = 0;
+  std::vector<std::string> requests;
+};
+
+/// TLS with `certificate` on `address`, then one HTTP request read whole and answered: by default
+/// a 400, so a client that verified the certificate and sent its request is refused by the
+/// "server" - the witness that its bytes went only to an authenticated peer. It can instead hold
+/// the request unanswered, redirect it, or play a server: the handshake answered with `version` and
+/// any other request with a `count()` of seven. The reference's `http_endpoint`, in C++.
+struct HttpsBehaviour {
+  int status = 400;
+  std::string location;     ///< a redirect's target, with a 3xx status
+  bool hold = false;        ///< never answer
+  bool initialize = false;  ///< answer as a server would
+};
+
+class HttpsEndpoint {
+ public:
+  using Behaviour = HttpsBehaviour;
+
+  HttpsEndpoint(const std::filesystem::path& certificate, const std::filesystem::path& key,
+                const std::string& address, Behaviour behaviour = {})
+      : behaviour_(std::move(behaviour)), context_(SSL_CTX_new(TLS_server_method())) {
+    (void)std::signal(SIGPIPE, SIG_IGN);
+    tls_detail::check(context_ != nullptr, "a server context");
+    tls_detail::check(
+        SSL_CTX_use_certificate_file(context_, certificate.c_str(), SSL_FILETYPE_PEM) == 1,
+        "the server certificate");
+    tls_detail::check(SSL_CTX_use_PrivateKey_file(context_, key.c_str(), SSL_FILETYPE_PEM) == 1,
+                      "the server key");
+    open(address);
+  }
+  /// The same over plain HTTP, for a redirect's target that must never be reached.
+  explicit HttpsEndpoint(const std::string& address) : context_(nullptr) { open(address); }
+
+  ~HttpsEndpoint() {
+    stopping_ = true;
+    ::shutdown(listener_, SHUT_RDWR);
+    ::close(listener_);
+    worker_.join();
+    if (context_ != nullptr) SSL_CTX_free(context_);
+  }
+  HttpsEndpoint(const HttpsEndpoint&) = delete;
+  HttpsEndpoint& operator=(const HttpsEndpoint&) = delete;
+
+  [[nodiscard]] int port() const noexcept { return port_; }
+  [[nodiscard]] HttpsObserved observed() const {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return observed_;
+  }
+  void behave(Behaviour behaviour) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    behaviour_ = std::move(behaviour);
+  }
+  /// Whether a handshake has failed here, waiting up to a second for one: the client gives up the
+  /// moment it refuses the certificate, before this side has read its alert.
+  [[nodiscard]] bool saw_a_tls_failure() const {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (observed().tls_errors > 0) return true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return observed().tls_errors > 0;
+  }
+
+ private:
+  void open(const std::string& address) {
+    const bool six = address.find(':') != std::string::npos;
+    listener_ = ::socket(six ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
+    tls_detail::check(listener_ >= 0, "a socket");
+    if (six) {
+      sockaddr_in6 bound{};
+      bound.sin6_family = AF_INET6;
+      ::inet_pton(AF_INET6, address.c_str(), &bound.sin6_addr);
+      tls_detail::check(::bind(listener_, reinterpret_cast<sockaddr*>(&bound), sizeof bound) == 0,
+                        "binding");
+      socklen_t length = sizeof bound;
+      ::getsockname(listener_, reinterpret_cast<sockaddr*>(&bound), &length);
+      port_ = ntohs(bound.sin6_port);
+    } else {
+      sockaddr_in bound{};
+      bound.sin_family = AF_INET;
+      ::inet_pton(AF_INET, address.c_str(), &bound.sin_addr);
+      tls_detail::check(::bind(listener_, reinterpret_cast<sockaddr*>(&bound), sizeof bound) == 0,
+                        "binding");
+      socklen_t length = sizeof bound;
+      ::getsockname(listener_, reinterpret_cast<sockaddr*>(&bound), &length);
+      port_ = ntohs(bound.sin_port);
+    }
+    tls_detail::check(::listen(listener_, 8) == 0, "listening");
+    worker_ = std::thread([this] { serve(); });
+  }
+
+  void serve() {
+    while (!stopping_) {
+      const int accepted = ::accept(listener_, nullptr, nullptr);
+      if (accepted < 0) return;
+      handle(accepted);
+      ::close(accepted);
+    }
+  }
+
+  /// Reads from TLS or the plain socket; at most `size` bytes.
+  int receive(SSL* secure, int socket, char* into, int size) {
+    if (secure != nullptr) return SSL_read(secure, into, size);
+    return static_cast<int>(::recv(socket, into, static_cast<std::size_t>(size), 0));
+  }
+
+  void handle(int socket) {
+    {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      ++observed_.tcp;
+    }
+    timeval timeout{2, 0};
+    ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+    SSL* secure = nullptr;
+    if (context_ != nullptr) {
+      secure = SSL_new(context_);
+      SSL_set_fd(secure, socket);
+      if (SSL_accept(secure) != 1) {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        ++observed_.tls_errors;
+        ERR_clear_error();
+        SSL_free(secure);
+        return;
+      }
+    }
+    std::string request;
+    char buffer[65536];
+    std::size_t end = std::string::npos;
+    while ((end = request.find("\r\n\r\n")) == std::string::npos) {
+      const int got = receive(secure, socket, buffer, sizeof buffer);
+      if (got <= 0) break;
+      request.append(buffer, static_cast<std::size_t>(got));
+    }
+    if (end != std::string::npos) {
+      std::size_t body = 0;
+      for (const std::string_view name : {"Content-Length: ", "content-length: "}) {
+        if (const std::size_t at = request.find(name); at != std::string::npos && at < end) {
+          body = std::stoul(request.substr(at + name.size()));
+        }
+      }
+      while (request.size() < end + 4 + body) {
+        const int got = receive(secure, socket, buffer, sizeof buffer);
+        if (got <= 0) break;
+        request.append(buffer, static_cast<std::size_t>(got));
+      }
+      Behaviour now;
+      {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        observed_.requests.push_back(request);
+        now = behaviour_;
+      }
+      if (now.hold) {
+        while (!stopping_) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      } else {
+        const std::string answer = answer_to(request.substr(end + 4), now);
+        if (secure != nullptr) {
+          (void)SSL_write(secure, answer.data(), static_cast<int>(answer.size()));
+        } else {
+          (void)::send(socket, answer.data(), answer.size(), MSG_NOSIGNAL);
+        }
+      }
+    }
+    ERR_clear_error();
+    if (secure != nullptr) SSL_free(secure);
+  }
+
+  static std::string answer_to(const std::string& statement, const Behaviour& behaviour) {
+    const auto text = [](std::string_view value) {
+      return std::string(1, static_cast<char>(value.size())) + std::string(value);
+    };
+    int status = behaviour.status;
+    std::string body = "no";
+    if (behaviour.initialize) {
+      status = 200;
+      if (statement.starts_with("SELECT version()")) {
+        body = std::string(1, '\x01') + text("version()") + text("String") + text("25.8.0.0");
+      } else {
+        body = std::string(1, '\x01') + text("count()") + text("UInt64") + std::string(1, '\x07') +
+               std::string(7, '\0');
+      }
+    }
+    std::string head = "HTTP/1.1 " + std::to_string(status) + " Fixture\r\n";
+    if (!behaviour.location.empty()) head += "Location: " + behaviour.location + "\r\n";
+    return head + "Content-Length: " + std::to_string(body.size()) +
+           "\r\nConnection: close\r\n\r\n" + body;
+  }
+
+  Behaviour behaviour_;
+  SSL_CTX* context_;
+  int listener_ = -1;
+  int port_ = 0;
+  std::atomic<bool> stopping_{false};
+  mutable std::mutex mutex_;
+  HttpsObserved observed_;
   std::thread worker_;
 };
 
