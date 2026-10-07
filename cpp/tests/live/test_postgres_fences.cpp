@@ -192,6 +192,38 @@ TEST_F(PostgresFence, ABarrierWaitsForTheWriterHoldingTheTable) {
   EXPECT_THROW(insert(2, 1), sde::EngineError);
 }
 
+TEST_F(PostgresFence, ARetriedBarrierStillWaitsForAWriterHoldingTheTable) {
+  // On a retry the barrier's constraint exists, so no DDL runs and nothing else waits: the drain's
+  // lock alone proves that every writer holding the table has finished. A delete is such a writer,
+  // since no CHECK constraint refuses it.
+  const std::string hold(32, '2');
+  (void)fence().prepare(1);
+  insert(1, 1);
+  (void)fence().freeze(hold);
+  Admin writer(scope_->dsn());
+  Admin observer(dsn_);
+  (void)writer.run("BEGIN");
+  (void)writer.run("DELETE FROM " + kQuoted + " WHERE id = 1");
+  std::future<sde::FenceState> frozen =
+      std::async(std::launch::async, [&] { return fence().freeze(hold); });
+  bool waiting = false;
+  for (const auto deadline = Clock::now() + std::chrono::seconds(5); Clock::now() < deadline;) {
+    const Admin::Rows rows = observer.rows(
+        "SELECT wait_event_type FROM pg_stat_activity WHERE application_name = $1",
+        {application_});
+    if (!rows.empty() && rows[0][0] == std::optional<std::string>("Lock")) {
+      waiting = true;
+      break;
+    }
+    if (frozen.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready) break;
+  }
+  EXPECT_TRUE(waiting) << "the retried barrier returned while a writer still held the table";
+  (void)writer.run("COMMIT");
+  ASSERT_EQ(frozen.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_TRUE(frozen.get().closed());
+  EXPECT_EQ(engine_->count(kTable), 0U);
+}
+
 TEST_F(PostgresFence, FenceDdlIsRefusedInsideAnApplicationTransaction) {
   // DDL on the application's connection would commit or roll back with the application's work.
   engine_->transaction([&] {
