@@ -210,16 +210,7 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // On the path every start takes - a rolled-back map file is read at process start - and costing
   // nothing for an unsigned map.
   physical_ = detail::validate_generations(model, placement, engines_, project_id_);
-  if (!physical_.empty()) {
-    std::set<std::string> tables;
-    for (const PhysicalFinding& finding : physical_) tables.insert(finding.table);
-    Json fields = Json::object();
-    fields.set("findings", static_cast<std::int64_t>(physical_.size()));
-    Json named = Json::array();
-    for (const std::string& table : tables) named.as_array().push_back(table);
-    fields.set("tables", std::move(named));
-    detail::emit(log_, "sde.schema.physical_mismatch", fields);
-  }
+  report_physical();
   forward_only_ = enforce_forward_only(placement, engines_, log_);
 }
 
@@ -343,6 +334,7 @@ void Session::ensure_schema() {
   const Use use(*this);
   if (placement_.contract() >= 4) {
     physical_ = detail::validate_generations(model_, placement_, engines_, project_id_);
+    report_physical();
     return;
   }
   std::vector<PhysicalFinding> findings;
@@ -357,9 +349,22 @@ void Session::ensure_schema() {
     }
   }
   physical_ = std::move(findings);
+  report_physical();
   Json fields = Json::object();
   fields.set("groups", static_cast<std::int64_t>(groups_.size()));
   detail::emit(log_, "sde.schema.applied", fields);
+}
+
+void Session::report_physical() const {
+  if (physical_.empty()) return;
+  std::set<std::string> tables;
+  for (const PhysicalFinding& finding : physical_) tables.insert(finding.table);
+  Json fields = Json::object();
+  fields.set("findings", static_cast<std::int64_t>(physical_.size()));
+  Json named = Json::array();
+  for (const std::string& table : tables) named.as_array().push_back(table);
+  fields.set("tables", std::move(named));
+  detail::emit(log_, "sde.schema.physical_mismatch", fields);
 }
 
 // --- data ---------------------------------------------------------------------------------------

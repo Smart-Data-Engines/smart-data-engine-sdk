@@ -168,6 +168,9 @@ class Session {
   [[nodiscard]] Row fields_out(std::string_view entity, Row row) const;
   [[nodiscard]] std::string client_name(std::string_view entity, const std::string& field) const;
 
+  /// `sde.schema.physical_mismatch`, when the tables differ from the design: on opening and on
+  /// `ensure_schema`, as the reference reports it.
+  void report_physical() const;
   void admit(std::string_view entity, const std::string& target, const Row& values) const;
   [[nodiscard]] const OperationShape& shape(const std::string& entity, std::string_view kind,
                                             const std::vector<std::string>& fields = {}) const;
