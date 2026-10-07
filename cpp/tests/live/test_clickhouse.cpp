@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "live/clickhouse.hpp"
+#include "live/http_stub.hpp"
 #include "live/live.hpp"
 #include "sde/clickhouse.hpp"
 #include "sde/errors.hpp"
@@ -434,6 +435,37 @@ TEST_F(ClickHouseLive, AFirstExchangeTheServerClosesIsNotReplayed) {
             }),
             "accepted");
   EXPECT_EQ(endpoint.seen(), std::vector<std::string>{"POST "});
+}
+
+TEST_F(ClickHouseLive, AValueTravelsInTheBodyAndNeverInTheUrl) {
+  // A URL is what a proxy between the application and the server logs. The reference's driver
+  // sends a statement as the body, and an INSERT's rows as the body under a statement that holds no
+  // value. The server here answers the handshake and the insert's DESCRIBE, and closes the rest.
+  const std::string canary = "canary-value-7c1e";
+  sde::live::ScriptedServer server({sde::live::version_answer("24.8.14.39"), "",
+                                    sde::live::texts_answer({"name", "type"}, {{"name", "String"}}),
+                                    ""});
+  sde::ClickHouseEngine ch("clickhouse://fixture:secret@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default");
+  ch.connect();
+  EXPECT_NE(message_of([&] { (void)ch.get("events", {{"name", canary}}); }), "accepted");
+  EXPECT_NE(message_of([&] { ch.insert("events", {{"name", canary}}); }), "accepted");
+  const std::vector<std::string> requests = server.requests();
+  ASSERT_EQ(requests.size(), 4U) << "the handshake, the read, the DESCRIBE and the INSERT";
+  for (std::size_t i = 0; i < requests.size(); ++i) {
+    const std::string line = requests[i].substr(0, requests[i].find("\r\n"));
+    EXPECT_EQ(line.find(canary), std::string::npos) << line;
+    EXPECT_EQ(line.find("secret"), std::string::npos) << line;
+    // `wait_end_of_query=1` is a setting; the statement would be `&query=`.
+    EXPECT_EQ(line.find("&query="), i == 3 ? line.find("&query=INSERT") : std::string::npos) << line;
+  }
+  EXPECT_NE(requests[1].find("\r\n\r\nSELECT * FROM `events` FINAL WHERE `name` = "
+                             "'canary-value-7c1e' LIMIT 1 FORMAT RowBinaryWithNamesAndTypes"),
+            std::string::npos)
+      << requests[1];
+  EXPECT_NE(requests[3].find("query=INSERT%20INTO%20%60events%60"), std::string::npos) << requests[3];
+  EXPECT_NE(requests[3].find(canary, requests[3].find("\r\n\r\n")), std::string::npos)
+      << "the row is the body";
 }
 
 TEST_F(ClickHouseLive, ATlsSchemeSendsAClientHelloAndNeverAPlainRequest) {
