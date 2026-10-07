@@ -178,6 +178,24 @@ bool is_nfc(std::string_view text) {
   return nfc(text) == text;
 }
 
+namespace detail {
+
+std::string nfkc(std::string_view text) {
+  if (is_ascii(text)) return std::string(text);
+  utf8proc_uint8_t* raw = nullptr;
+  const utf8proc_ssize_t length = utf8proc_map(
+      reinterpret_cast<const utf8proc_uint8_t*>(text.data()),
+      static_cast<utf8proc_ssize_t>(text.size()), &raw,
+      static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE | UTF8PROC_COMPAT));
+  std::unique_ptr<utf8proc_uint8_t, FreeDeleter> owned(raw);
+  if (length < 0) {
+    throw CanonicalError(std::string("NFKC normalisation failed: ") + utf8proc_errmsg(length));
+  }
+  return std::string(reinterpret_cast<const char*>(owned.get()), static_cast<std::size_t>(length));
+}
+
+}  // namespace detail
+
 namespace {
 
 // Case_Ignorable is the general categories Mn, Me, Cf, Lm and Sk plus the Word_Break classes

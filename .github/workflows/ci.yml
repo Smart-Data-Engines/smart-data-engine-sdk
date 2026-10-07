@@ -474,7 +474,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libssl-dev libutf8proc-dev libpq-dev g++-12 clang-16
+            ninja-build libssl-dev libutf8proc-dev libpq-dev libcurl4-openssl-dev g++-12 clang-16
 
       - name: configure
         env:
@@ -540,7 +540,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libssl-dev libutf8proc-dev libpq-dev clang
+            ninja-build libssl-dev libutf8proc-dev libpq-dev libcurl4-openssl-dev clang
 
       - name: configure
         run: |
