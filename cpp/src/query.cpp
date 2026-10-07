@@ -10,6 +10,7 @@
 
 #include "bignum.hpp"
 #include "python_compat.hpp"
+#include "sde/schema.hpp"
 #include "sde/unicode.hpp"
 #include "unicode_internal.hpp"
 #include "value_internal.hpp"
@@ -409,6 +410,174 @@ Row read_row(const std::vector<ReadColumn>& columns, Row row) {
     found->second = scaled_decimal(negative, magnitude, scale);
   }
   return row;
+}
+
+// --- the read's SQL -----------------------------------------------------------------------------
+
+namespace {
+
+bool is_float(const ReadColumn& column) {
+  return column.type == "float32" || column.type == "float64";
+}
+
+std::string joined(const std::vector<std::string>& parts, std::string_view separator) {
+  std::string out;
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    if (i > 0) out += separator;
+    out += parts[i];
+  }
+  return out;
+}
+
+/// The column as a predicate and an ordering read it: text in the reads' collation, a ClickHouse
+/// uuid as its text (whose order is the one a page follows), a float as a double.
+std::string expression_of(const ReadColumn& column, std::string_view dialect) {
+  const std::string expression = quote_identifier(dialect, column.name);
+  if (column.type == "string" && dialect == "postgres") return "(" + expression + " COLLATE \"C\")";
+  if (column.type == "uuid" && dialect == "clickhouse") return "toString(" + expression + ")";
+  if (is_float(column)) {
+    return dialect == "postgres" ? "CAST(" + expression + " AS double precision)"
+                                 : "toFloat64(" + expression + ")";
+  }
+  return expression;
+}
+
+std::string comparison(const ReadColumn& column, std::string_view op, const Value& value,
+                       std::string_view dialect, const Parameter& parameter) {
+  std::string expression = expression_of(column, dialect);
+  if (is_null(value)) return expression + " IS NULL";
+  if (column.type == "uuid" && dialect == "clickhouse" && op == "=") {
+    // Equality compares the native value: a condition on `toString` cannot prune the primary key.
+    return quote_identifier(dialect, column.name) + " = toUUID(" +
+           parameter(Value(std::get<Uuid>(value).to_string())) + ")";
+  }
+  std::string bound;
+  if (starts_with(column.type, "decimal(")) {
+    const auto [precision, declared] = decimal_type(column.type);
+    const Decimal& number = std::get<Decimal>(value);
+    const int scale = std::max(declared, std::max(0, number.scale()));
+    if (precision - declared + scale > kDecimalDigits) {
+      throw QueryRefused("decimal comparison requires more than 76 digits");
+    }
+    const std::string target = dialect == "postgres"
+                                   ? "numeric(76," + std::to_string(scale) + ")"
+                                   : "Nullable(Decimal(76," + std::to_string(scale) + "))";
+    expression = "CAST(" + expression + " AS " + target + ")";
+    bound = "CAST(" + parameter(Value(number.to_string())) + " AS " + target + ")";
+  } else if (column.type == "uuid" && dialect == "clickhouse") {
+    bound = parameter(Value(std::get<Uuid>(value).to_string()));
+  } else {
+    bound = parameter(value);
+  }
+  std::string out = expression + " " + std::string(op) + " " + bound;
+  if (is_float(column) && op != "=") {
+    const std::string not_nan = dialect == "postgres"
+                                    ? expression + " <> 'NaN'::double precision"
+                                    : "NOT isNaN(" + expression + ")";
+    out = "(" + not_nan + " AND " + out + ")";
+  }
+  return out;
+}
+
+std::string_view operator_of(ReadOperation operation) noexcept {
+  switch (operation) {
+    case ReadOperation::eq:
+      return "=";
+    case ReadOperation::ge:
+      return ">=";
+    case ReadOperation::lt:
+      return "<";
+  }
+  return "=";
+}
+
+std::vector<std::string> filter_clauses(const ReadPlan& plan, std::string_view dialect,
+                                        const Parameter& parameter) {
+  std::vector<std::string> clauses;
+  for (const ReadFilter& filter : plan.filters) {
+    clauses.push_back(
+        comparison(filter.column, operator_of(filter.operation), filter.value, dialect, parameter));
+  }
+  return clauses;
+}
+
+}  // namespace
+
+std::string read_sql(std::string_view table, const ReadPlan& plan, std::string_view dialect,
+                     const Parameter& parameter, bool count) {
+  std::vector<std::string> clauses = filter_clauses(plan, dialect, parameter);
+  if (!count && plan.after) {
+    std::vector<std::string> alternatives;
+    const std::string_view op = plan.descending ? "<" : ">";
+    for (std::size_t index = 0; index < plan.order.size(); ++index) {
+      const Value& value = (*plan.after)[index];
+      if (is_null(value)) continue;
+      // Each occurrence is bound in SQL order. Reusing a prefix would reuse a named ClickHouse
+      // parameter, but leave PostgreSQL's positional parameters misaligned.
+      std::vector<std::string> parts;
+      for (std::size_t position = 0; position < index; ++position) {
+        parts.push_back(
+            comparison(plan.order[position], "=", (*plan.after)[position], dialect, parameter));
+      }
+      const std::string expression = expression_of(plan.order[index], dialect);
+      const std::string later = comparison(plan.order[index], op, value, dialect, parameter);
+      parts.push_back("(" + expression + " IS NULL OR " + later + ")");
+      alternatives.push_back("(" + joined(parts, " AND ") + ")");
+    }
+    clauses.push_back(alternatives.empty() ? "FALSE" : "(" + joined(alternatives, " OR ") + ")");
+  }
+  const std::string where = clauses.empty() ? "" : " WHERE " + joined(clauses, " AND ");
+  const std::string final = dialect == "clickhouse" ? " FINAL" : "";
+  const std::string quoted = quote_identifier(dialect, table);
+  if (count) {
+    const std::string expression =
+        dialect == "postgres" ? "CAST(count(*) AS text)" : "toString(count())";
+    return "SELECT " + expression + " AS sde_count FROM " + quoted + final + where;
+  }
+  std::vector<std::string> projection;
+  for (const ReadColumn& column : plan.columns) {
+    const std::string name = quote_identifier(dialect, column.name);
+    if (dialect == "clickhouse" && (column.type == "timestamp" || column.type == "timestamptz")) {
+      projection.push_back("toTimeZone(" + name + ", 'UTC') AS " + name);
+    } else if (starts_with(column.type, "decimal(")) {
+      projection.push_back(dialect == "postgres" ? "CAST(" + name + " AS text) AS " + name
+                                                 : "toString(" + name + ") AS " + name);
+    } else {
+      projection.push_back(name);
+    }
+  }
+  std::vector<std::string> order;
+  const std::string direction = plan.descending ? "DESC" : "ASC";
+  for (const ReadColumn& column : plan.order) {
+    order.push_back(expression_of(column, dialect) + " " + direction + " NULLS LAST");
+  }
+  return "SELECT " + joined(projection, ", ") + " FROM " + quoted + final + where + " ORDER BY " +
+         joined(order, ", ") + " LIMIT " + parameter(Value(plan.limit + 1));
+}
+
+std::string summary_sql(std::string_view table, const ReadPlan& plan, const ReadColumn& column,
+                        std::string_view dialect, const Parameter& parameter) {
+  const int scale = summary_scale(column, 0);
+  const std::string quoted = quote_identifier(dialect, column.name);
+  const std::string target = dialect == "postgres"
+                                 ? "numeric(76," + std::to_string(scale) + ")"
+                                 : "Nullable(Decimal(76," + std::to_string(scale) + "))";
+  const auto text = [&](const std::string& expression) {
+    return dialect == "postgres" ? "CAST(" + expression + " AS text)"
+                                 : "toString(" + expression + ")";
+  };
+  const std::vector<std::string> fields = {
+      text("count(*)") + " AS sde_count",
+      text("count(" + quoted + ")") + " AS sde_present",
+      text("min(" + quoted + ")") + " AS sde_min",
+      text("max(" + quoted + ")") + " AS sde_max",
+      text("sum(CAST(" + quoted + " AS " + target + "))") + " AS sde_total",
+  };
+  const std::vector<std::string> clauses = filter_clauses(plan, dialect, parameter);
+  const std::string where = clauses.empty() ? "" : " WHERE " + joined(clauses, " AND ");
+  const std::string final = dialect == "clickhouse" ? " FINAL" : "";
+  return "SELECT " + joined(fields, ", ") + " FROM " + quote_identifier(dialect, table) + final +
+         where;
 }
 
 }  // namespace sde

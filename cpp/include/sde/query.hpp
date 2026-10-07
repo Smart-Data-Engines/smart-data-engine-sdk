@@ -9,6 +9,7 @@
 
 #include <concepts>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -144,5 +145,25 @@ struct NumericSummary {
 /// A row as an engine returned it, with each decimal put back at its column's declared scale: an
 /// engine may return `8.5` for a `decimal(12,2)` that holds `8.50`.
 [[nodiscard]] Row read_row(const std::vector<ReadColumn>& columns, Row row);
+
+/// Binds one value and returns the placeholder the statement writes for it. The callback owns the
+/// driver's representation, as the reference's `parameter` does: a libpq adapter keeps the value's
+/// text and returns `$n`, a ClickHouse one a named server-side parameter. It is called once per
+/// value, in the order the statement uses them, which positional placeholders depend on.
+using Parameter = std::function<std::string(const Value& value)>;
+
+/// One native query of a planned read in `postgres` or `clickhouse` SQL - the page, or with `count`
+/// the number of its rows - every value bound through `parameter`. Byte for byte the reference's
+/// `read_sql`; refuses (`QueryRefused`) a decimal comparison that needs more than 76 digits.
+[[nodiscard]] std::string read_sql(std::string_view table, const ReadPlan& plan,
+                                   std::string_view dialect, const Parameter& parameter,
+                                   bool count = false);
+
+/// The exact summary of one integer or decimal column of a planned read, every aggregate cast to
+/// text by the server so that no driver passes it through a binary float. Byte for byte the
+/// reference's `summary_sql`; refuses (`QueryRefused`) a column `summary_scale` refuses.
+[[nodiscard]] std::string summary_sql(std::string_view table, const ReadPlan& plan,
+                                      const ReadColumn& column, std::string_view dialect,
+                                      const Parameter& parameter);
 
 }  // namespace sde
