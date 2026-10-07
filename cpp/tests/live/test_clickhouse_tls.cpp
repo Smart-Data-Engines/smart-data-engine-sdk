@@ -113,13 +113,11 @@ TEST_F(ClickHouseTls, AnInvalidPeerCertificateReachesTlsButNeverApplicationBytes
     EXPECT_EQ(refused(tls_dsn(endpoint.port(), file("ca"))),
               "could not connect to ClickHouse: ClickHouse transport failed; the operation was not "
               "replayed and its outcome may be unknown");
-    // An expired certificate fails the chain inside the handshake, and the witness sees the
-    // alert. A certificate for another host completes the handshake: libcurl checks the name after
-    // it, where Python's ssl module checks it during, and closes before the request - so the claim
-    // both share is the one asserted for both: no application byte reached the peer.
-    if (certificate == "expired_cert") {
-      EXPECT_TRUE(endpoint.saw_a_tls_failure()) << "the endpoint did not see the handshake fail";
-    }
+    // Where the refusal happens is libcurl's: 8.5 (Ubuntu 24.04) fails an expired chain inside the
+    // handshake, and the witness sees the alert, but checks another host's name after it; 8.18
+    // (Ubuntu 26.04) checks both after the handshake, and the witness sees none (measured). Python's
+    // ssl module checks both during it. What every one of them guarantees, and what is asserted
+    // here, is that no application byte reached the peer.
     const sde::live::HttpsObserved seen = endpoint.observed();
     EXPECT_EQ(seen.tcp, 1);
     EXPECT_TRUE(seen.requests.empty()) << "application bytes went to an unverified peer";
@@ -131,7 +129,7 @@ TEST_F(ClickHouseTls, AnotherCaIsRefusedAndTrustsNothingForTheNextClient) {
   (void)refused(tls_dsn(endpoint.port(), file("ca")));
   EXPECT_EQ(endpoint.observed().requests.size(), 1U);
   (void)refused(tls_dsn(endpoint.port(), file("other_ca")));
-  EXPECT_TRUE(endpoint.saw_a_tls_failure());
+  // Refused inside the handshake or after it, as libcurl's version decides; never with a request.
   EXPECT_EQ(endpoint.observed().tcp, 2);
   EXPECT_EQ(endpoint.observed().requests.size(), 1U);
   (void)refused(tls_dsn(endpoint.port(), file("ca")));
@@ -225,7 +223,6 @@ TEST_F(ClickHouseTls, AConnectedEngineKeepsItsCaBytesWhileANewOneReadsTheChanged
   EXPECT_EQ(refused(dsn),
             "could not connect to ClickHouse: ClickHouse transport failed; the operation was not "
             "replayed and its outcome may be unknown");
-  EXPECT_TRUE(endpoint.saw_a_tls_failure());
   EXPECT_EQ(endpoint.observed().requests.size(), requests);
 }
 

@@ -5,11 +5,19 @@
 /// connection whose handshake failed never reaches the protocol, so a greeting that arrived is the
 /// witness that verification passed. Needs no DSN.
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -214,11 +222,69 @@ TEST_F(OrderbookTls, PlainTextAgainstATlsPortWaitsOutItsTimeout) {
   EXPECT_GE(std::chrono::duration<double>(Clock::now() - start).count(), 0.25);
 }
 
+/// What this platform's OpenSSL itself says when a TLS 1.3 client reads a plain server's greeting
+/// as a record, in CPython's `[SSL: REASON] text`: `wrong version number` on OpenSSL 3.0 and
+/// `record layer failure` on 3.5 - both measured, and both what CPython says on the same OpenSSL.
+std::string openssl_reading_plain_text(int port) {
+  SSL_CTX* context = SSL_CTX_new(TLS_client_method());
+  (void)SSL_CTX_set_min_proto_version(context, TLS1_3_VERSION);
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(static_cast<std::uint16_t>(port));
+  ::inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+  (void)::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof address);
+  SSL* ssl = SSL_new(context);
+  SSL_set_fd(ssl, fd);
+  ERR_clear_error();
+  (void)SSL_connect(ssl);
+  const char* reason = ERR_reason_error_string(ERR_peek_last_error());
+  const std::string text = reason == nullptr ? "" : reason;
+  ERR_clear_error();
+  SSL_free(ssl);
+  ::close(fd);
+  SSL_CTX_free(context);
+  std::string symbol;
+  for (const char c : text) {
+    symbol += c == ' ' ? '_' : static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  }
+  return "[SSL: " + symbol + "] " + text;
+}
+
 TEST_F(OrderbookTls, TlsAgainstAPlainPortReadsTheGreetingAsARecord) {
   Greeter server(std::nullopt);
+  const std::string says = openssl_reading_plain_text(server.port());
+  ASSERT_NE(says, "[SSL: ] ") << "OpenSSL itself refused nothing";
   EXPECT_EQ(failure_of([&] { ob::Connection(ob::parse_dsn(dsn("localhost", server.port(), file("ca")))); }),
             "OrderbookTlsError: TLS handshake with localhost:" + std::to_string(server.port()) +
-                " failed: [SSL: WRONG_VERSION_NUMBER] wrong version number");
+                " failed: " + says);
+}
+
+TEST_F(OrderbookTls, AServerThatNeverGreetsAfterTheHandshakeIsReadTimedOutInTlsWords) {
+  // CPython words a read that times out on a TLS socket `The read operation timed out`, and on a
+  // plain one `timed out`; the engine's client lets either through before its first answer.
+  ProtocolServer silent([](Peer& peer) { (void)peer.drain(milliseconds(2000)); },
+                        presenting("server_cert"));
+  const auto start = Clock::now();
+  EXPECT_EQ(failure_of([&] {
+              ob::Connection(ob::parse_dsn("orderbook://localhost:" + std::to_string(silent.port()) +
+                                           "?tls=on&timeout=0.3&ca=" + file("ca").string()));
+            }),
+            "TimeoutError: The read operation timed out");
+  EXPECT_GE(std::chrono::duration<double>(Clock::now() - start).count(), 0.25);
+}
+
+TEST_F(OrderbookTls, AServerThatHangsUpWithoutClosingTlsHasEndedTheStream) {
+  // An end of the stream with no close_notify is an end, as `suppress_ragged_eofs` makes it for the
+  // engine's client: the same words as on a plain connection, not a TLS failure.
+  ProtocolServer abrupt([](Peer& peer) {
+    if (!peer.send(sde::live::kGreeting) || !peer.line()) return;
+    peer.close();  // a TCP end, no TLS alert before it
+  },
+                        presenting("server_cert"));
+  ob::Connection connection(ob::parse_dsn(dsn("localhost", abrupt.port(), file("ca"))));
+  EXPECT_EQ(failure_of([&] { (void)connection.execute("PING"); }),
+            "OrderbookError: TCP connection closed by server");
 }
 
 TEST_F(OrderbookTls, AHandshakeTheServerNeverAnswersIsBoundedBySilence) {
