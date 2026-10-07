@@ -426,6 +426,49 @@ TEST_F(ClickHouseLive, AHandshakeThatNeverEndsIsBoundedAsAWhole) {
   EXPECT_LT(seconds, 5.0);
 }
 
+TEST_F(ClickHouseLive, AnExchangeAfterTheHandshakeIsBoundedBySilence) {
+  // The handshake has a bound of its own as a whole; every later exchange is bounded by silence
+  // alone, so a server that takes a read and says nothing is given up on after the URI's two
+  // seconds - and the read is reported, not retried.
+  sde::live::ScriptedServer server(
+      {sde::live::version_answer("24.8.14.39"), sde::live::Reply::silent()});
+  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default?send_receive_timeout=2");
+  ch.connect();
+  const auto started = Clock::now();
+  EXPECT_EQ(message_of([&] { (void)ch.get("events", {{"id", std::int64_t{1}}}); }),
+            "select from events failed: ClickHouse transport failed; the operation was not "
+            "replayed and its outcome may be unknown");
+  const double seconds = std::chrono::duration<double>(Clock::now() - started).count();
+  EXPECT_GE(seconds, 1.8);
+  EXPECT_LT(seconds, 5.0);
+  EXPECT_EQ(server.requests().size(), 2U);
+}
+
+TEST_F(ClickHouseLive, ProgressHeadersKeepALongAnswerAlive) {
+  // A long query is not silence: the server sends a progress header while it works, and the bound
+  // counts from the last one. Here a header a second for four seconds, under a two-second bound,
+  // then the answer.
+  std::vector<std::pair<std::chrono::milliseconds, std::string>> pieces{
+      {std::chrono::milliseconds(0), "HTTP/1.1 200 OK\r\n"}};
+  for (int n = 0; n < 4; ++n) {
+    pieces.emplace_back(std::chrono::milliseconds(1000),
+                        "X-ClickHouse-Progress: {\"read_rows\":\"" + std::to_string(n) + "\"}\r\n");
+  }
+  const std::string body = sde::live::texts_body({"name"}, {{"slow"}});
+  pieces.emplace_back(std::chrono::milliseconds(500), "Content-Length: " + std::to_string(body.size()) +
+                                                        "\r\nConnection: close\r\n\r\n" + body);
+  sde::live::ScriptedServer server(
+      {sde::live::version_answer("24.8.14.39"), sde::live::Reply::paced(std::move(pieces))});
+  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default?send_receive_timeout=2");
+  ch.connect();
+  const auto started = Clock::now();
+  EXPECT_EQ(ch.get("events", {{"name", std::string("slow")}}),
+            (sde::Row{{"name", std::string("slow")}}));
+  EXPECT_GE(std::chrono::duration<double>(Clock::now() - started).count(), 4.0);
+}
+
 TEST_F(ClickHouseLive, AWrongPasswordRevealsNothingTheServerSaid) {
   const std::string wrong = sde::live::with_login(dsn_, "default", "not-the-password");
   EXPECT_EQ(message_of([&] { sde::ClickHouseEngine(wrong).connect(); }),
