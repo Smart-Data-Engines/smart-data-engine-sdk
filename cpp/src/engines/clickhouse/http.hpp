@@ -61,7 +61,8 @@ class Http {
 
   /// One statement, its answer's body when the server accepted it. `format` appends
   /// `FORMAT <format>` and, for JSON, the settings that keep every number exact; `data` is the body
-  /// an INSERT carries; `settings` are more URL parameters, already encoded (`&async_insert=0`).
+  /// an INSERT carries, and without it the statement is the body - never the URL, which a proxy
+  /// may log; `settings` are more URL parameters, already encoded (`&async_insert=0`).
   /// Every exchange is bounded by the URI's send_receive_timeout of silence - progress headers keep
   /// a running query alive, as the reference's driver asks for them - and `handshake` bounds the
   /// whole exchange by it too. Throws `ServerError` or `TransportFailure`.
