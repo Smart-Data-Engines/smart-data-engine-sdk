@@ -34,6 +34,16 @@ reference's and those of the engine's Python client the reference puts into its 
   stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
   infinity or zero by the sign of its exponent rather than its size. Neither reached a release.
 
+**Fixed in the C++ library, and found in all three: a ClickHouse 26.5 or later catalogue read as
+another design.** From 26.5 ClickHouse keeps the parentheses of a single expression written in
+them, so the one-column sort key every library renders as `ORDER BY (id)` reads back `(id)` where
+26.4 and earlier read `id` - measured on nine releases from 24.8 to 26.9. Every table the libraries
+create there read as differing from its design: a session reported a physical mismatch, and
+provisioning, staging and a copy under a new generation refused. The C++ catalogue reader takes one
+pair of parentheses around a whole list, and its live suite passes against 26.5 and runs in CI
+against a current release beside the LTS. The Python and TypeScript libraries, released, read it as
+before; the finding is in [`docs/implementing.md`](docs/implementing.md#the-clickhouse-adapter-against-the-reference-on-one-server).
+
 **New: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
 `sde::ClickHouseEngine`, over ClickHouse's HTTP interface through libcurl, in a target of its own,
 `sde::clickhouse`, so an application that places nothing in ClickHouse carries no libcurl. It is the
