@@ -21,6 +21,7 @@ option(SDE_BUILD_TESTS "Build the unit tests and the conformance runner" ${PROJE
 option(SDE_WERROR "Treat compiler warnings as errors" OFF)
 option(SDE_POSTGRES "Build sde::postgres, the PostgreSQL adapter, over libpq" ON)
 option(SDE_CLICKHOUSE "Build sde::clickhouse, the ClickHouse adapter, over libcurl" ON)
+option(SDE_ORDERBOOK "Build sde::orderbook, the orderbook engine adapter, over its TCP protocol" ON)
 set(SDE_SANITIZE "" CACHE STRING "Comma-separated sanitizers to build with, e.g. address,undefined")
 
 include(GNUInstallDirs)
@@ -37,6 +38,9 @@ if(SDE_POSTGRES)
 endif()
 if(SDE_CLICKHOUSE)
   find_package(CURL 7.77 REQUIRED)
+endif()
+if(SDE_ORDERBOOK)
+  find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
 endif()
 
 # --- warnings and sanitizers, as an interface target every target here links ------------------
@@ -162,6 +166,22 @@ if(SDE_CLICKHOUSE)
   target_link_libraries(sde_clickhouse
     PUBLIC sde PRIVATE CURL::libcurl OpenSSL::Crypto $<BUILD_INTERFACE:sde_build_flags>)
   list(APPEND SDE_ADAPTERS sde_clickhouse)
+endif()
+if(SDE_ORDERBOOK)
+  add_library(sde_orderbook
+    src/engines/orderbook/dsn.cpp)
+  add_library(sde::orderbook ALIAS sde_orderbook)
+  target_compile_features(sde_orderbook PUBLIC cxx_std_20)
+  set_target_properties(sde_orderbook PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME orderbook)
+  target_include_directories(sde_orderbook
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(sde_orderbook
+    PUBLIC sde PRIVATE OpenSSL::SSL OpenSSL::Crypto $<BUILD_INTERFACE:sde_build_flags>)
+  list(APPEND SDE_ADAPTERS sde_orderbook)
 endif()
 
 # --- installation: find_package(sde CONFIG) -------------------------------------------------------
