@@ -39,6 +39,7 @@ add_executable(sde_unit_tests
   unit/test_packets.cpp
   unit/test_migration.cpp
   unit/test_verification.cpp
+  unit/test_read_sql.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main
   OpenSSL::Crypto)
