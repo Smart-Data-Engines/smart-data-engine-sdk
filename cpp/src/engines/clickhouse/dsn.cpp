@@ -612,7 +612,6 @@ Target parse(std::string_view dsn) {
   out.ca_cert = ca_cert;
   out.connect_timeout = seconds(option("connect_timeout"), kConnectTimeoutSeconds);
   out.send_receive_timeout = seconds(option("send_receive_timeout"), kHandshakeTimeoutSeconds);
-  out.receive_timeout_supplied = options.contains("send_receive_timeout");
   return out;
 }
 
