@@ -20,6 +20,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(SDE_BUILD_TESTS "Build the unit tests and the conformance runner" ${PROJECT_IS_TOP_LEVEL})
 option(SDE_WERROR "Treat compiler warnings as errors" OFF)
 option(SDE_POSTGRES "Build sde::postgres, the PostgreSQL adapter, over libpq" ON)
+option(SDE_CLICKHOUSE "Build sde::clickhouse, the ClickHouse adapter, over libcurl" ON)
 set(SDE_SANITIZE "" CACHE STRING "Comma-separated sanitizers to build with, e.g. address,undefined")
 
 include(GNUInstallDirs)
@@ -33,6 +34,9 @@ find_package(utf8proc REQUIRED)
 # Each adapter's driver is that adapter's alone: the core links no network library.
 if(SDE_POSTGRES)
   find_package(PostgreSQL REQUIRED)
+endif()
+if(SDE_CLICKHOUSE)
+  find_package(CURL 7.77 REQUIRED)
 endif()
 
 # --- warnings and sanitizers, as an interface target every target here links ------------------
@@ -137,6 +141,22 @@ if(SDE_POSTGRES)
   target_link_libraries(sde_postgres
     PUBLIC sde PRIVATE PostgreSQL::PostgreSQL $<BUILD_INTERFACE:sde_build_flags>)
   list(APPEND SDE_ADAPTERS sde_postgres)
+endif()
+if(SDE_CLICKHOUSE)
+  add_library(sde_clickhouse
+    src/engines/clickhouse/dsn.cpp)
+  add_library(sde::clickhouse ALIAS sde_clickhouse)
+  target_compile_features(sde_clickhouse PUBLIC cxx_std_20)
+  set_target_properties(sde_clickhouse PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME clickhouse)
+  target_include_directories(sde_clickhouse
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(sde_clickhouse
+    PUBLIC sde PRIVATE CURL::libcurl OpenSSL::Crypto $<BUILD_INTERFACE:sde_build_flags>)
+  list(APPEND SDE_ADAPTERS sde_clickhouse)
 endif()
 
 # --- installation: find_package(sde CONFIG) -------------------------------------------------------

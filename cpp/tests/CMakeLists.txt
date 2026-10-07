@@ -55,6 +55,13 @@ if(TARGET sde_postgres)
     unit/test_postgres_offline.cpp)
   target_link_libraries(sde_unit_tests PRIVATE sde_postgres)
 endif()
+if(TARGET sde_clickhouse)
+  target_sources(sde_unit_tests PRIVATE unit/test_clickhouse_dsn.cpp)
+  target_link_libraries(sde_unit_tests PRIVATE sde_clickhouse)
+  # The connection vectors every library runs, read in place.
+  target_compile_definitions(sde_unit_tests PRIVATE
+    SDE_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../testdata")
+endif()
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)
 
 add_executable(sde_conformance

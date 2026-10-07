@@ -40,13 +40,15 @@ monotonic clock, or the one you give it, and that is the only state kept between
 - utf8proc: NFC and case mapping.
 - libpq, for the PostgreSQL adapter only. `-DSDE_POSTGRES=OFF` builds without it, and without the
   adapter.
+- libcurl 7.77 or newer, for the ClickHouse adapter only, which is being written.
+  `-DSDE_CLICKHOUSE=OFF` builds without it.
 - GoogleTest, for the tests only. An installed one is used; otherwise CMake fetches 1.15.2, pinned by
   its archive's SHA-256.
 
 On Debian and Ubuntu:
 
 ```bash
-sudo apt-get install cmake ninja-build libssl-dev libutf8proc-dev libpq-dev
+sudo apt-get install cmake ninja-build libssl-dev libutf8proc-dev libpq-dev libcurl4-openssl-dev
 ```
 
 ## Build and test
