@@ -8,6 +8,33 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: ClickHouse 26.5 and later** (both libraries; the operator's two are Python's). From 26.5
+the server reports three things in a new form, and each reader took the new form for something
+else. Measured on 24.8, 26.5 and 26.9, and the key on nine releases:
+- **A one-column key.** The libraries create it as `ORDER BY (id)`, and `system.tables.sorting_key`
+  reads it back as `(id)`, where 24.8 to 26.4 read `id`; a list of two or more reads `a, b` on all of
+  them. The catalogue reader refused the parentheses, so every table with a one-column key read as
+  another design. A session reported it in `physical`, and provisioning refused the table. Now one
+  pair of parentheses around the whole of a key, an index's expression or a partition key is read
+  as what is inside it, and only a list of names, or one function of one name, may be there.
+- **An index built in place** (`sde-operator index`). The server records the materialization as
+  `(MATERIALIZE INDEX <name>)` where 24.8 records `MATERIALIZE INDEX <name>`, and the operator looked
+  for the second. So on 26.5 a build never saw its materialization finish: it waited out the signed
+  budget and asked for recovery, and every resume started another materialization. Removing an
+  index left an unfinished materialization of it running. Both forms are matched now.
+- **An administrator beside the operator** (staging and cutover,
+  [`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).
+  A user with a direct global `ACCESS MANAGEMENT` is admitted there. From 26.5 the server lists that
+  grant member by member, because seven of its members are granted per user name, and the operator
+  looked for the single row of 24.8. So on a current server it found no administrator and refused
+  every staging and cutover beside one, naming the server's own `default` user. Now the whole group
+  counts, as `system.privileges` defines it, however it is listed. A partial revoke of anything in it
+  leaves no administrator, on 24.8 too, where such a user was admitted before.
+
+CI runs the live slices of both libraries against ClickHouse 26.9 as well as the 24.8 LTS, on the
+newest Python and the newest Node. The first was found by a checkpoint of the C++ library's engine
+adapters against a current server, and the other two by running this suite against one.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
