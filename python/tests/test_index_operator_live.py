@@ -274,12 +274,18 @@ def ch_indexes(role: Roles) -> dict[str, str]:
     return {str(name): str(kind) for name, kind in rows}
 
 
+def materializing(name: str) -> dict[str, str]:
+    """``{c}`` and ``{p}``: how the server records ``MATERIALIZE INDEX name`` - bare on 24.8, in
+    parentheses on 26.5 (measured)."""
+    return {"c": f"MATERIALIZE INDEX {name}", "p": f"(MATERIALIZE INDEX {name})"}
+
+
 def ch_materializations(role: Roles, name: str) -> list[bool]:
     """``is_done`` of every live MATERIALIZE INDEX mutation of ``name``, oldest first."""
     rows = role.operator._cx.query(
         "SELECT is_done FROM system.mutations WHERE database = {d:String} AND table = {t:String} "
-        "AND command = {c:String} AND NOT is_killed ORDER BY create_time",
-        parameters={"d": role.namespace, "t": TABLE, "c": f"MATERIALIZE INDEX {name}"},
+        "AND command IN ({c:String}, {p:String}) AND NOT is_killed ORDER BY create_time",
+        parameters={"d": role.namespace, "t": TABLE, **materializing(name)},
     ).result_rows
     return [bool(done) for (done,) in rows]
 
@@ -421,8 +427,8 @@ def wait_until_held(build: Build, run: Callable[..., Any], name: str) -> int | N
     wait_for(
         lambda: run(
             "SELECT 1 FROM system.mutations WHERE database = currentDatabase() "
-            "AND table = {t:String} AND command = {c:String} AND NOT is_done",
-            {"t": TABLE, "c": f"MATERIALIZE INDEX {name}"},
+            "AND table = {t:String} AND command IN ({c:String}, {p:String}) AND NOT is_done",
+            {"t": TABLE, **materializing(name)},
         ),
         "the materialization to be pending",
     )
@@ -436,8 +442,8 @@ def unfinished(build: Build, run: Callable[..., Any], name: str) -> bool:
     return bool(
         run(
             "SELECT 1 FROM system.mutations WHERE database = currentDatabase() "
-            "AND table = {t:String} AND command = {c:String} AND NOT is_done",
-            {"t": TABLE, "c": f"MATERIALIZE INDEX {name}"},
+            "AND table = {t:String} AND command IN ({c:String}, {p:String}) AND NOT is_done",
+            {"t": TABLE, **materializing(name)},
         )
     )
 
