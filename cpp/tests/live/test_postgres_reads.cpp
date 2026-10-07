@@ -25,6 +25,7 @@
 #include "engines/postgres/values.hpp"
 #include "live/live.hpp"
 #include "live/postgres.hpp"
+#include "live/reads.hpp"
 #include "sde/canonical.hpp"
 #include "sde/errors.hpp"
 #include "sde/hashing.hpp"
@@ -40,6 +41,8 @@
 namespace {
 
 using sde::live::Admin;
+using sde::live::before;
+using sde::live::sorted;
 using sde::live::Roles;
 using sde::live::Scope;
 
@@ -96,49 +99,7 @@ sde::PlacementMap auto_map(const sde::Model& model, const std::string& indexes =
   return sde::load_map(document, options);
 }
 
-/// The PostgreSQL engine with every read plan it is handed recorded, so that a test renders the
-/// very statement the adapter ran and asks the planner about it: the reference's spy on `read_sql`.
-class Spy final : public sde::Engine, public sde::Queryable, public sde::Countable {
- public:
-  struct Read {
-    std::string table;
-    sde::ReadPlan plan;
-    bool count;
-  };
-
-  explicit Spy(sde::PostgresEngine& inner) : inner_(inner) {}
-  std::vector<Read> reads;
-
-  [[nodiscard]] std::string_view dialect() const noexcept override { return inner_.dialect(); }
-  std::vector<sde::PhysicalFinding> ensure_schema(const sde::PhysicalLayout& layout,
-                                                  const sde::Keys& keys) override {
-    return inner_.ensure_schema(layout, keys);
-  }
-  void insert(const std::string& table, const sde::Row& values) override {
-    inner_.insert(table, values);
-  }
-  std::optional<sde::Row> get(const std::string& table, const sde::Row& key) override {
-    return inner_.get(table, key);
-  }
-  void transaction(const std::function<void()>& body) override { inner_.transaction(body); }
-  [[nodiscard]] sde::Capabilities capabilities() noexcept override {
-    sde::Capabilities offered = inner_.capabilities();
-    offered.query = this;
-    offered.count = this;
-    return offered;
-  }
-  std::vector<sde::Row> select_rows(const std::string& table, const sde::ReadPlan& plan) override {
-    reads.push_back({table, plan, false});
-    return inner_.select_rows(table, plan);
-  }
-  std::uint64_t count_rows(const std::string& table, const sde::ReadPlan& plan) override {
-    reads.push_back({table, plan, true});
-    return inner_.count_rows(table, plan);
-  }
-
- private:
-  sde::PostgresEngine& inner_;
-};
+using Spy = sde::live::Spy<sde::PostgresEngine>;
 
 /// The plan's scans, `Node Type[:index][ on condition]`, with sequential scans off. A planner that
 /// cannot use an index for the predicate still reads one then - whole, filtering every entry - so an
@@ -201,16 +162,6 @@ class PostgresReads : public ::testing::Test {
 
 // --- pages, counts and summaries ----------------------------------------------------------------
 
-const std::vector<std::string> kIds = {
-    "00000000-0000-0001-0000-000000000000", "00000000-0000-0000-ffff-ffffffffffff",
-    "ffffffff-ffff-ffff-0000-000000000000", "00000000-0000-0000-0000-000000000001",
-    "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000003"};
-
-sde::Value at(int micros_after_base) {
-  return *sde::TimestampTz::parse("2026-09-14T00:00:00." + std::to_string(123456 + micros_after_base) +
-                                  "Z");
-}
-
 /// The reference's fixture: six events whose ids sort differently as text and as numbers, labels
 /// with two nulls and a tie, times in microsecond ties, amounts at scale 2 - saved through a
 /// session on the runtime login, telemetry on, the saving window rolled away.
@@ -257,15 +208,7 @@ struct Events {
     if (spoken.second) options.names = &*spoken.second;
     session = std::make_unique<sde::Session>(
         model, map, std::map<std::string, sde::Engine*>{{"db", runtime.get()}}, options);
-    const std::vector<std::optional<std::string>> labels = {"z", std::nullopt, "é", "a",
-                                                            std::nullopt, "a"};
-    for (std::size_t i = 0; i < kIds.size(); ++i) {
-      rows.push_back(sde::Row{
-          {"id", *sde::Uuid::parse(kIds[i])},
-          {"label", labels[i] ? sde::Value(*labels[i]) : sde::Value(sde::Null{})},
-          {"at", at(static_cast<int>(i / 2))},
-          {"amount", sde::Decimal(std::to_string(i) + ".25")}});
-    }
+    rows = sde::live::event_rows();
     session->save_many("Event", rows);
     (void)recorder->roll();
   }
@@ -286,37 +229,6 @@ struct Events {
     return out;
   }
 };
-
-/// Whether `left` sorts before `right` in the order the reads promise: text by code point (UTF-8
-/// bytes), a UUID by its bytes, an instant in time, a decimal by value.
-bool before(const sde::Value& left, const sde::Value& right) {
-  if (const auto* text = std::get_if<std::string>(&left)) return *text < std::get<std::string>(right);
-  if (const auto* id = std::get_if<sde::Uuid>(&left)) {
-    return id->to_string() < std::get<sde::Uuid>(right).to_string();
-  }
-  if (const auto* instant = std::get_if<sde::TimestampTz>(&left)) {
-    return instant->micros() < std::get<sde::TimestampTz>(right).micros();
-  }
-  if (const auto* amount = std::get_if<sde::Decimal>(&left)) {
-    return *amount < std::get<sde::Decimal>(right);
-  }
-  ADD_FAILURE() << "no order for this value here";
-  return false;
-}
-
-/// Sorted by these fields, in the order the reads promise.
-std::vector<sde::Row> sorted(std::vector<sde::Row> rows, const std::vector<std::string>& fields,
-                             bool descending = false) {
-  std::stable_sort(rows.begin(), rows.end(), [&](const sde::Row& left, const sde::Row& right) {
-    for (const std::string& field : fields) {
-      if (left.at(field) == right.at(field)) continue;
-      return descending ? before(right.at(field), left.at(field))
-                        : before(left.at(field), right.at(field));
-    }
-    return false;
-  });
-  return rows;
-}
 
 TEST_F(PostgresReads, UuidPagesUseOnePortableOrderAndNeverDropTheSentinel) {
   Events events(dsn_, false);
@@ -356,11 +268,11 @@ TEST_F(PostgresReads, NullableSortTiesKeepNullsLastInBothDirections) {
 
 TEST_F(PostgresReads, AHalfOpenTimeRangeWithEqualityAndMicrosecondTies) {
   Events events(dsn_, false);
-  const sde::Range bounds{"at", at(0), at(3)};
+  const sde::Range bounds{"at", sde::live::event_at(0), sde::live::event_at(3)};
   std::vector<sde::Row> wanted;
   for (const sde::Row& row : events.rows) {
-    if (row.at("label") == sde::Value(std::string("a")) && !before(row.at("at"), at(0)) &&
-        before(row.at("at"), at(3))) {
+    if (row.at("label") == sde::Value(std::string("a")) && !before(row.at("at"), sde::live::event_at(0)) &&
+        before(row.at("at"), sde::live::event_at(3))) {
       wanted.push_back(row);
     }
   }
@@ -396,7 +308,7 @@ TEST_F(PostgresReads, FiltersAreRecordedInTheModelsVocabularyWhenNamesAreHashed)
   Events events(dsn_, true);
   sde::CountOptions counted;
   counted.where = sde::Row{{"label", std::string("a")}};
-  counted.bounds = sde::Range{"at", at(0), at(3)};
+  counted.bounds = sde::Range{"at", sde::live::event_at(0), sde::live::event_at(3)};
   (void)events.session->count("Event", counted);
   sde::ScanOptions scanned;
   scanned.where = counted.where;
