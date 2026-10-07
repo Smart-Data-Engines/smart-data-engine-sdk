@@ -18,16 +18,21 @@ namespace sde {
 /// Receives one event: its name and an object of fields.
 using LogSink = std::function<void(std::string_view event, const Json& fields)>;
 
-/// The event names this library emits: every one is also the reference's.
+/// The event names this library emits, each also the reference's, so one grep finds a line from
+/// any language. A test holds the list to the `emit` calls in the sources both ways, and to the
+/// reference's vocabulary. A routing decision is not logged: the reference writes a line per read
+/// (`sde.route.resolved`, `sde.route.fallback`), the TypeScript library does not, and neither does
+/// this one.
 inline constexpr std::string_view LOG_EVENTS[] = {
     "sde.map.loaded",
     "sde.map.rejected",
     "sde.map.forward_only",
     "sde.map.rollback_unprotected",
-    "sde.route.resolved",
-    "sde.route.fallback",
     "sde.schema.applied",
+    "sde.schema.extra_columns",
+    "sde.schema.text_collation",
     "sde.schema.physical_mismatch",
+    "sde.write.failed",
     "sde.migration.divergence",
     "sde.migration.backfill_progress",
     "sde.telemetry.storage_unavailable",
