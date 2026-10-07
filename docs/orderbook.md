@@ -75,7 +75,11 @@ Settings that would do nothing are refused rather than ignored:
 - `tls_verify=False` without TLS.
 
 `connect()` asks a TCP server for its capabilities and refuses a server that cannot store a write's
-event time, which would stamp every update with its arrival instead.
+event time, which would stamp every update with its arrival instead. After an exchange that does not
+finish, the connection is not used again. TypeScript drops it, and its next `connect()` opens a new
+one. In Python the engine's client closes it, and `connect()` pings a connection it already has and
+replaces a closed one. A write with no connection is refused before anything is sent: `not
+connected; call connect() first`.
 
 ## Writing
 
