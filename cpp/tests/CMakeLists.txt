@@ -88,7 +88,7 @@ if(TARGET sde_postgres)
     live/test_postgres.cpp
     live/test_postgres_schema.cpp
     live/test_postgres_reads.cpp
-    live/test_postgres_migration.cpp
+    live/test_postgres_batches.cpp
     live/test_postgres_fences.cpp
     live/test_postgres_storage.cpp
     live/test_postgres_tls.cpp
@@ -113,7 +113,7 @@ endif()
 # What runs against whichever adapters are built: copies in every direction they allow, and the
 # agreement of two engines on one value, which needs both.
 if(TARGET sde_live_tests)
-  target_sources(sde_live_tests PRIVATE live/test_copies.cpp)
+  target_sources(sde_live_tests PRIVATE live/test_copies.cpp live/test_bookkeeping.cpp)
   if(TARGET sde_postgres)
     target_compile_definitions(sde_live_tests PRIVATE SDE_LIVE_POSTGRES)
   endif()
