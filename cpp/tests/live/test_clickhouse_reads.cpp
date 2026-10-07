@@ -435,6 +435,35 @@ TEST_F(ClickHouseReads, AFloatsNonFiniteValuesAreReadAndARangeExcludesNaN) {
   EXPECT_EQ(session.count("FloatValue", counted), 2U);
 }
 
+TEST_F(ClickHouseReads, AFloatBoundKeepsEveryDigitOfItsValue) {
+  // Three floats a hundred-millionth apart, and a bound equal to the middle one: written with
+  // fewer digits than a double carries, the bound would move past it and the read would lose a row.
+  const ClickHouseRoles roles(dsn_);
+  const sde::Model model = sde::load_neutral_model(R"({"entities": [{"name": "FloatValue",
+      "fields": [{"name": "id", "type": "int64"}, {"name": "value", "type": "float64"}],
+      "key": ["id"]}]})");
+  const sde::PlacementMap map = clickhouse_map(model);
+  const auto provisioning = connected(roles.operator_dsn());
+  (void)provisioning->ensure_schema(map.placement_of("FloatValue").source.layout,
+                                    {{"FloatValue", {"id"}}});
+  roles.grant("float_value");
+  const auto runtime = connected(roles.runtime_dsn());
+  sde::Session session(model, map, {{"db", runtime.get()}});
+  session.save_many("FloatValue", {{{"id", std::int64_t{1}}, {"value", 0.1234567}},
+                                   {{"id", std::int64_t{2}}, {"value", 0.12345675}},
+                                   {{"id", std::int64_t{3}}, {"value", 0.1234568}}});
+  sde::ScanOptions from;
+  from.bounds = sde::Range{"value", 0.12345675};
+  std::vector<std::int64_t> ids;
+  for (const sde::Row& row : session.scan("FloatValue", from).rows) {
+    ids.push_back(std::get<std::int64_t>(row.at("id")));
+  }
+  EXPECT_EQ(ids, (std::vector<std::int64_t>{2, 3}));
+  sde::CountOptions equal;
+  equal.where = sde::Row{{"value", 0.12345675}};
+  EXPECT_EQ(session.count("FloatValue", equal), 1U);
+}
+
 TEST_F(ClickHouseReads, ADecimalIsReadAtItsDeclaredScale) {
   const ClickHouseRoles roles(dsn_);
   const sde::Model model = sde::load_neutral_model(R"json({"entities": [{"name": "Price", "fields": [
@@ -453,6 +482,38 @@ TEST_F(ClickHouseReads, ADecimalIsReadAtItsDeclaredScale) {
   ASSERT_EQ(rows.size(), 2U);
   EXPECT_EQ(std::get<sde::Decimal>(rows[0].at("value")).to_string(), literal);
   EXPECT_EQ(std::get<sde::Decimal>(rows[1].at("value")).to_string(), "7.000000000000000000");
+}
+
+TEST_F(ClickHouseReads, AScanReadsEachValueByItsFieldsTypeWhateverTheColumnsZone) {
+  // A hand-written layout can give an instant field a column without a zone, and a wall-clock
+  // field one with UTC. A scan reads each by the field's type, as the reference's does; a point read
+  // gives the column's, as the reference's does too - recorded as a finding about both.
+  const ClickHouseRoles roles(dsn_);
+  const sde::Model model = sde::load_neutral_model(R"({"entities": [{"name": "Tick", "fields": [
+      {"name": "id", "type": "int64"}, {"name": "at", "type": "timestamptz"},
+      {"name": "wall", "type": "timestamp"}], "key": ["id"]}]})");
+  sde::LoadOptions options;
+  options.model = &model;
+  const sde::PlacementMap map = sde::load_map(
+      R"json({"contract": 3, "model_version": ")json" + model.version() + R"json(", "map_version": 1,
+          "groups": {"Tick": {"source": {"id": "s", "engine": "db", "layout": {
+          "tables": {"Tick": "tick"}, "columns": {"Tick": {"id": "Int64", "at": "DateTime64(6)",
+          "wall": "DateTime64(6, 'UTC')"}}}}}}})json",
+      options);
+  const auto provisioning = connected(roles.operator_dsn());
+  (void)provisioning->ensure_schema(map.placement_of("Tick").source.layout, {{"Tick", {"id"}}});
+  roles.grant("tick");
+  const auto runtime = connected(roles.runtime_dsn());
+  sde::Session session(model, map, {{"db", runtime.get()}});
+  const sde::Value instant = *sde::TimestampTz::parse("2026-10-07T12:00:00.123456Z");
+  const sde::Value wall = *sde::Timestamp::parse("2026-10-07T12:00:00.123456");
+  session.save("Tick", {{"id", std::int64_t{1}}, {"at", instant}, {"wall", wall}});
+  EXPECT_EQ(session.scan("Tick").rows,
+            (std::vector<sde::Row>{{{"id", std::int64_t{1}}, {"at", instant}, {"wall", wall}}}));
+  EXPECT_EQ(session.get("Tick", {{"id", std::int64_t{1}}}),
+            (sde::Row{{"id", std::int64_t{1}},
+                      {"at", *sde::Timestamp::parse("2026-10-07T12:00:00.123456")},
+                      {"wall", *sde::TimestampTz::parse("2026-10-07T12:00:00.123456Z")}}));
 }
 
 // --- what the server ran ------------------------------------------------------------------------
