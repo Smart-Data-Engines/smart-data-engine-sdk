@@ -157,6 +157,123 @@ def test_postgres_barrier_waits_for_the_open_source_transaction(guarded: Any) ->
         observer.close()
 
 
+@pytest.mark.parametrize("guarded", ["postgres"], indirect=True)
+def test_postgres_a_retried_barrier_still_waits_for_a_writer_holding_the_table(
+    guarded: Any,
+) -> None:
+    """A retry finds its constraint in place, so its ALTER TABLE has nothing to wait for: only the
+    drain's LOCK TABLE holds it until a writer that took the table after the first barrier is done.
+
+    The test above passed with that lock removed, because its first barrier waits in the ALTER.
+    Finding 17 of the C++ port, whose `ARetriedBarrierStillWaitsForAWriterHoldingTheTable` this is.
+    """
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    engine, table, fence = guarded
+    fence.prepare(1)
+    engine.insert(table, {"id": 1, sde.WRITE_EPOCH_COLUMN: 1})
+    assert fence.freeze(HOLD).closed
+    namespace = engine._cx.execute("SELECT current_schema()").fetchone()[0]
+    writer = engine._psycopg.connect(engine._dsn, autocommit=False)
+    observer = engine._psycopg.connect(engine._dsn, autocommit=True)
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        writer.execute(f"SET search_path TO {QUOTE['postgres'](namespace)}")
+        # A DELETE writes no row the closed barrier could refuse, and holds the table to commit.
+        writer.execute(f"DELETE FROM {QUOTE['postgres'](table)} WHERE id = 1")
+        future = pool.submit(fence.freeze, HOLD)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not future.done():
+            row = observer.execute(
+                "SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s",
+                [engine._cx.info.backend_pid],
+            ).fetchone()
+            if row and row[0] == "Lock":
+                break
+            time.sleep(0.01)
+        assert not future.done(), "the retried barrier returned while a writer held the table"
+        writer.commit()
+        assert future.result(timeout=5).closed
+        assert engine.count(table) == 0
+    finally:
+        writer.rollback()
+        pool.shutdown(wait=True)
+        writer.close()
+        observer.close()
+
+
+@pytest.fixture
+def schema() -> Iterator[Any]:
+    """An isolated PostgreSQL schema, for tables the fixture above cannot shape."""
+    dsn = os.environ.get("SDE_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("SDE_POSTGRES_DSN is required for the native write-fence slice")
+    from sde.engines.postgres import PostgresEngine
+
+    namespace = "sde_fence_" + uuid4().hex[:16]
+    engine = PostgresEngine(dsn)
+    engine.connect()
+    engine._cx.execute(f"CREATE SCHEMA {QUOTE['postgres'](namespace)}")
+    engine._cx.execute(f"SET search_path TO {QUOTE['postgres'](namespace)}")
+    try:
+        yield engine
+    finally:
+        engine._cx.execute(f"DROP SCHEMA {QUOTE['postgres'](namespace)} CASCADE")
+        engine.close()
+
+
+# What the fence's metadata refuses on PostgreSQL. The reference had no test of any of it; the C++
+# port tested each case and the reference answered every one the same way (finding 18).
+
+
+def test_postgres_a_fence_guards_only_an_ordinary_table_without_inheritance(schema: Any) -> None:
+    schema._cx.execute("CREATE TABLE parent (id bigint PRIMARY KEY)")
+    schema._cx.execute("CREATE TABLE child () INHERITS (parent)")
+    schema._cx.execute("CREATE VIEW shown AS SELECT id FROM parent")
+    for table in ("parent", "child", "shown"):
+        with pytest.raises(sde.MigrationRefused, match="ordinary PostgreSQL tables without"):
+            schema.write_fence(table, project_id=PROJECT).state()
+    with pytest.raises(sde.EngineError, match="write-fence table does not exist"):
+        schema.write_fence("absent", project_id=PROJECT).state()
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        "integer NOT NULL DEFAULT 0",
+        "bigint DEFAULT 0",
+        "bigint NOT NULL DEFAULT 1",
+        "bigint NOT NULL",
+        "bigint NOT NULL GENERATED ALWAYS AS (0) STORED",
+    ],
+)
+def test_postgres_the_reserved_column_defined_otherwise_is_refused(
+    schema: Any, definition: str
+) -> None:
+    column = QUOTE["postgres"](sde.WRITE_EPOCH_COLUMN)
+    schema._cx.execute(f"CREATE TABLE guarded (id bigint PRIMARY KEY, {column} {definition})")
+    with pytest.raises(sde.MigrationRefused, match="has an incompatible definition"):
+        schema.write_fence("guarded", project_id=PROJECT).state()
+
+
+def test_postgres_the_reserved_column_as_the_fence_defines_it_is_its_own(schema: Any) -> None:
+    column = QUOTE["postgres"](sde.WRITE_EPOCH_COLUMN)
+    schema._cx.execute(
+        f"CREATE TABLE guarded (id bigint PRIMARY KEY, {column} bigint NOT NULL DEFAULT 0)"
+    )
+    assert schema.write_fence("guarded", project_id=PROJECT).state().column == "valid"
+
+
+def test_postgres_fence_ddl_is_refused_inside_an_application_transaction(schema: Any) -> None:
+    schema._cx.execute("CREATE TABLE plain (id bigint PRIMARY KEY)")
+    refused = pytest.raises(sde.MigrationRefused, match="inside an application transaction")
+    with refused, schema.transaction():
+        schema.write_fence("plain", project_id=PROJECT).prepare(1)
+    # Nothing was changed by the refused call: the table has no reserved column.
+    assert schema.write_fence("plain", project_id=PROJECT).state().column == "absent"
+
+
 @pytest.mark.parametrize("guarded", ["clickhouse"], indirect=True)
 def test_clickhouse_barrier_waits_for_an_insert_using_old_metadata(guarded: Any) -> None:
     import time
