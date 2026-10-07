@@ -113,7 +113,8 @@ endif()
 # What runs against whichever adapters are built: copies in every direction they allow, and the
 # agreement of two engines on one value, which needs both.
 if(TARGET sde_live_tests)
-  target_sources(sde_live_tests PRIVATE live/test_copies.cpp live/test_bookkeeping.cpp)
+  target_sources(sde_live_tests PRIVATE live/test_copies.cpp live/test_bookkeeping.cpp
+    live/test_generations.cpp)
   if(TARGET sde_postgres)
     target_compile_definitions(sde_live_tests PRIVATE SDE_LIVE_POSTGRES)
   endif()
