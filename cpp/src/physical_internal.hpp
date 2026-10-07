@@ -48,4 +48,21 @@ void check_against_model(const std::string& where, const std::string& entity,
                          const std::map<std::string, std::string>& field_types,
                          const std::vector<std::string>* key_order, const Partition* partition);
 
+/// `parse_identifier_list`: `a, \`b c\`, d` as the names ClickHouse's catalogue writes, a quoted
+/// one with `\\` escaping a backslash and the backtick. Empty when the text is not such a list: an
+/// expression the parser does not understand is not evidence that a table matches.
+[[nodiscard]] std::optional<std::vector<std::string>> parse_identifier_list(std::string_view text);
+
+/// A partition key as the catalogue writes it, `toYYYYMM(\`at\`)`: the function and the field, or
+/// nothing for a table with no partition key.
+struct PartitionKey {
+  std::string function;
+  std::string field;
+};
+/// Empty when the text is not one function of one name.
+[[nodiscard]] std::optional<std::optional<PartitionKey>> parse_partition_key(std::string_view text);
+
+/// Python's `repr` of a tuple of texts: `()`, `('a',)`, `('a', 'b')`.
+[[nodiscard]] std::string python_tuple_repr(const std::vector<std::string>& items);
+
 }  // namespace sde::detail
