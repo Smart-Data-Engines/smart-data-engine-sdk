@@ -149,6 +149,11 @@ Json value_to_json(const Value& value) {
       value);
 }
 
+Json vector_form(const Value& value) {
+  if (const auto* naive = std::get_if<Timestamp>(&value)) return naive->to_string() + "Z";
+  return value_to_json(value);
+}
+
 Row row_from_json(const Json& object) {
   Row row;
   for (const auto& [name, value] : object.as_object()) row[name] = value_from_json(value);

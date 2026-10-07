@@ -4,8 +4,10 @@
 #include <ranges>
 #include <chrono>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 
+#include "admission.hpp"
 #include "bulk.hpp"
 #include "generation.hpp"
 #include "python_compat.hpp"
@@ -132,6 +134,10 @@ Session::Session(const Model& model, const PlacementMap& placement,
       const Entity& spec = model.entity(member);
       Admission admission;
       for (const auto& [name, unused] : columns.at(member)) admission.declared.insert(name);
+      // `columns` is a map, so the checks are in code point order, the order a refusal names.
+      for (const auto& [name, kind] : columns.at(member)) {
+        if (detail::Check check = detail::check_for(kind)) admission.checks.emplace_back(name, kind, std::move(check));
+      }
       if (placement.contract() >= 4) admission.declared.insert(std::string(EPOCH_COLUMN));
       for (const Field& field : spec.fields) {
         const bool keyed = std::find(spec.key.begin(), spec.key.end(), field.name) != spec.key.end();
@@ -292,11 +298,12 @@ std::pair<Engine*, const Materialization*> Session::target(const OperationShape&
   return {engines_.at(materialization.engine), &materialization};
 }
 
-void Session::admit(std::string_view entity, const std::string& target, const Row& values) const {
+Row Session::admit(std::string_view entity, const std::string& target, const Row& values) const {
   // A field declared without `nullable` and every key field must be present and not null, and a
   // field the entity does not declare is refused by name. The engines would not agree on any of
   // it: measured on 2 October 2026, PostgreSQL stored NULL in a required field and ClickHouse a
-  // value nobody wrote. Section 8b; `errors/078` to `082`.
+  // value nobody wrote. Section 8b; `errors/078` to `082`. Then every value must be one its
+  // field's type holds (`typed`), and the row is returned as engines receive it.
   const Admission& admission = admission_.at(target);
   const auto declared = [&](const std::string& name) { return admission.declared.count(name) != 0; };
   const bool all_declared =
@@ -308,7 +315,7 @@ void Session::admit(std::string_view entity, const std::string& target, const Ro
       throw ModelPlanningError(std::string(entity) + "." + client_name(entity, *name) +
                                " is required and this row gives it null");
     }
-    return;
+    return typed(entity, admission, values);
   }
   for (const auto& [name, unused] : values) {
     if (!declared(name)) {
@@ -322,6 +329,26 @@ void Session::admit(std::string_view entity, const std::string& target, const Ro
                                " is required and this row leaves it out");
     }
   }
+  throw std::logic_error("admit: a row refused by no rule");  // unreachable: one of the loops threw
+}
+
+Row Session::typed(std::string_view entity, const Admission& admission, Row values) const {
+  // Section 8b, point 4: a value takes a form a filter of its type takes, and the type holds it
+  // (`admission.hpp`). Each driver and engine used to convert what it was given in its own way,
+  // measured on 7 October 2026 in the other two libraries: a decimal rounded by PostgreSQL was
+  // truncated by ClickHouse, an integer outside int32 wrapped to the opposite sign. A row now
+  // reaches every engine with each value in the form a filter gets.
+  for (const auto& [name, kind, check] : admission.checks) {
+    const auto found = values.find(name);
+    if (found == values.end() || is_null(found->second)) continue;
+    try {
+      found->second = check(found->second);
+    } catch (const detail::Misfit& misfit) {
+      throw ModelPlanningError(std::string(entity) + "." + client_name(entity, name) + " is " + kind +
+                               " and this row gives it " + misfit.what());
+    }
+  }
+  return values;
 }
 
 // --- schema -------------------------------------------------------------------------------------
@@ -368,9 +395,9 @@ void Session::report_physical() const {
 void Session::save(std::string_view entity, const Row& given) {
   const Use use(*this);
   const std::string target_entity = target_of(entity);
-  const Row values = fields_in(entity, given);
+  const Row translated = fields_in(entity, given);
   const OperationShape& write = shape(target_entity, "write");
-  admit(entity, target_entity, values);
+  const Row values = admit(entity, target_entity, translated);
   const auto [engine, materialization] = target(write, false);
   const std::string& table = materialization->layout.table_for(target_entity);
   const std::int64_t started = now();
@@ -422,10 +449,16 @@ void Session::save_many(std::string_view entity, const std::vector<Row>& given) 
     throw BulkWriteRefused(
         "batch fields must be declared and include the key and all non-nullable fields");
   }
+  const Admission& admission = admission_.at(target_entity);
   for (std::size_t index = 0; index < rows.size(); ++index) {
-    if (const std::string* name = null_required(rows[index], admission_.at(target_entity).required)) {
+    if (const std::string* name = null_required(rows[index], admission.required)) {
       throw BulkWriteRefused("row " + std::to_string(index) + ": " + std::string(entity) + "." +
                              client_name(entity, *name) + " is required and this row gives it null");
+    }
+    try {
+      rows[index] = typed(entity, admission, std::move(rows[index]));
+    } catch (const ModelPlanningError& error) {
+      throw BulkWriteRefused("row " + std::to_string(index) + ": " + error.what());
     }
   }
   BulkWritable* writer = engine->capabilities().bulk;

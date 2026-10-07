@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**The C++ library refuses a value its field's type does not hold, as the other two do**
+([`docs/format-contract.md`](docs/format-contract.md) §8b, point 4). The check comes before any
+engine is called, and each admitted value goes on in the form a read plan gives it: a decimal at
+its column's scale, a timestamp as its UTC instant. The vectors `errors/113`-`120` and
+`migration/200` hold it in all three libraries. Its ClickHouse adapter had already refused a
+decimal past its column; now the session refuses it first, in the contract's words.
+
 **Measured: what the C++ library costs per operation** ([`docs/implementing.md`](docs/implementing.md#measuring-your-overhead)).
 Requirement 3.5 gives the library one percent of an operation. Measured in C++ for the first time,
 a point read through the session cost 0.64 µs at the median built optimised, 2.5% of the cheapest

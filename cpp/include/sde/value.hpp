@@ -19,11 +19,12 @@
 ///
 /// A row is `sde::Row`: field name to value, in code point order of the names.
 ///
-/// **The library does not convert a value to its field's type on a write, and that is the
-/// reference's behaviour rather than a gap.** A row reaches the engine with the values it was given;
-/// the model decides which fields a row must carry and that they are not null (section 8b), and the
-/// engine decides what a value of the wrong type means. Reads are the other way round: a read plan
-/// (`sde/query.hpp`) normalises each value to its column's type before any engine is called.
+/// **A row's value takes a form its field's type admits, and reaches the engine in one form per
+/// type** (section 8b, point 4). Before any engine is called the session refuses a value its field's
+/// type does not hold - a decimal past its scale or precision, an integer outside int32, a date that
+/// does not exist - and passes each value on in the form a read plan (`sde/query.hpp`) gives the same
+/// value: a decimal at its column's scale, a timestamp as its UTC instant, a UUID as `sde::Uuid`.
+/// The engines had answered for such values each in its own way, and one row meant two things.
 
 #include <array>
 #include <chrono>

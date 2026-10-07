@@ -601,9 +601,10 @@ the next one:
   `decimal(12,2)` field is stored as 1.23 in ClickHouse, truncated by the driver, and as 1.24 in
   PostgreSQL, rounded by the server - one save, two values - and `Decimal("12345678901.23")` is
   stored in ClickHouse as 12345678901.20, where PostgreSQL refuses it with `numeric field
-  overflow`. This library's ClickHouse adapter refuses both before sending anything. The fix that
-  makes the engines agree belongs to the contract: admission (§8b) refusing a decimal with more
-  fractional or integer digits than its field declares, in every library. The same driver cuts a
+  overflow`. This library's ClickHouse adapter refused both before sending anything. The fix that
+  makes the engines agree belonged to the contract, and is there now: admission (§8b, point 4)
+  refuses a value its field's type does not hold, a decimal's extra digits included, in every
+  library and before any engine. The same driver cuts a
   moment's fraction a `DateTime` or `DateTime64(3)` does not keep, stores an enum name its type
   does not declare as 0 - a row no later read can print - and on reading cuts nanoseconds; none of
   these is in a layout this library renders, all of them are in a table a hand-written map can

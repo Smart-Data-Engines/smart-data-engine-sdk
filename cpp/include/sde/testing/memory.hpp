@@ -51,6 +51,11 @@ class Recorded {
 [[nodiscard]] Json value_to_json(const Value& value);
 [[nodiscard]] Row row_from_json(const Json& object);
 [[nodiscard]] Json row_to_json(const Row& row);
+/// A value an engine holds, as the vectors write it. A row reaches an engine with each value in the
+/// form a filter of its type gets (format contract section 8b), and the vectors write those forms
+/// as the `query/` vectors do: an instant as `YYYY-MM-DDTHH:MM:SS.ffffffZ`, and a timestamp without
+/// a zone as its UTC wall time in the same form. Every other value as `value_to_json` writes it.
+[[nodiscard]] Json vector_form(const Value& value);
 
 /// A fence backend that keeps a table's constraints in memory and records every DDL call as an
 /// array - `["add", table, name, expression]`, `["drain", table, project, hold]` and so on.
