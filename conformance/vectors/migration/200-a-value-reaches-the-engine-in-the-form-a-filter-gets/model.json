@@ -1,0 +1,41 @@
+{
+  "entities": [
+    {
+      "name": "Value",
+      "fields": [
+        {
+          "name": "amount",
+          "type": "decimal(12,2)",
+          "nullable": true
+        },
+        {
+          "name": "at",
+          "type": "timestamptz",
+          "nullable": true
+        },
+        {
+          "name": "day",
+          "type": "date",
+          "nullable": true
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "token",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "wall",
+          "type": "timestamp",
+          "nullable": true
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}

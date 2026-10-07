@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from ._usage import SessionUsage, session_call, session_owner
+from .admission import Check, Misfit, check_for
 from .bulk import batch_columns, bulk_writer, snapshot_rows
 from .errors import (
     BulkWriteRefused,
@@ -416,8 +417,9 @@ class Session:
         reverse = self._reverse_fields.get(self._names.entity(entity), {})
         return sorted(reverse.get(field, field) for field in fields)
 
-    def _admit(self, entity: str, target: str, values: Mapping[str, Any]) -> None:
-        """Refuse, before any engine is called, a row the model does not allow.
+    def _admit(self, entity: str, target: str, values: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Refuse, before any engine is called, a row the model does not allow; or return it as
+        engines receive it.
 
         A field declared without ``nullable`` and every key field must be present and not ``None``,
         and a field the entity does not declare is refused by name. The engines would not agree on
@@ -426,15 +428,17 @@ class Session:
         the row left out, ``""`` for a string - and neither raised. The same model meant two things,
         and moving a group would have changed which. Shared vectors: ``errors/078``-``082``.
 
-        Two comparisons of key views and one pass over the required fields, from sets built once
-        per session: this is on every write.
+        Then every value must be one its field's type holds (:meth:`_typed`).
+
+        Two comparisons of key views, one pass over the required fields and one over the typed
+        ones, from tables built once per session: this is on every write.
         """
         admission = self._admission[target]
         names = values.keys()
         if names <= admission.declared and admission.needed <= names:
             name = _null_required(values, admission.required)
             if name is None:
-                return
+                return self._typed(entity, admission, values)
             raise ModelPlanningError(
                 f"{entity}.{self._client_names(entity, (name,))[0]} is required and this row "
                 f"gives it null"
@@ -449,6 +453,39 @@ class Session:
             f"{entity}.{self._client_names(entity, (absent,))[0]} is required and this row leaves "
             f"it out"
         )
+
+    def _typed(
+        self, entity: str, admission: _Admission, values: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Refuse a value its field's type does not hold; return the row as engines receive it.
+
+        Section 8b, point 4: a value takes a form a filter of its type takes, and the type holds
+        it (``sde.admission``). Each driver and engine used to convert what it was given in its own
+        way, measured on 7 October 2026: a decimal rounded by PostgreSQL was truncated by
+        ClickHouse, an integer outside int32 wrapped to the opposite sign in ClickHouse from
+        TypeScript, a date that does not exist moved two days. A row now reaches every engine with
+        each value in the form a filter gets, so every adapter sees one representation per type.
+
+        Fields in code-point order, the order a refusal names; the row is copied only when a value
+        changes form.
+        """
+        admitted: dict[str, Any] | None = None
+        for name, kind, check in admission.checks:
+            value = values.get(name)
+            if value is None:
+                continue
+            try:
+                given = check(value)
+            except Misfit as misfit:
+                raise ModelPlanningError(
+                    f"{entity}.{self._client_names(entity, (name,))[0]} is {kind} and this row "
+                    f"gives it {misfit}"
+                ) from None
+            if given is not value:
+                if admitted is None:
+                    admitted = dict(values)
+                admitted[name] = given
+        return values if admitted is None else admitted
 
     # --- structure -------------------------------------------------------------------------
 
@@ -510,7 +547,7 @@ class Session:
         target = self._entity(entity)
         values = self._fields_in(entity, values)
         shape = self._shape(target, "write")
-        self._admit(entity, target, values)
+        values = self._admit(entity, target, values)
         engine, materialization = self._target(shape, fresh=False)
         table = materialization.layout.table_for(target)
         started = perf_counter_ns() if self._recorder else 0
@@ -557,13 +594,20 @@ class Session:
             raise BulkWriteRefused(
                 "batch fields must be declared and include the key and all non-nullable fields"
             )
+        admission = self._admission[target]
+        typed = []
         for index, row in enumerate(translated):
-            name = _null_required(row, self._admission[target].required)
+            name = _null_required(row, admission.required)
             if name is not None:
                 raise BulkWriteRefused(
                     f"row {index}: {entity}.{self._client_names(entity, (name,))[0]} is required "
                     f"and this row gives it null"
                 )
+            try:
+                typed.append(self._typed(entity, admission, row))
+            except ModelPlanningError as exc:
+                raise BulkWriteRefused(f"row {index}: {exc}") from None
+        translated = tuple(typed)
         writer = bulk_writer(engine)
         for copy in spot.also_write:
             bulk_writer(self._engines[copy.engine])
@@ -1045,13 +1089,20 @@ def _predicates(plan: ReadPlan) -> dict[str, Any]:
 class _Admission:
     """What a row of one entity must and may carry, computed once per session."""
 
-    __slots__ = ("declared", "needed", "required")
+    __slots__ = ("checks", "declared", "needed", "required")
 
-    def __init__(self, declared: frozenset[str], required: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        declared: frozenset[str],
+        required: tuple[str, ...],
+        checks: tuple[tuple[str, str, Check], ...],
+    ) -> None:
         self.declared = declared
         self.required = required
         """The fields a row must give a value, in code-point order: the order a refusal names."""
         self.needed = frozenset(required)
+        self.checks = checks
+        """Each typed field, its neutral type and its check, in code-point order."""
 
 
 def _admission(
@@ -1068,7 +1119,12 @@ def _admission(
             required = tuple(
                 sorted(f.name for f in spec.fields if not f.nullable or f.name in spec.key)
             )
-            admission[entity] = _Admission(frozenset(columns[entity]) | reserved, required)
+            checks = tuple(
+                (name, kind, check)
+                for name, kind in sorted(columns[entity].items())
+                if (check := check_for(kind)) is not None
+            )
+            admission[entity] = _Admission(frozenset(columns[entity]) | reserved, required, checks)
     return admission
 
 

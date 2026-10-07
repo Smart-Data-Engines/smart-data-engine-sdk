@@ -28,6 +28,7 @@ import { ResourceBusy, ResourceClosed } from './errors.js'
 import { batchColumns, bulkWriter, snapshotRows } from './bulk.js'
 import { compareCodePoints } from './canonical.js'
 import { BulkWriteRefused, EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
+import { type Check, checkFor, Misfit } from './admission.js'
 import type { Group } from './groups.js'
 import { colocationGroups, groupOf } from './groups.js'
 import type { NameMap } from './hashing.js'
@@ -56,6 +57,8 @@ interface Admission {
   readonly declared: ReadonlySet<string>
   /** The fields a row must give a value, in code-point order: the order a refusal names. */
   readonly required: readonly string[]
+  /** Each typed field, its neutral type and its check, in code-point order. */
+  readonly checks: readonly (readonly [string, string, Check])[]
 }
 
 /** What an adapter has to offer for a session to route to it. */
@@ -193,7 +196,12 @@ export class Session {
           .filter((field) => !field.nullable || spec.key.includes(field.name))
           .map((field) => field.name)
           .sort(compareCodePoints)
-        this.admission.set(entity, { declared: new Set([...Object.keys(columns[entity] ?? {}), ...reserved]), required })
+        const checks: (readonly [string, string, Check])[] = []
+        for (const [name, kind] of Object.entries(columns[entity] ?? {}).sort(([a], [b]) => compareCodePoints(a, b))) {
+          const check = checkFor(kind)
+          if (check !== undefined) checks.push([name, kind, check])
+        }
+        this.admission.set(entity, { declared: new Set([...Object.keys(columns[entity] ?? {}), ...reserved]), required, checks })
       }
     }
     for (const shape of enumerateShapes(model)) {
@@ -397,7 +405,7 @@ export class Session {
    * row left out, '' for a string - and neither raised. The same model meant two things, and moving
    * a group would have changed which. Shared vectors: `errors/078`-`082`, contract section 8b.
    */
-  private admit(entity: string, target: string, values: Readonly<Row>): void {
+  private admit(entity: string, target: string, values: Readonly<Row>): Readonly<Row> {
     const admission = this.admission.get(target)!
     const names = Object.keys(values)
     const unknown = names.filter((name) => !admission.declared.has(name)).sort(compareCodePoints)
@@ -417,6 +425,42 @@ export class Session {
         )
       }
     }
+    return this.typed(entity, admission, values)
+  }
+
+  /**
+   * Refuse a value its field's type does not hold; return the row as engines receive it.
+   *
+   * Section 8b, point 4: a value takes a form a filter of its type takes, and the type holds it
+   * (`admission.ts`). Each driver and engine used to convert what it was given in its own way,
+   * measured on 7 October 2026: an integer outside int32 wrapped to the opposite sign in ClickHouse,
+   * a decimal rounded by PostgreSQL was truncated by ClickHouse, a date that does not exist moved two
+   * days. A row now reaches every engine with each value in the form a filter gets, so every adapter
+   * sees one representation per type.
+   *
+   * Fields in code-point order, the order a refusal names; the row is copied only when a value
+   * changes form.
+   */
+  private typed(entity: string, admission: Admission, values: Readonly<Row>): Readonly<Row> {
+    let admitted: Row | undefined
+    for (const [name, kind, check] of admission.checks) {
+      const value = values[name]
+      if (value === null || value === undefined) continue
+      let given: unknown
+      try {
+        given = check(value)
+      } catch (error) {
+        if (!(error instanceof Misfit)) throw error
+        throw new ModelPlanningError(
+          `${entity}.${this.clientNames(entity, [name])[0]} is ${kind} and this row gives it ${error.message}`,
+        )
+      }
+      if (given !== value) {
+        admitted ??= { ...values }
+        admitted[name] = given
+      }
+    }
+    return admitted ?? values
   }
 
   /**
@@ -529,9 +573,9 @@ export class Session {
   async save(entity: string, values: Readonly<Row>): Promise<void> {
     return this.usage.operation(async () => {
       const target = this.entityName(entity)
-      const body = this.fieldsIn(entity, values)
+      const given = this.fieldsIn(entity, values)
       const shape = this.shapeFor(target, 'write')
-      this.admit(entity, target, body)
+      const body = this.admit(entity, target, given)
       const [engine, materialization] = this.target(shape, false)
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()
@@ -637,9 +681,10 @@ export class Session {
       if (fields.some((field) => !declared.has(field)) || [...required].some((field) => !fields.includes(field))) {
         throw new BulkWriteRefused('batch fields must be declared and include the key and all non-nullable fields')
       }
-      const needed = this.admission.get(target)!.required
+      const admission = this.admission.get(target)!
+      const typed: Readonly<Row>[] = []
       for (const [index, row] of translated.entries()) {
-        for (const name of needed) {
+        for (const name of admission.required) {
           const value = row[name]
           if (value === null || value === undefined) {
             throw new BulkWriteRefused(
@@ -648,10 +693,16 @@ export class Session {
             )
           }
         }
+        try {
+          typed.push(this.typed(entity, admission, row))
+        } catch (error) {
+          if (!(error instanceof ModelPlanningError)) throw error
+          throw new BulkWriteRefused(`row ${index}: ${error.message}`)
+        }
       }
       const writer = bulkWriter(engine)
       for (const copy of spot.alsoWrite) bulkWriter(this.engines[copy.engine] as Engine)
-      const snapshot = snapshotRows(translated)
+      const snapshot = snapshotRows(typed)
       const stamped = snapshot.map((row) => stampValues(this.placement, shape.group, row))
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()

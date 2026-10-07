@@ -45,11 +45,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python" / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import sde  # noqa: E402
 from migration_vectors import sign  # noqa: E402
+
+import sde  # noqa: E402
 from sde.errors import MigrationRefused  # noqa: E402
 from sde.testing.loader import model_from_neutral  # noqa: E402
 from sde.testing.memory import engines_from as _engines  # noqa: E402
+from sde.testing.memory import vector_form  # noqa: E402
 
 VECTORS = ROOT / "conformance" / "vectors"
 
@@ -106,7 +108,9 @@ reader checking our honesty would notice that before they noticed the rule.
 
 def _map(*, source_engine: str, source_layout: Any, copy_engine: str, copy_layout: Any) -> dict:
     return {
-        "contract": sde.MAP_CONTRACT,
+        # The contract these vectors were written in, not the library's newest: from contract 4 a
+        # map carries a project id and write generations, and neither is what these cases are about.
+        "contract": 3,
         "model_version": _model().version,
         "map_version": 1,
         "groups": {
@@ -259,7 +263,8 @@ def _accepting_case(name: str, *, source: str, copy: str, why: str) -> None:
             "tables.json": {
                 engine: {
                     table: sorted(
-                        (dict(row) for row in rows),
+                        ({column: vector_form(value) for column, value in row.items()}
+                         for row in rows),
                         key=lambda row: json.dumps(row, sort_keys=True),
                     )
                     for table, rows in sorted(built.tables.items())

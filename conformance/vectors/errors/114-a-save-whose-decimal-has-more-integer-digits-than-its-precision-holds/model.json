@@ -1,0 +1,33 @@
+{
+  "entities": [
+    {
+      "name": "Entry",
+      "fields": [
+        {
+          "name": "amount",
+          "type": "decimal(12,2)"
+        },
+        {
+          "name": "at",
+          "type": "timestamptz",
+          "nullable": true
+        },
+        {
+          "name": "count",
+          "type": "int32"
+        },
+        {
+          "name": "day",
+          "type": "date"
+        },
+        {
+          "name": "id",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}

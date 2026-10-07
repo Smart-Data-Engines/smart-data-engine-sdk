@@ -1,0 +1,41 @@
+{
+  "error": "BulkWriteRefused",
+  "stage": "write",
+  "match": "row 1: Entry\\.at is timestamptz and this row gives it a value that is not a timestamp",
+  "write": {
+    "accepted": {
+      "operation": "save_many",
+      "entity": "Entry",
+      "rows": [
+        {
+          "amount": "1.230",
+          "at": null,
+          "count": 1,
+          "day": "2026-10-07",
+          "id": "e-1"
+        }
+      ]
+    },
+    "refused": {
+      "operation": "save_many",
+      "entity": "Entry",
+      "rows": [
+        {
+          "amount": "1.230",
+          "at": "2026-10-07T10:00:00Z",
+          "count": 1,
+          "day": "2026-10-07",
+          "id": "e-3"
+        },
+        {
+          "amount": "1.230",
+          "at": "2026-10-07T25:00:00Z",
+          "count": 1,
+          "day": "2026-10-07",
+          "id": "e-4"
+        }
+      ]
+    }
+  },
+  "why": "ClickHouse stored a timestamp made from any text - 1900-01-01 from words, 1970 from a number. The whole batch is refused, the row that fits included, and the row is named by its position."
+}

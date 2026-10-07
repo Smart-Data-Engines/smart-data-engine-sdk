@@ -265,6 +265,7 @@ MAY_IMPORT = frozenset(
         "re",
         "secrets",
         "string",
+        "struct",  # where float32 rounds a number, for the row a field's type holds; no network
         "sys",
         "threading",
         "time",
