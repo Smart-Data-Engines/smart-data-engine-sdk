@@ -169,7 +169,8 @@ if(SDE_CLICKHOUSE)
 endif()
 if(SDE_ORDERBOOK)
   add_library(sde_orderbook
-    src/engines/orderbook/dsn.cpp)
+    src/engines/orderbook/dsn.cpp
+    src/engines/orderbook/wire.cpp)
   add_library(sde::orderbook ALIAS sde_orderbook)
   target_compile_features(sde_orderbook PUBLIC cxx_std_20)
   set_target_properties(sde_orderbook PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME orderbook)
