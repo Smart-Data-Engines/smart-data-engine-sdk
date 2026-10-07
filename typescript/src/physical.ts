@@ -468,8 +468,32 @@ const BARE = /[A-Za-z_][A-Za-z0-9_]*/y
  * A name is bare or backtick-quoted with a backslash escaping the next character - the rule this
  * library writes. Anything else throws: an expression the parser does not understand is not
  * evidence that the table matches.
+ *
+ * From ClickHouse 26.5 the catalogue keeps the parentheses of a single expression written in them:
+ * `ORDER BY (id)`, which is how a one-column key is rendered, reads back `(id)`, where 26.4 and
+ * every release before it - 24.8, 25.3, 25.8, 26.3 among them - read `id`; a list of two or more
+ * reads `a, b` on all of them (measured). One pair around the whole of a list is the same list, and
+ * only a list may be inside it: no name outside backticks holds a parenthesis, so a pair that is
+ * not the outermost - `(a) + (b)` - leaves text that is not one.
  */
 export function parseIdentifierList(text: string): string[] {
+  const inner = parenthesised(text)
+  if (inner === null) return parseNames(text)
+  try {
+    return parseNames(inner)
+  } catch {
+    throw new Error(`not a list of column names: ${JSON.stringify(text)}`)
+  }
+}
+
+/** The text inside one pair of parentheses around the whole of it, or `null`. */
+function parenthesised(text: string): string | null {
+  if (text.length < 3 || !text.startsWith('(') || !text.endsWith(')')) return null
+  return text.slice(1, -1)
+}
+
+/** The list itself, without parentheses around it (`parseIdentifierList`). */
+function parseNames(text: string): string[] {
   const names: string[] = []
   let position = 0
   const length = text.length
@@ -512,12 +536,15 @@ export function parseIdentifierList(text: string): string[] {
   return names
 }
 
-/** ``toYYYYMM(`at`)`` -> `["toYYYYMM", "at"]`; an empty key -> `null`. */
+/**
+ * ``toYYYYMM(`at`)`` -> `["toYYYYMM", "at"]`, alone or in one pair of parentheses, which ClickHouse
+ * 26.5 and later keep; an empty key -> `null`.
+ */
 export function parsePartitionKey(text: string): readonly [string, string] | null {
   if (text === '') return null
-  const match = /^([A-Za-z][A-Za-z0-9]*)\((.*)\)$/s.exec(text)
+  const match = /^([A-Za-z][A-Za-z0-9]*)\((.*)\)$/s.exec(parenthesised(text) ?? text)
   if (match === null) throw new Error(`not a single-function partition key: ${JSON.stringify(text)}`)
-  const names = parseIdentifierList(match[2]!)
+  const names = parseNames(match[2]!)
   if (names.length !== 1) throw new Error(`not a single-function partition key: ${JSON.stringify(text)}`)
   return [match[1]!, names[0]!]
 }

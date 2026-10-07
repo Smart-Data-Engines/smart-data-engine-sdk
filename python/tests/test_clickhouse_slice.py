@@ -98,7 +98,10 @@ def test_the_schema_is_created_and_creating_it_again_changes_nothing(
         "AND name = 'event'"
     ).result_rows
     assert created[0][0] == "ReplacingMergeTree"
-    assert created[0][1] == "id", "ORDER BY has to be the declared key, or the table is unindexed"
+    # `ORDER BY (id)` reads back `id`, and `(id)` from ClickHouse 26.5 on (measured).
+    assert created[0][1] in ("id", "(id)"), (
+        "ORDER BY has to be the declared key, or the table is unindexed"
+    )
 
 
 def test_a_row_written_comes_back_identical(engine: ClickHouseEngine) -> None:
