@@ -30,6 +30,7 @@ add_executable(sde_unit_tests
   unit/test_python_compat.cpp
   unit/test_python_int.cpp
   unit/test_python_value.cpp
+  unit/test_physical_catalogue.cpp
   unit/test_layout.cpp
   unit/test_placement.cpp
   unit/test_telemetry.cpp
