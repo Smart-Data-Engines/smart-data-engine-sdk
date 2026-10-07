@@ -478,9 +478,11 @@ void PostgresEngine::verify_schema(const PhysicalLayout& layout) {
           "it: a type that differs is either a write that fails in your request path or, worse, "
           "one that succeeds and hands the value back as something else.");
     }
+    // The generation column is the library's own, added by provisioning for a map with write
+    // generations: naming it fired the event on every start of such a deployment (finding 21).
     std::vector<std::string> extra;
     for (const auto& [column, unused] : actual->second) {
-      if (!columns.contains(column)) extra.push_back(column);
+      if (!columns.contains(column) && column != EPOCH_COLUMN) extra.push_back(column);
     }
     if (!extra.empty()) {
       Json fields = Json::object();

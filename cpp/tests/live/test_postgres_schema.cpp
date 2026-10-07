@@ -328,12 +328,13 @@ TEST_F(PostgresSchema, ATypesModifierIsPartOfTheType) {
 }
 
 TEST_F(PostgresSchema, AnAliasIsTheSameTypeAndAnExtraColumnIsNamedNotRefused) {
-  // Created by hand in other spellings, with two columns the map does not name and the default
-  // collation: accepted, and both named - the extra columns and the key no read can use.
+  // Created by hand in other spellings, with two columns the map does not name, the generation
+  // column provisioning adds, and the default collation: accepted, and both named - the extra
+  // columns and the key no read can use. The generation column is ours and is not one of them.
   const Scope scope(dsn_);
   Admin(scope.dsn()).run("CREATE TABLE readings (station text, at timestamp with time zone, "
                          "humidity int4, temperature float8, zeta text, alpha int, "
-                         "PRIMARY KEY (station, at))");
+                         "__sde_write_epoch bigint, PRIMARY KEY (station, at))");
   const sde::Model model = readings();
   const sde::PlacementMap map = readings_map(model, false, 1, 3);
   Captured log;

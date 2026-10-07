@@ -213,12 +213,9 @@ TEST_F(ClickHouseSchema, AnotherDesignIsRefusedAtProvisioningAndReportedByARunni
   options.project_id = kProject;
   sde::Session session(model, second, {{"db", runtime.get()}}, options);
   EXPECT_EQ(as_tuples(session.physical()), undesigned(kUnverified));
-  // The same two events the reference writes, the first naming the generation's own column
-  // (a finding about the reference, recorded for all three libraries).
-  EXPECT_EQ(log.names(),
-            (std::vector<std::string>{"sde.schema.extra_columns", "sde.schema.physical_mismatch"}));
-  EXPECT_EQ(log.of("sde.schema.extra_columns"),
-            (std::vector<std::string>{R"({"columns":["__sde_write_epoch"],"table":"readings"})"}));
+  // The mismatch alone. The generation's own column is not an extra column: the reference named
+  // it until finding 21 of this library's port, and none of the three libraries does now.
+  EXPECT_EQ(log.names(), (std::vector<std::string>{"sde.schema.physical_mismatch"}));
   EXPECT_EQ(log.of("sde.schema.physical_mismatch"),
             (std::vector<std::string>{R"({"findings":5,"tables":["readings"]})"}));
   const sde::Row row{{"station", std::string("s1")},

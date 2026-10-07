@@ -453,9 +453,11 @@ void ClickHouseEngine::verify_schema(const PhysicalLayout& layout) {
           "with a timestamp the difference is usually precision, and a write that succeeds and "
           "comes back rounded is worse than one that fails.");
     }
+    // The generation column is the library's own, added by provisioning for a map with write
+    // generations: naming it fired the event on every start of such a deployment (finding 21).
     std::vector<std::string> extra;
     for (const auto& [column, unused] : actual->second) {
-      if (!columns.contains(column)) extra.push_back(column);
+      if (!columns.contains(column) && column != EPOCH_COLUMN) extra.push_back(column);
     }
     if (!extra.empty()) {
       Json fields = Json::object();
