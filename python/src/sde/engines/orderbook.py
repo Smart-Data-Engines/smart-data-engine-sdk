@@ -504,7 +504,12 @@ class OrderbookEngine:
 
     def connect(self) -> None:
         if self._engine is not None:
-            return
+            if self._data_dir is not None or self._open(self._engine):
+                return
+            # The engine's client closes a connection whose exchange did not finish, and says why
+            # on every later call (its #171). Returning here kept the adapter on that connection
+            # until close(); a new one replaces it.
+            self.close()
         try:
             import orderbook_engine
         except ImportError as exc:  # pragma: no cover - depends on a separate install
@@ -565,6 +570,15 @@ class OrderbookEngine:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    @staticmethod
+    def _open(engine: Any) -> bool:
+        """Whether the client's connection still answers: one round trip, on connect() only."""
+        try:
+            engine.ping()
+        except Exception:
+            return False
+        return True
 
     @property
     def _ob(self) -> Any:
@@ -781,8 +795,11 @@ class OrderbookEngine:
         stamp = _integer(timestamp_ns, "timestamp_ns", 0, MAX_TIMESTAMP_NS)
         checked = self._levels(levels, "")
         sequence = self._sequence(sequence_number)
+        # Outside the write's `try`: with no connection nothing was sent, and the answer is that,
+        # not an unconfirmed write that may have been stored.
+        engine = self._ob
         try:
-            self._ob.insert(
+            engine.insert(
                 symbol,
                 exchange,
                 side,
@@ -892,10 +909,13 @@ class OrderbookEngine:
         self._table(table)
         updates = self._updates(rows)
         stored = 0
+        # Before anything is sent: with no connection the batch was not sent at all, rather than
+        # an unknown outcome with none of it confirmed.
+        engine = self._ob
         if self._data_dir is not None:
             for number, update in enumerate(updates):
                 try:
-                    self._ob.insert(
+                    engine.insert(
                         update.symbol,
                         update.exchange,
                         update.side,
@@ -919,7 +939,7 @@ class OrderbookEngine:
         for start in range(0, len(updates), BATCH_UPDATES):
             part = updates[start : start + BATCH_UPDATES]
             try:
-                outcomes = self._ob.insert_batch(
+                outcomes = engine.insert_batch(
                     [
                         book_update(
                             update.symbol,
