@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Measured: what the C++ library costs per operation** ([`docs/implementing.md`](docs/implementing.md#measuring-your-overhead)).
+Requirement 3.5 gives the library one percent of an operation. Measured in C++ for the first time,
+a point read through the session cost 0.64 µs at the median built optimised, 2.5% of the cheapest
+round trip C++ makes: every call copied and sorted its key and found its shape, group, route,
+engine and table by name. The session now decides each entity's point read once, when it opens:
+0.11-0.12 µs without telemetry, 0.37-0.47% of that floor (break-even 11-12 µs), and 0.24 µs with a
+recorder, 0.09% of a PostgreSQL point read. CI judges both on an optimised build. It never reached
+a release.
+
 **New: the trading example in C++** ([`cpp/examples/trading/trading.cpp`](cpp/examples/trading/trading.cpp)).
 [`examples/trading`](examples/trading/README.md) - book depth on the orderbook engine, orders and
 fills on PostgreSQL, market trades on ClickHouse, through one signed map - as a C++ program with the

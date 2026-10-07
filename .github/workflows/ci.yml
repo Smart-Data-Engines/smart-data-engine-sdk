@@ -572,6 +572,20 @@ jobs:
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:18123/sde
         run: ctest --test-dir cpp/build --output-on-failure -L live -LE orderbook
 
+      - name: the library's cost per operation, built optimised
+        # Requirement 3.5 gives the library one percent of an operation, and it is release-blocking.
+        # A debug build measures the compiler, so the overhead tests judge only an optimised,
+        # unsanitised build: this one, of the two test programs that hold them. Against the
+        # loopback floor without telemetry, and against a PostgreSQL point read with it.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+        run: |
+          cmake -S cpp -B cpp/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSDE_WERROR=ON -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+          cmake --build cpp/build-release --target sde_unit_tests sde_live_tests
+          cpp/build-release/tests/sde_unit_tests --gtest_filter='Overhead.*'
+          cpp/build-release/tests/sde_live_tests --gtest_filter='PostgresOverhead.*'
+
       - name: a client's build, against the installed package
         # find_package(sde) is how somebody else's build sees this library, and nothing above
         # exercises it: the suite links the target from inside the same build. Installed, then the

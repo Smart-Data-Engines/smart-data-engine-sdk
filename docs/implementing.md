@@ -244,6 +244,21 @@ Two rules and one warning, all of them learned here rather than reasoned out:
   is 0.13% of the floor. Reporting the **break-even** is worth more than the ratio: an operation
   would have to complete in under ~14 µs before this library cost one percent of it.
 
+**The C++ library measured itself and found more than routing.** It times the whole of a point read
+through its session against an engine that hands back a row it already holds, less that engine's own
+call timed the same way, so everything the session does is in the number and nothing over a socket
+is. Built optimised on the same i3-7100U, the first measurement was 0.64 µs at the median, 2.5% of
+its loopback floor of ~25 µs - C++ makes the cheapest round trip of the three - because every call
+copied the key, sorted it, built a lookup key of copied strings and found the group, the route, the
+engine and the table by name. Decided once per session instead, it is 0.11-0.12 µs without
+telemetry over four runs, 0.37-0.47% of the floor, with a break-even of 11-12 µs. Measuring latency
+costs two reads of the clock and the recorder's atomics: 0.24 µs, 0.6-0.95% of the floor and 0.09%
+of a PostgreSQL point read through the adapter, so with telemetry the gate is the real operation, and
+the floor's number is printed. Two rules come out of it for a compiled language. Gate only an
+optimised, unsanitised build: a debug build of the same code measured nine to fifteen times slower,
+which is the compiler. And measure the cheapest round trip *your* runtime makes: the floor is a
+property of the runtime, and Node's is four times C++'s.
+
 ## Versions, tiers, and the word "supported"
 
 Declare two things and mean them.
