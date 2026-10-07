@@ -46,6 +46,7 @@ add_executable(sde_unit_tests
   unit/test_read_sql.cpp
   unit/test_provisioning.cpp
   unit/test_log.cpp
+  unit/test_overhead.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # The vocabulary test reads the library's sources and the reference's, as they are in the tree.
@@ -99,6 +100,7 @@ if(TARGET sde_postgres)
     live/test_postgres_fences.cpp
     live/test_postgres_storage.cpp
     live/test_postgres_tls.cpp
+    live/test_overhead_postgres.cpp
   )
   # OpenSSL's TLS half for the certificate witness the TLS tests talk to; the library links none.
   find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)

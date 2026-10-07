@@ -1,6 +1,7 @@
 #include "sde/session.hpp"
 
 #include <algorithm>
+#include <ranges>
 #include <chrono>
 #include <iterator>
 #include <string>
@@ -152,6 +153,34 @@ Session::Session(const Model& model, const PlacementMap& placement,
                       python_repr(std::vector<std::string>(missing.begin(), missing.end())) +
                       ". A session cannot route an operation to an engine it has no adapter for, "
                       "and guessing at a connection is not something a library should do.");
+  }
+
+  // A point read's shape and where it goes are fixed by the model and the map, so with nothing
+  // translating names they are found here once rather than by lookups on every call: requirement
+  // 3.5 gives this library one percent of an operation, and building those lookups' keys was most
+  // of a point read (measured). An entity whose read cannot be decided here has none, and the
+  // general path decides it - and refuses it - as before.
+  if (names_ == nullptr) {
+    for (const Entity& entity : model.entities()) {
+      PointRead read{entity.key, nullptr, {}, {}};
+      std::sort(read.key.begin(), read.key.end());
+      const auto found = shapes_.find({entity.name, "point_read", read.key});
+      if (found == shapes_.end()) continue;
+      read.shape = found->second;
+      try {
+        const auto place = [&](bool source) {
+          // Named, as in `target`: GCC cannot tell that `resolve` returns into the map.
+          const RouteContext context{false, source};
+          const Materialization& at = resolve(placement, *read.shape, context);
+          return PointRead::Place{engines_.at(at.engine), &at.layout.table_for(entity.name)};
+        };
+        read.routed = place(false);
+        read.source = place(true);
+      } catch (const std::exception&) {
+        continue;
+      }
+      point_reads_.emplace(entity.name, std::move(read));
+    }
   }
 
   // A copy that silently holds different values from its source is refused before the first write
@@ -476,6 +505,15 @@ void Session::replay_one(const Deferred& write) {
 
 std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fresh) {
   const Use use(*this);
+  // The model's key, exactly, of an entity of a model whose names nothing translates: the steps
+  // below, without copying the key or building a lookup key. Anything else - a hashed model, another
+  // key, an entity the model does not declare - takes the general path, which is the one refusing.
+  if (const auto known = point_reads_.find(entity);
+      known != point_reads_.end() && std::ranges::equal(key | std::views::keys, known->second.key)) {
+    const PointRead::Place& place =
+        fresh || in_write_transaction_ ? known->second.source : known->second.routed;
+    return read_one(*known->second.shape, entity, *place.engine, *place.table, key);
+  }
   const std::string target_entity = target_of(entity);
   const Row given = fields_in(entity, key);
   const Entity& spec = model_.entity(target_entity);
@@ -495,11 +533,15 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
   }
   const OperationShape& read = shape(target_entity, "point_read", expected);
   const auto [engine, materialization] = target(read, fresh);
-  const std::string& table = materialization->layout.table_for(target_entity);
+  return read_one(read, entity, *engine, materialization->layout.table_for(target_entity), given);
+}
+
+std::optional<Row> Session::read_one(const OperationShape& read, std::string_view entity,
+                                     Engine& engine, const std::string& table, const Row& given) {
   const std::int64_t started = now();
   std::optional<Row> row;
   try {
-    row = engine->get(table, given);
+    row = engine.get(table, given);
   } catch (...) {
     observe(read, started, 0, true);
     throw;

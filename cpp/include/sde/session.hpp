@@ -176,6 +176,9 @@ class Session {
                                             const std::vector<std::string>& fields = {}) const;
   [[nodiscard]] std::pair<Engine*, const Materialization*> target(const OperationShape& shape,
                                                                   bool fresh) const;
+  /// A point read from where it goes on: read, record, hand back the client's row.
+  std::optional<Row> read_one(const OperationShape& read, std::string_view entity, Engine& engine,
+                              const std::string& table, const Row& given);
   void fan_out(const std::string& entity, const std::string& group, const std::vector<Row>& rows,
                bool batch);
   void replay_one(const Deferred& write);
@@ -198,6 +201,21 @@ class Session {
   std::map<std::tuple<std::string, std::string, std::vector<std::string>>, const OperationShape*>
       shapes_;
   std::map<std::string, Admission> admission_;
+  /// The point read of each entity of a model whose names nothing translates, decided once: its key
+  /// in code point order, its shape, and where it goes - routed, or to the source when fresh or in
+  /// a write transaction - as `resolve` decides it. `get` takes it when the key given is exactly
+  /// that one.
+  struct PointRead {
+    struct Place {
+      Engine* engine = nullptr;
+      const std::string* table = nullptr;
+    };
+    std::vector<std::string> key;
+    const OperationShape* shape = nullptr;
+    Place routed;
+    Place source;
+  };
+  std::map<std::string, PointRead, std::less<>> point_reads_;
   std::map<std::string, std::map<std::string, std::string>> input_fields_;    ///< client entity
   std::map<std::string, std::map<std::string, std::string>> reverse_fields_;  ///< hashed entity
   std::vector<std::string> declared_;  ///< the client's entity names, with hashing on
