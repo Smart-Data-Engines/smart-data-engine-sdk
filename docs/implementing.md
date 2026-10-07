@@ -613,6 +613,50 @@ the next one:
   host's certificate. What both guarantee - no application byte reaches an unverified peer - is
   the claim to test.
 
+#### The orderbook adapter, over the engine's own protocol
+
+The third adapter speaks our engine's text protocol itself, over TCP or TLS 1.3, as the TypeScript
+one does: the engine ships a Python client and no C++ one, and a library that linked the engine
+would put the engine's code into every client that places nothing there. The reference does not
+speak the protocol at all - it calls the engine's Python client - so for this adapter **the
+reference is two programs**: the adapter, whose decisions and words this one ports, and the client
+it calls, whose framing, timeouts and words the adapter puts into its own messages (`query failed:
+…: TCP recv timeout`). Both were read at the engine commit the CI job pins, and every expected text
+was captured from them: the DSN against the reference's parser on 280,000 generated DSNs, the
+answer and STATUS parsing against the client's own functions, the connection failures - TLS among
+them - against the reference connecting to the same servers. What whoever writes the next one
+needs:
+
+- **the DSN's numbers are Python's.** The timeout is `float()` of text and the client reads every
+  number of an answer with `int()`, so `1_0` is ten seconds, an Arabic-Indic three is three, `inf`
+  is accepted, and U+001C to U+001F - which `str.isspace()` calls whitespace - are not stripped,
+  because `float()` strips C's whitespace once Python's has become a space. A port that reads them
+  with its own parser agrees on every DSN a person writes and disagrees on the ones a generator
+  writes; this one disagreed twice before the differential found it, the second time on a
+  four-hundred-digit mantissa no corpus had;
+- **every wait is bounded by silence, not by the answer.** The client sets one socket timeout, so a
+  slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
+- **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
+  its answer may still arrive, and the next command would read it as its own (the engine's #171).
+  The reference keeps the closed client and `connect()` does nothing until `close()`; this library
+  says the reason on every call in between and lets `connect()` open another;
+- **a write that cannot be sent is not a write that may have been stored.** The reference reads its
+  client inside the write's own failure, so it reports a write it never sent as one whose outcome is
+  unknown. This library refuses it first, as TypeScript does;
+- **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
+  address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
+  CPython cannot wait for, refused only at connect. This library connects to either family and
+  reproduces the second, which is a rule for the DSN in every library;
+- **TLS refusals are CPython's words without CPython's line.** `[SSL: CERTIFICATE_VERIFY_FAILED]
+  certificate verify failed: Hostname mismatch, certificate is not valid for 'host'.`, an end of the
+  stream inside the handshake as `EOF occurred in violation of protocol`, a reset as the socket's
+  `[Errno 104]`; CPython appends `(_ssl.c:1000)`, which names its own source.
+
+Each difference from the reference or from TypeScript is a finding for the contract, to become a
+rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepts an
+invisible format character the reference refuses), a key of another type in a point read
+(TypeScript answers "no row" where the reference reads it with `int()`), and the four above.
+
 ### Verification-request protocol check
 
 On 12 September 2026 a standalone Go checker implemented section 7b from its description and

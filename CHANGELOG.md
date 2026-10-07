@@ -8,6 +8,32 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: the orderbook adapter in the C++ library** ([`cpp/README.md`](cpp/README.md),
+[`docs/orderbook.md`](docs/orderbook.md#from-c)). `sde::OrderbookEngine`, over our engine's own
+text protocol on TCP or TLS 1.3, which the library speaks itself, as TypeScript does, in a target of
+its own, `sde::orderbook`, over OpenSSL; the engine's library is never linked. It is the reference's
+adapter, decision for decision: the fixed shape and key, a single write at level 0, batches as the
+engine's updates pipelined 64 at a time, the sequence number left to the server, pages of one book
+in key order from windows of time, two rows with one key refused, count and summary refused by
+name. Its DSN is read as the reference reads it, compared on 280,000 DSNs, and its words are the
+reference's and those of the engine's Python client the reference puts into its own.
+- The protocol: the greeting, the AUTH challenge answered with HMAC-SHA256 - the secret never goes
+  on the wire - PUSH lines skipped, commands pipelined, and an exchange that does not finish closes
+  the connection with its reason for every later call. Every wait is bounded by the DSN's timeout of
+  silence. TLS 1.3 at least, the DSN's CA the one trust anchor, the certificate bound to the host by
+  name with SNI or by address without it.
+- Its tests run against a fake engine and a TLS server in the process, and its slice against the
+  pinned `ob_tcp_server`, plain and with credentials and TLS, with one book written here and read by
+  the reference, and the other way round.
+- Two decisions differ from the reference, and a write with no connection is the first: refused
+  before anything is sent, where the reference reports a write it never sent as one that may have
+  been stored. The second: `connect()` opens a new connection after an exchange closed the old one.
+  Both, and the reference client's IPv4-only sockets and a timeout it accepts and cannot wait for,
+  are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
+- Fixed on the way, in the C++ library: Python's `float()` of text, which the DSN's timeout is,
+  stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
+  infinity or zero by the sign of its exponent rather than its size. Neither reached a release.
+
 **New: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
 `sde::ClickHouseEngine`, over ClickHouse's HTTP interface through libcurl, in a target of its own,
 `sde::clickhouse`, so an application that places nothing in ClickHouse carries no libcurl. It is the

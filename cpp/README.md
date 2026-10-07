@@ -6,7 +6,7 @@ implementation of [the format contract](../docs/format-contract.md), after Pytho
 and TypeScript, and it is held to the same shared vectors in [`conformance/`](../conformance) as
 they are.
 
-**Status: Tier 2 and hashing, with the PostgreSQL and ClickHouse adapters** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
+**Status: Tier 2 and hashing, with the PostgreSQL, ClickHouse and orderbook adapters** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
 
 | | |
 |---|---|
@@ -22,15 +22,16 @@ they are.
 | Schema preparation: what a person provisioning a map runs before the application opens it | yes |
 | PostgreSQL (Tier 2), over libpq: schema, reads, writes, transactions, bookkeeping, migration, write fences, sizes, TLS | yes |
 | ClickHouse (Tier 2), over libcurl: schema and the physical design, reads, writes and batches, bookkeeping, migration, write fences, sizes, TLS | yes |
-| The orderbook engine (Tier 2) | not yet |
+| The orderbook engine (Tier 2), over its own protocol on TCP or TLS 1.3: the fixed shape checked, writes as updates, batches, reads in key order, credentials, TLS | yes |
 
 Tier 2 is the vectors of §9 - `schema/`, `query/` and `migration/` - and this library passes all of
 them against the engine interface and its in-memory engine. The engines are separate: PostgreSQL is
 `sde::PostgresEngine`, in a target of its own, `sde::postgres`, which is the only part that links
 libpq, and ClickHouse is `sde::ClickHouseEngine`, in `sde::clickhouse`, the only part that links
-libcurl - the core links no network library, and an application carries only the adapters it links.
-The orderbook engine follows. The recorder reads a
-monotonic clock, or the one you give it, and that is the only state kept between calls.
+libcurl, and the orderbook engine is `sde::OrderbookEngine`, in `sde::orderbook`, which speaks the
+engine's protocol itself and links OpenSSL's TLS - the core links no network library, and an
+application carries only the adapters it links. The recorder reads a monotonic clock, or the one you
+give it, and that is the only state kept between calls.
 
 ## Requirements
 
@@ -44,6 +45,8 @@ monotonic clock, or the one you give it, and that is the only state kept between
   adapter.
 - libcurl 7.77 or newer, for the ClickHouse adapter only. `-DSDE_CLICKHOUSE=OFF` builds without it,
   and without the adapter.
+- OpenSSL 3's `libssl`, for the orderbook adapter only, which speaks the engine's protocol itself and
+  never links the engine. `-DSDE_ORDERBOOK=OFF` builds without the adapter.
 - GoogleTest, for the tests only. An installed one is used; otherwise CMake fetches 1.15.2, pinned by
   its archive's SHA-256.
 
@@ -79,6 +82,18 @@ SDE_CLICKHOUSE_DSN=clickhouse://default:sde@127.0.0.1:58123/sde \
 `CI=true` it fails instead, because a green job that ran nothing looks exactly like one that passed.
 Each test works in a schema - in ClickHouse, a database - of its own, with a runtime login of its own
 where it needs one, and drops both. The TLS tests need no server: they talk to a certificate witness the suite runs itself.
+So do the orderbook adapter's own tests, against a fake engine in the process that speaks its
+protocol. Against a real `ob_tcp_server` - plain, and one with `--auth-secret-file` and
+`--tls-client` - the slice is labelled `orderbook`, and `SDE_PYTHON` names an interpreter with the
+reference and the engine's Python client for the half where the reference reads what this library
+wrote:
+
+```bash
+SDE_ORDERBOOK_TCP=127.0.0.1:59090 \
+SDE_ORDERBOOK_SECURE_DSN='orderbook://identity:secret@localhost:59091?tls=on&ca=/path/ca.pem' \
+SDE_PYTHON=python3 \
+  ctest --test-dir cpp/build -L orderbook
+```
 
 ## Use it
 
@@ -143,6 +158,19 @@ sde::ClickHouseEngine engine(  // https or clickhouses; ca_cert names the CA, re
     "clickhouses://app:secret@ch.internal:8443/analytics?ca_cert=%2Fetc%2Fsde%2Fca.pem");
 engine.connect();
 sde::Session session(model, map, {{"ch", &engine}}, options);
+```
+
+Against our orderbook engine, link `sde::orderbook`. Its schema is fixed in the engine, so a group
+placed there either is that shape (`sde::ORDERBOOK_SHAPE`) or cannot be placed there, and nothing is
+provisioned. Its connection is `orderbook://[identity:secret@]host:port[?tls=on&ca=PATH&timeout=S]`,
+read as the reference reads it; the secret answers the server's challenge and never goes on the
+wire:
+
+```cpp
+sde::OrderbookEngine engine("orderbook://desk:secret@ob.internal:59091?tls=on&ca=%2Fetc%2Fsde%2Fca.pem");
+engine.connect();  // refuses a server that cannot store a write's event time
+sde::Session session(model, map, {{"ob", &engine}});
+session.save_many("DepthLevel", rows);  // the rows of one side of one book at one instant are one update
 ```
 
 A map with no signature is valid: that is the no-account mode, documented and supported. A signed
@@ -234,6 +262,18 @@ keeps working for as long as its keys are configured.
   table reads `FINAL`. A write barrier is a constraint and a drain - the table detached and attached
   again, in an Atomic database, after a durable intent naming its UUID - so an interrupted drain is
   resumed by name and attaches that table and no other.
+- **The orderbook adapter states what the engine does not promise rather than smoothing it over**,
+  as the reference does. There are no transactions; the key is not enforced, so a read meeting two
+  rows with one key refuses rather than picks one; a write is an update of N levels, so a single row
+  is level 0 or refused and `save_many` writes whole updates, pipelined 64 at a time; the server
+  numbers every update, so a row's `sequence_number` is null when written and the server's when
+  read; the engine answers in arrival order, so a page is assembled from windows of time read whole
+  and sorted; it counts nothing over its history, so a count and a summary are refused by name. A
+  read flushes first when something was written. The protocol is spoken here, its words those of
+  the engine's own client: an exchange that does not finish closes the connection, every later call
+  says why, and `connect()` opens another; every wait is bounded by the DSN's timeout of silence;
+  TLS is 1.3 at least, the DSN's CA the one trust anchor, the certificate bound to the host by name
+  or by address. No write of this library raises SIGPIPE.
 - **It is stricter than the two other libraries in a few places** where they coerce a value or fail
   with their runtime's own error: a materialisation's `id` and `engine` must be strings, a
   `lag_budget_ms` a non-negative integral number, a layout's tables and columns names and types,
@@ -260,6 +300,9 @@ it. Both were compared with the reference directly, and agreed everywhere:
   that, every difference was one of those two rules, and they are the reason the vectors exist;
 - the ClickHouse connection URI on 102,000 generated URIs against the reference's parser: the same
   outcome, the same message and every field equal, the timeouts to the bit;
+- the orderbook DSN on 280,000 generated DSNs against the reference's parser, the same way, its
+  timeout read as Python's `float()` reads text - underscores, any Unicode digit, an infinity - and
+  every number of an engine's answer read as `int()` reads it, checked against CPython;
 - the three packet loaders on 102,384 signed packets, made by changing every accepted packet
   vector at each of its paths and in random pairs, and signing them again so that each change reaches
   the rule it is about: the same outcome, fingerprint, record and message in every case except three

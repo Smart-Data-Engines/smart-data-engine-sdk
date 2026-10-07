@@ -93,7 +93,11 @@ through libcurl, likewise in a target of its own (`sde::clickhouse`), with the r
 ClickHouse slice ported the same way. What the reference runs against both engines with one body -
 copies in every direction, write generations, the frozen comparison, the bookkeeping, the
 agreement of the two engines on one value - runs here with one body too, for each adapter the
-build has. Our orderbook engine follows, and moves the cell when it round-trips, not before.
+build has. The third is our orderbook engine, over its own text protocol on TCP or TLS 1.3, which
+this library speaks itself as TypeScript does (`sde::orderbook`, over OpenSSL); the reference calls
+the engine's Python client, so its words are that client's as well as the adapter's, and both were
+captured. Its live tests are the reference's orderbook slices over TCP, plain and with credentials
+and TLS, and one book written here and read by the reference, and the other way round.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 
