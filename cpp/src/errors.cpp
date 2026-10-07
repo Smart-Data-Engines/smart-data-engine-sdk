@@ -1,5 +1,7 @@
 #include "sde/errors.hpp"
 
+#include "storage_internal.hpp"
+
 namespace sde {
 
 // The destructors are defined here so that each class's vtable and type information live in one
@@ -15,6 +17,7 @@ BulkWriteRefused::~BulkWriteRefused() = default;
 MapError::~MapError() = default;
 MapRolledBack::~MapRolledBack() = default;
 EngineError::~EngineError() = default;
+detail::CatalogueRefused::~CatalogueRefused() = default;
 ResourceBusy::~ResourceBusy() = default;
 ResourceClosed::~ResourceClosed() = default;
 MigrationRefused::~MigrationRefused() = default;

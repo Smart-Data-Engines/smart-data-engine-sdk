@@ -7,8 +7,9 @@
 
 #include "bulk.hpp"
 #include "generation.hpp"
-#include "session_use.hpp"
 #include "python_compat.hpp"
+#include "session_use.hpp"
+#include "storage_internal.hpp"
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
 #include "sde/migration.hpp"
@@ -69,13 +70,10 @@ Filter predicates(const ReadPlan& plan) {
 }
 
 /// `refused` when the catalogue denied the login - PostgreSQL's SQLSTATE 42501, ClickHouse's access
-/// error 497, which a login without the `system.parts` grant receives - and `failed` otherwise.
+/// error 497, which a login without the `system.parts` grant receives - and `failed` otherwise. The
+/// adapter read the server's code and says so by the error's type; its text decides nothing.
 std::string storage_refusal(const std::exception& error) {
-  const std::string_view text = error.what();
-  return text.find("42501") != std::string_view::npos ||
-                 text.find("Code: 497") != std::string_view::npos
-             ? "refused"
-             : "failed";
+  return dynamic_cast<const detail::CatalogueRefused*>(&error) != nullptr ? "refused" : "failed";
 }
 
 }  // namespace

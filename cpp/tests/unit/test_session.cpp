@@ -19,6 +19,7 @@
 #include "sde/session.hpp"
 #include "sde/telemetry.hpp"
 #include "sde/testing/memory.hpp"
+#include "storage_internal.hpp"
 
 namespace {
 
@@ -420,10 +421,15 @@ TEST(Session, StorageIsMeasuredOrSaysWhyNot) {
   EXPECT_EQ(measured.unavailable.at("Station"), "missing_table");
 
   pg.sizes = [](const std::vector<std::string>&) -> std::map<std::string, std::pair<std::int64_t, std::int64_t>> {
-    throw sde::EngineError("permission denied for table parts (SQLSTATE 42501)");
+    throw sde::detail::CatalogueRefused("storage sizes could not be read: permission denied");
   };
   measured = session.measure_storage();
   EXPECT_EQ(measured.unavailable.at("Reading"), "refused");
+  // The adapter that read the server's code says so by the type; a message's words decide nothing.
+  pg.sizes = [](const std::vector<std::string>&) -> std::map<std::string, std::pair<std::int64_t, std::int64_t>> {
+    throw sde::EngineError("permission denied for table parts (SQLSTATE 42501, Code: 497)");
+  };
+  EXPECT_EQ(session.measure_storage().unavailable.at("Reading"), "failed");
   pg.sizes = [](const std::vector<std::string>&) -> std::map<std::string, std::pair<std::int64_t, std::int64_t>> {
     throw sde::EngineError("connection reset");
   };
