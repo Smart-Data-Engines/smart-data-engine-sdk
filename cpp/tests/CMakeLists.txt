@@ -47,6 +47,7 @@ add_executable(sde_unit_tests
   unit/test_provisioning.cpp
   unit/test_log.cpp
   unit/test_overhead.cpp
+  unit/test_invariants.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # The vocabulary test reads the library's sources and the reference's, as they are in the tree.
@@ -71,6 +72,21 @@ if(TARGET sde_clickhouse)
     SDE_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../testdata")
 endif()
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)
+
+# Requirement 6.1, read from the archives: the core leaves no network symbol for the linker, and each
+# adapter's archive, the control, shows the library it is built on.
+set(SDE_SYMBOLS ${CMAKE_CURRENT_SOURCE_DIR}/support/core_symbols.cmake)
+add_test(NAME invariant.the_core_links_no_network COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
+  -DARCHIVE=$<TARGET_FILE:sde> -DEXPECT=none -P ${SDE_SYMBOLS})
+foreach(adapter_and_library IN ITEMS "sde_orderbook;sockets" "sde_postgres;libpq"
+                                    "sde_clickhouse;libcurl")
+  list(GET adapter_and_library 0 adapter)
+  list(GET adapter_and_library 1 library)
+  if(TARGET ${adapter})
+    add_test(NAME invariant.${adapter}_links_${library} COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
+      -DARCHIVE=$<TARGET_FILE:${adapter}> -DEXPECT=${library} -P ${SDE_SYMBOLS})
+  endif()
+endforeach()
 
 add_executable(sde_conformance
   conformance/stages.cpp
