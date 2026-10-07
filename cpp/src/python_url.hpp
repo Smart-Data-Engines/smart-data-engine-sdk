@@ -80,4 +80,20 @@ enum class Address { none, v4, v6 };
 /// an underflow zero, as there. `PythonValueError` otherwise.
 [[nodiscard]] double float_of(std::string_view text);
 
+/// `int(text)` of a `str` in base 10, as a sign and its digits without leading zeros (`0` for
+/// zero): C's whitespace around it once Python's has become a space, a sign, any Unicode decimal
+/// digit, an underscore only between two digits. `PythonValueError` otherwise, and
+/// `PythonIntLimit` past CPython's 4300 digits for converting text to an integer.
+struct PythonInt {
+  bool negative = false;
+  std::string digits;
+};
+struct PythonIntLimit {
+  std::size_t digits = 0;  ///< how many the text has
+};
+[[nodiscard]] PythonInt int_of(std::string_view text);
+
+/// `bytes.decode("utf-8", errors="replace")`: one U+FFFD for each maximal ill-formed part.
+[[nodiscard]] std::string decode_replacing(std::string_view bytes);
+
 }  // namespace sde::detail::python_url
