@@ -161,8 +161,12 @@ std::string Http::post(std::string_view sql, std::optional<std::string_view> for
   // bound on silence never cuts a query that is still running.
   const long interval = std::min<long>(
       120000, std::max<long>(10000, (static_cast<long>(std::ceil(target_.send_receive_timeout)) - 5) * 1000));
+  // The statement travels as the body, as the reference's driver sends it, so a value in a WHERE
+  // clause is never part of a URL that a proxy between here and the server would log. Only an
+  // INSERT that carries rows names its statement in the URL - that statement holds no value - and
+  // sends the rows as the body.
   std::string query = url() + "/?database=" + escaped(curl, target_.database) +
-                      "&query=" + escaped(curl, statement) +
+                      (data.empty() ? std::string() : "&query=" + escaped(curl, statement)) +
                       "&session_timezone=UTC&date_time_output_format=iso"
                       "&wait_end_of_query=1&send_progress_in_http_headers=1"
                       "&http_headers_progress_interval_ms=" + std::to_string(interval) +
@@ -179,9 +183,10 @@ std::string Http::post(std::string_view sql, std::optional<std::string_view> for
   exchange.silence = std::chrono::milliseconds(
       static_cast<long long>(std::ceil(target_.send_receive_timeout * 1000.0)));
   (void)curl_easy_setopt(curl, CURLOPT_URL, query.c_str());
+  const std::string_view sent = data.empty() ? std::string_view(statement) : data;
   (void)curl_easy_setopt(curl, CURLOPT_POST, 1L);
-  (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data.empty() ? "" : data.data());
-  (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(data.size()));
+  (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDS, sent.data());
+  (void)curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(sent.size()));
   (void)curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
   (void)curl_easy_setopt(curl, CURLOPT_USERNAME, target_.username.c_str());
   (void)curl_easy_setopt(curl, CURLOPT_PASSWORD, target_.password.c_str());
@@ -204,7 +209,9 @@ std::string Http::post(std::string_view sql, std::optional<std::string_view> for
   (void)curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &on_header);
   (void)curl_easy_setopt(curl, CURLOPT_HEADERDATA, &exchange);
   const std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(
-      curl_slist_append(curl_slist_append(nullptr, "Content-Type: text/plain; charset=utf-8"),
+      curl_slist_append(curl_slist_append(nullptr, data.empty()
+                                                       ? "Content-Type: text/plain; charset=utf-8"
+                                                       : "Content-Type: application/octet-stream"),
                         "Expect:"),
       &curl_slist_free_all);
   (void)curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.get());
