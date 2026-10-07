@@ -19,6 +19,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SDE_BUILD_TESTS "Build the unit tests and the conformance runner" ${PROJECT_IS_TOP_LEVEL})
 option(SDE_WERROR "Treat compiler warnings as errors" OFF)
+option(SDE_POSTGRES "Build sde::postgres, the PostgreSQL adapter, over libpq" ON)
 set(SDE_SANITIZE "" CACHE STRING "Comma-separated sanitizers to build with, e.g. address,undefined")
 
 include(GNUInstallDirs)
@@ -29,6 +30,10 @@ include(CMakePackageConfigHelpers)
 # dependency the format contract forces. Nothing else reaches the core library.
 find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 find_package(utf8proc REQUIRED)
+# Each adapter's driver is that adapter's alone: the core links no network library.
+if(SDE_POSTGRES)
+  find_package(PostgreSQL REQUIRED)
+endif()
 
 # --- warnings and sanitizers, as an interface target every target here links ------------------
 add_library(sde_build_flags INTERFACE)
@@ -110,8 +115,30 @@ target_include_directories(sde_testing
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(sde_testing PUBLIC sde PRIVATE $<BUILD_INTERFACE:sde_build_flags>)
 
+# --- the adapters: a target each, so an application links the drivers of the engines it uses ---
+set(SDE_ADAPTERS "")
+if(SDE_POSTGRES)
+  add_library(sde_postgres
+    src/engines/postgres.cpp
+    src/engines/postgres/connection.cpp
+    src/engines/postgres/fences.cpp
+    src/engines/postgres/values.cpp)
+  add_library(sde::postgres ALIAS sde_postgres)
+  target_compile_features(sde_postgres PUBLIC cxx_std_20)
+  set_target_properties(sde_postgres PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME postgres)
+  target_include_directories(sde_postgres
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(sde_postgres
+    PUBLIC sde PRIVATE PostgreSQL::PostgreSQL $<BUILD_INTERFACE:sde_build_flags>)
+  list(APPEND SDE_ADAPTERS sde_postgres)
+endif()
+
 # --- installation: find_package(sde CONFIG) -------------------------------------------------------
-install(TARGETS sde sde_testing EXPORT sdeTargets
+install(TARGETS sde sde_testing ${SDE_ADAPTERS} EXPORT sdeTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

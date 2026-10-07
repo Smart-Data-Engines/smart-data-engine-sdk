@@ -56,6 +56,45 @@ std::vector<std::string> effective_key(std::string_view where, std::string_view 
   return found->second;
 }
 
+std::vector<DeclaredTable> declared_tables(
+    const PhysicalLayout& layout, const std::map<std::string, std::vector<std::string>>& keys) {
+  std::vector<std::pair<std::string, std::string>> tables(layout.tables.begin(),
+                                                          layout.tables.end());
+  std::stable_sort(tables.begin(), tables.end(),
+                   [](const auto& a, const auto& b) { return a.second < b.second; });
+  std::vector<const Index*> indexes;
+  for (const Index& index : layout.indexes) indexes.push_back(&index);
+  std::stable_sort(indexes.begin(), indexes.end(),
+                   [](const Index* a, const Index* b) { return a->name < b->name; });
+  std::vector<DeclaredTable> out;
+  for (const auto& [entity, table] : tables) {
+    const std::string where = "table " + detail::python_repr(table);
+    const auto keyed = keys.find(entity);
+    const std::vector<std::string> key =
+        keyed != keys.end() ? keyed->second : std::vector<std::string>{};
+    DeclaredTable declared{table, effective_key(where, entity, key, layout.key_order), {}, {}};
+    if (const auto partition = layout.partition_by.find(entity);
+        partition != layout.partition_by.end()) {
+      if (auto refusal = detail::partition_key_refusal(where, entity, key, partition->second)) {
+        throw MapError(*refusal);
+      }
+      declared.partition = std::make_pair(
+          std::string(detail::partition_function(partition->second.granularity)),
+          partition->second.field);
+    }
+    for (const Index* index : indexes) {
+      if (index->entity != entity) continue;
+      const std::string type_full = index->method == "set"
+                                        ? "set(" + std::to_string(index->max_rows.value_or(0)) + ")"
+                                        : index->method;
+      declared.indexes.push_back(
+          DeclaredIndex{index->name, index->method, index->columns, index->granularity, type_full});
+    }
+    out.push_back(std::move(declared));
+  }
+  return out;
+}
+
 namespace detail {
 
 std::optional<std::string> key_order_refusal(std::string_view where, std::string_view entity,
