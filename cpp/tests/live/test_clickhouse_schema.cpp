@@ -234,18 +234,21 @@ TEST_F(ClickHouseSchema, AnotherDesignIsRefusedAtProvisioningAndReportedByARunni
 }
 
 TEST_F(ClickHouseSchema, AnIndexOfTheDeclaredNameButAnotherShapeIsNamedAsItIs) {
+  // Each differs from the design in one aspect only - its column, its granularity, its type's
+  // parameter - so each comparison is the one that names it.
   const ClickHouseRoles roles(dsn_);
   const sde::Model model = readings();
   const auto provisioning = engine(roles.operator_dsn());
   sde::prepare_schema(model, readings_map(model, false), {{"db", provisioning.get()}}, kProject);
+  roles.command("ALTER TABLE readings ADD INDEX reading_temperature humidity TYPE minmax GRANULARITY 4");
+  roles.command("ALTER TABLE readings ADD INDEX reading_humidity humidity TYPE set(100) GRANULARITY 5");
   roles.command(
-      "ALTER TABLE readings ADD INDEX reading_temperature humidity TYPE set(7) GRANULARITY 3");
-  roles.command("ALTER TABLE readings ADD INDEX reading_station (station, humidity) "
-                "TYPE bloom_filter(0.01) GRANULARITY 1");
+      "ALTER TABLE readings ADD INDEX reading_station station TYPE bloom_filter(0.01) GRANULARITY 1");
   const sde::PlacementMap designed = readings_map(model, true, 2);
-  std::vector<Finding> expected = undesigned("absent");
-  std::get<3>(expected[3]) = "bloom_filter(0.01) on ('station', 'humidity') granularity 1";
-  std::get<3>(expected[4]) = "set(7) on ('humidity',) granularity 3";
+  std::vector<Finding> expected = undesigned("");
+  std::get<3>(expected[2]) = "set(100) on ('humidity',) granularity 5";
+  std::get<3>(expected[3]) = "bloom_filter(0.01) on ('station',) granularity 1";
+  std::get<3>(expected[4]) = "minmax on ('humidity',) granularity 4";
   EXPECT_EQ(as_tuples(provisioning->validate_schema(
                 designed.placement_of("Reading").source.layout, kReadingKeys)),
             expected);
@@ -703,6 +706,7 @@ TEST_F(ClickHouseSchema, ProvisioningPreparesTheBookkeepingWithoutAdoptingTheMap
   sde::prepare_schema(model, map, {{"db", provisioning.get()}}, kProject);
   EXPECT_EQ(recorded(roles), std::vector<std::string>{})
       << "signed provisioning left creating the bookkeeping to the runtime, or recorded the map";
+  EXPECT_EQ(provisioning->map_watermark(), std::nullopt) << "an empty bookkeeping is no watermark";
   provisioning->record_map_version(2, model.version());
   sde::prepare_schema(model, map, {{"db", provisioning.get()}}, kProject);
   EXPECT_EQ(recorded(roles), std::vector<std::string>{"2"});
