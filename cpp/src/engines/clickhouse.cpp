@@ -23,6 +23,7 @@
 #include "sde/placement.hpp"
 #include "sde/query.hpp"
 #include "sde/schema.hpp"
+#include "storage_internal.hpp"
 
 namespace sde {
 
@@ -534,7 +535,12 @@ std::map<std::string, std::pair<std::int64_t, std::int64_t>> ClickHouseEngine::s
       out[text_at(row, 0)] = {integer_at(row, 1), integer_at(row, 2)};
     }
   } catch (const std::exception& error) {
-    throw EngineError("storage sizes could not be read: " + failure(error));
+    const std::string message = "storage sizes could not be read: " + failure(error);
+    if (const auto* refused = dynamic_cast<const ServerError*>(&error);
+        refused != nullptr && refused->code() == 497) {
+      throw detail::CatalogueRefused(message);
+    }
+    throw EngineError(message);
   }
   return out;
 }
