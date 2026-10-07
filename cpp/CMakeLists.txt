@@ -144,7 +144,11 @@ if(SDE_POSTGRES)
 endif()
 if(SDE_CLICKHOUSE)
   add_library(sde_clickhouse
-    src/engines/clickhouse/dsn.cpp)
+    src/engines/clickhouse.cpp
+    src/engines/clickhouse/dsn.cpp
+    src/engines/clickhouse/fences.cpp
+    src/engines/clickhouse/http.cpp
+    src/engines/clickhouse/values.cpp)
   add_library(sde::clickhouse ALIAS sde_clickhouse)
   target_compile_features(sde_clickhouse PUBLIC cxx_std_20)
   set_target_properties(sde_clickhouse PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME clickhouse)

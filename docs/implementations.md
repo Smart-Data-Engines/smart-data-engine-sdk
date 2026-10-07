@@ -24,7 +24,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 |---|---|---|---|---|---|---|
 | `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
 | `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
-| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 2 | yes | 1 | 1–6 | `postgres` |
+| `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 2 | yes | 1 | 1–6 | `clickhouse`, `postgres` |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
 layout and `schema_statements(dialect=...)` take, so they are the spelling a client actually types.
@@ -88,8 +88,10 @@ engines cell is separate:** an engine enters the cell when its adapter round-tri
 server. The first is PostgreSQL, over libpq, in a target of its own (`sde::postgres`), so an
 application that places nothing there links no libpq and the core links no network library at all.
 Its live tests are the reference's PostgreSQL slice, ported, with every expected message captured
-from the reference against the same server. ClickHouse and our orderbook engine follow, in the order
-the other two have them, and each moves the cell when it round-trips, not before.
+from the reference against the same server. The second is ClickHouse, over its HTTP interface
+through libcurl, likewise in a target of its own (`sde::clickhouse`): it round-trips every neutral
+type against a real server, and the rest of the reference's ClickHouse slice is being ported the
+same way. Our orderbook engine follows, and moves the cell when it round-trips, not before.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 

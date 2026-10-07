@@ -8,6 +8,21 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New, in progress: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
+`sde::ClickHouseEngine`, over ClickHouse's HTTP interface through libcurl, in a target of its own,
+`sde::clickhouse`, so an application that places nothing in ClickHouse carries no libcurl. Its
+connection URI is parsed as the reference parses it, rule for rule and message for message, compared
+on 102,000 URIs. An exchange is one POST on a connection of its own, never reused, so a failed one is
+reported with its outcome unknown and never sent again. Rows travel in `RowBinaryWithNamesAndTypes`
+both ways, so a date of year 1 or 9999 is the date it was.
+- A value its column cannot hold is refused before anything is sent. The reference's driver stores
+  `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24 - and
+  `Decimal("12345678901.23")` as 12345678901.20, without a word: recorded in
+  [`docs/implementing.md`](docs/implementing.md), as a rule for the contract.
+- So far its live tests cover the schema, writes and point reads of every neutral type, counts, and
+  the transport's failures and bounds, each message captured from the reference against the same
+  server; the rest of the reference's ClickHouse slice is being ported.
+
 **New: the PostgreSQL adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
 `sde::PostgresEngine`, over libpq, in a target of its own, `sde::postgres`: the core still links no
 network library, and an application that places nothing in PostgreSQL carries no libpq. It is the

@@ -372,6 +372,76 @@ void check_against_model(const std::string& where, const std::string& entity,
   }
 }
 
+std::optional<std::vector<std::string>> parse_identifier_list(std::string_view text) {
+  std::vector<std::string> names;
+  std::size_t position = 0;
+  const auto bare_start = [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+  };
+  const auto bare = [&](char c) { return bare_start(c) || (c >= '0' && c <= '9'); };
+  while (position < text.size()) {
+    if (text[position] == '`') {
+      ++position;
+      std::string name;
+      while (true) {
+        if (position >= text.size()) return std::nullopt;  // unterminated
+        const char c = text[position];
+        if (c == '\\') {
+          if (position + 1 >= text.size()) return std::nullopt;  // dangling escape
+          name += text[position + 1];
+          position += 2;
+          continue;
+        }
+        if (c == '`') {
+          ++position;
+          break;
+        }
+        name += c;
+        ++position;
+      }
+      names.push_back(std::move(name));
+    } else {
+      if (!bare_start(text[position])) return std::nullopt;
+      const std::size_t start = position;
+      while (position < text.size() && bare(text[position])) ++position;
+      names.emplace_back(text.substr(start, position - start));
+    }
+    if (position < text.size()) {
+      // A separator is only ever between two names.
+      if (text.substr(position, 2) != ", " || position + 2 >= text.size()) return std::nullopt;
+      position += 2;
+    }
+  }
+  return names;
+}
+
+std::optional<std::optional<PartitionKey>> parse_partition_key(std::string_view text) {
+  if (text.empty()) return std::optional<PartitionKey>{};
+  // ([A-Za-z][A-Za-z0-9]*)\((.*)\), whole: `.` stops at a newline.
+  std::size_t at = 0;
+  const auto letter = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+  if (!letter(text[0])) return std::nullopt;
+  while (at < text.size() && (letter(text[at]) || (text[at] >= '0' && text[at] <= '9'))) ++at;
+  if (at >= text.size() || text[at] != '(' || text.back() != ')' || text.size() < at + 2) {
+    return std::nullopt;
+  }
+  const std::string_view inner = text.substr(at + 1, text.size() - at - 2);
+  if (inner.find('\n') != std::string_view::npos) return std::nullopt;
+  const auto names = parse_identifier_list(inner);
+  if (!names || names->size() != 1) return std::nullopt;
+  return std::optional<PartitionKey>(PartitionKey{std::string(text.substr(0, at)), names->front()});
+}
+
+std::string python_tuple_repr(const std::vector<std::string>& items) {
+  std::string out = "(";
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += python_repr(std::string_view(items[i]));
+  }
+  if (items.size() == 1) out += ",";
+  return out + ")";
+}
+
 }  // namespace detail
 
 }  // namespace sde

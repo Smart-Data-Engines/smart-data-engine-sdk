@@ -6,7 +6,7 @@ implementation of [the format contract](../docs/format-contract.md), after Pytho
 and TypeScript, and it is held to the same shared vectors in [`conformance/`](../conformance) as
 they are.
 
-**Status: Tier 2 and hashing, with the PostgreSQL adapter** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
+**Status: Tier 2 and hashing, with the PostgreSQL adapter and the ClickHouse one in progress** ([`format-contract.md` §9](../docs/format-contract.md#9-capability-tiers)).
 
 | | |
 |---|---|
@@ -21,13 +21,15 @@ they are.
 | Migration participation (Tier 2): backfill, verification and verification requests, the comparison under write barriers, and the signed cutover, staging and index build packets | yes |
 | Schema preparation: what a person provisioning a map runs before the application opens it | yes |
 | PostgreSQL (Tier 2), over libpq: schema, reads, writes, transactions, bookkeeping, migration, write fences, sizes, TLS | yes |
-| ClickHouse, the orderbook engine (Tier 2) | not yet |
+| ClickHouse (Tier 2), over libcurl: schema, writes and point reads of every neutral type, counts, the transport's bounds; the rest of the reference's slice is being ported | in progress |
+| The orderbook engine (Tier 2) | not yet |
 
 Tier 2 is the vectors of §9 - `schema/`, `query/` and `migration/` - and this library passes all of
 them against the engine interface and its in-memory engine. The engines are separate: PostgreSQL is
 `sde::PostgresEngine`, in a target of its own, `sde::postgres`, which is the only part that links
-libpq - the core links no network library, and an application that places nothing in PostgreSQL
-carries none. ClickHouse and the orderbook engine follow, in that order. The recorder reads a
+libpq, and ClickHouse is `sde::ClickHouseEngine`, in `sde::clickhouse`, the only part that links
+libcurl - the core links no network library, and an application carries only the adapters it links.
+The orderbook engine follows. The recorder reads a
 monotonic clock, or the one you give it, and that is the only state kept between calls.
 
 ## Requirements
@@ -40,8 +42,8 @@ monotonic clock, or the one you give it, and that is the only state kept between
 - utf8proc: NFC and case mapping.
 - libpq, for the PostgreSQL adapter only. `-DSDE_POSTGRES=OFF` builds without it, and without the
   adapter.
-- libcurl 7.77 or newer, for the ClickHouse adapter only, which is being written.
-  `-DSDE_CLICKHOUSE=OFF` builds without it.
+- libcurl 7.77 or newer, for the ClickHouse adapter only. `-DSDE_CLICKHOUSE=OFF` builds without it,
+  and without the adapter.
 - GoogleTest, for the tests only. An installed one is used; otherwise CMake fetches 1.15.2, pinned by
   its archive's SHA-256.
 
@@ -65,16 +67,18 @@ with both sanitizers. The same three builds are presets, run from `cpp/`:
 `release` and `sanitizers`. The tests read the vectors in place from `conformance/vectors`, and a vector
 family this suite has never heard of fails the build's tests rather than passing unread.
 
-The live tests run the adapter against a real server, labelled `live`:
+The live tests run the adapters against real servers, labelled `live`:
 
 ```bash
-SDE_POSTGRES_DSN=postgresql://postgres:sde@127.0.0.1:55432/sde ctest --test-dir cpp/build -L live
+SDE_POSTGRES_DSN=postgresql://postgres:sde@127.0.0.1:55432/sde \
+SDE_CLICKHOUSE_DSN=clickhouse://default:sde@127.0.0.1:58123/sde \
+  ctest --test-dir cpp/build -L live
 ```
 
-`make engines-up` starts that server. Without the DSN each live test is skipped and says so; with
+`make engines-up` starts both servers. Without a DSN each live test is skipped and says so; with
 `CI=true` it fails instead, because a green job that ran nothing looks exactly like one that passed.
-Each test works in a schema of its own, with a runtime login of its own where it needs one, and drops
-both. The TLS tests need no server: they talk to a certificate witness the suite runs itself.
+Each test works in a schema - in ClickHouse, a database - of its own, with a runtime login of its own
+where it needs one, and drops both. The TLS tests need no server: they talk to a certificate witness the suite runs itself.
 
 ## Use it
 
@@ -202,6 +206,15 @@ keeps working for as long as its keys are configured.
   dropped rather than printed. One thread uses an adapter at a time: a second is refused
   (`sde::ResourceBusy`), and an adapter inherited across `fork` refuses everything
   (`sde::ResourceClosed`).
+- **The ClickHouse adapter never sends anything twice.** An exchange is one HTTP POST on a
+  connection of its own, never reused, so a failed one is reported with its outcome unknown and is
+  not retried. Opening is bounded by the URI's `connect_timeout` (ten seconds), and every exchange by
+  `send_receive_timeout` (fifteen) of silence - a long query keeps the connection alive with
+  progress headers. There are no transactions, and `transaction` refuses before its body runs. Rows
+  travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it was,
+  and a value its column cannot hold - an integer out of range, a decimal with more digits than the
+  column keeps - is refused before anything is sent, where the reference's driver changes it
+  silently ([`docs/implementing.md`](../docs/implementing.md#the-third-implementation-c)).
 - **It is stricter than the two other libraries in a few places** where they coerce a value or fail
   with their runtime's own error: a materialisation's `id` and `engine` must be strings, a
   `lag_budget_ms` a non-negative integral number, a layout's tables and columns names and types,

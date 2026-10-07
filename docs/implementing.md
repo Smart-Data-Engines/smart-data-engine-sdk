@@ -564,6 +564,32 @@ and agreed in class and text. Two things for whoever writes the next adapter ove
   and this library hands libpq its default before the DSN, so only a `connect_timeout` the DSN sets
   overrides it; a live test holds the mentioned case at ten seconds.
 
+#### The ClickHouse adapter, against the reference on one server
+
+The second adapter, ClickHouse over its HTTP interface through libcurl, is ported the same way: the
+connection URI first, compared with the reference's parser on 102,000 generated URIs - outcome,
+message and every field equal, the timeouts to the bit - and then the adapter, whose every compared
+message was captured from the reference against the same server. Three things for whoever writes
+the next one:
+
+- **the driver's settings are part of the reference's behaviour.** clickhouse-connect runs every
+  exchange in a UTC session with ISO output, keeps a silent connection alive with progress headers
+  and never resends an exchange. An adapter on plain HTTP has to ask for each of these on every
+  request, or a server's time zone moves a moment and a lost reply becomes a second insert;
+- **text formats let the server change a value.** The reference's driver moves rows in ClickHouse's
+  binary Native format. Rows sent as JSON are clamped by the server to the range it prints -
+  measured on ClickHouse 24.8, a `Date32` of year 1 is stored as 1900-01-01 and a `DateTime64` of
+  year 9999 as 2299-12-31, without an error - so this library uses `RowBinaryWithNamesAndTypes` both
+  ways;
+- **a decimal with more digits than its column is changed silently, and differently per engine.**
+  Measured through the reference's adapters on 7 October: `Decimal("1.239")` saved into a
+  `decimal(12,2)` field is stored as 1.23 in ClickHouse, truncated by the driver, and as 1.24 in
+  PostgreSQL, rounded by the server - one save, two values - and `Decimal("12345678901.23")` is
+  stored in ClickHouse as 12345678901.20, where PostgreSQL refuses it with `numeric field
+  overflow`. This library's ClickHouse adapter refuses both before sending anything. The fix that
+  makes the engines agree belongs to the contract: admission (§8b) refusing a decimal with more
+  fractional or integer digits than its field declares, in every library.
+
 ### Verification-request protocol check
 
 On 12 September 2026 a standalone Go checker implemented section 7b from its description and
