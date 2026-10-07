@@ -15,6 +15,12 @@
 /// What it is divided by is the caller's: the cheapest round trip there is (`floor_round_trips`), or
 /// an engine's. Gated only where the build is optimised and unsanitised: a debug build or a
 /// sanitizer measures the compiler, and its numbers are printed and not judged.
+///
+/// Interference only ever adds time, so each number is the least of several rounds, each round
+/// measuring its floor and its point reads back to back (`least_interfered`). Measured: four busy
+/// loops beside one run doubled the library's median and left the floor's, and a run straight
+/// after the live suite failed the gate on the code that had passed it ten times in a row. A
+/// regression moves every round; a neighbour moves some.
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -190,6 +196,38 @@ inline Added point_read(bool recorded) {
   out.through_p99 = percentile(through, 0.99);
   out.direct_p50 = percentile(direct, 0.5);
   out.p50 = std::max(out.through_p50 - out.direct_p50, 0.0);
+  return out;
+}
+
+/// Each number the least of `rounds` rounds of the floor and the point reads, measured back to back.
+struct LeastInterfered {
+  int rounds = 0;
+  double floor_p50 = 0;
+  double floor_p99 = 0;
+  Added point;  ///< `p50` is the least added work of a round, not the difference of two least
+};
+
+inline LeastInterfered least_interfered(bool recorded, int rounds = 5) {
+  LeastInterfered out;
+  out.rounds = rounds;
+  for (int round = 0; round < rounds; ++round) {
+    const std::vector<std::int64_t> floor = floor_round_trips();
+    const Added added = point_read(recorded);
+    const double floor_p50 = percentile(floor, 0.5);
+    const double floor_p99 = percentile(floor, 0.99);
+    if (round == 0) {
+      out.floor_p50 = floor_p50;
+      out.floor_p99 = floor_p99;
+      out.point = added;
+      continue;
+    }
+    out.floor_p50 = std::min(out.floor_p50, floor_p50);
+    out.floor_p99 = std::min(out.floor_p99, floor_p99);
+    out.point.through_p50 = std::min(out.point.through_p50, added.through_p50);
+    out.point.through_p99 = std::min(out.point.through_p99, added.through_p99);
+    out.point.direct_p50 = std::min(out.point.direct_p50, added.direct_p50);
+    out.point.p50 = std::min(out.point.p50, added.p50);
+  }
   return out;
 }
 
