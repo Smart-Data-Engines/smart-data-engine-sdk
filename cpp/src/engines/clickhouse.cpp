@@ -600,15 +600,12 @@ std::vector<Row> ClickHouseEngine::select_rows(const std::string& table, const R
     std::vector<Row> rows = query(statement);
     for (Row& row : rows) {
       for (const ReadColumn& column : plan.columns) {
-        // Read in UTC, as an instant; a wall-clock column is that instant's UTC reading.
+        // The read's SQL gives every moment through toTimeZone(..., 'UTC'), so it arrives as an
+        // instant whatever its column's zone; a wall-clock field is that instant's UTC reading.
         Value& value = row.at(column.name);
         if (column.type == "timestamp") {
           if (const auto* instant = std::get_if<TimestampTz>(&value)) {
             value = *Timestamp::from_micros(instant->micros());
-          }
-        } else if (column.type == "timestamptz") {
-          if (const auto* wall = std::get_if<Timestamp>(&value)) {
-            value = *TimestampTz::from_micros(wall->micros());
           }
         }
       }
