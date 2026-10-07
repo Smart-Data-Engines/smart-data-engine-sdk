@@ -107,7 +107,8 @@ if(TARGET sde_clickhouse)
     gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
   endif()
   target_sources(sde_live_tests PRIVATE live/test_clickhouse.cpp live/test_clickhouse_schema.cpp
-    live/test_clickhouse_types.cpp live/test_clickhouse_reads.cpp live/test_clickhouse_fences.cpp)
+    live/test_clickhouse_types.cpp live/test_clickhouse_reads.cpp live/test_clickhouse_fences.cpp
+    live/test_clickhouse_storage.cpp)
   target_link_libraries(sde_live_tests PRIVATE sde_clickhouse)
 endif()
 # What runs against whichever adapters are built: copies in every direction they allow, and the
