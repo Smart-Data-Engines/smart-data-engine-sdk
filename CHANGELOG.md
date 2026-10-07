@@ -34,6 +34,13 @@ Shared vectors: `errors/113`-`120` and `migration/200`.
   them, and ClickHouse had stored the `null` it got as NULL, or as 0 in a required column.
 - Maps, DDL and stored data do not change. A `json` field is not checked.
 
+**The C++ library refuses a value its field's type does not hold, as the other two do**
+([`docs/format-contract.md`](docs/format-contract.md) §8b, point 4). The check comes before any
+engine is called, and each admitted value goes on in the form a read plan gives it: a decimal at
+its column's scale, a timestamp as its UTC instant. The vectors `errors/113`-`120` and
+`migration/200` hold it in all three libraries. Its ClickHouse adapter had already refused a
+decimal past its column; now the session refuses it first, in the contract's words.
+
 **Fixed: TypeScript's orderbook reader judged an answer by its first sixteen bytes** (TypeScript).
 It waited for sixteen bytes before deciding whether they began an answer. A row a subscription
 pushed in front of an answer, longer than that and still arriving, was refused as an answer the

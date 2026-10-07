@@ -85,6 +85,7 @@ add_library(sde
   src/value.cpp
   src/schema.cpp
   src/query.cpp
+  src/admission.cpp
   src/log.cpp
   src/write_fence.cpp
   src/watermark.cpp
