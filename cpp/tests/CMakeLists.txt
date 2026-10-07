@@ -43,6 +43,11 @@ add_executable(sde_unit_tests
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main
   OpenSSL::Crypto)
+# An adapter's own logic - its codec, its SQL - is tested without its engine.
+if(TARGET sde_postgres)
+  target_sources(sde_unit_tests PRIVATE unit/test_postgres_values.cpp)
+  target_link_libraries(sde_unit_tests PRIVATE sde_postgres)
+endif()
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)
 
 add_executable(sde_conformance
@@ -65,3 +70,12 @@ target_link_libraries(sde_conformance PRIVATE sde_test_support sde::testing GTes
 # rebuild was not run by ctest at all, and nothing said so. Run whole, the binary reads the tree each
 # time, and test_families.cpp fails on a family it has never heard of.
 add_test(NAME conformance COMMAND sde_conformance --gtest_brief=1)
+
+# The adapters against real engines. Without a DSN each test is skipped, and says so; with CI=true
+# it fails instead, because a green job that ran nothing looks exactly like one that passed.
+if(TARGET sde_postgres)
+  add_executable(sde_live_tests live/test_postgres.cpp)
+  target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing sde_postgres
+    PostgreSQL::PostgreSQL GTest::gtest_main)
+  gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
+endif()
