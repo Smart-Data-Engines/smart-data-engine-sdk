@@ -453,6 +453,20 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [gcc-12, clang-16]
+    # The live tests of the PostgreSQL adapter run against this server; with CI=true, which Actions
+    # sets, a live test without its DSN fails rather than skips.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -460,7 +474,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libssl-dev libutf8proc-dev g++-12 clang-16
+            ninja-build libssl-dev libutf8proc-dev libpq-dev g++-12 clang-16
 
       - name: configure
         env:
@@ -480,9 +494,12 @@ jobs:
       - name: build, every warning an error
         run: cmake --build cpp/build
 
-      - name: the unit tests and every vector family of the library's tier
+      - name: the unit tests, every vector family of the library's tier, and the live tests
         # test_families.cpp fails on a family it has never heard of, so a family added to
-        # conformance/ cannot pass here by being ignored.
+        # conformance/ cannot pass here by being ignored. The live tests, labelled `live`, are the
+        # adapter against the server above.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
         run: ctest --test-dir cpp/build --output-on-failure
 
       - name: a client's build, against the installed package
@@ -502,6 +519,20 @@ jobs:
     # wrote is where an out-of-bounds read hides behind a green test, and undefined behaviour is what
     # the next optimiser turns into a different answer.
     runs-on: ubuntu-latest
+    # The live tests too: libpq calls back into this library's code, and the threads of a barrier
+    # test meet the adapter's usage gate. With CI=true a live test without its DSN fails.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -509,7 +540,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libssl-dev libutf8proc-dev clang
+            ninja-build libssl-dev libutf8proc-dev libpq-dev clang
 
       - name: configure
         run: |
@@ -523,6 +554,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
         run: ctest --test-dir cpp/build --output-on-failure
 
       - name: the recorder's and the session's threads, under ThreadSanitizer

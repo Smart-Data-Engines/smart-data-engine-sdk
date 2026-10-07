@@ -58,7 +58,8 @@ jobs:
         if: matrix.language == 'c-cpp'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libutf8proc-dev
+          sudo apt-get install -y --no-install-recommends ninja-build libssl-dev libutf8proc-dev \
+            libpq-dev
           cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDE_BUILD_TESTS=OFF
           cmake --build cpp/build
 
