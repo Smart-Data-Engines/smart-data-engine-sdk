@@ -83,6 +83,7 @@ if(TARGET sde_postgres)
     live/test_postgres_reads.cpp
     live/test_postgres_migration.cpp
     live/test_postgres_fences.cpp
+    live/test_postgres_storage.cpp
   )
   target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing sde_postgres
     PostgreSQL::PostgreSQL GTest::gtest_main)
