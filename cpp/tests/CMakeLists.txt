@@ -128,6 +128,15 @@ if(TARGET sde_orderbook)
   target_sources(sde_live_tests PRIVATE live/test_orderbook_wire.cpp live/test_orderbook_tls.cpp
     live/test_orderbook_adapter.cpp)
   target_link_libraries(sde_live_tests PRIVATE sde_orderbook OpenSSL::SSL)
+  # The adapter against a real ob_tcp_server, plain and with TLS, and beside the reference: built
+  # everywhere, run where an engine is - the SDK's `orderbook` CI job, which builds one. Labelled so
+  # that a job without one can leave it out by name rather than by a skip.
+  add_executable(sde_orderbook_live_tests live/test_orderbook_slice.cpp)
+  target_link_libraries(sde_orderbook_live_tests PRIVATE sde_test_support sde::testing sde_orderbook
+    GTest::gtest_main)
+  target_compile_definitions(sde_orderbook_live_tests PRIVATE
+    SDE_REPOSITORY="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+  gtest_discover_tests(sde_orderbook_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS orderbook)
 endif()
 # What runs against whichever adapters are built: copies in every direction they allow, and the
 # agreement of two engines on one value, which needs both.
