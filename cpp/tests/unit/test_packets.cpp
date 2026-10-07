@@ -12,78 +12,22 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <openssl/evp.h>
 
-#include "crypto.hpp"
-#include "encoding.hpp"
 #include "sde/canonical.hpp"
 #include "sde/errors.hpp"
 #include "sde/model.hpp"
 #include "sde/packets.hpp"
 #include "sde/placement.hpp"
+#include "support/signer.hpp"
 #include "support/vectors.hpp"
 
 namespace {
 
 using sde::testing_support::read_json;
+using sde::testing_support::Signer;
 using sde::testing_support::vectors_root;
 
 constexpr std::string_view kProject = "11111111111111111111111111111111";
-
-/// An Ed25519 key for the test, from a fixed seed: the library only verifies, so the signing is
-/// OpenSSL's, called directly.
-class Signer {
- public:
-  Signer() {
-    const sde::detail::Digest seed = sde::detail::sha256("the packets' unit tests");
-    key_.reset(EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, seed.data(), seed.size()));
-  }
-
-  [[nodiscard]] std::string public_key() const {
-    unsigned char raw[32];
-    std::size_t length = sizeof raw;
-    EXPECT_EQ(EVP_PKEY_get_raw_public_key(key_.get(), raw, &length), 1);
-    return {reinterpret_cast<const char*>(raw), length};
-  }
-
-  [[nodiscard]] std::string sign(std::string_view message) const {
-    const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(),
-                                                                          &EVP_MD_CTX_free);
-    unsigned char signature[64];
-    std::size_t length = sizeof signature;
-    EXPECT_EQ(EVP_DigestSignInit(context.get(), nullptr, nullptr, nullptr, key_.get()), 1);
-    const auto* bytes = reinterpret_cast<const unsigned char*>(message.data());
-    EXPECT_EQ(EVP_DigestSign(context.get(), signature, &length, bytes, message.size()), 1);
-    return {reinterpret_cast<const char*>(signature), length};
-  }
-
-  [[nodiscard]] sde::PublicKeys keys() const {
-    return sde::PublicKeys::named({{"k", public_key()}});
-  }
-
-  /// The document signed as the control plane signs it: over its canonical bytes without the block.
-  [[nodiscard]] sde::Json signed_document(sde::Json document) const {
-    (void)document.erase("signature");
-    sde::Json block = sde::Json::object();
-    block.set("alg", "ed25519");
-    block.set("key_id", "k");
-    block.set("value", sde::detail::base64_encode(sign(sde::canonical_bytes(document))));
-    document.set("signature", std::move(block));
-    return document;
-  }
-
-  /// A packet with each of its maps re-signed, then the packet around them.
-  [[nodiscard]] sde::Json resigned(sde::Json packet,
-                                   std::initializer_list<std::string_view> maps) const {
-    for (std::string_view name : maps) {
-      packet.set(std::string(name), signed_document(*packet.find(name)));
-    }
-    return signed_document(std::move(packet));
-  }
-
- private:
-  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> key_{nullptr, &EVP_PKEY_free};
-};
 
 struct Case {
   sde::Model model;
@@ -123,7 +67,7 @@ sde::Json& at(sde::Json& document, std::initializer_list<std::string_view> path)
 
 class CutoverPacket : public ::testing::Test {
  protected:
-  Signer signer;
+  Signer signer{"the packets' unit tests"};
   Case base = vector_case("079-cutover-packet-authorizes-one-group");
 
   [[nodiscard]] sde::Json resigned(sde::Json packet) const {
@@ -201,7 +145,7 @@ TEST_F(CutoverPacket, AMapOrEncodingRefusalInsideItIsTheCutovers) {
 
 class StagingPacket : public ::testing::Test {
  protected:
-  Signer signer;
+  Signer signer{"the packets' unit tests"};
   Case base = vector_case("099-staging-authorizes-one-fresh-copy");
 
   [[nodiscard]] sde::Json resigned(sde::Json packet) const {
@@ -249,7 +193,7 @@ TEST_F(StagingPacket, ItsCopyTakesTheNamesOfItsStage) {
 
 class IndexPacket : public ::testing::Test {
  protected:
-  Signer signer;
+  Signer signer{"the packets' unit tests"};
 
   [[nodiscard]] sde::IndexPlan load(const Case& base) const {
     return sde::load_index_plan(signer.resigned(base.packet, {"current", "prepared"}), base.model,

@@ -65,6 +65,7 @@ add_library(sde
   src/hashing.cpp
   src/python_compat.cpp
   src/physical.cpp
+  src/provisioning.cpp
   src/layout.cpp
   src/placement.cpp
   src/routing.cpp

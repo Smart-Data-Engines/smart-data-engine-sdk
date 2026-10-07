@@ -19,7 +19,8 @@ add_library(sde_test_support STATIC support/vectors.cpp)
 target_include_directories(sde_test_support
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 target_compile_definitions(sde_test_support PUBLIC SDE_VECTORS_DIR="${SDE_VECTORS_DIR}")
-target_link_libraries(sde_test_support PUBLIC sde::sde GTest::gtest sde_build_flags)
+target_link_libraries(sde_test_support
+  PUBLIC sde::sde GTest::gtest OpenSSL::Crypto sde_build_flags)
 
 add_executable(sde_unit_tests
   unit/test_json.cpp
@@ -40,9 +41,9 @@ add_executable(sde_unit_tests
   unit/test_migration.cpp
   unit/test_verification.cpp
   unit/test_read_sql.cpp
+  unit/test_provisioning.cpp
 )
-target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main
-  OpenSSL::Crypto)
+target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # An adapter's own logic - its codec, its SQL - is tested without its engine.
 if(TARGET sde_postgres)
   target_sources(sde_unit_tests PRIVATE unit/test_postgres_values.cpp)
