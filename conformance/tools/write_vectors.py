@@ -7,6 +7,12 @@ PostgreSQL then stored NULL in a required field, and ClickHouse stored a value n
 for an integer the row left out, ``""`` for a string (measured on PostgreSQL 15 and ClickHouse 24.8,
 SDK ``b30c9fd``). The same model meant two things, and moving a group changed which.
 
+From 7 October 2026 a row is also refused when it gives a field a value its type does not hold
+(section 8b, point 4). Each driver and engine had converted such a value in its own way, measured
+through ``Session.save`` on the same two engines: a decimal with too many fractional digits was
+rounded by PostgreSQL and truncated by ClickHouse, an integer outside int32 wrapped to the opposite
+sign in ClickHouse from TypeScript, a date that does not exist moved two days.
+
 Each case opens a session on a valid map, makes one accepted write - the control that shows the
 engine records what it receives - and then the refused one. ``calls.json`` holds the accepted write
 and nothing of the refused one: a refusal is made before any engine is called.
@@ -82,6 +88,61 @@ ENGINES = {"pg-main": {"dialect": "postgres"}}
 
 FULL = {"amount": 1, "id": "t-1", "label": "first", "note": None}
 """The accepted write: every field, and ``null`` where the model allows it."""
+
+
+# The typed cases' model: one field of each kind a typed refusal names, and a nullable timestamp the
+# accepted write can leave out.
+ENTRY: dict[str, Any] = {
+    "entities": [
+        {
+            "name": "Entry",
+            "fields": [
+                {"name": "amount", "type": "decimal(12,2)"},
+                {"name": "at", "type": "timestamptz", "nullable": True},
+                {"name": "count", "type": "int32"},
+                {"name": "day", "type": "date"},
+                {"name": "id", "type": "string"},
+            ],
+            "key": ["id"],
+        }
+    ]
+}
+ENTRY_VERSION = "1d78c15aa7623338"  # its hash, under the same reasoning as MODEL_VERSION
+
+ENTRY_MAP: dict[str, Any] = {
+    "contract": 3,
+    "model_version": ENTRY_VERSION,
+    "map_version": 1,
+    "groups": {
+        "Entry": {
+            "source": {
+                "id": "Entry@pg",
+                "engine": "pg-main",
+                "layout": {
+                    "tables": {"Entry": "entry"},
+                    "columns": {
+                        "Entry": {
+                            "amount": "numeric(12,2)",
+                            "at": "timestamptz",
+                            "count": "integer",
+                            "day": "date",
+                            "id": "text",
+                        }
+                    },
+                },
+            }
+        }
+    },
+}
+
+ENTRY_FULL = {"amount": "1.230", "at": None, "count": 1, "day": "2026-10-07", "id": "e-1"}
+"""The typed cases' accepted write. ``1.230`` has three fractional digits and fits two: a trailing
+zero says nothing about the value, and a rule that counted it would refuse what every engine stores
+exactly."""
+
+
+def entry(**values: Any) -> dict[str, Any]:
+    return {"operation": "save", "entity": "Entry", "values": {**ENTRY_FULL, "id": "e-2", **values}}
 
 
 def dump(path: Path, value: Any) -> None:
@@ -162,17 +223,118 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
 ]
 
 
+ACCEPTED_ENTRY = [{"engine": "pg-main", "call": "insert", "table": "entry"}]
+
+TYPED_CASES: list[
+    tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, Any]], str]
+] = [
+    (
+        "113-a-save-whose-decimal-has-more-fractional-digits-than-its-scale",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(amount="1.239"),
+        r"Entry\.amount is decimal\(12,2\) and this row gives it more than 2 fractional digits",
+        ACCEPTED_ENTRY,
+        "PostgreSQL stored 1.24 and ClickHouse 1.23, from both libraries, and neither raised: one "
+        "save, two values, and which one depended on where the group lived. Refused before either.",
+    ),
+    (
+        "114-a-save-whose-decimal-has-more-integer-digits-than-its-precision-holds",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(amount="12345678901.23"),
+        r"Entry\.amount is decimal\(12,2\) and this row gives it more than 10 integer digits",
+        ACCEPTED_ENTRY,
+        "Thirteen digits into twelve. PostgreSQL refused it as an overflow, TypeScript's "
+        "ClickHouse path refused it in ClickHouse's words, and the reference's ClickHouse driver "
+        "stored 12345678901.20 - a digit changed and the column holding more than its precision.",
+    ),
+    (
+        "115-a-save-whose-integer-is-outside-int32",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(count=2147483648),
+        r"Entry\.count is int32 and this row gives it an integer outside int32",
+        ACCEPTED_ENTRY,
+        "2^31 is one past int32. ClickHouse, sent it as JSON from TypeScript, stored "
+        "-2147483648: the opposite sign, and a successful write.",
+    ),
+    (
+        "116-a-save-that-gives-an-integer-field-a-boolean",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(count=True),
+        r"Entry\.count is int32 and this row gives it a value that is not an integer",
+        ACCEPTED_ENTRY,
+        "PostgreSQL refused a boolean in an integer column and ClickHouse stored 1, from both "
+        "libraries. A boolean is not an integer here even where the host language says it is one.",
+    ),
+    (
+        "117-a-save-whose-date-does-not-exist",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(day="2026-02-30"),
+        r"Entry\.day is date and this row gives it a value that is not a date",
+        ACCEPTED_ENTRY,
+        "PostgreSQL refused 30 February and ClickHouse stored 2 March. A date is checked as a date "
+        "filter is: YYYY-MM-DD text of a day that exists.",
+    ),
+    (
+        "118-a-save-whose-decimal-is-not-a-number",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(amount="NaN"),
+        r"Entry\.amount is decimal\(12,2\) and this row gives it "
+        r"a value that is not an exact decimal",
+        ACCEPTED_ENTRY,
+        "PostgreSQL stored NaN in a numeric(12,2) column and ClickHouse refused it; JavaScript's "
+        "NaN reached ClickHouse as 0.00. A decimal is an exact, finite number, written as a "
+        "decimal filter is.",
+    ),
+    (
+        "119-a-batch-row-whose-timestamp-is-not-one",
+        "BulkWriteRefused",
+        {"operation": "save_many", "entity": "Entry", "rows": [ENTRY_FULL]},
+        {
+            "operation": "save_many",
+            "entity": "Entry",
+            "rows": [
+                {**ENTRY_FULL, "id": "e-3", "at": "2026-10-07T10:00:00Z"},
+                {**ENTRY_FULL, "id": "e-4", "at": "2026-10-07T25:00:00Z"},
+            ],
+        },
+        r"row 1: Entry\.at is timestamptz and this row gives it a value that is not a timestamp",
+        [{"engine": "pg-main", "call": "insert_many", "table": "entry", "rows": 1}],
+        "ClickHouse stored a timestamp made from any text - 1900-01-01 from words, 1970 from a "
+        "number. The whole batch is refused, the row that fits included, and the row is named by "
+        "its position.",
+    ),
+    (
+        "120-a-row-that-misfits-twice-names-the-first-field",
+        "ModelPlanningError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(amount="1.239", count=True, day="2026-02-30"),
+        r"Entry\.amount is decimal\(12,2\) and this row gives it more than 2 fractional digits",
+        ACCEPTED_ENTRY,
+        "Three fields misfit. The first in code-point order is named, as every refusal of section "
+        "8b names its first offending field, so two libraries give the same message.",
+    ),
+]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
     parser.parse_args()
-    for name, error, accepted, refused, match, calls, why in CASES:
+    for name, error, accepted, refused, match, calls, why in CASES + TYPED_CASES:
         directory = ERRORS / name
         directory.mkdir(exist_ok=True)
         model, placement = MODEL, MAP
         if name.startswith("080-"):
             model = NULLABLE_KEY
             placement = {**copy.deepcopy(MAP), "model_version": NULLABLE_KEY_VERSION}
+        if (name, error, accepted, refused, match, calls, why) in TYPED_CASES:
+            model, placement = ENTRY, ENTRY_MAP
         expected = {
             "error": error,
             "stage": "write",
@@ -188,7 +350,7 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
-    print(f"Wrote {len(CASES)} write-stage refusals without importing an SDK")
+    print(f"Wrote {len(CASES) + len(TYPED_CASES)} write-stage refusals without importing an SDK")
 
 
 if __name__ == "__main__":

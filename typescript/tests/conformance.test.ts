@@ -72,7 +72,7 @@ import {
   watermarkRecord,
 } from '../src/index.js'
 import type { MemoryEngine } from '../src/testing/memory.js'
-import { enginesFrom } from '../src/testing/memory.js'
+import { enginesFrom, vectorForm } from '../src/testing/memory.js'
 import type { LogicalModel, Materialization, PlacementMap } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
@@ -858,9 +858,9 @@ async function driveSession(
     const engine = engines[name] as MemoryEngine
     const tables: Record<string, unknown> = {}
     for (const table of Object.keys(engine.tables).sort()) {
-      tables[table] = [...(engine.tables[table] as Record<string, unknown>[])].sort((a, b) =>
-        JSON.stringify(sortedKeys(a)) < JSON.stringify(sortedKeys(b)) ? -1 : 1,
-      )
+      tables[table] = (engine.tables[table] as Record<string, unknown>[])
+        .map((row) => Object.fromEntries(Object.entries(row).map(([column, value]) => [column, vectorForm(value)])))
+        .sort((a, b) => (JSON.stringify(sortedKeys(a)) < JSON.stringify(sortedKeys(b)) ? -1 : 1))
     }
     gotTables[name] = tables
   }

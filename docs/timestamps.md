@@ -16,8 +16,12 @@ JSON.stringify({ at }) // '{"at":"2026-09-12T09:30:15.123456Z"}'
 
 Pass `Timestamp` directly to `Session.save`, adapter writes, and key predicates. A `Date` remains
 accepted on writes, with the precision it actually carries; the adapters serialize its UTC value
-explicitly, including for a timezone-free `timestamp` column. Reading either input returns
-`Timestamp`. Code that previously expected `Date` on a read must use `toISOString()` for text,
+explicitly, including for a timezone-free `timestamp` column. `Session.save` also takes the ISO text
+`Timestamp.from()` takes and passes it on as its `Timestamp`, so an offset is converted for every
+engine alike; anything else, a number included, is refused before any engine (format contract §8b,
+point 4). Until 7 October 2026 the text went to the engine as written: PostgreSQL dropped the offset
+in a timezone-free column, ClickHouse refused it, and ClickHouse stored a number as a timestamp.
+Reading either input returns `Timestamp`. Code that previously expected `Date` on a read must use `toISOString()` for text,
 `epochMicroseconds` for exact comparisons, or `toDate()` when the instant is exactly representable.
 
 `toDate()` throws if microseconds would be lost. It never rounds. Calling `Number(timestamp)` also

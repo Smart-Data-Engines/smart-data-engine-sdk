@@ -1,0 +1,28 @@
+{
+  "contract": 3,
+  "model_version": "64ed95b2081f50de",
+  "map_version": 1,
+  "groups": {
+    "Value": {
+      "source": {
+        "id": "Value@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Value": "value"
+          },
+          "columns": {
+            "Value": {
+              "amount": "numeric(12,2)",
+              "at": "timestamptz",
+              "day": "date",
+              "id": "bigint",
+              "token": "uuid",
+              "wall": "timestamp"
+            }
+          }
+        }
+      }
+    }
+  }
+}

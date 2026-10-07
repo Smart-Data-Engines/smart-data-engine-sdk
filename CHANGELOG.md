@@ -8,6 +8,32 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a value its field's type does not hold is refused before any engine** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md#a-value-its-type-holds) §8b). A row's values
+went to the driver as the application gave them, and each engine answered for them in its own way.
+Measured through `Session.save` on PostgreSQL 15 and ClickHouse 24.8:
+- a decimal with more fractional digits than its column was rounded by PostgreSQL and truncated by
+  ClickHouse, from both libraries;
+- a decimal past its precision was stored by Python's ClickHouse driver with a digit changed;
+- from TypeScript, ClickHouse wrapped an integer outside int32 to the opposite sign and stored
+  `NaN` in a decimal column as 0.00;
+- ClickHouse stored 2026-02-30 as 2026-03-02, and a timestamp made from a number or from words;
+- ClickHouse stored the infinity or the zero a `float32` rounds a value to, where PostgreSQL
+  refused it.
+
+A value now takes a form a filter of its type takes, and its type must hold it. The refusal names
+the field, the type and what does not fit, never the value. The value reaches the engine in one
+form per type: a decimal at its column's scale, a timestamp as its UTC instant, a UUID in lower case.
+Shared vectors: `errors/113`-`120` and `migration/200`.
+- **Breaking** for code that relied on a driver's conversion:
+  - a Python `float`, or a TypeScript `number` with a fraction, for a decimal field: pass a
+    `Decimal` or decimal text;
+  - a boolean for an integer field, and text for a number;
+  - a `Date` (TypeScript) or a `datetime` (Python) for a `date` field: pass the day.
+- TypeScript writes `NaN` and the infinities to ClickHouse as those values. JSON has no token for
+  them, and ClickHouse had stored the `null` it got as NULL, or as 0 in a required column.
+- Maps, DDL and stored data do not change. A `json` field is not checked.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of

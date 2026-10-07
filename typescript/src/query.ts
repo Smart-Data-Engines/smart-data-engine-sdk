@@ -81,12 +81,22 @@ function text(value: string): string {
   return value
 }
 
+/**
+ * Decimal text's sign, integer digits, fraction digits and exponent, or null when it is not one.
+ *
+ * The grammar of a decimal value in a filter and in a row alike (format contract section 8b), so
+ * that a row and a read agree about what a decimal is.
+ */
+export function decimalParts(value: string): RegExpExecArray | null {
+  const source = value.trim().replace(/^([+-]?)\./, (_match, sign: string) => sign + '0.')
+  return /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source)
+}
+
 interface DecimalValue { readonly text: string; readonly scale: number; readonly integerDigits: number }
 function decimal(value: unknown): DecimalValue {
   if (typeof value === 'bigint' || (typeof value === 'number' && Number.isSafeInteger(value))) value = String(value)
   if (typeof value !== 'string') throw new QueryRefused('decimal query values require integer or decimal text')
-  const source = value.trim().replace(/^([+-]?)\./, (_match, sign: string) => sign + '0.')
-  const parts = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source)
+  const parts = decimalParts(value)
   if (parts === null) throw new QueryRefused('invalid decimal query value')
   const fraction = parts[3] ?? '', exponent = Number(parts[4] ?? 0)
   if (!Number.isSafeInteger(exponent)) throw new QueryRefused('decimal query values may use at most 76 digits')

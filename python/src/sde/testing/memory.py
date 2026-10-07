@@ -24,12 +24,36 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from ..errors import EngineError
 from ..placement import PhysicalLayout
 
-__all__ = ["MemoryEngine", "Recorded", "engines_from"]
+__all__ = ["MemoryEngine", "Recorded", "engines_from", "vector_form"]
+
+
+def vector_form(value: Any) -> Any:
+    """A value an engine holds, as the vectors write it.
+
+    A row reaches an engine with each value in the form a filter of its type gets (format contract
+    section 8b), and some of those forms are not JSON. The vectors write them as the ``query/``
+    vectors write the same values: an instant as ``YYYY-MM-DDTHH:MM:SS.ffffffZ`` in UTC, a
+    timezone-free timestamp as its UTC wall time in the same form, a decimal in plain notation, a
+    UUID and a date as their text. Anything else is JSON already.
+    """
+    if isinstance(value, datetime):
+        instant = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return instant.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, UUID):
+        return str(value)
+    return value
 
 
 class Recorded:

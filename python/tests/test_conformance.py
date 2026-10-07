@@ -39,7 +39,7 @@ from sde.errors import (
 )
 from sde.hashing import hash_identifiers
 from sde.testing.loader import model_from_neutral
-from sde.testing.memory import engines_from
+from sde.testing.memory import engines_from, vector_form
 
 VECTORS = Path(__file__).resolve().parents[2] / "conformance" / "vectors"
 CONTRACT_FILE = Path(__file__).resolve().parents[2] / "conformance" / "contract-version.txt"
@@ -410,7 +410,8 @@ def _drive_session(
     got_tables = {
         name: {
             table: sorted(
-                (dict(row) for row in rows), key=lambda row: json.dumps(row, sort_keys=True)
+                ({column: vector_form(value) for column, value in row.items()} for row in rows),
+                key=lambda row: json.dumps(row, sort_keys=True),
             )
             for table, rows in sorted(engine.tables.items())
         }
