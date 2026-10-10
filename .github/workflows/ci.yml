@@ -71,6 +71,23 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # A current release beside the LTS above, used by the newest Python only. From 26.5 the
+      # catalogue keeps the parentheses of a single expression written in them - `ORDER BY (id)`
+      # reads back `(id)` - and while CI ran 24.8 alone every library read its own one-column key
+      # as another design. Moved by a deliberate edit, like the LTS.
+      clickhouse-current:
+        image: clickhouse/clickhouse-server:26.9-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["18123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -111,13 +128,19 @@ jobs:
         # `test_failure_semantics` is here because every row of docs/failure-semantics.md that a
         # client reads before buying is either measured by it or paired with a mechanism by it. A
         # document whose evidence skipped is a document with no evidence.
+        #
+        # On the newest Python they run once more against a current ClickHouse (the service above
+        # says why). One interpreter is enough: what moved is the server.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
-          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+          CLICKHOUSE_PORTS: ${{ matrix.python == '3.14' && '8123 18123' || '8123' }}
         run: |
-          for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_demo_resources.py tests/test_demo_verification.py tests/test_demo_query_count.py tests/test_*_live.py; do
-            pytest "$slice" -q --junitxml="$RUNNER_TEMP/sde-integration.xml"
-            python ../tools/check_junit.py "$RUNNER_TEMP/sde-integration.xml"
+          for port in $CLICKHOUSE_PORTS; do
+            export SDE_CLICKHOUSE_DSN="clickhouse://default:sde@127.0.0.1:$port/sde"
+            for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_demo_resources.py tests/test_demo_verification.py tests/test_demo_query_count.py tests/test_*_live.py; do
+              pytest "$slice" -q --junitxml="$RUNNER_TEMP/sde-integration.xml"
+              python ../tools/check_junit.py "$RUNNER_TEMP/sde-integration.xml"
+            done
           done
 
 
@@ -175,6 +198,23 @@ jobs:
         # IPv6 `[::1]` and ClickHouse listens on IPv4 only, so the probe fails against a server that
         # started perfectly - and GitHub then reports "Failed to initialize container", which points
         # at the image rather than at the health check that was wrong.
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      # A current release beside the LTS above, used by the newest Node only. From 26.5 the
+      # catalogue keeps the parentheses of a single expression written in them - `ORDER BY (id)`
+      # reads back `(id)` - and while CI ran 24.8 alone every library read its own one-column key
+      # as another design. Moved by a deliberate edit, like the LTS.
+      clickhouse-current:
+        image: clickhouse/clickhouse-server:26.9-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["18123:8123"]
         options: >-
           --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
           --health-interval 5s
@@ -243,28 +283,34 @@ jobs:
         # wherever the suite runs rather than only where two databases happen to be. One of its
         # assertions has already caught a defect this adapter would have shipped: `pg` ignores a
         # `connect_timeout` in a connection string, so deferring to it left no bound at all.
+        #
+        # On the newest Node they run once more against a current ClickHouse (the service above says
+        # why). One runtime is enough: what moved is the server.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
-          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+          CLICKHOUSE_PORTS: ${{ matrix.node == '26' && '8123 18123' || '8123' }}
         run: |
-          for file in tests/*.live.test.ts; do
-            slice=${file#tests/}
-            slice=${slice%.test.ts}
-            npx vitest run "$file" --reporter=json --outputFile="$RUNNER_TEMP/$slice.json"
-            node -e '
-              const report = require(process.env.RUNNER_TEMP + "/" + process.argv[1] + ".json")
-              const slice = process.argv[1]
-              if (report.numPendingTests > 0) {
-                console.error(slice + ": " + report.numPendingTests +
-                  " test(s) skipped, so the adapters were checked by nothing")
-                process.exit(1)
-              }
-              if (report.numPassedTests < 1) {
-                console.error(slice + ": ran no tests at all")
-                process.exit(1)
-              }
-              console.log(slice + ": " + report.numPassedTests + " passed, none skipped")
-            ' "$slice"
+          for port in $CLICKHOUSE_PORTS; do
+            export SDE_CLICKHOUSE_DSN="clickhouse://default:sde@127.0.0.1:$port/sde"
+            for file in tests/*.live.test.ts; do
+              slice=${file#tests/}
+              slice=${slice%.test.ts}
+              npx vitest run "$file" --reporter=json --outputFile="$RUNNER_TEMP/$slice.json"
+              node -e '
+                const report = require(process.env.RUNNER_TEMP + "/" + process.argv[1] + ".json")
+                const slice = process.argv[1] + " (ClickHouse :" + process.argv[2] + ")"
+                if (report.numPendingTests > 0) {
+                  console.error(slice + ": " + report.numPendingTests +
+                    " test(s) skipped, so the adapters were checked by nothing")
+                  process.exit(1)
+                }
+                if (report.numPassedTests < 1) {
+                  console.error(slice + ": ran no tests at all")
+                  process.exit(1)
+                }
+                console.log(slice + ": " + report.numPassedTests + " passed, none skipped")
+              ' "$slice" "$port"
+            done
           done
 
   orderbook:

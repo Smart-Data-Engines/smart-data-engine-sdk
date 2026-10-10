@@ -133,6 +133,15 @@ nothing: it can grant itself anything, and this protocol does not revoke adminis
 build moves no authority, because the tables stay the same tables, so nobody beside it is affected.
 A role is never an administrator here.
 
+"A direct global `ACCESS MANAGEMENT`" means the whole group as the server itself defines it in
+`system.privileges`, held by the user's own grants: as the group, as a group above it (`ALL`), or
+member by member. A partial revoke of anything in it, at any level, leaves no administrator. The
+server decides how such a grant is listed, and it changed (measured): 24.8 lists one row,
+`ACCESS MANAGEMENT` with no database or table; from 26.5 seven members are granted per user name
+(`ON *` rather than `ON *.*`), so the group is listed member by member and never whole, and 26.9
+adds a member, `CREATE TOKEN`. Until 7 October 2026 the operator looked for the row of 24.8 alone,
+so on a current server it found no administrator and refused every staging and cutover beside one.
+
 Until 3 October 2026 ClickHouse refused an administrator who was not the operator's own login, and
 an index build refused any other grantee at all. No test had run an operator that was not the
 administrator, and the first build of the general test was refused beside one.

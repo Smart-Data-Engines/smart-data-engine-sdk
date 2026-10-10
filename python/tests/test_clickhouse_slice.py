@@ -82,7 +82,11 @@ def test_the_schema_is_created_and_creating_it_again_changes_nothing(
 ) -> None:
     group = sde.colocation_groups(model)[0]
     layout = default_layout(model, group, dialect="clickhouse")
-    engine.ensure_schema(layout, keys={"Event": model.entity("Event").key})
+    keys = {"Event": model.entity("Event").key}
+    # And reads its own design back as the declared one: on ClickHouse 26.5 and later the
+    # one-column key is `(id)` in the catalogue, and it read as another sort key (measured).
+    assert engine.ensure_schema(layout, keys=keys) == ()
+    assert engine.validate_schema(layout, keys=keys) == ()
 
     described = engine._cx.query("DESCRIBE TABLE `event`").result_rows
     types = {row[0]: row[1] for row in described}
@@ -98,7 +102,10 @@ def test_the_schema_is_created_and_creating_it_again_changes_nothing(
         "AND name = 'event'"
     ).result_rows
     assert created[0][0] == "ReplacingMergeTree"
-    assert created[0][1] == "id", "ORDER BY has to be the declared key, or the table is unindexed"
+    # `ORDER BY (id)` reads back `id`, and `(id)` from ClickHouse 26.5 on (measured).
+    assert created[0][1] in ("id", "(id)"), (
+        "ORDER BY has to be the declared key, or the table is unindexed"
+    )
 
 
 def test_a_row_written_comes_back_identical(engine: ClickHouseEngine) -> None:

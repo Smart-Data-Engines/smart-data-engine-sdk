@@ -324,6 +324,13 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect(engine.version).toMatch(/^\d+\./)
   })
 
+  it('reads its own one-column key back as the declared design', async () => {
+    // ClickHouse 26.5 and later keep the parentheses `ORDER BY (id)` was written with, so the
+    // catalogue says `(id)`, which read as another sort key (measured).
+    expect(await engine.ensureSchema(layout!, { keys: KEYS })).toEqual([])
+    expect(await engine.validateSchema(layout!, { keys: KEYS })).toEqual([])
+  })
+
   it('round-trips every type the layout declares', async () => {
     const id = randomUUID()
     await engine.insert('sample', sample(id))

@@ -313,8 +313,7 @@ class NativeOperator:
         in silence. An administrator is trusted, because this protocol does not revoke
         administrative powers (docs/local-cutover.md): refusing one protects nothing. On
         PostgreSQL that is a superuser, who appears in no ACL. On ClickHouse it is a user with a
-        direct global ACCESS MANAGEMENT, who can grant itself anything; measured on 24.8, such a
-        user's grants are listed one access type per row, that one with no database or table.
+        direct global ACCESS MANAGEMENT, who can grant itself anything (:meth:`_administrators`).
         A role is never an administrator here, and any other grant covering the table refuses,
         whatever its kind, global ones included.
         """
@@ -342,15 +341,7 @@ class NativeOperator:
         else:
             operator = str(self.rows("SELECT currentUser()")[0][0])
             database = self.endpoint()[2]
-            administrators = {
-                str(row[0])
-                for row in self.rows(
-                    "SELECT DISTINCT user_name FROM system.grants WHERE user_name IS NOT NULL "
-                    "AND access_type='ACCESS MANAGEMENT' AND database IS NULL AND table IS NULL "
-                    "AND column IS NULL AND is_partial_revoke=0"
-                )
-            }
-            allowed = {*principals, operator, *administrators}
+            allowed = {*principals, operator, *self._administrators()}
             for table in tables:
                 grants = self.rows(
                     "SELECT user_name,role_name,access_type,database,table FROM system.grants "
@@ -376,6 +367,67 @@ class NativeOperator:
                         f"global ACCESS MANAGEMENT; declare it as a runtime login or narrow its "
                         f"grants away from this database for the operation"
                     )
+
+    def _administrators(self) -> set[str]:
+        """The ClickHouse users holding the whole of ACCESS MANAGEMENT, directly and globally.
+
+        The group is the server's own, read from ``system.privileges``, and so is the way a grant
+        of it is listed (measured): on 24.8 as one row, ``ACCESS MANAGEMENT`` with no database or
+        table; from 26.5 a row per member, because seven of them are now granted per user name
+        (``ON *`` rather than ``ON *.*``) and the group is never shown whole; 26.9 adds a member,
+        ``CREATE TOKEN``. Read only as the row of 24.8, no administrator was found on a current
+        server. So a member counts when the user holds it, a group above it (``ALL`` too), or
+        every privilege below it; and a partial revoke of anything in the group, or above it, at
+        any level, leaves no administrator.
+        """
+        parents: dict[str, str | None] = {
+            str(privilege): None if group is None else str(group)
+            for privilege, group in self.rows(
+                "SELECT privilege, parent_group FROM system.privileges"
+            )
+        }
+        children: dict[str, list[str]] = {}
+        for privilege, parent in parents.items():
+            if parent is not None:
+                children.setdefault(parent, []).append(privilege)
+        group = "ACCESS MANAGEMENT"
+        within = {group}
+        pending = [group]
+        while pending:
+            for child in children.get(pending.pop(), []):
+                within.add(child)
+                pending.append(child)
+        above = parents.get(group)
+        while above is not None:
+            within.add(above)
+            above = parents.get(above)
+
+        held: dict[str, set[str]] = {}
+        revoked: set[str] = set()
+        for user, access, partial, database, table, column in self.rows(
+            "SELECT user_name, access_type, is_partial_revoke, database, table, column "
+            "FROM system.grants WHERE user_name IS NOT NULL"
+        ):
+            if partial:
+                if str(access) in within:
+                    revoked.add(str(user))
+            elif database is None and table is None and column is None:
+                held.setdefault(str(user), set()).add(str(access))
+
+        def covered(rights: set[str], privilege: str) -> bool:
+            node: str | None = privilege
+            while node is not None:
+                if node in rights:
+                    return True
+                node = parents.get(node)
+            below = children.get(privilege, [])
+            return bool(below) and all(covered(rights, child) for child in below)
+
+        return {
+            user
+            for user, rights in held.items()
+            if user not in revoked and covered(rights, group)
+        }
 
     def access(self, tables: Sequence[TableIdentity], *, enabled: bool) -> None:
         if not self.principals:
