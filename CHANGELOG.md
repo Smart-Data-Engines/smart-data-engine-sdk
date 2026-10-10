@@ -8,6 +8,51 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
+measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
+`telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
+atomic counters, swapped at a roll that waits for the writes begun on the old block. Its concurrency
+is tested under ThreadSanitizer in CI.
+
+**New: a C++ library, Tier 0 with hashing** ([`cpp/README.md`](cpp/README.md)). It declares models
+and computes their versions and shapes, reads and writes the neutral declaration, loads placement
+maps of contracts 1 to 6 with their signatures and key sets, and routes operations. It has no
+engine adapters yet. It is built with CMake from this repository (GCC 12 or Clang 16 at the oldest,
+OpenSSL 3, utf8proc) and is on no package registry.
+- It passes every vector of its tier.
+- Where the other two libraries coerce a value or fail with their runtime's own error, it refuses
+  with the contract's. Those inputs are listed in
+  [`docs/implementing.md`](docs/implementing.md#the-third-implementation-c), to become rules in every
+  library.
+- Four required checks join the ruleset, nineteen in all: `cpp (gcc-12)`, `cpp (clang-16)`,
+  `cpp-sanitizers` and CodeQL's `analyze (c-cpp)`.
+
+## `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0
+
+Our own L2 orderbook engine becomes the third engine of both libraries, under placement map
+contract 6. On the way there, a design evaluation and a general test of the whole product on a test
+host found defects that are fixed here:
+- rows the model forbids reached the engines;
+- the library's reads used no index on a text column;
+- the local operator refused to work beside a ClickHouse administrator.
+
+Both libraries also work with ClickHouse 26.5 and later, where the released ones refused a table
+with a one-column key right after creating it.
+
+**Why 0.2.0 and not a patch.** Both libraries change things a caller depends on. The version number
+has to say so to version ranges: npm's `^0.1.0` and pip's `~=0.1.1` both stop below 0.2.0, so an
+application moves on when it decides to (§5.1 of [`docs/publishing.md`](docs/publishing.md)). What
+changes for a caller:
+- **A row the model does not allow is refused before any engine.** PostgreSQL used to store NULL in a
+  required field, and ClickHouse stored `0` or `""` for one left out. Such a write now raises.
+- **`sde.fixed_schema_mismatch` takes a required `nullable` argument** (Python).
+- **A contract-6 map is refused by 0.1.x**, and a group on the orderbook engine needs one.
+- **PostgreSQL tables are created with text columns `COLLATE "C"`.** A table created by 0.1.x keeps
+  its collation, and Python names it with the remedy.
+- **The operator counts a ClickHouse administrator only with the whole `ACCESS MANAGEMENT` group**
+  (Python). A partial revoke of anything in it leaves no administrator, on 24.8 too, where such a
+  user was admitted before.
+
 **Fixed: ClickHouse 26.5 and later** (both libraries; the operator's two are Python's). From 26.5
 the server reports three things in a new form, and each reader took the new form for something
 else. Measured on 24.8, 26.5 and 26.9, and the key on nine releases:
@@ -35,25 +80,6 @@ else. Measured on 24.8, 26.5 and 26.9, and the key on nine releases:
 CI runs the live slices of both libraries against ClickHouse 26.9 as well as the 24.8 LTS, on the
 newest Python and the newest Node. The first was found by a checkpoint of the C++ library's engine
 adapters against a current server, and the other two by running this suite against one.
-
-**New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
-measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
-`telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
-atomic counters, swapped at a roll that waits for the writes begun on the old block. Its concurrency
-is tested under ThreadSanitizer in CI.
-
-**New: a C++ library, Tier 0 with hashing** ([`cpp/README.md`](cpp/README.md)). It declares models
-and computes their versions and shapes, reads and writes the neutral declaration, loads placement
-maps of contracts 1 to 6 with their signatures and key sets, and routes operations. It has no
-engine adapters yet. It is built with CMake from this repository (GCC 12 or Clang 16 at the oldest,
-OpenSSL 3, utf8proc) and is on no package registry.
-- It passes every vector of its tier.
-- Where the other two libraries coerce a value or fail with their runtime's own error, it refuses
-  with the contract's. Those inputs are listed in
-  [`docs/implementing.md`](docs/implementing.md#the-third-implementation-c), to become rules in every
-  library.
-- Four required checks join the ruleset, nineteen in all: `cpp (gcc-12)`, `cpp (clang-16)`,
-  `cpp-sanitizers` and CodeQL's `analyze (c-cpp)`.
 
 **Fixed: the local operator beside the engine's administrator** (Python,
 [`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).

@@ -1,6 +1,6 @@
 {
   "name": "@smart-data-engines/sde",
-  "version": "0.1.1-dev.0",
+  "version": "0.2.0",
   "description": "Smart Data Engine client library: declare a data model, we place it and move it",
   "license": "Apache-2.0",
   "homepage": "https://github.com/Smart-Data-Engines/smart-data-engine-sdk",
