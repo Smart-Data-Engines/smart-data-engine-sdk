@@ -571,7 +571,7 @@ smart-data-engine-sdk==0.1.0` answers "Requirement already satisfied" and fetche
 on 27 September with a wheel of `f4d57c4` plus one comment: the comment stayed installed. The next
 release bumps from there to whatever number it takes. A release of one language moves only that
 language on: after `python-v0.1.1`, Python went to `0.1.2.dev0` and TypeScript, not released,
-stayed on `0.1.1-dev.0`.
+stayed on `0.1.1-dev.0`. `0.2.0` released both, so both moved: `0.2.1.dev0` and `0.2.1-dev.0`.
 
 **Which number.** In 0.x the minor is the compatibility line, because both registries' default
 ranges stop there:
@@ -790,3 +790,12 @@ one needs the one before it.
      answered first both times. Installs, pinned or not, wait until the simple index lists the
      version: `Accept: application/vnd.pypi.simple.v1+json`, which is served with
      `cache-control: max-age=600`.
+9. **The first minor release**, `python-v0.2.0` and `typescript-v0.2.0` on `af8e6b6` (#110), released
+   both languages, because both changed what a caller depends on (§5.1). The tags were pushed on
+   10 October at 10:57Z. Each gate and build passed in under half a minute, and both publish jobs
+   then waited for the reviewer until 12:46Z. Each tag published on its first run, and npm moved
+   `latest` to `0.2.0`. One observation for the verification:
+   - `npm audit signatures` checks provenance only in a recent enough npm. Ubuntu's npm 9.2.0 on
+     Node 18.19.1 reported the registry signature and said nothing about the attestation. npm
+     10.9.9 on the same Node reported the attestation verified, and so did npm 11.20.0 on Node 26.
+     So the check runs npm 10 or later, which still supports Node 18, and expects both lines.
