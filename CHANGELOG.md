@@ -29,6 +29,9 @@ OpenSSL 3, utf8proc) and is on no package registry.
 
 ## `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0
 
+Published on 10 October 2026, each tag on its first run of the release workflow, with attestations
+on PyPI and provenance on npm. On npm it is `latest`.
+
 Our own L2 orderbook engine becomes the third engine of both libraries, under placement map
 contract 6. On the way there, a design evaluation and a general test of the whole product on a test
 host found defects that are fixed here:

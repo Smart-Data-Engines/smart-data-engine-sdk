@@ -96,14 +96,15 @@ The tier in the table above is checked against each library's own `TIER` constan
 a list that says one thing while the code says another is the failure requirement 17.6 exists to
 prevent, and prose does not fail.
 
-**`pip install smart-data-engine-sdk` installs `0.1.1`**, a patch release of 28 September 2026 that
-fixes recovery of an interrupted PostgreSQL index build ([`CHANGELOG.md`](../CHANGELOG.md)).
-`0.1.0`, the first release, was published by the release workflow on 27 September with
-attestations, and so was `0.1.1`. The name was claimed on PyPI on 12 September with a development
-release, and the release candidate `0.1.0rc1` came through the same workflow earlier on
-27 September. **`npm install @smart-data-engines/sde` installs `0.1.0`**, published by the same
-workflow the same day, with provenance, after the candidate `0.1.0-rc.1`. The one version before
-those, `0.1.0-dev.0`, was published by hand. That publish was forced: npm configures trusted
+**`pip install smart-data-engine-sdk` installs `0.2.0`, and `npm install @smart-data-engines/sde`
+installs `0.2.0`**, both published by the release workflow on 10 October 2026, with attestations on
+PyPI and provenance on npm. They add our orderbook engine as the third engine and change what a
+caller depends on, which is why the number is not a patch ([`CHANGELOG.md`](../CHANGELOG.md)).
+Before them came `0.1.0`, the first release, on both registries on 27 September, and `0.1.1`, a
+Python patch of 28 September that fixes recovery of an interrupted PostgreSQL index build. The name
+was claimed on PyPI on 12 September with a development release, and the release candidates
+`0.1.0rc1` and `0.1.0-rc.1` came through the same workflow earlier on 27 September. The one npm
+version before those, `0.1.0-dev.0`, was published by hand. That publish was forced: npm configures trusted
 publishing only on a package that already exists, so the first publish cannot come from CI
 ([`publishing.md`](publishing.md) §5.3).
 
