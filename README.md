@@ -206,7 +206,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **370 of them, in ten families** — that every
+And [`conformance/`](conformance/) holds the vectors — **401 of them, in ten families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 
@@ -294,10 +294,9 @@ Every vector of its tier passed. What it found is where the reference's behaviou
 its runtime rather than a rule. A materialisation id written as `true` is the string `"True"` in
 Python and `"true"` in TypeScript, so one map names two different copies. A lag budget written as a
 string is accepted by both. And seven rules no vector can see - a mutation removing each one left
-every vector green, among them a write routed at a copy rather than the source. C++ refuses each
-of those with the contract's own error, and the list is in
-[`docs/implementing.md`](docs/implementing.md#the-third-implementation-c), to become a vector and a
-rule in every library.
+every vector green, among them a write routed at a copy rather than the source. Each of those is a
+rule of the contract now, refused alike by all three libraries with a vector of its own; the list is
+in [`docs/implementing.md`](docs/implementing.md#the-third-implementation-c).
 
 ## What happens when something fails
 

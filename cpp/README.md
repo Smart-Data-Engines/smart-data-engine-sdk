@@ -111,12 +111,11 @@ keeps working for as long as its keys are configured.
 - **Nothing is logged unless you pass a sink** (`LoadOptions::log`). Events are named from the
   reference's closed vocabulary (`sde.map.loaded`, `sde.map.rejected`) and carry structure, never a
   row's values.
-- **It is stricter than the two other libraries in a few places** where they coerce a value or fail
-  with their runtime's own error: a materialisation's `id` and `engine` must be strings, a
-  `lag_budget_ms` a non-negative integral number, a layout's tables and columns names and types,
-  `derived` a list. Those differences are written down as findings in
-  [`docs/implementing.md`](../docs/implementing.md#the-third-implementation-c), to be made the
-  contract's rule in every library rather than this one's.
+- **Writing it found the places where the other two libraries coerced a value or failed with their
+  runtime's own error**: a materialisation `id` written as `true`, a `lag_budget_ms` written as a
+  string, a layout table that is not a name, a write shape routed at a copy. Each is a rule of the
+  contract now, refused alike in all three, with a vector
+  ([`docs/implementing.md`](../docs/implementing.md#the-third-implementation-c)).
 
 ## Agreement that the vectors cannot reach
 

@@ -310,6 +310,13 @@ def _layout(raw: Mapping[str, Any], where: str, *, contract: int) -> PhysicalLay
             f"{where}: layout needs a non-empty 'tables' mapping entity -> table name, "
             'or {"auto": true} to have one derived from the model'
         )
+    # Names, in name order (format contract §8a). `str(table)` used to read a number as a table
+    # name here and TypeScript compared it as it was, so `5` was a table in one library and not in
+    # the other - found by the C++ library, which has to give a value a type to read it at all.
+    for entity in sorted(tables):
+        table = tables[entity]
+        if not isinstance(table, str) or not table:
+            raise MapError(f"{where}: tables[{entity!r}] must be a table name, not {table!r}")
     for name, holds in RESERVED_TABLES.items():
         reserved = sorted(entity for entity, table in tables.items() if str(table) == name)
         if reserved:
@@ -319,7 +326,7 @@ def _layout(raw: Mapping[str, Any], where: str, *, contract: int) -> PhysicalLay
                 f"would be read as bookkeeping and written to as bookkeeping. Rename the table; "
                 f"the name is yours to choose everywhere else."
             )
-    columns = {k: dict(v) for k, v in (raw.get("columns") or {}).items()}
+    columns = _columns(raw.get("columns"), where)
     if contract < PHYSICAL_DESIGN_SINCE:
         # Before contract 5 `partition_by` had no meaning, and the refusal is the whole point: the
         # key was parsed, emitted by the control plane when non-empty, and **no renderer ever
@@ -352,6 +359,51 @@ def _layout(raw: Mapping[str, Any], where: str, *, contract: int) -> PhysicalLay
         partition_by=partition_by,
         key_order=key_order,
     )
+
+
+def _columns(raw: Any, where: str) -> dict[str, dict[str, str]]:
+    """Entity -> column -> the engine's type name, or nothing.
+
+    `raw.get("columns") or {}` read `false` and `[]` as no columns, `dict(v)` turned a list of pairs
+    into columns and crashed on a string, and TypeScript took whatever arrived. Refused now, in name
+    order, with the contract's error.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise MapError(
+            f"{where}: columns maps an entity to an object of column name -> type, not {raw!r}"
+        )
+    out: dict[str, dict[str, str]] = {}
+    for entity in sorted(raw):
+        types = raw[entity]
+        if not isinstance(types, dict):
+            raise MapError(
+                f"{where}: columns[{entity!r}] must be an object of column name -> type, not "
+                f"{types!r}"
+            )
+        for column in sorted(types):
+            kind = types[column]
+            if not isinstance(kind, str) or not kind:
+                raise MapError(
+                    f"{where}: columns[{entity!r}][{column!r}] must be a type name, not {kind!r}"
+                )
+        out[entity] = dict(types)
+    return out
+
+
+def _lag_budget(lag: Any, where: str) -> int:
+    """A non-negative integral number. `int(lag)` truncated `1.5`, read `"30000"` and `True`, and
+    TypeScript's `Number(lag)` read some of those another way."""
+    integral = (isinstance(lag, int) and not isinstance(lag, bool)) or (
+        isinstance(lag, float) and lag.is_integer()
+    )
+    if not integral or lag < 0:
+        raise MapError(
+            f"{where}: lag_budget_ms must be a non-negative integer number of milliseconds, not "
+            f"{lag!r}"
+        )
+    return int(lag)
 
 
 def _also_write(
@@ -419,6 +471,8 @@ def _also_write(
 def _materialization(
     raw: Mapping[str, Any], where: str, *, source: bool, contract: int
 ) -> Materialization:
+    if not isinstance(raw, dict):
+        raise MapError(f"{where}: expected an object")
     for required in ("id", "engine", "layout"):
         if required not in raw:
             raise MapError(f"{where}: materialisation is missing {required!r}")
@@ -434,11 +488,17 @@ def _materialization(
             "client, not the monitoring - can tell whether it is healthy or hours behind."
         )
     layout = _layout(raw["layout"], where, contract=contract)
+    # Strings, not `str(...)`: `str(True)` is "True" here and `String(true)` is "true" in
+    # TypeScript, so one map named two different copies in two libraries.
+    if not isinstance(raw["id"], str):
+        raise MapError(f"{where}: a materialisation id is a string, not {raw['id']!r}")
+    if not isinstance(raw["engine"], str):
+        raise MapError(f"{where}: an engine is named by a string, not {raw['engine']!r}")
     return Materialization(
-        id=str(raw["id"]),
-        engine=str(raw["engine"]),
+        id=raw["id"],
+        engine=raw["engine"],
         layout=layout,  # type: ignore[arg-type]
-        lag_budget_ms=None if lag is None else int(lag),
+        lag_budget_ms=None if lag is None else _lag_budget(lag, where),
     )
 
 
@@ -478,7 +538,10 @@ def _key_set(public_key: bytes | Mapping[str, bytes]) -> tuple[tuple[str, bytes]
 
 
 def _verify_signature(
-    raw: Mapping[str, Any], public_key: bytes | Mapping[str, bytes]
+    raw: Mapping[str, Any],
+    public_key: bytes | Mapping[str, bytes],
+    *,
+    contract: int | None = None,
 ) -> str | None:
     """Verify, and report **which** of the caller's keys did it.
 
@@ -531,7 +594,13 @@ def _verify_signature(
         hinted = [pair for pair in keys if pair[0] == claimed]
         ordered = hinted + [pair for pair in keys if pair[0] != claimed]
 
-    payload = canonical_bytes({k: v for k, v in raw.items() if k != "signature"})
+    # A placement map passes its contract and gets the map's canonical rules; a signed packet
+    # envelope (cutover, staging, index build) has its own number rules and keeps the encoder's.
+    payload = (
+        canonical_bytes({k: v for k, v in raw.items() if k != "signature"})
+        if contract is None
+        else _canonical_payload(raw, contract=contract, signed=True)
+    )
     for name, key in ordered:
         try:
             Ed25519PublicKey.from_public_bytes(key).verify(value, payload)
@@ -597,6 +666,45 @@ def load_map(
         key=placement.verified_with,
     )
     return placement
+
+
+_SAFE = 2**53 - 1
+
+
+def _unsafe_integer(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return abs(value) > _SAFE
+    if isinstance(value, dict):
+        return any(_unsafe_integer(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_unsafe_integer(item) for item in value)
+    return False
+
+
+def _canonical_payload(raw: Mapping[str, Any], *, contract: int, signed: bool) -> bytes:
+    """The bytes a signature covers and a fingerprint hashes: the map without its signature.
+
+    From contract 4 a document's numbers are safe integers (section 7d): JavaScript reads anything
+    past 2^53 - 1 as a nearby double, so one document would be signed over one number and read as
+    another. This library encoded any integer, TypeScript refused them, and a signed map with no
+    canonical form left both loaders as their encoder's error rather than a map error.
+    """
+    payload = {key: value for key, value in raw.items() if key != "signature"}
+    try:
+        if contract >= 4 and _unsafe_integer(payload):
+            raise CanonicalError("an integer outside the safe range of 2^53 - 1")
+        return canonical_bytes(payload)
+    except CanonicalError as exc:
+        if contract >= 4:
+            raise MapError("contract 4 requires a canonically encodable placement map") from exc
+        if signed:
+            raise MapError(
+                "this map is signed and its payload has no canonical form, so no signature over "
+                f"it can verify: {exc}"
+            ) from exc
+        raise
 
 
 def _require_canonical_text(value: Any) -> None:
@@ -695,7 +803,7 @@ def _parse_map(
                 "provided to check that claim. Either pass the key, or use an unsigned map - an "
                 "unsigned map is a supported mode, an unverifiable claim is not."
             )
-        verified_with = _verify_signature(raw, public_key)
+        verified_with = _verify_signature(raw, public_key, contract=contract)
     else:
         verified_with = None
 
@@ -735,9 +843,12 @@ def _parse_map(
                 f"write generations this group does not carry."
             )
         source = _materialization(body["source"], f"{where}.source", source=True, contract=contract)
+        derived_raw = body.get("derived")
+        if derived_raw is not None and not isinstance(derived_raw, list):
+            raise MapError(f"{where}: 'derived' is a list of materialisations, not {derived_raw!r}")
         derived = tuple(
             _materialization(d, f"{where}.derived[{i}]", source=False, contract=contract)
-            for i, d in enumerate(body.get("derived") or ())
+            for i, d in enumerate(derived_raw or ())
         )
         ids = [m.id for m in (source, *derived)]
         if len(set(ids)) != len(ids):
@@ -783,8 +894,8 @@ def _parse_map(
             name: _resolve_auto(placement, model, model_groups[name])
             for name, placement in groups.items()
         }
-        for placement in groups.values():
-            _refuse_shadowing(placement)
+        for name in sorted(groups):
+            _refuse_shadowing(groups[name])
         for name in sorted(groups):
             _check_physical(groups[name], model)
         _check_routing_targets(routing, groups, model)
@@ -794,6 +905,11 @@ def _parse_map(
             "it from. Pass model= to load_map()."
         )
     else:
+        # Explicit layouts have their tables without a model, so a copy that is the source under
+        # another name is as visible here. TypeScript refused it without a model and this library
+        # did not; both refuse it now, after coverage and in name order (format contract §8a).
+        for name in sorted(groups):
+            _refuse_shadowing(groups[name])
         _check_routing_targets(routing, groups, None)
 
     if contract >= 4:
@@ -808,11 +924,9 @@ def _parse_map(
 
     try:
         fingerprint = hashlib.sha256(
-            canonical_bytes({key: value for key, value in raw.items() if key != "signature"})
+            _canonical_payload(raw, contract=contract, signed=False)
         ).hexdigest()
-    except CanonicalError as exc:
-        if contract >= 4:
-            raise MapError("contract 4 requires a canonically encodable placement map") from exc
+    except CanonicalError:
         # An unsigned legacy map may carry noncanonical annotations. Preserve its old behavior;
         # the optional bound-verification protocol refuses a map it cannot fingerprint.
         fingerprint = None
@@ -973,6 +1087,8 @@ def _check_routing_targets(
     if model is None:
         return
 
+    from .shapes import WRITE_KINDS  # late, as in _model_shapes
+
     shapes = {shape.id: shape for shape in _model_shapes(model)}
     for shape_id, target in sorted(routing.items()):
         shape = shapes.get(shape_id)
@@ -989,6 +1105,13 @@ def _check_routing_targets(
                 f"{shape.group!r} - to materialisation {target!r}, which that group does not "
                 f"declare. Materialisation ids are unique only within a group, so this would read "
                 f"{shape.entity} out of a copy that does not hold it."
+            )
+        if shape.kind in WRITE_KINDS and target != groups[shape.group].source.id:
+            # The control plane refuses to issue this (`issue`); a hand-written map met nothing.
+            raise MapError(
+                f"the routing table sends shape {shape_id!r}, a {shape.kind}, to {target!r}, "
+                "which is not the source. Writes go to the source whatever this table says, so an "
+                "entry like this one is a planner that believes something untrue."
             )
 
 

@@ -699,7 +699,7 @@ def test_signature_vector(case: Path) -> None:
         keys = {name: b64decode(value) for name, value in encoded.items()}
 
     if "error" in expected:
-        with pytest.raises(_ERRORS[expected["error"]], match=expected["match"]):
+        with pytest.raises(_ERRORS[expected["error"]], match=re.escape(expected["match"])):
             sde.load_map(document, model=model, public_key=keys, require_signature=True)
         return
 
@@ -781,7 +781,7 @@ def _refuse_at_session(case: Path, exc_type: type[Exception], expected: Mapping[
     model = model_from_neutral(_read_json(case / "model.json"))
     placement = _load_map_from_vector(case, expected.get("load", {}))
     engines = engines_from(_read_json(case / "engines.json"))
-    with pytest.raises(exc_type, match=expected["match"]):
+    with pytest.raises(exc_type, match=re.escape(expected["match"])):
         sde.Session(model, placement, engines)
     # **A map that can never work must not have cost anything first.** A library that gathered the
     # watermarks and refused afterwards would produce this same refusal with the price already
@@ -815,7 +815,7 @@ def _refuse_at_write(case: Path, exc_type: type[Exception], expected: Mapping[st
     session = sde.Session(model, placement, engines)
     write = expected["write"]
     _write(session, write["accepted"])
-    with pytest.raises(exc_type, match=expected["match"]) as raised:
+    with pytest.raises(exc_type, match=re.escape(expected["match"])) as raised:
         _write(session, write["refused"])
     # The class exactly: `BulkWriteRefused` is a `ModelPlanningError`, and a vector naming the
     # parent must not be satisfied by the child, or the reverse.
@@ -849,7 +849,7 @@ def test_error_vector(case: Path) -> None:
         _refuse_at_write(case, exc_type, expected)
         return
 
-    with pytest.raises(exc_type, match=expected["match"]):
+    with pytest.raises(exc_type, match=re.escape(expected["match"])):
         if stage == "model":
             model_from_neutral(_read_json(case / "model.json"))
         else:
@@ -898,7 +898,7 @@ def test_canonical_vector(case: Path) -> None:
     if expected_error.exists():
         want = _read_json(expected_error)
         assert want["error"] == "CanonicalError"
-        with pytest.raises(CanonicalError, match=want["match"]):
+        with pytest.raises(CanonicalError, match=re.escape(want["match"])):
             canonical_bytes(value)
         return
 

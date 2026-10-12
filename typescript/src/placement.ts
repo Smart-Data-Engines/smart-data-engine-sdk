@@ -26,7 +26,7 @@ import {
   parseKeyOrder,
   parsePartitionBy,
 } from './physical.js'
-import { enumerateShapes, shapeId } from './shapes.js'
+import { WRITE_KINDS, enumerateShapes, shapeId } from './shapes.js'
 
 export interface PhysicalLayout {
   readonly tables: Readonly<Record<string, string>>
@@ -203,15 +203,75 @@ export const RESERVED_TABLES: ReadonlyArray<readonly [string, string]> = [
 const AUTO = Symbol('auto-layout')
 type MaybeLayout = PhysicalLayout | typeof AUTO
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function asRecord(value: unknown, where: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isPlainObject(value)) {
     throw new MapError(`${where}: expected an object`)
   }
-  return value as Record<string, unknown>
+  return value
+}
+
+/**
+ * Whether the reference reads a JSON value as present: `null`, `false`, zero, and an empty string,
+ * array or object are not. JavaScript's truthiness differs on `[]` and `{}`, and `?? {}` differs on
+ * `false` and `0`, which is how one document meant two things in two libraries more than once.
+ */
+function pythonTruthy(value: unknown): boolean {
+  if (value === undefined || value === null) return false
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value.length > 0
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
+/** A value as a refusal shows it. */
+function describe(value: unknown): string {
+  return value === undefined ? 'undefined' : JSON.stringify(value)
+}
+
+/**
+ * Entity -> column -> the engine's type name, or nothing.
+ *
+ * Cast without a look before: a list, a string or a number arrived as "the columns" and failed, if
+ * at all, in a renderer. Refused now, in name order, as the reference refuses it.
+ */
+function readColumns(raw: unknown, where: string): Record<string, Record<string, string>> {
+  if (raw === undefined || raw === null) return {}
+  if (!isPlainObject(raw)) {
+    throw new MapError(
+      `${where}: columns maps an entity to an object of column name -> type, not ${describe(raw)}`,
+    )
+  }
+  const out: Record<string, Record<string, string>> = Object.create(null)
+  for (const entity of Object.keys(raw).sort(compareCodePoints)) {
+    const types = raw[entity]
+    if (!isPlainObject(types)) {
+      throw new MapError(
+        `${where}: columns['${entity}'] must be an object of column name -> type, not ` +
+          describe(types),
+      )
+    }
+    for (const column of Object.keys(types).sort(compareCodePoints)) {
+      const kind = types[column]
+      if (typeof kind !== 'string' || kind.length === 0) {
+        throw new MapError(
+          `${where}: columns['${entity}']['${column}'] must be a type name, not ${describe(kind)}`,
+        )
+      }
+    }
+    out[entity] = { ...(types as Record<string, string>) }
+  }
+  return out
 }
 
 function readLayout(raw: unknown, where: string, contract: number): MaybeLayout {
-  const body = asRecord(raw, `${where}: layout`)
+  if (!isPlainObject(raw)) throw new MapError(`${where}: layout must be an object`)
+  const body = raw
   if (body['auto'] === true) {
     if (Object.keys(body).length !== 1) {
       throw new MapError(
@@ -222,11 +282,19 @@ function readLayout(raw: unknown, where: string, contract: number): MaybeLayout 
     return AUTO
   }
   const tables = body['tables']
-  if (typeof tables !== 'object' || tables === null || Object.keys(tables).length === 0) {
+  if (!isPlainObject(tables) || Object.keys(tables).length === 0) {
     throw new MapError(
       `${where}: layout needs a non-empty 'tables' mapping entity to table name, or {"auto": true} ` +
         'to have one derived from the model',
     )
+  }
+  // Names, in name order (format contract §8a). Compared as they came, a number was a table name
+  // in the reference (`str(table)`) and not here - found by the C++ library.
+  for (const entity of Object.keys(tables).sort(compareCodePoints)) {
+    const table = tables[entity]
+    if (typeof table !== 'string' || table.length === 0) {
+      throw new MapError(`${where}: tables['${entity}'] must be a table name, not ${describe(table)}`)
+    }
   }
   for (const [name, holds] of RESERVED_TABLES) {
     const reserved = Object.entries(tables as Record<string, string>)
@@ -242,14 +310,14 @@ function readLayout(raw: unknown, where: string, contract: number): MaybeLayout 
       )
     }
   }
-  const columns = (body['columns'] ?? {}) as PhysicalLayout['columns']
+  const columns = readColumns(body['columns'], where) as PhysicalLayout['columns']
   let keyOrder: Record<string, readonly string[]> = {}
   let partitionBy: Record<string, PartitionSpec> = {}
   if (contract < PHYSICAL_DESIGN_SINCE) {
     // Before contract 5 `partition_by` had no meaning, and the refusal is the whole point: the key
     // was parsed, emitted by the control plane when non-empty, and no renderer ever applied it. A
     // contract-4 document may not start meaning something by it now (`errors/037`).
-    if (Object.keys((body['partition_by'] ?? {}) as Record<string, unknown>).length > 0) {
+    if (pythonTruthy(body['partition_by'])) {
       throw new MapError(
         `${where}: this layout declares partition_by in a document declaring map contract ` +
           `${contract}, where no library renders it - the table would be created unpartitioned ` +
@@ -294,9 +362,9 @@ function readAlsoWrite(
   raw: unknown,
   where: string,
   contract: number,
-  source: Materialization,
-  derived: readonly Materialization[],
-): readonly Materialization[] {
+  source: { readonly id: string },
+  derived: readonly { readonly id: string }[],
+): readonly string[] {
   if (raw === undefined || raw === null) return []
   if (contract < ALSO_WRITE_SINCE) {
     throw new MapError(
@@ -317,7 +385,7 @@ function readAlsoWrite(
     )
   }
   const byId = new Map(derived.map((m) => [m.id, m]))
-  const out: Materialization[] = []
+  const out: string[] = []
   const seen = new Set<string>()
   for (const entry of raw) {
     if (typeof entry !== 'string') {
@@ -342,13 +410,13 @@ function readAlsoWrite(
     if (found === undefined) {
       throw new MapError(
         `${where}: 'also_write' names '${entry}', which is not a derived materialisation of this ` +
-          `group. It has ${JSON.stringify([...byId.keys()].sort())}. A fan-out target that does ` +
+          `group. It has ${JSON.stringify([...byId.keys()].sort(compareCodePoints))}. A fan-out target that does ` +
           'not exist is a write with nowhere to go, and during a migration that is a row the copy ' +
           'never receives.',
       )
     }
     seen.add(entry)
-    out.push(found)
+    out.push(found.id)
   }
   return out
 }
@@ -376,13 +444,27 @@ function readMaterialization(
         'not the monitoring - can tell whether it is healthy or hours behind.',
     )
   }
+  // The layout first, then the values, as the reference reads them.
+  const layout = readLayout(body['layout'], where, contract)
+  // Strings, not `String(...)`: `String(true)` is "true" here and the reference's `str(True)` is
+  // "True", so one map named two different copies in two libraries. Found by the C++ library.
+  const id = body['id']
+  if (typeof id !== 'string') {
+    throw new MapError(`${where}: a materialisation id is a string, not ${describe(id)}`)
+  }
+  const engine = body['engine']
+  if (typeof engine !== 'string') {
+    throw new MapError(`${where}: an engine is named by a string, not ${describe(engine)}`)
+  }
+  if (!isSource && (typeof lag !== 'number' || !Number.isInteger(lag) || lag < 0)) {
+    throw new MapError(
+      `${where}: lag_budget_ms must be a non-negative integer number of milliseconds, not ` +
+        describe(lag),
+    )
+  }
   return {
-    mat: {
-      id: String(body['id']),
-      engine: String(body['engine']),
-      lagBudgetMs: isSource ? null : Number(lag),
-    },
-    layout: readLayout(body['layout'], where, contract),
+    mat: { id, engine, lagBudgetMs: isSource ? null : (lag as number) },
+    layout,
   }
 }
 
@@ -419,7 +501,8 @@ function keySet(
   if (publicKey instanceof Uint8Array) {
     pairs = [['', publicKey]]
   } else {
-    pairs = Object.entries(publicKey).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    // By code point, as the reference sorts; `<` compares UTF-16 units and differs above U+FFFF.
+    pairs = Object.entries(publicKey).sort(([a], [b]) => compareCodePoints(a, b))
     if (pairs.length === 0) {
       throw new MapError(
         'an empty set of public keys was supplied. That is not the no-account mode - a map with ' +
@@ -441,6 +524,80 @@ function keySet(
   return pairs
 }
 
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+/**
+ * Base64 as the reference decodes a signature: Python 3.12's `b64decode(value, validate=True)`.
+ *
+ * `Buffer.from(value, 'base64')` decodes anything, skipping what it does not understand, so a
+ * value the reference refuses as not base64 was refused here only later, as a signature that does
+ * not verify - the right answer for the wrong reason. Python's rules, exactly: the standard
+ * alphabet and nothing else, no padding at the start, inside data or short of a quantum's end, and
+ * nothing after a complete pad sequence; but padding after a whole quantum, and bits under the
+ * padding that are not zero, are accepted.
+ */
+function decodeBase64AsPython(text: string): Uint8Array | null {
+  const out: number[] = []
+  let quantum = 0
+  let left = 0
+  let pads = 0
+  let padding = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!
+    if (c === '=') {
+      padding = true
+      if (i === 0) return null
+      if (quantum >= 2 && quantum + ++pads >= 4) {
+        if (i + 1 < text.length) return null
+        return Uint8Array.from(out)
+      }
+      continue
+    }
+    const bits = BASE64.indexOf(c)
+    if (bits < 0 || padding) return null
+    pads = 0
+    if (quantum === 0) {
+      left = bits
+      quantum = 1
+    } else if (quantum === 1) {
+      out.push(((left << 2) | (bits >> 4)) & 0xff)
+      left = bits & 0x0f
+      quantum = 2
+    } else if (quantum === 2) {
+      out.push(((left << 4) | (bits >> 2)) & 0xff)
+      left = bits & 0x03
+      quantum = 3
+    } else {
+      out.push(((left << 6) | bits) & 0xff)
+      left = 0
+      quantum = 0
+    }
+  }
+  return quantum === 0 ? Uint8Array.from(out) : null
+}
+
+/**
+ * The bytes a placement map's signature covers and its fingerprint hashes: the map without its
+ * signature. A payload with no canonical form is a map error, not the encoder's: from contract 4
+ * the contract's own sentence (section 7d), and below it, for a signed map, the reason no
+ * signature over it can verify.
+ */
+function mapPayload(rest: Record<string, unknown>, contract: number, signed: boolean): Buffer {
+  try {
+    return canonicalBytes(rest)
+  } catch (error) {
+    if (!(error instanceof CanonicalError)) throw error
+    if (contract >= 4) throw new MapError('contract 4 requires a canonically encodable placement map')
+    if (signed) {
+      throw new MapError(
+        'this map is signed and its payload has no canonical form, so no signature over it can ' +
+          `verify: ${error.message}`,
+      )
+    }
+    throw error
+  }
+}
+
 /**
  * Verify, and report **which** of the caller's keys did it.
  *
@@ -459,14 +616,17 @@ function keySet(
 export function verifyMapSignature(
   raw: Record<string, unknown>,
   publicKey: Uint8Array | Readonly<Record<string, Uint8Array>>,
+  contract?: number,
 ): string | null {
-  const signature = asRecord(raw['signature'], 'signature')
-  if (signature['alg'] !== 'ed25519') {
+  // In the reference's order: the block, its value, the hint, the configured keys, then the payload.
+  // The payload came first here, so a map with two defects was refused for a different one.
+  const signature = raw['signature']
+  if (!isPlainObject(signature) || signature['alg'] !== 'ed25519') {
     throw new MapError('only ed25519 signatures are understood')
   }
-  const value = Buffer.from(String(signature['value']), 'base64')
-  const { signature: _omit, ...rest } = raw
-  const payload = canonicalBytes(rest)
+  const encoded = signature['value']
+  const value = typeof encoded === 'string' ? decodeBase64AsPython(encoded) : null
+  if (value === null) throw new MapError('the signature is not valid base64')
 
   const claimed = typeof signature['key_id'] === 'string' ? signature['key_id'] : null
   const keys = keySet(publicKey)
@@ -474,6 +634,11 @@ export function verifyMapSignature(
     claimed === null
       ? keys
       : [...keys.filter(([name]) => name === claimed), ...keys.filter(([name]) => name !== claimed)]
+
+  // A placement map passes its contract and gets the map's canonical rules; a signed packet
+  // envelope (cutover, staging, index build) keeps the encoder's own error.
+  const { signature: _omit, ...rest } = raw
+  const payload = contract === undefined ? canonicalBytes(rest) : mapPayload(rest, contract, true)
 
   for (const [name, raw32] of ordered) {
     // Node wants a KeyObject; a raw 32-byte Ed25519 key becomes one via a minimal DER wrapper. The
@@ -536,7 +701,7 @@ function checkRoutingTargets(
       throw new MapError(
         `the routing table sends shape '${shapeIdent}' to materialisation '${target}', and no ` +
           'group in this map declares one with that id. The map is internally inconsistent: ' +
-          `declared ids are ${JSON.stringify([...everywhere].sort())}.`,
+          `declared ids are ${JSON.stringify([...everywhere].sort(compareCodePoints))}.`,
       )
     }
   }
@@ -560,6 +725,14 @@ function checkRoutingTargets(
           `to materialisation '${target as string}', which that group does not declare. ` +
           'Materialisation ids are unique only within a group, so this would read ' +
           `${shape.entity} out of a copy that does not hold it.`,
+      )
+    }
+    if (WRITE_KINDS.has(shape.kind) && target !== groups[shape.group]!.source.id) {
+      // The control plane refuses to issue this; a hand-written map met nothing until now.
+      throw new MapError(
+        `the routing table sends shape '${shapeIdent}', a ${shape.kind}, to '${target as string}', ` +
+          'which is not the source. Writes go to the source whatever this table says, so an entry ' +
+          'like this one is a planner that believes something untrue.',
       )
     }
   }
@@ -688,43 +861,38 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
           'supported mode, an unverifiable claim is not.',
       )
     }
-    verifiedWith = verifyMapSignature(body, options.publicKey)
+    verifiedWith = verifyMapSignature(body, options.publicKey, contract)
   }
 
   const groupsRaw = body['groups']
-  if (typeof groupsRaw !== 'object' || groupsRaw === null) {
+  if (!isPlainObject(groupsRaw) || Object.keys(groupsRaw).length === 0) {
+    // Empty is refused too, as the reference refuses it: a map placing nothing is no map.
     throw new MapError('the map places no groups')
   }
 
-  const modelGroups = options.model ? colocationGroups(options.model) : []
-  const membersOf = new Map(modelGroups.map((g) => [g.name, g.members]))
-
-  const groups: Record<string, GroupPlacement> = {}
+  type Read = { readonly mat: Omit<Materialization, 'layout'>; readonly layout: MaybeLayout }
+  interface ReadGroup {
+    readonly writeEpoch: number | undefined
+    readonly source: Read
+    readonly derived: readonly Read[]
+    readonly alsoWrite: readonly string[]
+  }
+  const read = new Map<string, ReadGroup>()
   // By name, not in the document's order. A map with two defects has to refuse the same way in
   // every language (format-contract §8a): `errors/019` carries a reserved table name in one group
   // and an auto-plus-explicit layout in another, and it pinned the first only because that group is
   // written earlier in the file and both of our runtimes iterate an object in insertion order. A
   // third implementation in Go, whose maps iterate in a randomised order, failed that vector in 5
   // of 20 runs. `checkRoutingTargets` has sorted since it was written; this loop had not.
-  const groupNames = Object.keys(groupsRaw as Record<string, unknown>).sort(compareCodePoints)
-  for (const name of groupNames) {
-    const value = (groupsRaw as Record<string, unknown>)[name]
+  //
+  // Layouts are read here and derived later, after coverage, as the reference does: deriving one in
+  // this loop refused a group the model does not have as "no model was supplied", and refused an
+  // auto layout before a defect in a group written after it.
+  for (const name of Object.keys(groupsRaw).sort(compareCodePoints)) {
     const where = `group '${name}'`
-    const placement = asRecord(value, where)
-    if (!('source' in placement)) {
+    const placement = groupsRaw[name]
+    if (!isPlainObject(placement) || !('source' in placement)) {
       throw new MapError(`${where}: needs a 'source' materialisation`)
-    }
-
-    const resolve = (layout: MaybeLayout, what: string): PhysicalLayout => {
-      if (layout !== AUTO) return layout
-      const members = membersOf.get(name)
-      if (!members) {
-        throw new MapError(
-          `${where}.${what}: a layout asked to be derived with {"auto": true}, but no model was ` +
-            'supplied to derive it from. Pass model to loadMap().',
-        )
-      }
-      return defaultLayout(options.model!, members)
     }
 
     const writeEpoch = contract >= 4 ? placement['write_epoch'] : undefined
@@ -746,53 +914,51 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
           'this group does not carry.',
       )
     }
-    const sourceRead = readMaterialization(placement['source'], `${where}.source`, true, contract)
-    const source: Materialization = {
-      ...sourceRead.mat,
-      layout: resolve(sourceRead.layout, 'source'),
+    const source = readMaterialization(placement['source'], `${where}.source`, true, contract)
+
+    const derivedRaw = placement['derived']
+    if (derivedRaw !== undefined && derivedRaw !== null && !Array.isArray(derivedRaw)) {
+      throw new MapError(`${where}: 'derived' is a list of materialisations, not ${describe(derivedRaw)}`)
     }
+    const derived = ((derivedRaw ?? []) as unknown[]).map((entry, i) =>
+      readMaterialization(entry, `${where}.derived[${i}]`, false, contract),
+    )
 
-    const derivedRaw = (placement['derived'] ?? []) as unknown[]
-    const derived: Materialization[] = derivedRaw.map((entry, i) => {
-      const read = readMaterialization(entry, `${where}.derived[${i}]`, false, contract)
-      return { ...read.mat, layout: resolve(read.layout, `derived[${i}]`) }
-    })
-
-    const ids = [source, ...derived].map((m) => m.id)
+    const ids = [source, ...derived].map((m) => m.mat.id)
     if (new Set(ids).size !== ids.length) {
       throw new MapError(`${where}: two materialisations share an id`)
     }
 
-    // A derived copy in the same engine, naming the same tables, is the source with a second name in
-    // the map: its lag would always read as zero and a read routed to it would silently be a read of
-    // the source. Found by a Python test; refused here for the same reason.
-    const sourceTables = new Set(Object.values(source.layout.tables))
-    for (const candidate of derived) {
-      if (candidate.engine !== source.engine) continue
-      const shared = Object.values(candidate.layout.tables)
-        .filter((t) => sourceTables.has(t))
-        .sort()
-      if (shared.length > 0) {
-        throw new MapError(
-          `${where}: materialisation '${candidate.id}' is in the same engine as the source and ` +
-            `reuses its tables ${JSON.stringify(shared)}. That is not a copy of the group, it is ` +
-            'the original with a second name in the map.',
-        )
-      }
-    }
-
-    groups[name] = {
-      ...(writeEpoch === undefined ? {} : { writeEpoch: writeEpoch as number }),
-      group: name,
+    read.set(name, {
+      writeEpoch: writeEpoch as number | undefined,
       source,
       derived,
-      alsoWrite: readAlsoWrite(placement['also_write'], where, contract, source, derived),
-    }
+      alsoWrite: readAlsoWrite(
+        placement['also_write'],
+        where,
+        contract,
+        source.mat,
+        derived.map((m) => m.mat),
+      ),
+    })
   }
 
-  if (options.model) {
+  // The reference's order from here: routing's shape, coverage both ways, layouts derived, a copy
+  // that is the source under another name, the physical design, then the routing entries.
+  const routingRaw = body['routing']
+  let routing: Record<string, unknown> = {}
+  if (pythonTruthy(routingRaw)) {
+    if (!isPlainObject(routingRaw)) {
+      throw new MapError("'routing' must be a mapping from shape id to materialisation id")
+    }
+    routing = routingRaw
+  }
+
+  const model = options.model
+  const modelGroups = model ? colocationGroups(model) : []
+  if (model) {
     const declaredNames = modelGroups.map((g) => g.name)
-    const missing = declaredNames.filter((name) => !(name in groups)).sort()
+    const missing = declaredNames.filter((name) => !read.has(name)).sort(compareCodePoints)
     if (missing.length > 0) {
       throw new MapError(
         `the map does not place these groups: ${JSON.stringify(missing)}. Every group in the model ` +
@@ -802,9 +968,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     // And the other direction. Checking one of the two reads as complete: Python fell through to a
     // dict lookup and produced a bare KeyError, this one accepted the map in silence. Two
     // languages, one missing check, two different wrong answers.
-    const unknown = Object.keys(groups)
-      .filter((name) => !declaredNames.includes(name))
-      .sort()
+    const unknown = [...read.keys()].filter((name) => !declaredNames.includes(name)).sort(compareCodePoints)
     if (unknown.length > 0) {
       throw new MapError(
         `the map places groups this model does not have: ${JSON.stringify(unknown)}. The model ` +
@@ -812,20 +976,62 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
           'differently, and a group nobody declared has no entities to hold.',
       )
     }
+  } else if ([...read.values()].some((g) => [g.source, ...g.derived].some((m) => m.layout === AUTO))) {
+    throw new MapError(
+      'a layout asked to be derived with {"auto": true}, but no model was supplied to derive it ' +
+        'from. Pass model to loadMap().',
+    )
   }
 
-  const routingRaw = body['routing'] ?? {}
-  if (typeof routingRaw !== 'object' || routingRaw === null) {
-    throw new MapError("'routing' must be a mapping from shape id to materialisation id")
-  }
-
-  if (options.model) {
-    for (const name of Object.keys(groups).sort(compareCodePoints)) {
-      checkPhysical(groups[name]!, options.model)
+  const membersOf = new Map(modelGroups.map((g) => [g.name, g.members]))
+  const groups: Record<string, GroupPlacement> = {}
+  for (const [name, group] of read) {
+    const resolve = (entry: Read): Materialization => ({
+      ...entry.mat,
+      layout: entry.layout === AUTO ? defaultLayout(model!, membersOf.get(name)!) : entry.layout,
+    })
+    const source = resolve(group.source)
+    const derived = group.derived.map(resolve)
+    groups[name] = {
+      ...(group.writeEpoch === undefined ? {} : { writeEpoch: group.writeEpoch }),
+      group: name,
+      source,
+      derived,
+      // The resolved copies themselves, by id: rebuilding a placement is how a fan-out was dropped
+      // once in the reference, and an id is what survives a rebuild.
+      alsoWrite: group.alsoWrite.map((id) => derived.find((m) => m.id === id)!),
     }
   }
 
-  checkRoutingTargets(routingRaw as Record<string, unknown>, groups, options.model)
+  // A derived copy in the same engine, naming the same tables, is the source with a second name in
+  // the map: its lag would always read as zero and a read routed to it would silently be a read of
+  // the source. Checked whenever the tables are known - with a model, or with explicit layouts.
+  for (const name of Object.keys(groups).sort(compareCodePoints)) {
+    const { source, derived } = groups[name]!
+    const sourceTables = new Set(Object.values(source.layout.tables))
+    for (const candidate of derived) {
+      if (candidate.engine !== source.engine) continue
+      const shared = Object.values(candidate.layout.tables)
+        .filter((t) => sourceTables.has(t))
+        .sort(compareCodePoints)
+      if (shared.length > 0) {
+        throw new MapError(
+          `group '${name}': materialisation '${candidate.id}' is in the same engine as the source ` +
+            `and reuses its tables ${JSON.stringify(shared)}. That is not a copy of the group, it ` +
+            'is the original with a second name in the map, so its lag would always read as zero ' +
+            'and a read routed to it would silently be a read of the source.',
+        )
+      }
+    }
+  }
+
+  if (model) {
+    for (const name of Object.keys(groups).sort(compareCodePoints)) {
+      checkPhysical(groups[name]!, model)
+    }
+  }
+
+  checkRoutingTargets(routing, groups, model)
 
   if (contract >= 4) {
     for (const spot of Object.values(groups)) {
@@ -859,7 +1065,7 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
     mapVersion,
     ...(projectId === undefined ? {} : { projectId: projectId as string }),
     groups,
-    routing: routingRaw as Record<string, string>,
+    routing: routing as Record<string, string>,
     signed: signaturePresent,
     fingerprint,
     verifiedWith,

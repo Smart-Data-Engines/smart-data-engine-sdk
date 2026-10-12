@@ -440,8 +440,8 @@ is a rule, and where it is an accident of its runtime.
 at the session and write stages, which need engines; the runner passes them as outside the claim at
 those two stages only, and fails on any stage it does not know. Thirty-one source mutations
 followed. Four survived every vector and every unit test, and a fifth survived the unit tests because
-each of their cases was also refused by a later check; all five are fatal now. The vectors could not
-see these:
+each of their cases was also refused by a later check; all five are fatal now. No vector could see
+these until the change below:
 
 - entities of `key_order` and `partition_by` checked in document order, where §8a says name order;
 - the upper bounds of an index's `granularity` and `max_rows` (only the lower ones are pinned);
@@ -452,8 +452,8 @@ see these:
 - the shadowing refusal, which has no vector at all;
 - padding inside a signature value's quantum, which Python refuses and TypeScript decodes.
 
-**Where the two references coerce, or fail with their runtime's own error, this library refuses
-with the contract's.** Each of these is accepted, or crashes, somewhere in the other two:
+**Where the two references coerced, or failed with their runtime's own error, this library refused
+with the contract's.** Each of these was accepted, or crashed, somewhere in the other two:
 
 - a neutral `atomic` group that overlaps another, repeats a member or has one member;
 - `nullable` that is not a boolean;
@@ -469,16 +469,29 @@ with the contract's.** Each of these is accepted, or crashes, somewhere in the o
 - a signed map whose payload has no canonical form, which both references let out of the loader as
   their canonical encoder's error rather than a map error.
 
-Two smaller divergences between the references themselves came out of choosing which to follow:
-- a signature block that is not an object gets a different message in each;
-- a key set's names sort by code point in Python and by UTF-16 unit in TypeScript.
+Choosing which reference to follow turned up divergences between the two references themselves:
+- a signature block that is not an object got a different message in each;
+- TypeScript decoded any signature value and refused it later, as a signature that does not verify;
+- a key set's names sorted by code point in Python and by UTF-16 unit in TypeScript;
+- TypeScript derived an `{"auto": true}` layout inside the loop over groups, so a group the model
+  does not have was refused as "no model was supplied", and an auto layout before a defect in a
+  group written after it;
+- TypeScript checked `routing`'s shape after coverage, and Python before;
+- TypeScript accepted an empty `groups` object, and an array as `routing`.
 
-One finding is about the suite's own documentation. This page says a `match` is a substring
-compared literally, both reference runners compile it as a regular expression, and four `errors/`
-vectors write `Thing\.amount` - which only a regular expression reads as `Thing.amount`.
+One finding was about the suite's own documentation. This page says a `match` is a substring
+compared literally, both reference runners compiled it as a regular expression, and four `errors/`
+vectors wrote `Thing\.amount`, which only a regular expression reads as `Thing.amount`.
 
-Each of these becomes a vector and a rule in every library in its own change. Until then, this
-library is stricter on exactly these inputs, and says so in its README.
+**Each of these is a rule of the contract now, in all three libraries, with a vector**:
+- `errors/083`-`112` and `routing/003`, written by `conformance/tools/third_implementation_vectors.py`
+  only after the reference refuses each one with its `match`;
+- the rules are in §4a, §7 and §8a;
+- every runner compares `match` literally, and the four write-stage cases say `Thing.amount`.
+
+The one divergence not made a rule is the spelling of an integral number below contract 4, where
+the contract has no normalisation: `3.0` is a float to a JSON reader that keeps one and the integer
+3 to JavaScript, which has no other kind. A producer writes integers as integers.
 
 What the vectors do not exercise at all was compared with the reference directly, and agreed
 everywhere:

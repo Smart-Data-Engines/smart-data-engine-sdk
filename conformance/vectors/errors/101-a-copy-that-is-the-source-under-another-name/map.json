@@ -1,0 +1,67 @@
+{
+  "contract": 3,
+  "model_version": "d342947c3bf04095",
+  "map_version": 1,
+  "groups": {
+    "Event": {
+      "source": {
+        "id": "Event@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Event": "event"
+          },
+          "columns": {
+            "Event": {
+              "at": "timestamptz",
+              "id": "bigint",
+              "kind": "text"
+            }
+          }
+        }
+      },
+      "derived": [
+        {
+          "id": "Event@ch",
+          "engine": "pg-main",
+          "layout": {
+            "tables": {
+              "Event": "event"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "bigint",
+                "kind": "text"
+              }
+            }
+          },
+          "lag_budget_ms": 30000
+        }
+      ]
+    },
+    "Line": {
+      "source": {
+        "id": "Line@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Line": "line",
+            "Order": "order"
+          },
+          "columns": {
+            "Line": {
+              "line": "integer",
+              "order_id": "bigint",
+              "qty": "bigint"
+            },
+            "Order": {
+              "id": "bigint",
+              "placed": "timestamptz"
+            }
+          }
+        }
+      }
+    }
+  }
+}

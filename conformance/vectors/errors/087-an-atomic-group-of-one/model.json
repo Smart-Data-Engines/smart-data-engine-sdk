@@ -1,0 +1,73 @@
+{
+  "entities": [
+    {
+      "name": "Event",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "kind",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    },
+    {
+      "name": "Line",
+      "fields": [
+        {
+          "name": "line",
+          "type": "int32"
+        },
+        {
+          "name": "order_id",
+          "type": "int64"
+        },
+        {
+          "name": "qty",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "order_id",
+        "line"
+      ]
+    },
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "placed",
+          "type": "timestamptz"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "order",
+      "from": "Line",
+      "to": "Order"
+    }
+  ],
+  "atomic": [
+    [
+      "Event"
+    ]
+  ]
+}

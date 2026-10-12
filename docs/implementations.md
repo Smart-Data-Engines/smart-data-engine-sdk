@@ -84,13 +84,12 @@ ClickHouse, then our orderbook engine - and each moves the cell when it round-tr
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 
-Two things about it differ from the other two by design. **Its refusals are typed and its messages
-are the reference's**: the contract's error classes as an exception hierarchy, and a value in a
-message written as Python's `repr` writes it, so one defect reads the same in three languages.
-**It is stricter where the other two coerce or fail with their runtime's own error** - a
-materialisation id that is a number, a lag budget written as a string, a layout's table that is not
-a name. Each is a finding in [`implementing.md`](implementing.md#the-third-implementation-c), to be
-made a rule of the contract in every library rather than a property of one.
+**Its refusals are typed and its messages are the reference's**: the contract's error classes as
+an exception hierarchy, and a value in a message written as Python's `repr` writes it, so one defect
+reads the same in three languages. Writing it found the places where the other two coerced a value
+or failed with their runtime's own error - a materialisation id that is a boolean, a lag budget
+written as a string, a layout's table that is not a name. Each is a rule of the contract now, in all
+three libraries ([`implementing.md`](implementing.md#the-third-implementation-c)).
 
 The tier in the table above is checked against each library's own `TIER` constant by a test, because
 a list that says one thing while the code says another is the failure requirement 17.6 exists to

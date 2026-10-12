@@ -244,7 +244,7 @@ describe('error vectors', () => {
 
       if (expected.stage === 'model') {
         expect(() => modelFromNeutral(readJson(join(dir, 'model.json')))).toThrow(
-          new RegExp(expected.match),
+          expected.match,
         )
         return
       }
@@ -278,7 +278,7 @@ describe('error vectors', () => {
           (error: unknown) => error,
         )
         expect(refused, `${name}: the row was accepted`).toBeInstanceOf(Error)
-        expect((refused as Error).message).toMatch(new RegExp(expected.match))
+        expect((refused as Error).message).toMatch(expected.match)
         // The class exactly: BulkWriteRefused is a ModelPlanningError, and a vector naming the
         // parent must not be satisfied by the child, or the reverse.
         expect((refused as Error).constructor, `${name}: raised ${(refused as Error).name}`).toBe(ctor)
@@ -292,7 +292,7 @@ describe('error vectors', () => {
       }
 
       if (expected.stage !== 'session') {
-        expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match))
+        expect(() => loadMap(raw, options)).toThrow(expected.match)
         return
       }
 
@@ -303,7 +303,7 @@ describe('error vectors', () => {
       // for the same reason the model is.
       const map = loadMap(raw, options)
       const engines = enginesFrom(readJson(join(dir, 'engines.json')))
-      await expect(Session.open(model, map, engines)).rejects.toThrow(new RegExp(expected.match))
+      await expect(Session.open(model, map, engines)).rejects.toThrow(expected.match)
       // **A map that can never work must not have cost anything first.** A library that gathered
       // the watermarks and refused afterwards would give this same answer with the price already
       // paid - which is not hypothetical: it is how the no-account promise broke in
@@ -377,7 +377,7 @@ describe('signature vectors', () => {
       const options = { model, publicKey, requireSignature: true }
       if (expected.error !== undefined) {
         expect(ERRORS[expected.error], `unknown error class ${expected.error}`).toBeDefined()
-        expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match as string))
+        expect(() => loadMap(raw, options)).toThrow(expected.match as string)
         return
       }
 
@@ -454,7 +454,7 @@ describe('canonical vectors', () => {
           }
         }
         expect(() => canonicalBytes(value)).toThrow(CanonicalError)
-        expect(() => canonicalBytes(value)).toThrow(new RegExp(expectedError.match))
+        expect(() => canonicalBytes(value)).toThrow(expectedError.match)
         return
       }
 
