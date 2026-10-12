@@ -96,7 +96,12 @@ In local mode you choose the number, from 1; 0 is the engine's "unknown".
 **Values the engine cannot store are refused before sending**, with the field named:
 - a negative time, quantity or order count;
 - a level past 999 (the engine stores 1000 levels per side);
-- whitespace, a quote, a backslash or a control character in a symbol or an exchange.
+- whitespace, a quote, a backslash or a character that does not print, in a symbol or an exchange.
+  "Does not print" is Unicode's Other and Separator categories, as Python's `str.isprintable()`
+  decides it: controls, format characters such as a zero-width space or a bidirectional mark, and
+  private use. Each library asks its runtime's Unicode, so a character newer than that version is
+  refused as unassigned. Node 18 (Unicode 15.1) accepts the 627 characters 15.1 assigned, which
+  Python 3.12 (15.0) refuses.
 
 Measured: the server refuses `INSERT BTC USD ...` as "unexpected token" and a negative quantity as
 "unknown command", which tells a client nothing.

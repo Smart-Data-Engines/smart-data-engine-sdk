@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript's orderbook adapter accepted a symbol with a character that does not print**
+([`docs/orderbook.md`](docs/orderbook.md)). It refused whitespace and controls, but not a zero-width
+space, a bidirectional mark, a byte-order mark or private use. Two books that printed alike were
+then two addresses. It refuses what the reference's `str.isprintable()` refuses now, by Unicode
+category. Compared over every code point, the only difference left is Unicode's version: Node 18
+knows 15.1, Python 3.12 knows 15.0. Finding 33 of the C++ port.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of

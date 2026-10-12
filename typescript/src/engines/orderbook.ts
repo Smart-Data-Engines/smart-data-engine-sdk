@@ -118,8 +118,12 @@ function name(value: unknown, what: string): string {
     throw new EngineError(`${what} must be a non-empty string, not ${describe(value)}`)
   }
   for (const character of value) {
-    const point = character.codePointAt(0)!
-    if (character === "'" || character === '\\' || /\s/u.test(character) || point < 0x20 || (point >= 0x7f && point < 0xa0)) {
+    // What does not print is refused, as the reference's `str.isprintable()` refuses it: Unicode's
+    // Other and Separator categories - controls, format characters, private use, every space -
+    // which hold all of `isspace()` too. A zero-width space or a bidirectional mark passed here
+    // until 7 October 2026, so two books that print alike were two addresses (finding 33 of the C++
+    // port).
+    if (character === "'" || character === '\\' || /[\p{C}\p{Z}]/u.test(character)) {
       throw new EngineError(
         `${JSON.stringify(value)} cannot be used as a ${what}: this engine's query language has no escape ` +
           'sequence inside a string literal and its wire protocol separates fields by whitespace, so a ' +
