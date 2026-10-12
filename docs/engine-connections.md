@@ -67,6 +67,12 @@ No request follows an HTTP redirect or automatically replays a transport-ambiguo
 including the first version/settings request. After a lost response, inspect the uncertain outcome;
 reconnecting does not mean that replaying the write is safe. See [failure semantics](failure-semantics.md).
 
+A statement travels as the body of its request, never in its URL. A URL is what a proxy or a load
+balancer in between logs, and a read's statement holds the values it filters on: a point read's
+holds its key. The URL carries the database and the request's settings. An INSERT whose rows are
+the body may carry its statement there too, which names the table and the columns and holds no
+value. No row value travels in a URL.
+
 ## PostgreSQL
 
 Use an explicit verified profile for a customer connection:

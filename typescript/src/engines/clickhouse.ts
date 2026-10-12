@@ -226,10 +226,13 @@ export class ClickHouseEngine {
         search.set('output_format_json_quote_decimals', '1')
         search.set('output_format_decimal_trailing_zeros', '1')
       }
-      if (options.body === undefined) search.set('query', query)
-      else search.set('query', query)
+      // A URL is what a proxy or a load balancer in between logs, and a statement holds the values
+      // a read filters on, so the statement is the body. An INSERT's rows are its body: its
+      // statement, which names the table and the columns and no value, goes in the URL, where the
+      // server reads the start of a statement. The reference's driver sends both the same way.
+      if (options.body !== undefined) search.set('query', query)
       const path = `/?${search.toString()}`
-      const payload = options.body ?? ''
+      const payload = options.body ?? query
       const requestFn = this.target.protocol === 'https:' ? httpsRequest : httpRequest
       const inactivity = options.timeoutMs ?? (this.target.receive_timeout_supplied
         ? Math.ceil(this.target.send_receive_timeout * 1000) : undefined)
