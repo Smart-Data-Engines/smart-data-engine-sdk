@@ -13,6 +13,7 @@ behaviours against the engine itself:
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 import types
@@ -93,6 +94,7 @@ class _Server:
     refuse: set[int] = field(default_factory=set)
     fail_batch: int | None = None
     fail_close: bool = False
+    fail_query: bool = False
     capabilities: set[str] = field(
         default_factory=lambda: {"insert_event_time", "strict_args", "backup"}
     )
@@ -114,7 +116,15 @@ class _Server:
 class _Client:
     def __init__(self, server: _Server, **kwargs: Any) -> None:
         self.server = server
+        self.abandoned: str | None = None
         server.constructed.append(kwargs)
+
+    def ping(self) -> str:
+        # The engine's client after an exchange that did not finish (its #171): closed, and every
+        # call says why.
+        if self.abandoned is not None:
+            raise OSError(f"the connection was closed because {self.abandoned}")
+        return "PONG"
 
     def server_capabilities(self) -> set[str]:
         return set(self.server.capabilities)
@@ -147,7 +157,13 @@ class _Client:
         return None
 
     def query(self, sql: str) -> list[_Row]:
+        if self.abandoned is not None:
+            raise OSError(f"the connection was closed because {self.abandoned}")
         self.server.queries.append(sql)
+        if self.server.fail_query:
+            self.server.fail_query = False
+            self.abandoned = "an exchange (query) did not finish: timed out"
+            raise OSError("timed out")
         match = _QUERY.fullmatch(sql)
         assert match, f"the adapter sent a query the engine's grammar would not take: {sql}"
         book = [r for r in self.server.rows
@@ -211,6 +227,10 @@ def _row(**overrides: Any) -> dict[str, Any]:
     }
     values.update(overrides)
     return values
+
+
+def _key() -> dict[str, Any]:
+    return {name: _row()[name] for name in sde.ORDERBOOK_KEY}
 
 
 def _model() -> sde.LogicalModel:
@@ -431,6 +451,62 @@ def test_an_unconfirmed_tcp_write_says_it_may_have_been_stored(
     monkeypatch.setattr(_Client, "insert", boom)
     with pytest.raises(EngineError, match="may still have been stored"):
         tcp.insert(TABLE, _row())
+
+
+def test_a_write_with_no_connection_is_refused_before_anything_is_sent(
+    server: _Server, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Never connected, nothing was sent: not an unconfirmed write, and not a failed one.
+
+    The adapter read its connection inside the write's own `try`, so `insert` answered that the
+    engine did not confirm the write and that it may have been stored, and logged
+    `sde.write.failed`; `insert_many` failed with an AttributeError on the client's module. Finding
+    30 of the C++ port; TypeScript and C++ refuse here, before anything.
+    """
+    caplog.set_level(logging.INFO, logger="sde")
+    for adapter in (OrderbookEngine(host="127.0.0.1", port=9090), OrderbookEngine("/tmp/fake")):
+        with pytest.raises(EngineError) as refused:
+            adapter.insert(TABLE, _row())
+        assert str(refused.value) == "not connected; call connect() first"
+        with pytest.raises(EngineError) as refused:
+            adapter.insert_many(TABLE, [_row()])
+        assert str(refused.value) == "not connected; call connect() first"
+    assert server.inserts == [] and server.batches == []
+    assert [r for r in caplog.records if getattr(r, "sde_event", None) == "sde.write.failed"] == []
+
+
+def test_a_batch_after_a_lost_connection_is_refused_rather_than_unknown(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    server.fail_batch = 1
+    with pytest.raises(EngineError, match="outcome of this batch is unknown"):
+        tcp.insert_many(TABLE, [_row()])
+    with pytest.raises(EngineError) as refused:
+        tcp.insert_many(TABLE, [_row(timestamp_ns=2_000)])
+    assert str(refused.value) == "not connected; call connect() first"
+    assert len(server.batches) == 1
+
+
+def test_connect_replaces_a_connection_the_client_closed_after_an_exchange(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    """The engine's client closes a connection whose exchange did not finish, and says why on every
+    later call (its #171). `connect()` returned at once because a client was set, so the adapter
+    stayed on the closed one until `close()`; it asks the client now and replaces a closed one.
+    Finding 31 of the C++ port.
+    """
+    tcp.insert(TABLE, _row())
+    server.fail_query = True
+    with pytest.raises(EngineError):
+        tcp.get(TABLE, _key())
+    with pytest.raises(EngineError, match="was closed because"):
+        tcp.get(TABLE, _key())
+    tcp.connect()
+    assert len(server.constructed) == 2
+    assert tcp.get(TABLE, _key()) is not None
+    # A connection that is open is kept: one client, however often connect() is called.
+    tcp.connect()
+    assert len(server.constructed) == 2
 
 
 # ── Batches are the engine's updates ────────────────────────────────────────────────────────────
