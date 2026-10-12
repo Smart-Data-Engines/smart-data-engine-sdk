@@ -8,6 +8,12 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a PostgreSQL DSN that only mentioned `connect_timeout` lost the connect bound** (Python,
+[`docs/failure-semantics.md`](docs/failure-semantics.md)). The 10-second default was applied only
+when the text `connect_timeout` was absent from the DSN, so `?application_name=connect_timeout_probe`
+left a host that accepts and stays silent holding the call: still waiting after 20 seconds. The
+adapter now reads the DSN's keys as libpq does, and a `connect_timeout` key still wins.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
