@@ -1404,7 +1404,9 @@ declares. A row is refused when:
 
 1. it carries a field its entity does not declare: `<Entity> declares no field <field>`;
 2. it leaves out a required field: `<Entity>.<field> is required and this row leaves it out`;
-3. it gives a required field null: `<Entity>.<field> is required and this row gives it null`.
+3. it gives a required field null: `<Entity>.<field> is required and this row gives it null`;
+4. it gives a field a value its type does not hold: `<Entity>.<field> is <type> and this row gives
+   it <what>`, below.
 
 The checks run in that order, and each names the first offending field in code-point order (§1).
 Names are the client's, with hashed identifiers too (§2a). A batch is refused whole, before anything
@@ -1422,6 +1424,55 @@ engines answered for it, each in its own way. Measured on PostgreSQL 15 and Clic
 The same model meant different things on different engines, and moving a group would have changed
 which. `errors/078`-`082` pin the refusals at the `write` stage: a session is open on a valid map, one
 accepted write comes first, and `calls.json` holds that write and nothing of the refused one.
+
+### A value its type holds
+
+A value other than null is admitted in a form a filter value of the same type takes
+([logical reads](logical-reads.md)), and its type must hold it. `<what>` never contains the value:
+a refusal is logged, and the value is the client's.
+
+| Type | A value it admits | `<what>` when it does not |
+|---|---|---|
+| `bool` | a boolean | `a value that is not a boolean` |
+| `int32`, `int64` | an integer the type holds; where every number is binary floating point, a safe integer or the host's big integer | `a value that is not an integer`, `an integer outside int32` (`int64`) |
+| `float32`, `float64` | a number, NaN and the infinities included. `float32` refuses a finite number it rounds to an infinity, or one that is not zero and that it rounds to zero | `a value that is not a number`, `a number outside float32` (and `float64`, for an integer past it where integers are unbounded) |
+| `decimal(p,s)` | an exact decimal: an integer, decimal text, or the host's decimal type; finite; at most `s` fractional digits once trailing zeros are dropped, and at most `p-s` integer digits | `a value that is not an exact decimal`, `more than <s> fractional digits`, `more than <p-s> integer digits` |
+| `string` | text of Unicode scalar values | `a value that is not text` |
+| `bytes` | the host's bytes | `a value that is not bytes` |
+| `uuid` | UUID text, 8-4-4-4-12 hexadecimal digits in either case, or the host's UUID type | `a value that is not a UUID` |
+| `date` | `YYYY-MM-DD` text of a day that exists, or the host's date type | `a value that is not a date` |
+| `timestamp`, `timestamptz` | ISO 8601 text with at most six fractional digits and an optional offset, or the host's timestamp types; UTC years 0001 to 9999 | `a value that is not a timestamp` |
+| `json` | not checked | |
+
+Decimal text has one grammar: an optional sign, digits with an optional point and fraction (or a
+point and a fraction), an optional exponent, and white space around it ignored. A binary floating
+point number is not an exact decimal, whatever it prints as. Text past the reference's own decimal
+limits - an adjusted exponent above 999999999999999999, or an exponent below -1999999999999999997 -
+is not an exact decimal either: its `Decimal()` refuses it, and the libraries agree. A value with
+too many digits on both sides of the point is refused for its fractional digits.
+
+**A value reaches the engine in the form a filter gets**, one form per type, so that every adapter
+receives the same thing:
+- a decimal given as text or as the host's decimal type is written at its column's scale in plain
+  notation. `1.230` and `123E-2` become `1.23` in a `decimal(12,2)`, `1E+3` becomes `1000.00` and
+  `-0.00` becomes `0.00`. An integer stays the integer it was;
+- a timestamp is its instant in UTC, and in a timezone-free field its UTC wall time: an offset is
+  converted, and text without one is UTC;
+- a UUID is lower case, and a date is its day.
+
+`migration/200` pins these forms; its tables write them as the `query/` vectors write the same
+values. `errors/113`-`120` pin the refusals at the `write` stage.
+
+Before 7 October 2026 a value went to the driver as the application gave it. Measured through
+`Session.save` on PostgreSQL 15 and ClickHouse 24.8, from both libraries:
+- a decimal with more fractional digits than its column was rounded by PostgreSQL and truncated by
+  ClickHouse;
+- a decimal past its precision was stored by the reference's ClickHouse driver with a digit changed;
+- an integer outside int32 wrapped to the opposite sign in ClickHouse from TypeScript;
+- `NaN` was stored as NaN by PostgreSQL and reached ClickHouse as 0.00 from TypeScript;
+- ClickHouse stored 2026-02-30 as 2026-03-02, and a timestamp made from a number or from words;
+- PostgreSQL dropped the offset of a timestamp written to a timezone-free column, and ClickHouse
+  refused it.
 
 ## 9. Capability tiers
 

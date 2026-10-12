@@ -139,6 +139,12 @@ function convert(value: unknown, type: string): unknown {
 /** One value on the way *in*, as a JSON-safe form ClickHouse will accept. */
 function outbound(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString()
+  // JSON has no NaN and no infinity, and `JSON.stringify` writes null for them, which ClickHouse
+  // stored as NULL in a nullable column and as 0 in any other. Quoted, the server reads them as the
+  // values themselves (measured on 24.8 and 26.9; the bare token `nan` is refused).
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    return Number.isNaN(value) ? 'nan' : value > 0 ? 'inf' : '-inf'
+  }
   if (value instanceof Timestamp || value instanceof Date) {
     // Date remains a valid millisecond-resolution input; Timestamp retains six digits.
     // Both serialize UTC parts, independently of the process timezone.

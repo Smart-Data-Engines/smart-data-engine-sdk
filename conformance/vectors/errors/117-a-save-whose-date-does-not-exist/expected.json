@@ -1,0 +1,30 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Entry\\.day is date and this row gives it a value that is not a date",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Entry",
+      "values": {
+        "amount": "1.230",
+        "at": null,
+        "count": 1,
+        "day": "2026-10-07",
+        "id": "e-1"
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Entry",
+      "values": {
+        "amount": "1.230",
+        "at": null,
+        "count": 1,
+        "day": "2026-02-30",
+        "id": "e-2"
+      }
+    }
+  },
+  "why": "PostgreSQL refused 30 February and ClickHouse stored 2 March. A date is checked as a date filter is: YYYY-MM-DD text of a day that exists."
+}

@@ -98,7 +98,13 @@ def _text(value: str) -> str:
     return value
 
 
-def _decimal(value: Any) -> Decimal:
+def exact_decimal(value: Any) -> Decimal:
+    """A finite decimal given as ``Decimal``, an integer or decimal text, or ``QueryRefused``.
+
+    The forms a value of a decimal field takes, in a filter and in a row alike (format contract
+    section 8b): one grammar for the text, so that a row and a read agree about what a decimal is.
+    The caller decides how large a value may be.
+    """
     if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
         raise QueryRefused("decimal query values require Decimal, integer or decimal text")
     if (
@@ -110,11 +116,17 @@ def _decimal(value: Any) -> Decimal:
     ):
         raise QueryRefused("invalid decimal query value")
     try:
-        number = Decimal(value)
+        # A `Decimal` is immutable, and a copy of one would cost every write that gives one.
+        number = value if type(value) is Decimal else Decimal(value)
     except InvalidOperation:
         raise QueryRefused("invalid decimal query value") from None
     if not number.is_finite():
         raise QueryRefused("decimal query values must be finite")
+    return number
+
+
+def _decimal(value: Any) -> Decimal:
+    number = exact_decimal(value)
     # Check before formatting: a compact exponent must not allocate an unbounded parameter.
     exponent = number.as_tuple().exponent
     assert isinstance(exponent, int)

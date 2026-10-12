@@ -1,0 +1,30 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Entry\\.count is int32 and this row gives it an integer outside int32",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Entry",
+      "values": {
+        "amount": "1.230",
+        "at": null,
+        "count": 1,
+        "day": "2026-10-07",
+        "id": "e-1"
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Entry",
+      "values": {
+        "amount": "1.230",
+        "at": null,
+        "count": 2147483648,
+        "day": "2026-10-07",
+        "id": "e-2"
+      }
+    }
+  },
+  "why": "2^31 is one past int32. ClickHouse, sent it as JSON from TypeScript, stored -2147483648: the opposite sign, and a successful write."
+}
