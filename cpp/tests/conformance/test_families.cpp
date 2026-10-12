@@ -28,8 +28,9 @@ const std::map<std::string, int>& tier_of_family() {
 
 /// The families this suite has a runner for, each in its own file.
 const std::set<std::string>& run_here() {
-  static const std::set<std::string> families = {"canonical", "model",   "routing",  "errors",
-                                                 "signature", "hashing", "telemetry"};
+  static const std::set<std::string> families = {"canonical", "model",   "routing",   "errors",
+                                                 "signature", "hashing", "telemetry", "schema",
+                                                 "query"};
   return families;
 }
 
