@@ -31,6 +31,7 @@ from ..explain import (
     QueryPlanRefused,
     postgres_findings,
 )
+from ..generation import EPOCH_COLUMN
 from ..layout import POSTGRES_TYPES
 from ..logging import log
 from ..migration import key_columns, same_width
@@ -460,7 +461,9 @@ class PostgresEngine:
                     f"that fails in your request path or, worse, one that succeeds and hands the "
                     f"value back as something else."
                 )
-            extra = sorted(set(actual) - set(columns))
+            # The generation column is the library's own, added by provisioning for a map with
+            # write generations: naming it fired the event on every start of such a deployment.
+            extra = sorted(set(actual) - set(columns) - {EPOCH_COLUMN})
             if extra:
                 log("sde.schema.extra_columns", table=table, columns=extra)
 

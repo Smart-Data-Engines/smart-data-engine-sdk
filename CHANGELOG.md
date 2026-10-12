@@ -8,6 +8,12 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: `sde.schema.extra_columns` named the library's own generation column** (Python). The event
+is for a column added outside SDE. From contract 4 a table carries `__sde_write_epoch`, which
+provisioning adds for a map with write generations, and every schema check named it. An alert on the
+event fired on every start of every such deployment, about a column that is ours. A column a client
+adds is still named.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
