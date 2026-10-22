@@ -373,7 +373,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config liblz4-dev libcurl4-openssl-dev
+            build-essential cmake ninja-build pkg-config liblz4-dev libzstd-dev libcurl4-openssl-dev
           cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOB_BUILD_TESTS=OFF
           cmake --build engine/build --target ob_tcp_server orderbook_shared
           engine/build/ob_tcp_server --version
@@ -457,7 +457,7 @@ jobs:
           pytest tests/test_orderbook_slice.py tests/test_orderbook_session_slice.py \
             tests/test_orderbook_tcp.py tests/test_orderbook_adapter.py \
             tests/test_orderbook_three_engines.py tests/test_orderbook_trading_example.py \
-            -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
+            tests/test_orderbook_books.py -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
 
       # The TypeScript adapter against the same two servers, and the same book written by one
@@ -470,7 +470,7 @@ jobs:
           SDE_PYTHON: python
         run: |
           export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
-          npx vitest run tests/orderbook.test.ts tests/orderbook.slice.test.ts \
+          npx vitest run tests/orderbook.test.ts tests/orderbook.slice.test.ts tests/orderbook.books.test.ts \
             --reporter=json --outputFile="$RUNNER_TEMP/sde-orderbook-ts.json"
           node -e '
             const report = require(process.env.RUNNER_TEMP + "/sde-orderbook-ts.json")

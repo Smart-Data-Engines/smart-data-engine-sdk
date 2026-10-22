@@ -29,6 +29,8 @@
  * implementation. Anything the format contract left implicit had nowhere to hide.
  */
 
+export { BookStream, bookDiff, ENGINE_DEPTH, Resync } from './books.js'
+export type { BookEngine, BookSink, BookStreamOptions, BookUpdate, ComposedBook, Level, LevelInput, Mode, Side, StreamStats } from './books.js'
 export { CanonicalError, canonicalBytes, canonicalString, compareCodePoints, digest16 } from './canonical.js'
 export {
   DeclarationError,

@@ -1,0 +1,18 @@
+{
+ "kind": "diff",
+ "name": "a removal goes before a new price",
+ "side": "bid",
+ "before": [
+  [100, 5, 1],
+  [99, 3, 1]
+ ],
+ "after": [
+  [101, 2, 1],
+  [99, 3, 1]
+ ],
+ "diff": [
+  [100, 0, 0],
+  [101, 2, 1]
+ ],
+ "why": "a full side has no room for a new price until the removals are applied"
+}

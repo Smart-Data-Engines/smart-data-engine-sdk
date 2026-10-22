@@ -1,0 +1,88 @@
+{
+ "kind": "stream",
+ "name": "without a time, the machine's clock, never before the side's last",
+ "mode": "incremental",
+ "resync": {
+  "updates": 1000,
+  "seconds": 60
+ },
+ "wall_ns": 15,
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [101, 2, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "at": 2,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [101, 2, 1],
+    [98, 4, 2]
+   ],
+   "ts": 30
+  },
+  {
+   "at": 3,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "bid",
+   "ts": 15,
+   "levels": [
+    [100, 0, 0],
+    [101, 2, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "bid",
+   "ts": 30,
+   "levels": [
+    [99, 0, 0],
+    [98, 4, 2]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 30,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  }
+ ]
+}

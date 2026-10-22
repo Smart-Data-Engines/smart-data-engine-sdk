@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from ._usage import SessionUsage, session_call, session_owner
+from .books import BookStream, Resync
 from .bulk import batch_columns, bulk_writer, snapshot_rows
 from .errors import (
     BulkWriteRefused,
@@ -105,6 +106,31 @@ def _storage_refusal(exc: BaseException) -> str:
     if getattr(cause, "sqlstate", None) == "42501" or "Code: 497" in str(cause):
         return "refused"
     return "failed"
+
+
+class _BookSink:
+    """A book stream's sink: each update one write of the entity, through the session that opened
+    the stream, so placement, ownership and telemetry are the session's own."""
+
+    def __init__(self, session: Session, target: str, shape: OperationShape, symbol: str,
+                 exchange: str) -> None:
+        self._session = session
+        self._target = target
+        self._shape = shape
+        self._symbol = symbol
+        self._exchange = exchange
+
+    def send_whole(self, side: str, levels: list[tuple[int, int, int]], timestamp_ns: int) -> None:
+        self._session._book_write(self._target, self._shape, symbol=self._symbol,
+                                  exchange=self._exchange, side=side, levels=levels,
+                                  timestamp_ns=timestamp_ns, whole=True)
+
+    def send_changes(
+        self, side: str, levels: list[tuple[int, int, int]], timestamp_ns: int
+    ) -> None:
+        self._session._book_write(self._target, self._shape, symbol=self._symbol,
+                                  exchange=self._exchange, side=side, levels=levels,
+                                  timestamp_ns=timestamp_ns, whole=False)
 
 
 class Session:
@@ -582,6 +608,85 @@ class Session:
         finally:
             self._observe(shape, started, rows=len(snapshot), failed=failed)
 
+    @session_call
+    def book_stream(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        mode: str = "incremental",
+        resync: Resync | None = None,
+    ) -> BookStream:
+        """A stream of one book of ``entity`` - one symbol on one exchange - to the orderbook
+        engine, sent whole or as its changes (:mod:`sde.books`).
+
+        The entity's group must be placed on the orderbook engine, which reads an update by price
+        and replaces a side whole (``MREPLACE``): refused otherwise, and refused for a server that
+        does not announce ``replace_side``, before anything is sent. Each update the stream sends
+        is one write of the entity, under this session's rules and timed like ``save_many``'s.
+        """
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, _ = self._target(shape, fresh=False)
+        supports = getattr(engine, "supports_replace_side", None)
+        if supports is None:
+            raise EngineError(
+                f"{entity} is placed on an engine that does not take a book by price: a book "
+                f"stream writes to the orderbook engine, which applies an update by price and "
+                f"replaces a side whole"
+            )
+        if not supports():
+            raise EngineError(
+                "this orderbook server does not replace a side of a book (capability "
+                "replace_side), which a book stream needs: in full mode for every update, in "
+                "incremental mode for each resync. Upgrade the server; nothing was sent."
+            )
+        check = getattr(engine, "check_book", None)
+        if check is not None:
+            check(symbol, exchange)
+        sink = _BookSink(self, target, shape, symbol, exchange)
+        return BookStream(sink, mode=mode, resync=resync)
+
+    @session_call
+    def _book_write(
+        self,
+        target: str,
+        shape: OperationShape,
+        *,
+        symbol: str,
+        exchange: str,
+        side: str,
+        levels: list[tuple[int, int, int]],
+        timestamp_ns: int,
+        whole: bool,
+    ) -> None:
+        """One update of a book stream: a whole side, or changes by price."""
+        engine, materialization = self._target(shape, fresh=False)
+        if self._placement.placement_of(shape.group).also_write:
+            # Unreachable while a map refuses copies of a group without generations, which every
+            # group on the orderbook engine is. Refused rather than skipped if that ever changes:
+            # a copy that misses the stream's updates is a copy that is silently wrong.
+            raise EngineError(
+                f"{target} has copies being written, and a book stream writes only the source"
+            )
+        name = "replace_levels" if whole else "apply_levels"
+        write = getattr(engine, name, None)
+        if write is None:
+            raise EngineError(f"{target} is placed on an engine that does not take a book by price")
+        table = materialization.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        try:
+            write(table, symbol=symbol, exchange=exchange, side=side, timestamp_ns=timestamp_ns,
+                  levels=levels)
+            self._session_usage.check()
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=len(levels), failed=failed)
+
     # --- dual write ----------------------------------------------------------------------------
 
     def _fan_out(
@@ -804,6 +909,65 @@ class Session:
             self._observe(shape, started, rows=returned, failed=failed, plan=plan)
 
     @session_call
+    def book_at(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        at_ns: int,
+        depth: int | None = None,
+        fresh: bool = False,
+    ) -> dict[str, list[tuple[int, int, int]]]:
+        """The book of ``entity`` for one symbol on one exchange as of ``at_ns``, composed by the
+        orderbook engine from what was written - by price, in time order: ``{"bid": [...],
+        "ask": [...]}``, each side best first as (price, quantity, order count), at most ``depth``
+        levels a side.
+
+        The read side of :meth:`book_stream`: a stream that sends only changes stores only
+        changes, and this answers the book they make. Recorded as a range read of the entity's
+        time, which is what it is: a book is its history up to ``at_ns``.
+        """
+        if not isinstance(fresh, bool):
+            raise QueryRefused("fresh must be a bool")
+        target = self._entity(entity)
+
+        def field(name: str) -> str:
+            try:
+                return next(iter(self._fields_in(entity, {name: None})))
+            except ModelPlanningError as exc:
+                raise QueryRefused(
+                    f"{entity} is not a book: it has no field {name!r} ({exc})"
+                ) from exc
+
+        moment = field("timestamp_ns")
+        equal = sorted((field("symbol"), field("exchange")))
+        shape = self._shape(target, "range_read", (moment,))
+        engine, material = self._target(shape, fresh=fresh)
+        read = getattr(engine, "book_at", None)
+        if read is None:
+            raise QueryRefused(
+                f"{entity} is placed on an engine that does not compose a book: the orderbook "
+                f"engine does"
+            )
+        table = material.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed, returned = False, 0
+        try:
+            book: dict[str, list[tuple[int, int, int]]] = read(
+                table, symbol=symbol, exchange=exchange, at_ns=at_ns, depth=depth
+            )
+            self._session_usage.check()
+            returned = sum(len(levels) for levels in book.values())
+            return book
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=returned, failed=failed,
+                          predicates={"equal": equal, "ranged": moment})
+
+    @session_call
     def count(
         self, entity: str, *, where: Mapping[str, Any] | None = None,
         bounds: Range | None = None, fresh: bool = False,
@@ -945,11 +1109,13 @@ class Session:
         rows: int,
         failed: bool,
         plan: ReadPlan | None = None,
+        predicates: Mapping[str, Any] | None = None,
     ) -> None:
         """Hand one observation to the recorder, if there is one.
 
         The timing call is skipped entirely when telemetry is off, which is why `started` is
         passed in rather than measured here: with no recorder this method is one attribute check.
+        A read without a plan - a book's - names what it filtered on as ``predicates``.
         """
         recorder = self._recorder
         if recorder is None:
@@ -962,7 +1128,7 @@ class Session:
             nanoseconds=perf_counter_ns() - started,
             rows=rows,
             failed=failed,
-            **({} if plan is None else _predicates(plan)),
+            **(_predicates(plan) if plan is not None else dict(predicates or {})),
         )
 
     # --- transactions ----------------------------------------------------------------------
