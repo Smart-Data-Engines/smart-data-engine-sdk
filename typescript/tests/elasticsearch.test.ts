@@ -1,4 +1,5 @@
 /** The TypeScript Elasticsearch adapter without a server: its profile, its JSON and its refusals. */
+import { readFileSync } from 'node:fs'
 import { inspect } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
@@ -207,5 +208,21 @@ describe('what the adapter refuses', () => {
 
   it('lets the orderbook engine refuse a search by name', () => {
     expect(() => searchEngine(new OrderbookEngine({ host: '127.0.0.1', port: 1 }))).toThrow(SearchRefused)
+  })
+})
+
+// Written by conformance/tools/elasticsearch_vectors.py and read by the Python tests too, so that a
+// fence one library provisions the other reads: the processor is compared byte for byte.
+const FENCE_PROCESSORS = JSON.parse(
+  readFileSync(new URL('../../conformance/fence-processors.json', import.meta.url), 'utf8'),
+) as { cases: Record<string, Record<string, string>>; processors: Record<string, unknown> }
+
+describe('the write fence', () => {
+  it('renders the same pipeline processor as the Python library', async () => {
+    const { fenceProcessor } = await import('../src/engines/_write-fences.js')
+    expect(Object.keys(FENCE_PROCESSORS.cases)).toHaveLength(5)
+    for (const [name, constraints] of Object.entries(FENCE_PROCESSORS.cases)) {
+      expect(fenceProcessor(constraints), name).toEqual(FENCE_PROCESSORS.processors[name])
+    }
   })
 })

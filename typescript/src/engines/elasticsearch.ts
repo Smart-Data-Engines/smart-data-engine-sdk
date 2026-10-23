@@ -33,6 +33,8 @@ import type { Row } from '../session.js'
 import { Timestamp } from '../timestamp.js'
 import { verifiedTlsOptions } from './_clickhouse-connection.js'
 import { parseExactJson, stringifyExactJson } from './_json.js'
+import { ElasticsearchFences } from './_write-fences.js'
+import { EPOCH_COLUMN, WriteFence } from '../write-fence.js'
 
 /** The most this adapter reads of one response. A page is at most 1001 documents. */
 export const MAX_RESPONSE_BYTES = 256 * 1024 * 1024
@@ -190,6 +192,8 @@ interface Index {
   readonly entity: string
   readonly columns: Readonly<Record<string, string>>
   readonly key: readonly string[]
+  /** The index has a write generation field: every document a session writes carries one. */
+  readonly fenced: boolean
 }
 
 function rowOf(index: Index, source: Readonly<Record<string, unknown>>): Row {
@@ -230,6 +234,20 @@ export class ElasticsearchEngine {
 
   toJSON(): string {
     return this.toString()
+  }
+
+  /**
+   * The write-fence protocol on this index (`write-fences.md`), for a provisioning login. Its pipeline
+   * and its write block need the cluster privilege `manage_pipeline` and `manage` on the index;
+   * reading its state at session open needs `read_pipeline`.
+   */
+  writeFence(table: string, options: { projectId: string }): WriteFence {
+    this.indexes.delete(table)
+    return new WriteFence(new ElasticsearchFences(async (method, path, body) => {
+      // A fence changes the index's mapping and settings: forget what was read of it.
+      this.indexes.clear()
+      return this.request(method, path, body)
+    }), table, options)
   }
 
   /** Open the pool and authenticate - `_security/_authenticate`, which any login may ask. */
@@ -424,7 +442,13 @@ export class ElasticsearchEngine {
     const properties = (mapping['properties'] ?? {}) as Record<string, Record<string, unknown>>
     const columns: Record<string, string> = {}
     for (const [column, field] of Object.entries(properties).sort(([a], [b]) => (a < b ? -1 : 1))) {
-      if (column !== TOKENS_FIELD) columns[column] = layoutType(column, field)
+      if (column !== TOKENS_FIELD && column !== EPOCH_COLUMN) columns[column] = layoutType(column, field)
+    }
+    // The write generation is the fence's field, not the layout's: present exactly as the fence adds
+    // it, or absent.
+    const fenced = EPOCH_COLUMN in properties
+    if (fenced && JSON.stringify(properties[EPOCH_COLUMN]) !== JSON.stringify({ type: 'long' })) {
+      throw new EngineError(`index ${name} maps ${EPOCH_COLUMN} as something other than a long`)
     }
     if (key.some((column) => typeof column !== 'string' || columns[column] === undefined)) {
       throw new EngineError(`index ${name} names a key field it does not map`)
@@ -435,14 +459,18 @@ export class ElasticsearchEngine {
     // token field mapped as text or a disabled _source would each change an answer while every type
     // still matched. It is what this library creates or nothing.
     const layout = { tables: { [entity]: name }, columns: { [entity]: columns }, indexes: [], partitionBy: {} }
-    if (!sameJson(elasticsearchMapping(layout, entity, { [entity]: key as string[] }), mapping)) {
+    const rendered = elasticsearchMapping(layout, entity, { [entity]: key as string[] }) as {
+      properties: Record<string, unknown>
+    }
+    if (fenced) rendered.properties[EPOCH_COLUMN] = { type: 'long' }
+    if (!sameJson(rendered, mapping)) {
       throw new EngineError(
         `index ${name} has a mapping this library would not create: something beyond each ` +
           "field's type differs - a field parameter, the token fields or _source - and each of " +
           'those can change an answer',
       )
     }
-    const index = { name, entity, columns, key: key as string[] }
+    const index = { name, entity, columns, key: key as string[], fenced }
     this.indexes.set(name, index)
     return index
   }
@@ -643,7 +671,8 @@ export class ElasticsearchEngine {
 
 function documentOf(index: Index, values: Readonly<Row>): { id: string; source: Record<string, unknown> } {
   try {
-    return document(index.columns, index.key, values)
+    const stored = index.fenced ? { ...index.columns, [EPOCH_COLUMN]: 'long' } : index.columns
+    return document(stored, index.key, values)
   } catch (error) {
     throw new EngineError(`${index.name}: ${(error as Error).message}`)
   }

@@ -1,8 +1,10 @@
 /** Native fencing DDL for dedicated provisioning connections. No placement decision lives here. */
 import { EngineError, MigrationRefused } from '../errors.js'
-import { QUOTE } from '../schema.js'
+import { indexNameRefusal, QUOTE } from '../schema.js'
 import type { Row } from '../session.js'
-import { DRAIN_TABLE, EPOCH_COLUMN, fenceState, type FenceBackend, type FenceMetadata } from '../write-fence.js'
+import {
+  DRAIN_TABLE, EPOCH_COLUMN, FENCE_PREFIX, fenceState, type ColumnState, type FenceBackend, type FenceMetadata,
+} from '../write-fence.js'
 
 interface PgTransport {
   query(sql: string, values?: readonly unknown[]): Promise<readonly Row[]>
@@ -195,5 +197,262 @@ export async function fenceIO<T>(operation: () => Promise<T>): Promise<T> {
     if (error instanceof EngineError || error instanceof MigrationRefused) throw error
     const detail = error instanceof Error ? error.message : String(error)
     throw new EngineError('write-fence operation failed; inspect or resume its state: ' + detail)
+  }
+}
+
+// --- Elasticsearch ---------------------------------------------------------------------------------
+
+/** `request(method, path, body)`: the adapter's own transport, one request, no replay. */
+export type ElasticsearchRequest = (method: string, path: string, body?: unknown) => Promise<[number, unknown]>
+
+const PIPELINE_CONTRACT = 1
+const HOLDS = /^(?:setup|hold_[0-9a-f]{32})$/
+const BOUND = /^(min|max)_([1-9][0-9]*)$/
+
+function indexName(index: string): string {
+  const refusal = indexNameRefusal(index)
+  if (refusal !== null) throw new MigrationRefused(`'${index}' is not an Elasticsearch index name: ${refusal}`)
+  return index
+}
+
+/** The ingest pipeline holding `index`'s write fence: one per index, named after it. */
+export function fencePipeline(index: string): string {
+  return FENCE_PREFIX + indexName(index)
+}
+
+/**
+ * The one processor of a fence pipeline, rendered from its constraints and nothing else - the same
+ * bytes as Python's `fence_processor`, so that a fence one library provisions the other reads.
+ */
+export function fenceProcessor(constraints: Readonly<Record<string, string>>): Record<string, unknown> {
+  const names = Object.keys(constraints).filter((name) => name.startsWith(FENCE_PREFIX)).sort()
+  const held = names.some((name) => HOLDS.test(name.slice(FENCE_PREFIX.length)))
+  const bounds = names.map((name) => BOUND.exec(name.slice(FENCE_PREFIX.length))).filter((match) => match !== null)
+  const lower = bounds.filter((match) => match[1] === 'min').map((match) => Number(match[2])).sort((a, b) => a - b)
+  const upper = bounds.filter((match) => match[1] === 'max').map((match) => Number(match[2])).sort((a, b) => a - b)
+  const compare = [...lower.map((value) => `v < ${value}L`), ...upper.map((value) => `v > ${value}L`)]
+  // No constant conditions inside a script: Painless refuses `if (true)` as an extraneous block.
+  const script = held
+    ? 'true'
+    : bounds.length === 0
+      ? 'false'
+      : `def e = ctx['${EPOCH_COLUMN}']; ` +
+        'if (!(e instanceof Integer || e instanceof Long)) { return true; } ' +
+        'long v = ((Number) e).longValue(); ' +
+        `return ${compare.join(' || ')};`
+  const admits = lower.length > 0 && upper.length > 0
+    ? `from ${Math.max(...lower)} to ${Math.min(...upper)}`
+    : 'none recorded'
+  const message = held
+    ? 'a write barrier holds this index: no write is admitted until it is released'
+    : `the write generation {{${EPOCH_COLUMN}}} is not one this index admits (generations ${admits})`
+  return { fail: { if: script, message } }
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(sortKeys(left)) === JSON.stringify(sortKeys(right))
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]))
+  }
+  return value
+}
+
+/**
+ * The write-fence protocol on Elasticsearch: a pipeline holds the constraints, a block drains. The
+ * twin of Python's `ElasticsearchFences`; `docs/write-fences.md` gives the reasons.
+ */
+export class ElasticsearchFences implements FenceBackend {
+  constructor(private readonly request: ElasticsearchRequest) {}
+
+  private async call(method: string, path: string, body?: unknown): Promise<[number, unknown]> {
+    try {
+      return await this.request(method, path, body)
+    } catch (error) {
+      if (error instanceof EngineError) {
+        throw new EngineError(`write-fence operation failed; inspect or resume its state: ${error.message}`)
+      }
+      throw error
+    }
+  }
+
+  private async index(table: string): Promise<[string, Record<string, unknown>]> {
+    // Every operation starts here or in addColumn and drain, which check the same: the name goes
+    // into a path, so it is refused unless it is an index name ("a/../_cluster").
+    indexName(table)
+    const [status, body] = await this.call('GET', `/${table}/_settings`)
+    const settings = status === 200
+      ? ((body as Record<string, { settings?: { index?: Record<string, unknown> } }> | null)?.[table]?.settings?.index)
+      : undefined
+    if (settings === undefined || typeof settings['uuid'] !== 'string') {
+      throw new EngineError(`write-fence index ${table} does not exist`)
+    }
+    return [settings['uuid'], settings]
+  }
+
+  private async pipeline(table: string): Promise<[Record<string, unknown> | null, number | null]> {
+    const [status, body] = await this.call('GET', `/_ingest/pipeline/${fencePipeline(table)}`)
+    if (status === 404) return [null, null]
+    const document = status === 200 ? (body as Record<string, unknown> | null)?.[fencePipeline(table)] : undefined
+    if (document === null || typeof document !== 'object') {
+      throw new EngineError(`the write-fence pipeline of ${table} could not be read (${status})`)
+    }
+    const version = (document as Record<string, unknown>)['version']
+    return [document as Record<string, unknown>, typeof version === 'number' && Number.isInteger(version) ? version : null]
+  }
+
+  private constraintsOf(table: string, uuid: string, document: Record<string, unknown> | null): Record<string, string> {
+    if (document === null) return {}
+    const outer = document['_meta']
+    const meta = outer !== null && typeof outer === 'object' ? (outer as Record<string, unknown>)['sde'] : undefined
+    const record = meta !== null && typeof meta === 'object' ? meta as Record<string, unknown> : null
+    if (record === null || record['contract'] !== PIPELINE_CONTRACT || record['index'] !== table) {
+      throw new MigrationRefused(`the pipeline ${fencePipeline(table)} is not a write fence of this library`)
+    }
+    // The fence of an earlier index of the same name: nothing of it applies to this one.
+    if (record['uuid'] !== uuid) return {}
+    const constraints = record['constraints']
+    if (
+      constraints === null || typeof constraints !== 'object' ||
+      !Object.values(constraints).every((value) => typeof value === 'string')
+    ) {
+      throw new MigrationRefused(`the write-fence pipeline of ${table} has unreadable constraints`)
+    }
+    if (!sameJson(document['processors'], [fenceProcessor(constraints as Record<string, string>)])) {
+      throw new MigrationRefused(
+        `the write-fence pipeline of ${table} was changed outside this library: its processor is not ` +
+          'the one its constraints render',
+      )
+    }
+    return { ...(constraints as Record<string, string>) }
+  }
+
+  async metadata(table: string): Promise<FenceMetadata> {
+    const [uuid, settings] = await this.index(table)
+    const final = settings['final_pipeline']
+    if (final !== undefined && final !== '_none' && final !== fencePipeline(table)) {
+      throw new MigrationRefused(
+        `index ${table} runs another final pipeline (${String(final)}); a write fence cannot be installed beside it`,
+      )
+    }
+    const [status, body] = await this.call('GET', `/${table}/_mapping`)
+    const properties = status === 200
+      ? (body as Record<string, { mappings?: { properties?: Record<string, unknown> } }> | null)?.[table]?.mappings?.properties
+      : undefined
+    if (properties === undefined || properties === null || typeof properties !== 'object') {
+      throw new EngineError(`the mapping of ${table} could not be read (${status})`)
+    }
+    const field = properties[EPOCH_COLUMN]
+    const column: ColumnState = field === undefined ? 'absent' : sameJson(field, { type: 'long' }) ? 'valid' : 'conflict'
+    const [document] = await this.pipeline(table)
+    const constraints = this.constraintsOf(table, uuid, document)
+    const blocked = String((settings['blocks'] as Record<string, unknown> | undefined)?.['write'] ?? 'false').toLowerCase() === 'true'
+    const held = Object.keys(constraints).some((name) => HOLDS.test(name.slice(FENCE_PREFIX.length)))
+    if (blocked && !held) {
+      if (!Object.keys(constraints).some((name) => name.startsWith(FENCE_PREFIX + 'owner_'))) {
+        throw new MigrationRefused(
+          `index ${table} is write-blocked and carries no write fence of this library: somebody else ` +
+            'blocked it, and this library does not lift that',
+        )
+      }
+      constraints[FENCE_PREFIX + 'setup'] = '0'
+    }
+    return { identity: uuid, column, constraints }
+  }
+
+  async addColumn(table: string): Promise<void> {
+    indexName(table)
+    const [status] = await this.call('PUT', `/${table}/_mapping`, { properties: { [EPOCH_COLUMN]: { type: 'long' } } })
+    if (status !== 200) throw new EngineError(`adding ${EPOCH_COLUMN} to ${table} failed (${status})`)
+  }
+
+  private async write(
+    table: string,
+    change: (constraints: Record<string, string>) => Record<string, string>,
+  ): Promise<Record<string, string>> {
+    const [uuid, settings] = await this.index(table)
+    const [document, version] = await this.pipeline(table)
+    const before = this.constraintsOf(table, uuid, document)
+    const after = change({ ...before })
+    const recorded = ((document?.['_meta'] as Record<string, unknown> | undefined)?.['sde'] ?? null) as Record<string, unknown> | null
+    if (!sameJson(after, before) || recorded === null || recorded['uuid'] !== uuid) {
+      const sorted = Object.fromEntries(Object.entries(after).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      const body = {
+        description: `Smart Data Engine write fence of ${table}`,
+        version: (version ?? 0) + 1,
+        _meta: { sde: { contract: PIPELINE_CONTRACT, index: table, uuid, constraints: sorted } },
+        processors: [fenceProcessor(after)],
+      }
+      let path = `/_ingest/pipeline/${fencePipeline(table)}`
+      if (document !== null) path += `?if_version=${version ?? 0}`
+      const [status] = await this.call('PUT', path, body)
+      if (status === 409) {
+        throw new MigrationRefused(
+          `the write fence of ${table} changed while this command ran: another executor is provisioning it. ` +
+            'Serialize commands in one project state directory.',
+        )
+      }
+      if (status !== 200) throw new EngineError(`writing the write fence of ${table} failed (${status})`)
+    }
+    if (settings['final_pipeline'] !== fencePipeline(table)) {
+      const [status] = await this.call('PUT', `/${table}/_settings`, { 'index.final_pipeline': fencePipeline(table) })
+      if (status !== 200) throw new EngineError(`installing the write fence on ${table} failed (${status})`)
+    }
+    return after
+  }
+
+  async addConstraint(table: string, name: string, expression: string): Promise<void> {
+    await this.write(table, (constraints) => {
+      if ((constraints[name] ?? expression) !== expression) {
+        throw new MigrationRefused(`write fence constraint ${name} has an unexpected predicate`)
+      }
+      return { ...constraints, [name]: expression }
+    })
+  }
+
+  async dropConstraint(table: string, name: string): Promise<void> {
+    const after = await this.write(table, (constraints) =>
+      Object.fromEntries(Object.entries(constraints).filter(([key]) => key !== name)))
+    if (!Object.keys(after).some((key) => HOLDS.test(key.slice(FENCE_PREFIX.length)))) {
+      // The last hold: the shard-level block goes with it.
+      const [, settings] = await this.index(table)
+      if (String((settings['blocks'] as Record<string, unknown> | undefined)?.['write'] ?? 'false').toLowerCase() === 'true') {
+        const [status] = await this.call('PUT', `/${table}/_settings`, { 'index.blocks.write': false })
+        if (status !== 200) throw new EngineError(`lifting the write block of ${table} failed (${status})`)
+      }
+    }
+  }
+
+  async drain(table: string, options: { projectId: string; hold: string }): Promise<void> {
+    // Repeated on a retry: the block proves that every operation already on the shards has finished.
+    indexName(table)
+    let [status, body] = await this.call('PUT', `/${table}/_block/write`)
+    let response = (body ?? {}) as { acknowledged?: unknown; shards_acknowledged?: unknown; indices?: { name?: string; blocked?: unknown }[] }
+    if (status === 200 && response.acknowledged === true && (response.indices ?? []).length === 0) {
+      // Already blocked, and a block added again proves nothing: lifted and added again, while the
+      // hold already in the pipeline refuses every new write at its arrival.
+      const [lifted] = await this.call('PUT', `/${table}/_settings`, { 'index.blocks.write': false })
+      if (lifted !== 200) throw new EngineError(`renewing the write barrier on ${table} failed (${lifted})`)
+      ;[status, body] = await this.call('PUT', `/${table}/_block/write`)
+      response = (body ?? {}) as typeof response
+    }
+    if (
+      status !== 200 || response.acknowledged !== true || response.shards_acknowledged !== true ||
+      !(response.indices ?? []).some((entry) => entry.name === table && entry.blocked === true)
+    ) {
+      throw new EngineError(
+        `the write barrier on ${table} was not confirmed by every shard (${status}); the index may be closed ` +
+          'to writes - inspect or resume',
+      )
+    }
+    held(await this.metadata(table), options.projectId, options.hold)
+  }
+
+  async restore(table: string, options: { projectId: string; hold: string }): Promise<void> {
+    // Nothing is detached on Elasticsearch: the block is the drain, and the hold its record.
+    held(await this.metadata(table), options.projectId, options.hold)
   }
 }

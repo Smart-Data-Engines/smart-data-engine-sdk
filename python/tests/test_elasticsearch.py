@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -362,3 +364,17 @@ def test_a_refused_write_names_the_error_type_and_never_the_value() -> None:
             call()
         assert "document_parsing_exception" in str(caught.value)
         assert "secret" not in str(caught.value)
+
+
+
+FENCE_PROCESSORS = Path(__file__).resolve().parents[2] / "conformance" / "fence-processors.json"
+"""Written by conformance/tools/elasticsearch_vectors.py and read by the TypeScript tests too."""
+
+
+def test_a_fence_pipeline_renders_the_same_processor_in_both_languages() -> None:
+    from sde.engines._write_fences import fence_processor
+
+    table = json.loads(FENCE_PROCESSORS.read_text(encoding="utf-8"))
+    assert len(table["cases"]) == 5
+    for name, constraints in table["cases"].items():
+        assert fence_processor(constraints) == table["processors"][name], name

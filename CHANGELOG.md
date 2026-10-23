@@ -18,7 +18,8 @@ Elasticsearch or off it like any other.
   one.
 - The runtime login also needs `read_pipeline`. Provisioning needs `manage` and `manage_pipeline`
   ([`docs/engine-connections.md`](docs/engine-connections.md)).
-- Python first. The TypeScript adapter follows.
+- Both libraries keep it. They render the same pipeline, pinned by `conformance/fence-processors.json`,
+  and a fence one library provisions is read by the other in the live tests.
 
 **New: Elasticsearch in the TypeScript library** (`@smart-data-engines/sde/engines/elasticsearch`).
 The same engine in the same layout as the Python adapter, with the mapping and the documents held
