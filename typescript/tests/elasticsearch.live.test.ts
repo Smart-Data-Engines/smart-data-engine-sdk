@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 
 import { buildModel, entity, loadMap, Session, T, Timestamp, type Row, type SearchPage } from '../src/index.js'
 import { ElasticsearchEngine } from '../src/engines/elasticsearch.js'
+import { elasticsearchMapping } from '../src/schema.js'
 
 const DSN = process.env['SDE_ELASTICSEARCH_DSN']
 const T0 = 1_792_742_400_123_456n
@@ -73,6 +74,22 @@ async function fixture(body: (session: Session, engine: ElasticsearchEngine, ind
 }
 
 const ids = (page: SearchPage) => page.rows.map((row) => Number(row['id']))
+
+type Raw = { request(method: string, path: string, body?: unknown): Promise<[number, unknown]> }
+
+/** A connected engine and a fresh index name, deleted afterwards. */
+async function bare(body: (engine: ElasticsearchEngine, index: string, raw: Raw) => Promise<void>) {
+  const index = 'sde_ts_' + randomBytes(6).toString('hex')
+  const engine = new ElasticsearchEngine(DSN as string)
+  await engine.connect()
+  const raw = engine as unknown as Raw
+  try {
+    await body(engine, index, raw)
+  } finally {
+    await raw.request('DELETE', '/' + index)
+    await engine.close()
+  }
+}
 
 function wire(row: Row): Record<string, unknown> {
   return Object.fromEntries(Object.entries(row).map(([name, value]) => {
@@ -191,6 +208,60 @@ describe.skipIf(DSN === undefined)('Elasticsearch, live', () => {
       process.off('warning', listener)
     }
     expect(warnings).not.toContain('MaxListenersExceededWarning')
+  }, 60_000)
+
+  it('answers a decimal bound with more digits than the column, as PostgreSQL does', async () => {
+    await fixture(async (session) => {
+      const written = rows()
+      await session.saveMany('Reading', written)
+      const amount = (row: Row) => Number(row['amount'])
+      const above = written.filter((row) => amount(row) >= 2.25005).length
+      expect(await session.count('Reading', { bounds: { field: 'amount', low: '2.25005' } })).toBe(BigInt(above))
+      expect(await session.count('Reading', { bounds: { field: 'amount', high: '2.25005' } }))
+        .toBe(BigInt(written.length - above))
+      expect(await session.count('Reading', { where: { amount: '2.25005' } })).toBe(0n)
+      expect(await session.count('Reading', { where: { amount: '2.25' } })).toBe(1n)
+    })
+  }, 60_000)
+
+  it('reads a float32 back as the value it is filtered on', async () => {
+    await bare(async (engine, index) => {
+      const model = buildModel([entity('Gauge', { fields: { id: T.int64, x: T.float32 }, key: ['id'] })])
+      const columns = { id: 'long', x: 'float' }
+      const placement = loadMap({
+        contract: 3, model_version: model.version, map_version: 1,
+        groups: { Gauge: { source: { id: 'es', engine: 'es', layout: { tables: { Gauge: index }, columns: { Gauge: columns } } } } },
+      }, { model })
+      await engine.ensureSchema(placement.groups['Gauge']!.source.layout, { keys: { Gauge: ['id'] } })
+      const session = await Session.open(model, placement, { es: engine })
+      await session.save('Gauge', { id: 1n, x: 0.99999999 })
+      expect(await session.get('Gauge', { id: 1n })).toEqual({ id: 1n, x: 1 })
+      expect(await session.count('Gauge', { where: { x: 1 } })).toBe(1n)
+      expect(await session.count('Gauge', { bounds: { field: 'x', low: 1 } })).toBe(1n)
+      expect(await session.count('Gauge', { bounds: { field: 'x', high: 1 } })).toBe(0n)
+    })
+  }, 60_000)
+
+  it('refuses an index with a parameter this library never sets, and one made for another entity', async () => {
+    await bare(async (engine, index, raw) => {
+      const columns = { id: 'long', body: 'keyword' }
+      const layout = { tables: { Note: index }, columns: { Note: columns }, indexes: [], partitionBy: {} }
+      const mapping = elasticsearchMapping(layout, 'Note', { Note: ['id'] }) as {
+        properties: Record<string, Record<string, unknown>>
+      }
+      mapping.properties['body']!['ignore_above'] = 5
+      const [status] = await raw.request('PUT', '/' + index, { mappings: mapping })
+      expect(status).toBe(200)
+      await expect(engine.validateSchema(layout, { keys: { Note: ['id'] } })).rejects.toThrow(/would not create/)
+      await expect(engine.insert(index, { id: 1n, body: 'x' })).rejects.toThrow(/would not create/)
+    })
+    await bare(async (engine, index) => {
+      const columns = { id: 'long', body: 'keyword' }
+      const other = { tables: { Other: index }, columns: { Other: columns }, indexes: [], partitionBy: {} }
+      const mine = { tables: { Note: index }, columns: { Note: columns }, indexes: [], partitionBy: {} }
+      await engine.ensureSchema(other, { keys: { Other: ['id'] } })
+      await expect(engine.ensureSchema(mine, { keys: { Note: ['id'] } })).rejects.toThrow(/exists for Other/)
+    })
   }, 60_000)
 
   it('keeps the map watermark', async () => {

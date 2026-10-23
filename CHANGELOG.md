@@ -39,6 +39,20 @@ bounded scans, exact counts and `Session.search` from a text index of the librar
   accepted to a loopback address only. `make es-up` starts one with its own CA and prints the DSN.
 - `conformance/vectors/documents/` is the suite's thirteenth family: a row's `_id` and `_source`.
   `schema/019` and `020` pin the mapping. The TypeScript library renders both byte for byte.
+- **Fixed after a second review, in both languages** (§7m):
+  - A decimal no longer depends on the caller's decimal context. At a precision of ten, Python
+    stored an eighteen-digit value rounded, and two keys shared one `_id`.
+  - A `float` field keeps the float32 the engine indexes, so a filter and a read agree. A value
+    past the largest float32 is refused before sending.
+  - A search, a page, a count and the watermark refuse an answer some shard did not contribute to.
+  - An index's whole mapping is compared, not only each field's type. A `normalizer` or a disabled
+    `_source` changed answers while every type matched.
+  - A token longer than one term and a lone surrogate are refused before sending, and a refused
+    write names the engine's error type, never a reason that can quote the value.
+  - A decimal bound with more digits than the column is answered as PostgreSQL answers it.
+  - TypeScript keeps the sign of `-0.0`, and prints no credentials through `inspect` or `JSON`.
+  - Both languages refuse the same DSNs. TypeScript had connected `:secret@` without the secret.
+  - `documents/009` to `013` pin the float32, the token, the negative key and the surrogate.
 
 **New: search, Python and TypeScript** ([`docs/logical-reads.md`](docs/logical-reads.md#search)).
 `Session.search` returns the rows whose chosen text fields hold every token of a query, a page in

@@ -87,14 +87,18 @@ elasticsearch+http://USER:PASSWORD@127.0.0.1:9200/
 Elasticsearch has served TLS by default since 8.0, so plain HTTP is refused for any other host: it
 would carry the credentials in the clear. Credentials are a user and password in the URL, sent as
 Basic authentication, or an `api_key` option - the encoded key Elasticsearch returns - sent as
-`ApiKey`, never both.
+`ApiKey`, never both. The user and password are percent-encoded UTF-8, and a user part (`@` in the
+authority) has a nonempty user: `:secret@` is refused rather than connected without the secret. An
+`api_key` is base64 with its padding. Both adapters read every profile the same way, and neither
+prints the credentials: Python's `repr` and TypeScript's `inspect`, `JSON.stringify` and `String`
+leave them out, of the engine and of the parsed profile.
 
 | Query option | Accepted meaning |
 |---|---|
 | `api_key` | The encoded API key; refused beside a user. |
 | `ca_cert` | Absolute path to a readable PEM CA file, on TLS. Nonempty regular file, at most 1 MiB. |
 | `verify` | Omit or literal `true`, on TLS. Disabling verification is refused. |
-| `connect_timeout` | Positive finite seconds from 0.001 through 2147483.647; default 10. |
+| `connect_timeout` | Seconds from 0.001 through 2147483.647, digits with an optional fraction (no exponent); default 10. |
 | `send_receive_timeout` | The same range; default 30. Socket inactivity, not a total deadline. |
 
 Unknown, repeated and malformed options, a path, a fragment, whitespace and an IPv6 zone are

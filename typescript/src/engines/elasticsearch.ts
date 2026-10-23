@@ -23,7 +23,8 @@ import { isIP } from 'node:net'
 import { isAbsolute } from 'node:path'
 
 import { UsageGate } from '../_usage.js'
-import { document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
+import { canonicalString } from '../canonical.js'
+import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
 import { readRow, type ReadFilter, type ReadPlan } from '../query.js'
@@ -38,6 +39,8 @@ export const MAX_RESPONSE_BYTES = 256 * 1024 * 1024
 const OPTIONS = new Set(['api_key', 'ca_cert', 'connect_timeout', 'send_receive_timeout', 'verify'])
 const IDLE_MS = 20_000
 const WATERMARK = 'sde_map_state'
+/** A shard that fails or times out fails the search, rather than leaving its rows out. */
+const PARTIAL_REFUSED = '?allow_partial_search_results=false'
 
 export interface ElasticsearchConnection {
   readonly host: string
@@ -104,24 +107,40 @@ export function parseDsn(dsn: string): ElasticsearchConnection {
   }
   const caCert = options.get('ca_cert') ?? null
   if (caCert !== null && !isAbsolute(caCert)) refuse('ca_cert is an absolute path')
-  const user = url.username === '' ? null : decodeURIComponent(url.username)
-  const password = decodeURIComponent(url.password)
+  // A user part is present when the authority holds an `@`, empty or not - as Python reads it. The
+  // URL parser reports an empty user as no user, which would drop `:secret@` and connect without it.
+  const authority = (dsn.split('//', 2)[1] ?? '').split(/[/?#]/, 1)[0] ?? ''
+  const user = authority.includes('@') ? decoded(url.username) : null
+  const password = decoded(url.password)
   if (user !== null && options.has('api_key')) refuse('an Elasticsearch DSN gives a user or an api_key, not both')
   let authorization: string | null = null
   if (user !== null) {
-    if (user.includes(':')) refuse('an Elasticsearch user has no colon')
+    if (user === '' || user.includes(':')) refuse('an Elasticsearch user is nonempty and has no colon')
     authorization = 'Basic ' + Buffer.from(`${user}:${password}`, 'utf8').toString('base64')
   } else if (options.has('api_key')) {
     const key = options.get('api_key') as string
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(key)) refuse('api_key is the encoded key Elasticsearch returns')
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(key) || key.length % 4 !== 0) {
+      refuse('api_key is the encoded key Elasticsearch returns')
+    }
     authorization = `ApiKey ${key}`
   }
   const port = url.port === '' ? 9200 : Number(url.port)
-  return Object.freeze({
-    host, port, tls, authorization, caCert,
+  const connection = {
+    host, port, tls, caCert,
     connectTimeoutMs: seconds('connect_timeout', options.get('connect_timeout'), 10),
     sendReceiveTimeoutMs: seconds('send_receive_timeout', options.get('send_receive_timeout'), 30),
-  })
+  }
+  // Not enumerable: whatever prints or serialises the profile does not print the credentials.
+  Object.defineProperty(connection, 'authorization', { value: authorization, enumerable: false })
+  return Object.freeze(connection as ElasticsearchConnection)
+}
+
+function decoded(text: string): string {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return refuse('the user and password of an Elasticsearch DSN are percent-encoded UTF-8')
+  }
 }
 
 function readValue(kind: string, value: unknown): unknown {
@@ -168,6 +187,7 @@ function layoutType(name: string, field: Readonly<Record<string, unknown>>): str
 
 interface Index {
   readonly name: string
+  readonly entity: string
   readonly columns: Readonly<Record<string, string>>
   readonly key: readonly string[]
 }
@@ -195,6 +215,21 @@ export class ElasticsearchEngine {
       // Read and checked now, so a bad CA file is refused before any socket opens.
       verifiedTlsOptions(this.connection.host, this.connection.caCert, 'Elasticsearch')
     }
+  }
+
+  toString(): string {
+    const { host, port, tls, authorization } = this.connection
+    const login = authorization === null ? 'none' : authorization.split(' ', 1)[0]
+    return `ElasticsearchEngine(${tls ? 'https' : 'http'} ${host}:${port}, login=${login})`
+  }
+
+  /** Never the credentials, whatever inspects this object. */
+  [Symbol.for('nodejs.util.inspect.custom')](): string {
+    return this.toString()
+  }
+
+  toJSON(): string {
+    return this.toString()
   }
 
   /** Open the pool and authenticate - `_security/_authenticate`, which any login may ask. */
@@ -358,11 +393,13 @@ export class ElasticsearchEngine {
       const wanted = { ...(layout.columns[entity] ?? {}) }
       const sameColumns = JSON.stringify(Object.entries(found.columns).sort()) ===
         JSON.stringify(Object.entries(wanted).sort())
-      if (!sameColumns || JSON.stringify(found.key) !== JSON.stringify(expected._meta.sde.key)) {
+      const sameKey = JSON.stringify(found.key) === JSON.stringify(expected._meta.sde.key)
+      if (!sameColumns || !sameKey || found.entity !== entity) {
         throw new EngineError(
-          `index ${index} exists with fields ${JSON.stringify(found.columns)} and key ` +
-            `${JSON.stringify(found.key)}, and the layout needs ${JSON.stringify(wanted)} and key ` +
-            `${JSON.stringify(expected._meta.sde.key)}. Elasticsearch changes no field in place.`,
+          `index ${index} exists for ${found.entity} with fields ${JSON.stringify(found.columns)} ` +
+            `and key ${JSON.stringify(found.key)}, and the layout needs ${entity} with ` +
+            `${JSON.stringify(wanted)} and key ${JSON.stringify(expected._meta.sde.key)}. ` +
+            'Elasticsearch changes no field in place.',
         )
       }
     }
@@ -376,7 +413,7 @@ export class ElasticsearchEngine {
     const document = body as Record<string, { mappings?: Record<string, unknown> }> | null
     const mapping = status === 200 ? document?.[name]?.mappings : undefined
     if (mapping === undefined) throw new EngineError(`the mapping of ${name} could not be read: ${errorOf(status, body)}`)
-    const meta = (mapping['_meta'] as { sde?: { key?: unknown } } | undefined)?.sde
+    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown } } | undefined)?.sde
     const key = meta?.key
     if (mapping['dynamic'] !== 'strict' || !Array.isArray(key) || key.length === 0) {
       throw new EngineError(
@@ -392,7 +429,20 @@ export class ElasticsearchEngine {
     if (key.some((column) => typeof column !== 'string' || columns[column] === undefined)) {
       throw new EngineError(`index ${name} names a key field it does not map`)
     }
-    const index = { name, columns, key: key as string[] }
+    const entity = meta?.entity
+    if (typeof entity !== 'string' || entity === '') throw new EngineError(`index ${name} names no entity in _meta.sde`)
+    // The whole mapping, not only each field's type: a normalizer, a null_value, an ignore_above, a
+    // token field mapped as text or a disabled _source would each change an answer while every type
+    // still matched. It is what this library creates or nothing.
+    const layout = { tables: { [entity]: name }, columns: { [entity]: columns }, indexes: [], partitionBy: {} }
+    if (!sameJson(elasticsearchMapping(layout, entity, { [entity]: key as string[] }), mapping)) {
+      throw new EngineError(
+        `index ${name} has a mapping this library would not create: something beyond each ` +
+          "field's type differs - a field parameter, the token fields or _source - and each of " +
+          'those can change an answer',
+      )
+    }
+    const index = { name, entity, columns, key: key as string[] }
     this.indexes.set(name, index)
     return index
   }
@@ -406,7 +456,7 @@ export class ElasticsearchEngine {
       const index = await this.index(table)
       const { id, source } = documentOf(index, values)
       const [status, body] = await this.request('PUT', this.path(table, '_doc', id) + '?refresh=wait_for', source)
-      if (status !== 200 && status !== 201) throw new EngineError(`insert into ${table} failed: ${errorOf(status, body)}`)
+      if (status !== 200 && status !== 201) throw new EngineError(`insert into ${table} failed: ${writeErrorOf(status, body)}`)
     })
   }
 
@@ -422,7 +472,9 @@ export class ElasticsearchEngine {
       }
       const [status, body] = await this.request('POST', '/_bulk?refresh=wait_for', undefined, lines.join('\n') + '\n')
       const result = body as { errors?: boolean; items?: { index?: { status?: number; error?: { type?: string } } }[] } | null
-      if (status !== 200 || result === null) throw new EngineError(`batch insert into ${table} failed: ${errorOf(status, body)}`)
+      if (status !== 200 || result === null) {
+        throw new EngineError(`batch insert into ${table} failed: ${writeErrorOf(status, body)}`)
+      }
       if (result.errors === true) {
         const items = (result.items ?? []).map((item) => item.index ?? {})
         const failed = items.filter((item) => (item.status ?? 500) >= 300)
@@ -457,12 +509,20 @@ export class ElasticsearchEngine {
 
   private filter(index: Index, predicate: ReadFilter): Record<string, unknown> {
     const name = predicate.column.name
-    if (predicate.operation === 'eq') {
-      if (predicate.value === null) return { bool: { must_not: [{ exists: { field: name } }] } }
-      return { term: { [name]: stored(index.columns[name] as string, predicate.value) } }
+    const kind = index.columns[name] as string
+    if (predicate.operation === 'eq' && predicate.value === null) {
+      return { bool: { must_not: [{ exists: { field: name } }] } }
     }
-    const bound = predicate.operation === 'ge' ? 'gte' : 'lt'
-    return { range: { [name]: { [bound]: stored(index.columns[name] as string, predicate.value) } } }
+    let value: unknown
+    if (kind.startsWith('long/decimal(')) {
+      const bound = decimalBound(kind, predicate.value, predicate.operation)
+      if (bound === null) return { bool: { must_not: [{ match_all: {} }] } }
+      value = bound
+    } else {
+      value = stored(kind, predicate.value)
+    }
+    if (predicate.operation === 'eq') return { term: { [name]: value } }
+    return { range: { [name]: { [predicate.operation === 'ge' ? 'gte' : 'lt']: value } } }
   }
 
   /** Rows past `plan.after` in the plan's order, nulls last: the keyset rule of the SQL dialects. */
@@ -496,9 +556,10 @@ export class ElasticsearchEngine {
       size: plan.limit + 1,
       track_total_hits: false,
     }
-    const [status, response] = await this.request('POST', this.path(table, '_search'), body)
+    const [status, response] = await this.request('POST', this.path(table, '_search') + PARTIAL_REFUSED, body)
     const hits = (response as { hits?: { hits?: { _source?: Record<string, unknown> }[] } } | null)?.hits?.hits
     if (status !== 200 || hits === undefined) throw new EngineError(`logical scan of ${table} failed: ${errorOf(status, response)}`)
+    whole(response, `a page of ${table}`)
     return hits.map((hit) => readRow(plan.columns, rowOf(index, hit._source ?? {})))
   }
 
@@ -529,6 +590,7 @@ export class ElasticsearchEngine {
       const [status, response] = await this.request('POST', this.path(table, '_count'), body)
       const count = (response as { count?: number | bigint } | null)?.count
       if (status !== 200 || count === undefined) throw new EngineError(`count of ${table} failed: ${errorOf(status, response)}`)
+      whole(response, `the count of ${table}`)
       return BigInt(count)
     })
   }
@@ -548,9 +610,10 @@ export class ElasticsearchEngine {
     return this.usage.operation(async () => {
       await this.watermarkIndex()
       const body = { size: 1, sort: [{ map_version: { order: 'desc' } }], _source: ['map_version'] }
-      const [status, response] = await this.request('POST', this.path(WATERMARK, '_search'), body)
+      const [status, response] = await this.request('POST', this.path(WATERMARK, '_search') + PARTIAL_REFUSED, body)
       const hits = (response as { hits?: { hits?: { _source?: { map_version?: number } }[] } } | null)?.hits?.hits
       if (status !== 200 || hits === undefined) throw new EngineError(`reading ${WATERMARK} failed: ${errorOf(status, response)}`)
+      whole(response, `the watermark in ${WATERMARK}`)
       const version = hits[0]?._source?.map_version
       return version === undefined ? null : Number(version)
     })
@@ -593,6 +656,37 @@ function normalised(value: unknown): string {
 function alreadyExists(status: number, body: unknown): boolean {
   const error = (body as { error?: { type?: string } } | null)?.error
   return status === 400 && error?.type === 'resource_already_exists_exception'
+}
+
+/**
+ * Refuse an answer some shard did not contribute to: a page missing rows would move the cursor past
+ * them for good, and a count would not be exact.
+ */
+export function whole(response: unknown, what: string): void {
+  const body = response as { timed_out?: unknown; _shards?: { failed?: unknown } } | null
+  const failed = Number(body?._shards?.failed ?? 0)
+  if (body?.timed_out === true || failed !== 0) {
+    throw new EngineError(
+      `${what} came back partial - timed out or with ${failed} failed shard(s) - and a partial ` +
+        'answer is not one this library returns',
+    )
+  }
+}
+
+/** Two JSON documents equal as values: key order aside, nothing the canonical encoding cannot hold. */
+function sameJson(left: unknown, right: unknown): boolean {
+  try {
+    return canonicalString(left) === canonicalString(right)
+  } catch {
+    // A float or a value of no canonical form: nothing this library renders holds one.
+    return false
+  }
+}
+
+/** A refused write, by its type only: the engine's reason can quote the document's value. */
+export function writeErrorOf(status: number, body: unknown): string {
+  const error = (body as { error?: { type?: string } } | null)?.error
+  return error === undefined ? String(status) : `${status} ${error.type ?? ''}`.trim()
 }
 
 function errorOf(status: number, body: unknown): string {

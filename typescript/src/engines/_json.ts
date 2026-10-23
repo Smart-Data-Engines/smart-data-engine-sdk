@@ -133,7 +133,8 @@ export function stringifyExactJson(value: unknown): string {
   if (typeof value === 'bigint') return value.toString()
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new TypeError('JSON has no NaN or infinity')
-    return JSON.stringify(value)
+    // `JSON.stringify(-0)` is `0`, which would lose the sign Python keeps as `-0.0`.
+    return Object.is(value, -0) ? '-0.0' : JSON.stringify(value)
   }
   if (typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value)
   if (Array.isArray(value)) return '[' + value.map(stringifyExactJson).join(',') + ']'

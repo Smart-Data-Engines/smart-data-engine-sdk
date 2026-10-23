@@ -25,6 +25,39 @@ const UUID_TEXT = /^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/
 const DATE_TEXT = /^(\d{4})-(\d{2})-(\d{2})$/
 const DECIMAL_TYPE = /^long\/decimal\((\d+),(\d+)\)$/
 const DECIMAL_TEXT = /^([+-]?)(\d+)(?:\.(\d+))?$/
+// A high surrogate not followed by a low one, or a low one not preceded by a high one. UTF-8 has no
+// bytes for either: `Buffer` would write U+FFFD in its place, and the engine would hold another text.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+/**
+ * A decimal predicate's bound in the column's scaled integers, or `null` for an equality no stored
+ * value can meet. `>= 0.005` on a scale of 2 is `>= 0.01` and `< 0.005` is `< 0.01`, as PostgreSQL
+ * and ClickHouse answer; a bound at or past the column's digits becomes the first value beyond them.
+ * The same function as Python's `_decimal_bound`, so both libraries send the same query.
+ */
+export function decimalBound(kind: string, value: unknown, operation: string): bigint | null {
+  const decimal = DECIMAL_TYPE.exec(kind)
+  if (decimal === null) throw new EngineError(`'${kind}' is not a decimal column`)
+  const digits = Number(decimal[1]), scale = Number(decimal[2])
+  const text = typeof value === 'bigint' || (typeof value === 'number' && Number.isSafeInteger(value))
+    ? String(value)
+    : value
+  const parts = typeof text === 'string' ? DECIMAL_TEXT.exec(text.trim()) : null
+  if (parts === null) throw new EngineError('a decimal predicate takes decimal text or an integer')
+  const fraction = parts[3] ?? ''
+  const sign = parts[1] === '-' ? -1n : 1n
+  const kept = BigInt((parts[2] as string) + fraction.slice(0, scale).padEnd(scale, '0'))
+  const rest = /[1-9]/.test(fraction.slice(scale))
+  const limit = 10n ** BigInt(digits)
+  if (rest && operation === 'eq') return null
+  // Ceiling of the exact scaled value: one more for a positive value with a remainder.
+  let bound = sign * kept + (rest && sign > 0n ? 1n : 0n)
+  if (bound >= limit || bound <= -limit) {
+    if (operation === 'eq') return null
+    bound = bound > 0n ? limit : -limit
+  }
+  return bound
+}
 
 function integer(value: unknown, bits: bigint): bigint {
   if (typeof value !== 'bigint' && !(typeof value === 'number' && Number.isSafeInteger(value))) {
@@ -81,12 +114,21 @@ export function stored(kind: string, value: unknown): StoredValue {
     case 'long':
       return integer(value, 64n)
     case 'float':
-    case 'double':
+    case 'double': {
       if (typeof value !== 'number') throw new EngineError('a float field takes a number')
       if (!Number.isFinite(value)) throw new EngineError('Elasticsearch stores no NaN or infinity')
-      return value
+      if (kind === 'double') return value
+      // Indexed as a float32 and returned as written: rounded here, so the value a filter compares
+      // is the value a read returns, as a PostgreSQL `real` and a ClickHouse `Float32` return it.
+      const single = Math.fround(value)
+      if (!Number.isFinite(single)) throw new EngineError('the value is outside float32')
+      return single
+    }
     case 'keyword':
       if (typeof value !== 'string') throw new EngineError('a text field takes a string')
+      if (LONE_SURROGATE.test(value)) {
+        throw new EngineError('a text value holds a lone surrogate, which UTF-8 cannot carry')
+      }
       if (Buffer.byteLength(value, 'utf8') > KEYWORD_BYTES) {
         throw new EngineError(
           `a text value longer than ${KEYWORD_BYTES} UTF-8 bytes is one term Elasticsearch ` +
@@ -177,6 +219,13 @@ export function document(
     source[column] = value
     if (kind === 'keyword' && value !== null) {
       const fieldTokens = searchTokens(value)
+      // Normalising and folding can lengthen a text; a token is one term too.
+      if (fieldTokens.some((token) => Buffer.byteLength(token, 'utf8') > KEYWORD_BYTES)) {
+        throw new EngineError(
+          `a token of ${column} is longer than ${KEYWORD_BYTES} UTF-8 bytes once normalised and ` +
+            'folded, one term Elasticsearch cannot index',
+        )
+      }
       if (fieldTokens.length > 0) found[column] = fieldTokens
     }
   }

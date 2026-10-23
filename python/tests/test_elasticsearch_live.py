@@ -306,3 +306,103 @@ def test_tls_is_verified_against_the_given_authority_only() -> None:
     without = urllib.parse.urlunsplit(parts._replace(query=""))
     with pytest.raises(sde.EngineError, match="could not connect"):
         ElasticsearchEngine(without).connect()
+
+
+def test_a_decimal_bound_with_more_digits_than_the_column_is_answered() -> None:
+    """``>= 0.005`` on a scale of 4 is a question about the column, answered as PostgreSQL and
+    ClickHouse answer it, not refused (second review, finding 8)."""
+    with fixture() as (session, _engine, _model):
+        written = rows()
+        session.save_many("Reading", written)
+        bound = Decimal("2.50005")
+        wanted = [row["id"] for row in written if row["amount"] >= bound]
+        assert pages(session, limit=5, bounds=sde.Range("amount", low=bound)) == wanted
+        below = [row["id"] for row in written if row["amount"] < bound]
+        assert pages(session, limit=5, bounds=sde.Range("amount", high=bound)) == below
+        assert session.count("Reading", where={"amount": Decimal("2.50005")}) == 0
+        assert session.count("Reading", where={"amount": Decimal("2.5")}) == 1
+
+
+def test_a_float32_reads_back_as_the_value_it_is_filtered_on() -> None:
+    assert DSN is not None
+    sde.clear_registry()
+
+    @sde.entity
+    class Gauge:
+        id: int
+        x: sde.Float32
+
+    model = sde.build_model(Gauge)
+    table = "sde_test_" + uuid4().hex[:12]
+    layout = sde.PhysicalLayout(tables={"Gauge": table}, columns={"Gauge": {"id": "long",
+                                                                             "x": "float"}})
+    engine = ElasticsearchEngine(DSN)
+    engine.connect()
+    try:
+        engine.ensure_schema(layout, keys={"Gauge": ["id"]})
+        placement = sde.load_map(
+            {"contract": 3, "model_version": model.version, "map_version": 1,
+             "groups": {"Gauge": {"source": {"id": "es", "engine": "es", "layout": {
+                 "tables": {"Gauge": table}, "columns": {"Gauge": {"id": "long", "x": "float"}},
+             }}}}},
+            model=model,
+        )
+        session = sde.Session(model, placement, {"es": engine})
+        session.save("Gauge", {"id": 1, "x": 0.99999999})
+        row = session.get("Gauge", {"id": 1})
+        assert row == {"id": 1, "x": 1.0}
+        assert session.count("Gauge", where={"x": 1.0}) == 1
+        assert session.count("Gauge", bounds=sde.Range("x", low=1.0)) == 1
+        assert session.count("Gauge", bounds=sde.Range("x", high=1.0)) == 0
+    finally:
+        engine._request("DELETE", "/" + table)
+        engine.close()
+
+
+def test_an_index_with_a_parameter_this_library_never_sets_is_refused() -> None:
+    """Every type matching is not enough: a normalizer changes what equality means (second
+    review, finding 4). Refused when the schema is checked and when a session reads the index."""
+    assert DSN is not None
+    table = "sde_test_" + uuid4().hex[:12]
+    layout = sde.PhysicalLayout(tables={"Note": table}, columns={"Note": {"id": "long",
+                                                                         "body": "keyword"}})
+    from sde.schema import elasticsearch_mapping
+
+    mapping = elasticsearch_mapping(layout, "Note", {"Note": ["id"]})
+    mapping["properties"]["body"]["ignore_above"] = 5
+    engine = ElasticsearchEngine(DSN)
+    engine.connect()
+    try:
+        status, _ = engine._request("PUT", "/" + table, {"mappings": mapping})
+        assert status == 200
+        with pytest.raises(sde.EngineError, match="would not create"):
+            engine.validate_schema(layout, keys={"Note": ["id"]})
+        with pytest.raises(sde.EngineError, match="would not create"):
+            engine.insert(table, {"id": 1, "body": "x"})
+        other = ElasticsearchEngine(DSN)
+        other.connect()
+        try:
+            with pytest.raises(sde.EngineError, match="would not create"):
+                other.get(table, {"id": 1})
+        finally:
+            other.close()
+    finally:
+        engine._request("DELETE", "/" + table)
+        engine.close()
+
+
+def test_an_index_made_for_another_entity_is_refused() -> None:
+    assert DSN is not None
+    table = "sde_test_" + uuid4().hex[:12]
+    columns = {"id": "long", "body": "keyword"}
+    other = sde.PhysicalLayout(tables={"Other": table}, columns={"Other": columns})
+    mine = sde.PhysicalLayout(tables={"Note": table}, columns={"Note": columns})
+    engine = ElasticsearchEngine(DSN)
+    engine.connect()
+    try:
+        engine.ensure_schema(other, keys={"Other": ["id"]})
+        with pytest.raises(sde.EngineError, match="exists for Other"):
+            engine.ensure_schema(mine, keys={"Note": ["id"]})
+    finally:
+        engine._request("DELETE", "/" + table)
+        engine.close()
