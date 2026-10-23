@@ -378,3 +378,70 @@ def test_a_fence_pipeline_renders_the_same_processor_in_both_languages() -> None
     assert len(table["cases"]) == 5
     for name, constraints in table["cases"].items():
         assert fence_processor(constraints) == table["processors"][name], name
+
+
+class _FenceTransport:
+    """An Elasticsearch that answers the fence backend's reads from a dict, and records writes."""
+
+    def __init__(self, *, final_pipeline: str | None = None, version: int | None = None) -> None:
+        self.sent: list[tuple[str, str]] = []
+        self.final_pipeline = final_pipeline
+        self.version = version
+
+    def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        self.sent.append((method, path))
+        if path == "/notes/_settings" and method == "GET":
+            index: dict[str, Any] = {"uuid": "u1"}
+            if self.final_pipeline is not None:
+                index["final_pipeline"] = self.final_pipeline
+            return 200, {"notes": {"settings": {"index": index}}}
+        if path == "/notes/_mapping":
+            return 200, {"notes": {"mappings": {"properties": {"id": {"type": "long"}}}}}
+        if path.startswith("/_ingest/pipeline/") and method == "GET":
+            if self.version is None:
+                return 404, {}
+            from sde.engines._write_fences import fence_processor
+
+            return 200, {"__sde_f_notes": {
+                "version": self.version,
+                "_meta": {"sde": {"contract": 1, "index": "notes", "uuid": "u1",
+                                  "constraints": {}}},
+                "processors": [fence_processor({})],
+            }}
+        return 200, {"acknowledged": True}
+
+
+@pytest.mark.parametrize("name", ["a/../_cluster", "Upper", "_x", "a b", "a?x=1"])
+def test_a_fence_refuses_a_name_that_is_not_an_index_before_any_request(name: str) -> None:
+    from sde.engines._write_fences import ElasticsearchFences
+
+    transport = _FenceTransport()
+    fences = ElasticsearchFences(transport)
+    calls = (
+        lambda: fences.metadata(name),
+        lambda: fences.add_column(name),
+        lambda: fences.add_constraint(name, "__sde_f_setup", "0"),
+        lambda: fences.drop_constraint(name, "__sde_f_setup"),
+        lambda: fences.drain(name, project_id="0" * 32, hold="setup"),
+    )
+    for call in calls:
+        with pytest.raises(sde.MigrationRefused, match="not an Elasticsearch index name"):
+            call()
+    assert transport.sent == []
+
+
+def test_a_fence_is_not_installed_beside_another_final_pipeline() -> None:
+    from sde.engines._write_fences import ElasticsearchFences
+
+    with pytest.raises(sde.MigrationRefused, match="runs another final pipeline"):
+        ElasticsearchFences(_FenceTransport(final_pipeline="theirs")).metadata("notes")
+
+
+def test_a_fence_change_carries_the_version_it_read() -> None:
+    """A second, uncoordinated executor is refused (409), not overwritten."""
+    from sde.engines._write_fences import ElasticsearchFences
+
+    transport = _FenceTransport(version=5)
+    ElasticsearchFences(transport).add_constraint("notes", "__sde_f_setup", "0")
+    puts = [path for method, path in transport.sent if method == "PUT"]
+    assert "/_ingest/pipeline/__sde_f_notes?if_version=5" in puts

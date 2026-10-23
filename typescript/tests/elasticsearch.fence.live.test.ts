@@ -124,6 +124,22 @@ describe.skipIf(DSN === undefined)('the Elasticsearch write fence, live', () => 
     })
   }, 60_000)
 
+  it('refuses a block or a pipeline that is not this library\'s, and takes neither over', async () => {
+    await fresh(async (engine, index, raw) => {
+      expect((await raw.request('PUT', `/${index}/_block/write`))[0]).toBe(200)
+      await expect(engine.writeFence(index, { projectId: PROJECT }).state()).rejects.toThrow(/somebody else blocked it/)
+      await raw.request('PUT', `/${index}/_settings`, { 'index.blocks.write': false })
+      const fence = engine.writeFence(index, { projectId: PROJECT })
+      await fence.prepare(2)
+      const [, body] = await raw.request('GET', `/_ingest/pipeline/${fencePipeline(index)}`)
+      const pipeline = Object.fromEntries(Object.entries((body as Record<string, Record<string, unknown>>)[fencePipeline(index)] ?? {})
+        .filter(([key]) => !key.endsWith('_date_millis'))) as { processors: { fail: { if: string } }[] }
+      pipeline.processors[0]!.fail.if = 'false'
+      expect((await raw.request('PUT', `/_ingest/pipeline/${fencePipeline(index)}`, pipeline))[0]).toBe(200)
+      await expect(fence.state()).rejects.toThrow(/changed outside this library/)
+    })
+  }, 60_000)
+
   it('reads a fence the Python library provisioned, and provisions one Python reads', async () => {
     await fresh(async (engine, index) => {
       const provisioned = peer('fence-prepare', index, { project_id: PROJECT, epoch: 9 })
