@@ -20,12 +20,14 @@ disagree on the DDL place the same entity in tables with different columns.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
+from .canonical import canonical_str
 from .errors import EngineError
-from .layout import DIALECTS, FIXED_SCHEMA, POSTGRES_TYPES
+from .layout import DIALECTS, FIXED_SCHEMA, POSTGRES_TYPES, index_name_refusal
 from .physical import (
     CLICKHOUSE_METHODS,
     POSTGRES_METHODS,
@@ -287,10 +289,116 @@ def _no_statements(layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]) ->
     return ()
 
 
+TOKENS_FIELD: Final = "__sde_tokens"
+"""Where a document keeps the search tokens of each text field (format contract 7l).
+
+An object with one keyword array per `keyword` field, computed by the library at write: the tokens
+of the field's text, distinct and sorted. The engine's own analyzer is not used, because it does
+not normalise to NFC - a decomposed accent would be cut into two tokens, and the row would never be
+a candidate for the word it spells - and the library's rule is the answer anyway. The field is the
+library's and is stripped from every row read back, as the write generation column is elsewhere.
+"""
+
+_ELASTICSEARCH_TYPES = frozenset(
+    {"boolean", "integer", "long", "float", "double", "keyword", "keyword/uuid", "date",
+     "long/timestamp", "long/timestamptz"}
+)
+_ELASTICSEARCH_DECIMAL = re.compile(r"long/decimal\(([1-9]|1[0-8]),([0-9]|1[0-8])\)")
+
+
+def elasticsearch_property(kind: str) -> dict[str, Any]:
+    """The mapping of one column: its Elasticsearch type, and the neutral type when that is needed
+    to read the value back - the two halves of a layout's column type (``long/timestamptz``)."""
+    decimal = _ELASTICSEARCH_DECIMAL.fullmatch(kind)
+    if kind not in _ELASTICSEARCH_TYPES and (
+        decimal is None or int(decimal.group(2)) > int(decimal.group(1))
+    ):
+        raise EngineError(
+            f"{kind!r} is not a column type this library maps in Elasticsearch: it maps "
+            f"{sorted(_ELASTICSEARCH_TYPES)} and long/decimal(p,s) up to eighteen digits"
+        )
+    native, _, neutral = kind.partition("/")
+    field: dict[str, Any] = {"type": native}
+    if native == "date":
+        # Only `yyyy-MM-dd`: the default format would also take an instant, and a date that was an
+        # instant somewhere else is a day off somewhere.
+        field["format"] = "strict_date"
+    if neutral:
+        field["meta"] = {"sde_type": neutral}
+    return field
+
+
+def elasticsearch_mapping(
+    layout: PhysicalLayout, entity: str, keys: Mapping[str, Sequence[str]]
+) -> dict[str, Any]:
+    """The index mapping of one entity: strict, every column typed, the key and the token fields."""
+    cols, key = _columns_and_key(layout, entity, keys)
+    absent = [column for column in key if column not in cols]
+    if absent:
+        raise EngineError(
+            f"the key of {entity!r} names columns the layout does not have: {absent}. A "
+            f"document's _id is derived from its key, so it could not be addressed."
+        )
+    floating = [column for column in key if cols[column] in ("float", "double")]
+    if floating:
+        raise EngineError(
+            f"the key of {entity!r} has a floating-point field {floating}: a document's _id is "
+            f"derived from its key's exact bytes (contract 7m), and a float has none to agree on"
+        )
+    properties: dict[str, Any] = {}
+    tokens: dict[str, Any] = {}
+    for column, kind in sorted(cols.items()):
+        if not column or column.startswith("__sde_") or "." in column:
+            raise EngineError(
+                f"{column!r} cannot be a field of an Elasticsearch document: a dot names an object "
+                f"path, and names starting with __sde_ are the library's own"
+            )
+        properties[column] = elasticsearch_property(kind)
+        if kind == "keyword":
+            tokens[column] = {"type": "keyword"}
+    if tokens:
+        properties[TOKENS_FIELD] = {"properties": tokens}
+    return {
+        "_meta": {"sde": {"entity": entity, "key": list(key)}},
+        "dynamic": "strict",
+        "properties": properties,
+    }
+
+
+def _elasticsearch_statements(
+    layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]
+) -> tuple[str, ...]:
+    """One index per entity, as the canonical JSON of what creates it.
+
+    A statement here is a document rather than SQL: ``{"index": name, "mappings": {...}}``, which
+    the adapter sends as ``PUT /name``. Canonical, so that two libraries render the same bytes and
+    the vectors can pin them as they pin DDL. Creating an index that exists is refused by the
+    engine, which the adapter treats as the ``IF NOT EXISTS`` of the other dialects and follows by
+    comparing what exists with this.
+    """
+    if layout.key_order or layout.partition_by or layout.indexes:
+        raise EngineError(
+            "Elasticsearch takes no physical design from a map - key order, partition or indexes "
+            "- because every field it maps is indexed and a document has no key order. A map "
+            "that declared one and got the plain index would be a storage decision silently "
+            "dropped."
+        )
+    statements = []
+    for entity in sorted(layout.tables):
+        index = layout.tables[entity]
+        refusal = index_name_refusal(index)
+        if refusal is not None:
+            raise EngineError(f"{index!r} cannot be an Elasticsearch index: {refusal}")
+        mapping = elasticsearch_mapping(layout, entity, keys)
+        statements.append(canonical_str({"index": index, "mappings": mapping}))
+    return tuple(statements)
+
+
 _BY_DIALECT = {
     "postgres": _postgres_statements,
     "clickhouse": _clickhouse_statements,
     "orderbook": _no_statements,
+    "elasticsearch": _elasticsearch_statements,
 }
 
 # A dialect this library types columns for and cannot render DDL for would be a map it can build and
@@ -302,7 +410,10 @@ assert set(_BY_DIALECT) == set(DIALECTS), sorted(set(_BY_DIALECT) ^ set(DIALECTS
 # the symbol and the exchange as string *literals* rather than identifiers. A no-op quoting function
 # entered here to satisfy a symmetry would look usable and silently escape nothing the day somebody
 # reached for it.
-_QUOTED = set(DIALECTS) - FIXED_SCHEMA
+#
+# Elasticsearch is the other named exception: it takes no SQL. Its identifiers travel as JSON keys
+# and as one path segment of a URL, which the index-name rule (`index_name_refusal`) keeps safe.
+_QUOTED = set(DIALECTS) - FIXED_SCHEMA - {"elasticsearch"}
 assert set(QUOTE) == _QUOTED, sorted(set(QUOTE) ^ _QUOTED)
 
 
@@ -442,6 +553,23 @@ def compatibility_views(
                     f"there is nowhere to put a view. Its table is {layout.tables.get(entity)!r} "
                     f"and the old name was {was.get(entity)!r}: a query naming the old one has to "
                     f"be edited.",
+                )
+                for entity in sorted(layout.tables)
+            ),
+        )
+
+    if dialect == "elasticsearch":
+        # No group arrives here by a move - an index takes no write generation, so a placement on
+        # it is final - and a query written by hand against an index is not SQL to keep working.
+        return CompatibilityViews(
+            create=(),
+            drop=(),
+            not_possible=tuple(
+                (
+                    entity,
+                    f"Elasticsearch takes no SQL, so a view of a SQL table has no equivalent "
+                    f"here. Its index is {layout.tables.get(entity)!r} and the old name was "
+                    f"{was.get(entity)!r}: a query naming the old one has to be rewritten.",
                 )
                 for entity in sorted(layout.tables)
             ),

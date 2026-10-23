@@ -74,6 +74,7 @@ from .search import (
     SearchRefused,
     matches,
     query_tokens,
+    search_engine,
     text_index,
 )
 from .shapes import OperationShape, enumerate_shapes
@@ -1017,6 +1018,7 @@ class Session:
         engine, material = self._target(shape, fresh=False)
         self._read_projection(material, target, plan, count=False)
         table = material.layout.table_for(target)
+        search_engine(engine)
         indexed = text_index(engine)
         reader = None if indexed is not None else query_engine(engine)
         started = perf_counter_ns() if self._recorder else 0

@@ -1447,3 +1447,49 @@ describe('search vectors', () => {
     })
   }
 })
+
+// --- documents vectors (contract 7m) ----------------------------------------------------------
+//
+// A row as an Elasticsearch document. Two libraries writing one row to one index have to agree on
+// its _id, or a second save is a second document, and on its _source, value for value.
+
+describe('documents vectors', () => {
+  const documentCases = cases('documents')
+
+  it('has the documents family', () => {
+    expect(documentCases.length).toBeGreaterThanOrEqual(8)
+  })
+
+  const exact = (value: unknown): unknown =>
+    value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === 1 && '$int' in value
+      ? BigInt((value as { $int: string }).$int)
+      : value
+
+  for (const name of documentCases) {
+    it(name, async () => {
+      const { document } = await import('../src/elasticsearch-document.js')
+      const dir = join(VECTORS, 'documents', name)
+      const spec = readJson<{ columns: Record<string, string>; key: string[]; row: Record<string, unknown> }>(
+        join(dir, 'case.json'),
+      )
+      const want = readJson<Record<string, any>>(join(dir, 'expected.json'))
+      const why = readFileSync(join(dir, 'why.txt'), 'utf8')
+      const row = Object.fromEntries(Object.entries(spec.row).map(([column, value]) => [column, exact(value)]))
+      if ('error' in want) {
+        expect(() => document(spec.columns, spec.key, row), why).toThrow(want['match'] as string)
+        return
+      }
+      const { id, source } = document(spec.columns, spec.key, row)
+      expect(id, why).toBe(want['id'])
+      const expected: Record<string, unknown> = {}
+      for (const [column, value] of Object.entries(want['source'] as Record<string, unknown>)) {
+        const kind = spec.columns[column]
+        const decoded = exact(value)
+        expected[column] = kind !== undefined && (kind === 'long' || kind.startsWith('long/')) &&
+          decoded !== null ? BigInt(decoded as number | bigint) : decoded
+      }
+      expect(source, why).toEqual(expected)
+    })
+  }
+})

@@ -366,6 +366,10 @@ class OrderbookEngine:
     )
     """Why ``Session.count`` is refused for a group on this engine (``sde.query.count_engine``)."""
 
+    search_refusal = (
+        "this engine searches nothing over its history: its text is a symbol, an exchange and a "
+        "side, and a read of its history needs the symbol and the exchange already"
+    )
     summary_refusal = (
         "this engine summarizes nothing over its history: its aggregates read the live book, not "
         "the stored rows. Refused rather than computed from a full scan."

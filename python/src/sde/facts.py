@@ -25,7 +25,9 @@ __all__ = ["FACTS_VERSION", "engine_facts"]
 FACTS_VERSION: Final = 1
 """Raised when a key changes meaning, so a request carrying facts says which meaning it used."""
 
-_ALL_READS: Final[dict[str, bool]] = {"get": True, "scan": True, "count": True, "summarize": True}
+_ALL_READS: Final[dict[str, bool]] = {
+    "get": True, "scan": True, "count": True, "summarize": True, "search": True,
+}
 
 _FACTS: Final[dict[str, dict[str, Any]]] = {
     "postgres": {
@@ -36,6 +38,8 @@ _FACTS: Final[dict[str, dict[str, Any]]] = {
         "write_generations": True,
         "write_unit": "row",
         "reads": dict(_ALL_READS),
+        # A search reads every row in key order and the library checks each (contract 7l).
+        "text_index": False,
     },
     "clickhouse": {
         "schema": "derived",
@@ -45,6 +49,31 @@ _FACTS: Final[dict[str, dict[str, Any]]] = {
         "write_generations": True,
         "write_unit": "row",
         "reads": dict(_ALL_READS),
+        "text_index": False,
+    },
+    "elasticsearch": {
+        "schema": "derived",
+        "transactions": False,
+        # A document's _id is its key's digest: a second save under one key replaces the first.
+        "key": "newest_wins",
+        # No write fences: a group placed here carries no generation (map contract 6) and cannot
+        # be staged, cut over or have an index built.
+        "write_generations": False,
+        "write_unit": "row",
+        # No summaries: its aggregations add in double precision, and a summary of this library
+        # is exact.
+        "reads": {"get": True, "scan": True, "count": True, "summarize": False, "search": True},
+        # A search's candidates come from token fields the library writes beside each text field,
+        # so only rows that hold every token are read.
+        "text_index": True,
+        # A write returns when a search and a scan can see it, which waits for the index's
+        # refresh - a second by default. A read by key sees it at once.
+        "write_visibility": "refresh",
+        # Text longer than this many UTF-8 bytes is one term the engine cannot index, and is
+        # refused before it is sent. Decimals keep at most eighteen digits; bytes and json have no
+        # field type here at all.
+        "limits": {"string_bytes": 32766, "decimal_digits": 18},
+        "unsupported_types": ["bytes", "json"],
     },
     "orderbook": {
         "schema": "fixed",
@@ -69,8 +98,10 @@ _FACTS: Final[dict[str, dict[str, Any]]] = {
         "write_generations": False,
         # One side of one book at one instant, levels 0 to n-1; a single row is level 0.
         "write_unit": "level_update",
-        # Its aggregates read the live book, not the history, so there is nothing to count.
-        "reads": {"get": True, "scan": True, "count": False, "summarize": False},
+        # Its aggregates read the live book, not the history, so there is nothing to count. Nor
+        # is there text to search: its strings are the symbol, the exchange and the side.
+        "reads": {"get": True, "scan": True, "count": False, "summarize": False, "search": False},
+        "text_index": False,
         "scan_requires": {
             "equal": ["symbol", "exchange"],
             "ranges": ["timestamp_ns", "price"],
