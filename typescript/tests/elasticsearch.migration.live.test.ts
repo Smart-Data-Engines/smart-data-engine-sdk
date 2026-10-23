@@ -86,6 +86,45 @@ describe.skipIf(DSN === undefined)('Elasticsearch in a migration, from TypeScrip
     })
   }, 120_000)
 
+  it('orders and bounds every key type as its value: a boolean, a date, an instant, a decimal, a uuid', async () => {
+    await engine(async (es, created) => {
+      const columns = { flag: 'boolean', day: 'date', at: 'long/timestamptz', amount: 'long/decimal(12,2)', ref: 'keyword/uuid' }
+      const order = Object.keys(columns)
+      const table = await index(es, created, columns, order)
+      const start = -1_000_001n // an instant before 1970
+      const rows: Row[] = Array.from({ length: 60 }, (_, i) => ({
+        flag: i % 2 === 0,
+        day: `1999-12-${String(30 + (i % 2)).padStart(2, '0')}`,
+        at: Timestamp.fromEpochMicroseconds(start + BigInt((i * 37) % 11)),
+        amount: (((i * 13) % 17) - 8) / 4 < 0 ? `-${Math.abs((((i * 13) % 17) - 8) / 4).toFixed(2)}` : ((((i * 13) % 17) - 8) / 4).toFixed(2),
+        ref: [...randomBytes(16).toString('hex')].map((c, at) => ([8, 12, 16, 20].includes(at) ? '-' : '') + c).join(''),
+      }))
+      await es.copyIn(table, rows)
+      const keyOf = (row: Row) => [row['flag'], row['day'], (row['at'] as Timestamp).epochMicroseconds, row['amount'], row['ref']]
+      const compare = (a: unknown[], b: unknown[]): number => {
+        for (let at = 0; at < a.length; at += 1) {
+          const [x, y] = [a[at], b[at]]
+          if (x === y) continue
+          if (at === 3) return Number(x) < Number(y) ? -1 : 1
+          return (x as string | bigint | boolean) < (y as string | bigint | boolean) ? -1 : 1
+        }
+        return 0
+      }
+      const expected = rows.map(keyOf).sort(compare)
+      const read = async (options: { after?: unknown[]; upto?: unknown[] } = {}) =>
+        (await es.keyRange(table, order, options)).map(keyOf)
+      expect(await read()).toEqual(expected)
+      const bound = (position: number): unknown[] => {
+        const [flag, day, at, amount, ref] = expected[position] as unknown[]
+        return [flag, day, Timestamp.fromEpochMicroseconds(at as bigint), amount, ref]
+      }
+      for (const at of [0, 1, 30, expected.length - 2]) {
+        expect(await read({ after: bound(at) })).toEqual(expected.slice(at + 1))
+        expect(await read({ upto: bound(at) })).toEqual(expected.slice(0, at + 1))
+      }
+    })
+  }, 60_000)
+
   it('leaves a document already there, says what it refused, and keeps the largest marker', async () => {
     await engine(async (es, created) => {
       const table = await index(es, created, { id: 'long', body: 'keyword' }, ['id'])

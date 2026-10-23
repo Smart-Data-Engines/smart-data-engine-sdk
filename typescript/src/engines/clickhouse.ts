@@ -647,7 +647,10 @@ export class ClickHouseEngine {
           const value = row[column.name]
           if (value !== null && ['float32', 'float64'].includes(column.type)) {
             const text = String(value).toLowerCase()
-            row[column.name] = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+            const number = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+            // `toString` gives a float32's shortest decimal, another double than the float32: the
+            // value a read by key returns, and every other engine's scan, is the float32 itself.
+            row[column.name] = column.type === 'float32' ? Math.fround(number) : number
           }
         }
         return rows.map(row => readRow(plan.columns, row))

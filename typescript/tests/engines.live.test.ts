@@ -349,6 +349,23 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect(back?.['narrow']).toBe(Math.fround(0.1))
   })
 
+  it('scans a float32 as the float32 a read by key returns', async () => {
+    // A scan projects floats with `toString`, which keeps NaN and the infinities through JSON and
+    // gives a float32's shortest decimal: parsed alone, another double than the float32.
+    const id = randomUUID()
+    await engine.insert('sample', sample(id))
+    const column = (name: string, type: string) => ({ name, type })
+    const plan = {
+      columns: [column('id', 'uuid'), column('narrow', 'float32'), column('approx', 'float64')],
+      filters: [{ column: column('id', 'uuid'), operation: 'eq' as const, value: id }],
+      order: [column('id', 'uuid')], descending: false, after: null, limit: 10,
+    }
+    const [row] = await engine.selectRows('sample', plan)
+    expect(row?.['narrow']).toBe(Math.fround(0.1))
+    expect(row?.['approx']).toBe(0.1)
+    expect(row?.['narrow']).toBe((await engine.get('sample', { id }))?.['narrow'])
+  })
+
   it('refuses to pretend it has a transaction', async () => {
     // A no-op that ran the callback would let the writes proceed and let the caller believe they
     // were atomic, which is being lied to at the worst possible moment.

@@ -240,6 +240,8 @@ abandoned one returns the abandonment.
 - It does not rename an index or change one in place - a change removes it and adds a new one under
   a new name - and it does not change a key order, a partition, a table or an engine. Those are
   relayouts or moves, through a copy.
+- It builds nothing on Elasticsearch, and refuses a build there by name: every field of a layout
+  there is indexed already, and a map gives it no index to add or remove.
 - It does not remove an index the map in force does not declare. One created by hand is neither
   verified nor touched.
 - It does not adopt an index somebody created under a bound name, even one of the right shape on

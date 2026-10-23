@@ -944,13 +944,8 @@ function alreadyThere(item: BulkItem): boolean {
   return item.status === 409 && item.error?.type === 'version_conflict_engine_exception'
 }
 
-/** `column` strictly above `value` (or below), the value as stored. A boolean has no range. */
+/** `column` strictly above `value` (or below), the value as stored: a boolean too, false before true. */
 function beyond(column: string, value: StoredValue, above: boolean): Record<string, unknown> {
-  if (typeof value === 'boolean') {
-    // Two values and no order to range over: above true and below false hold nothing.
-    if (above === value) return { bool: { must_not: [{ match_all: {} }] } }
-    return { term: { [column]: !value } }
-  }
   return { range: { [column]: { [above ? 'gt' : 'lt']: value } } }
 }
 
