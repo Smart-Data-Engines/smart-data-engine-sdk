@@ -70,7 +70,9 @@ function sample(id: string): Row {
     small: -2_147_483_648,
     big: 9_007_199_254_740_993n, // 2^53 + 1: the first integer a `number` cannot hold exactly
     approx: 0.1,
-    narrow: 0.5,
+    // Not 0.5, which every engine reads alike: the float32 nearest 0.1 is another double than 0.1,
+    // and PostgreSQL's and ClickHouse's text for it (`0.1`) parsed back to 0.1 itself.
+    narrow: 0.1,
     money: '12.34',
     flag: true,
     at: Timestamp.from('2026-08-27T12:00:00.123456Z'),
@@ -135,6 +137,8 @@ describe.skipIf(!PG_DSN)('the PostgreSQL adapter', () => {
     expect(back?.['label']).toBe('zażółć gęślą jaźń')
     expect(back?.['flag']).toBe(true)
     expect(back?.['small']).toBe(-2_147_483_648)
+    // a float32 is the float32 it is, as ClickHouse and Elasticsearch read it.
+    expect(back?.['narrow']).toBe(Math.fround(0.1))
   })
 
   it('refuses a table that already exists with a different shape', async () => {
@@ -342,6 +346,7 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect((back?.['at'] as Timestamp).toISOString()).toBe('2026-08-27T12:00:00.123456Z')
     expect(back?.['label']).toBe('zażółć gęślą jaźń')
     expect(back?.['flag']).toBe(true)
+    expect(back?.['narrow']).toBe(Math.fround(0.1))
   })
 
   it('refuses to pretend it has a transaction', async () => {

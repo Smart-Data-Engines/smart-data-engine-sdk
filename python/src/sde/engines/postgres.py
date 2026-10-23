@@ -17,6 +17,7 @@ identifier in PostgreSQL is folded to lower case in a way that is lossy for some
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -67,6 +68,25 @@ _TEXT_COLLATION_REMEDY = (
 )
 
 
+def _float32_loader() -> type:
+    """A ``real`` read as the float32 it is, exactly, as ClickHouse and Elasticsearch return one.
+
+    PostgreSQL's text is the shortest decimal that rounds back to the stored float32 - ``0.1`` for
+    the float32 nearest 0.1 - and parsed as a double that is another number than the float32
+    itself, ``0.10000000149011612``. The two engines' copies of one value then compared unequal,
+    so a group with a float32 column never verified between them. Rounding the parsed double to
+    float32 gives the stored value back; the text round-trips, so nothing else changes.
+    """
+    from psycopg.adapt import Loader
+
+    class Float32Loader(Loader):
+        def load(self, data: Any) -> float:
+            single: float = struct.unpack("<f", struct.pack("<f", float(bytes(data))))[0]
+            return single
+
+    return Float32Loader
+
+
 class PostgresEngine:
     """A thin adapter over psycopg. Deliberately thin: it executes decisions, it makes none."""
 
@@ -113,6 +133,7 @@ class PostgresEngine:
                 options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
             try:
                 self._conn = self._psycopg.connect(self._dsn, autocommit=True, **options)
+                self._conn.adapters.register_loader("float4", _float32_loader())
                 self._unusable = False
             except Exception as exc:
                 raise EngineError(f"could not connect to PostgreSQL: {exc}") from exc

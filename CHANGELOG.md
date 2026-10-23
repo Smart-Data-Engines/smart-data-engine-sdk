@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a float32 reads as the float32 it is, from every engine and in both languages.**
+PostgreSQL's text for a `real` - and ClickHouse's JSON, which the TypeScript adapter reads - is the
+shortest decimal that rounds back to the stored value: `0.1` for the float32 nearest 0.1. Parsed,
+that is another double than the float32 itself, `0.10000000149011612`, which the Python ClickHouse
+adapter and both Elasticsearch adapters return. So one stored value read differently by engine, and
+a group with a float32 column never verified between two of them. The first copy from PostgreSQL to
+Elasticsearch found it.
+- Python's PostgreSQL adapter and TypeScript's PostgreSQL and ClickHouse adapters now return the
+  float32 exactly. Stored values are unchanged; a read that returned `0.1` returns
+  `0.10000000149011612`.
+- The agreement tests write `0.1` to a float32 column, not `0.5`, which every engine read alike.
+
 **A group on Elasticsearch carries a write generation** - breaking for maps written since #134,
 which no release contained. The library
 keeps the write-fence protocol there in the index's own final pipeline, with a write block as the
