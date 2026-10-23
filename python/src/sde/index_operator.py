@@ -22,6 +22,7 @@ from .index_build import IndexPlan, IndexReceipt, load_index_plan
 from .local_cutover import CutoverRecoveryRequired
 from .physical import METHODS_BY_DIALECT, index_method, refuse_findings
 from .placement import WATERMARK_TABLE
+from .watermark import newer_map
 
 if TYPE_CHECKING:
     from .engines._operator import NativeOperator
@@ -88,7 +89,8 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
     for name, driver in operator.native.items():
         value = operator.engines[name].map_watermark()
         if value is not None and value > plan.current.map_version:
-            raise MigrationRefused("a newer map was adopted before this index build")
+            raise newer_map("a newer map was adopted before this index build", name,
+                            operator.engines[name].dialect, value, plan.current.map_version)
         # The runtime logins as staging qualifies them, without its rule for every other
         # grantee: a build moves no authority, so nobody needs a barrier or an access transition.
         driver.qualify([WATERMARK_TABLE], sorted(allowed[name]), readers=False)
@@ -200,10 +202,11 @@ def _finish(
     if execution["decision"] == "built":
 
         def watermarks() -> None:
-            for engine in operator.engines.values():
+            for name, engine in operator.engines.items():
                 observed = engine.map_watermark()
                 if observed is not None and observed > plan.prepared.map_version:
-                    raise MigrationRefused("a newer map appeared while finishing the index build")
+                    raise newer_map("a newer map appeared while finishing the index build", name,
+                                    engine.dialect, observed, plan.prepared.map_version)
                 engine.record_map_version(
                     plan.prepared.map_version, model_version=operator.model.version
                 )

@@ -32,6 +32,7 @@ from .model import LogicalModel
 from .physical import refuse_findings
 from .placement import WATERMARK_TABLE, PlacementMap, load_map
 from .staging import StagingPlan, StagingReceipt
+from .watermark import newer_map
 
 if TYPE_CHECKING:
     from ._cutover_project import ProjectState
@@ -296,7 +297,8 @@ class LocalCutover:
             }
             watermark = self.engines[name].map_watermark()
             if watermark is not None and watermark > plan.before.map_version:
-                raise MigrationRefused("a newer map was adopted before this local cutover")
+                raise newer_map("a newer map was adopted before this local cutover", name,
+                                self.engines[name].dialect, watermark, plan.before.map_version)
         tables = []
         for material in spot.all():
             for entity, table in sorted(material.layout.tables.items()):
@@ -487,10 +489,11 @@ class LocalCutover:
             candidate, active_role = plan.abort, "source"
 
         def watermark() -> None:
-            for engine in self.engines.values():
+            for name, engine in self.engines.items():
                 value = engine.map_watermark()
                 if value is not None and value > candidate.map_version:
-                    raise MigrationRefused("a newer map appeared while completing cutover")
+                    raise newer_map("a newer map appeared while completing cutover", name,
+                                    engine.dialect, value, candidate.map_version)
                 engine.record_map_version(candidate.map_version, model_version=self.model.version)
 
         self._step(state, "watermarks", watermark)

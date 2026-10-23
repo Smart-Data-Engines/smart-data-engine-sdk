@@ -1261,3 +1261,42 @@ def test_the_operator_cli_abandons_an_unfinished_build_once(tmp_path: Path) -> N
             "error": "refused",
             "message": "there is no unfinished index build or staging to abandon",
         }
+
+
+@pytest.mark.parametrize("when", ["before", "while"])
+def test_a_newer_map_that_overtakes_an_index_build_is_named_with_both_versions(
+    when: str, tmp_path: Path
+) -> None:
+    with initial("postgres", tmp_path) as build:
+        newer = build.plan.prepared.map_version + 5
+
+        def adopt() -> None:
+            build.role.operator.record_map_version(newer, model_version=build.model.version)
+
+        if when == "before":
+            adopt()
+            event, in_force = "was adopted before this index build", build.plan.current.map_version
+        else:
+            build.operator._after_step = (
+                lambda step: adopt() if step == "index_watermarks:intent" else None
+            )
+            event = "appeared while finishing the index build"
+            in_force = build.plan.prepared.map_version
+        expected = (
+            f"a newer map {event}: postgres records map version {newer}, and the map this "
+            f"operation was prepared from is version {in_force}."
+        )
+        if when == "before":
+            with pytest.raises(sde.MigrationRefused) as refused:
+                build.operator.index(build.plan)
+            assert str(refused.value) == expected
+        else:
+            # After its durable decision the operation is resumed, not refused: the reason it
+            # stopped is beneath the error that says so.
+            with pytest.raises(CutoverRecoveryRequired) as stopped:
+                build.operator.index(build.plan)
+            reasons, error = [], stopped.value.__cause__
+            while error is not None:
+                reasons.append(str(error))
+                error = error.__cause__
+            assert expected in reasons
