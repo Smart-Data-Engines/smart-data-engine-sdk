@@ -56,9 +56,9 @@ _FACTS: Final[dict[str, dict[str, Any]]] = {
         "transactions": False,
         # A document's _id is its key's digest: a second save under one key replaces the first.
         "key": "newest_wins",
-        # No write fences: a group placed here carries no generation (map contract 6) and cannot
-        # be staged, cut over or have an index built.
-        "write_generations": False,
+        # Write fences in the index's own final pipeline, drained by a write block: a group here
+        # carries a generation like any other, and a migration can move it there or away.
+        "write_generations": True,
         "write_unit": "row",
         # No summaries: its aggregations add in double precision, and a summary of this library
         # is exact.

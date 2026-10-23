@@ -65,6 +65,8 @@ from ..schema import (
 )
 from ..search import tokens as text_tokens
 from ..watermark import WATERMARK_TABLE
+from ..write_fence import EPOCH_COLUMN, WriteFence
+from ._write_fences import ElasticsearchFences
 
 __all__ = ["KEYWORD_BYTES", "ElasticsearchEngine", "document", "document_id", "parse_dsn"]
 
@@ -471,10 +473,17 @@ class _Index:
     """Column -> layout type (``long/timestamptz``), read back from the mapping."""
     key: tuple[str, ...]
     entity: str = ""
+    fenced: bool = False
+    """The index has a write generation field: every document a session writes carries one."""
+
+    @property
+    def stored_columns(self) -> Mapping[str, str]:
+        """What a document holds: the layout's columns, and the generation where it is fenced."""
+        return {**self.columns, EPOCH_COLUMN: "long"} if self.fenced else self.columns
 
     def document(self, values: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         try:
-            return document(self.columns, self.key, values)
+            return document(self.stored_columns, self.key, values)
         except EngineError as exc:
             raise EngineError(f"{self.name}: {exc}") from None
 
@@ -658,6 +667,23 @@ class ElasticsearchEngine:
             raise EngineError(f"{index!r} is not an Elasticsearch index name: {refusal}")
         return "/" + "/".join([urllib.parse.quote(index, safe=""), *rest])
 
+    # --- write generations -------------------------------------------------------------------
+
+    def write_fence(self, table: str, *, project_id: str) -> WriteFence:
+        """The write-fence protocol on this index (``write-fences.md``), for a provisioning login.
+
+        Its pipeline and its write block need the cluster privilege ``manage_pipeline`` and
+        ``manage`` on the index; reading its state at session open needs ``read_pipeline``. A
+        runtime key holds neither of the first two, so it cannot lift a fence it writes under.
+        """
+        self._indexes.pop(table, None)
+        return WriteFence(ElasticsearchFences(self._fence_request), table, project_id=project_id)
+
+    def _fence_request(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        # A fence changes the index's mapping and settings: forget what was read of it.
+        self._indexes.clear()
+        return self._request(method, path, body)
+
     # --- schema ----------------------------------------------------------------------------
 
     @guarded
@@ -735,11 +761,17 @@ class ElasticsearchEngine:
                 f"index {name} was not created by this library: its mapping is not strict or "
                 f"names no key in _meta.sde"
             )
+        properties = mapping.get("properties", {})
         columns = {
             column: _layout_type(column, field)
-            for column, field in sorted(mapping.get("properties", {}).items())
-            if column != TOKENS_FIELD
+            for column, field in sorted(properties.items())
+            if column not in (TOKENS_FIELD, EPOCH_COLUMN)
         }
+        # The write generation is the fence's field, not the layout's: present exactly as the
+        # fence adds it, or absent.
+        fenced = EPOCH_COLUMN in properties
+        if fenced and properties[EPOCH_COLUMN] != {"type": "long"}:
+            raise EngineError(f"index {name} maps {EPOCH_COLUMN} as something other than a long")
         if any(column not in columns for column in key):
             raise EngineError(f"index {name} names a key field it does not map")
         entity = meta.get("entity")
@@ -753,13 +785,15 @@ class ElasticsearchEngine:
             entity,
             {entity: [str(column) for column in key]},
         )
+        if fenced:
+            rendered["properties"][EPOCH_COLUMN] = {"type": "long"}
         if not _same_json(rendered, mapping):
             raise EngineError(
                 f"index {name} has a mapping this library would not create: something beyond each "
                 f"field's type differs - a field parameter, the token fields or _source - and "
                 f"each of those can change an answer"
             )
-        index = _Index(name, columns, tuple(str(column) for column in key), entity)
+        index = _Index(name, columns, tuple(str(column) for column in key), entity, fenced)
         self._indexes[name] = index
         return index
 

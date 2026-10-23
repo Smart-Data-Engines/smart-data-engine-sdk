@@ -191,12 +191,13 @@ def test_an_entity_whose_name_cannot_be_an_index_cannot_be_laid_out(
 
 def test_the_facts_say_what_the_adapter_does() -> None:
     facts = sde.engine_facts("elasticsearch")
-    assert facts["transactions"] is False and facts["write_generations"] is False
+    assert facts["transactions"] is False
+    assert facts["write_generations"] is True
     assert facts["reads"] == {
         "get": True, "scan": True, "count": True, "summarize": False, "search": True,
     }
     assert facts["text_index"] is True
-    assert not hasattr(ElasticsearchEngine, "write_fence")
+    assert callable(ElasticsearchEngine.write_fence)
     assert not hasattr(ElasticsearchEngine, "summarize_rows")
     assert callable(ElasticsearchEngine.search_rows)
     with pytest.raises(sde.EngineError, match="no multi-document transactions"):
