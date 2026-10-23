@@ -76,9 +76,20 @@ What the operator checks:
   `manage_ingest_pipelines` or `manage_security`: each could lift a block, rewrite a fence, grant
   itself more or - `delete`, and `write`, which includes it - remove documents past the fence. A
   delete runs no ingest pipeline, where an index or an update runs the final one (measured on 9.5.5),
-  and the library never deletes a document. A key that
-  does not cover a staging's fresh name, `sde_m_<stage>_<position>`, is refused before anything is
-  created. Give it a pattern such as `sde_m_*`, because nothing here grants a privilege.
+  and the library never deletes a document.
+- **The same, by action.** A role can name an action and none of the privileges above, and then
+  each privilege that implies the action reads false. So the operator also asks for the action
+  `indices:admin/settings/update` on each index, which lifts a block or unsets a fence's pipeline.
+  It also asks for the cluster actions that write or delete a pipeline
+  (`cluster:admin/ingest/pipeline/put`, `.../delete`) and that restore a snapshot
+  (`cluster:admin/snapshot/restore`). And it asks for those that write a role, a role mapping, a
+  user or a password (`cluster:admin/xpack/security/role/put`, `role_mapping/put`, `user/put`,
+  `user/change_password`). A key holding any of them is refused by the action's name. Measured on
+  9.5.5: a key whose role named the settings and pipeline actions and no refused privilege lifted
+  a write block, unset `final_pipeline` and wrote a pipeline.
+- **The fresh names.** A key that does not cover a staging's fresh name,
+  `sde_m_<stage>_<position>`, is refused before anything is created. Give it a pattern such as
+  `sde_m_*`, because nothing here grants a privilege.
 - **No list of other principals.** A block refuses every principal whatever it holds, so the SQL
   engines' refusal of an undeclared grantee has nothing to do here.
 - **Each index** by its `index.uuid`, on the cluster of the operator's `cluster_uuid`. A runtime key

@@ -83,8 +83,11 @@ provisioning creates it. `read_pipeline` lets a session read the write fence of 
 opens. `index` rather than `write`: the library never deletes a document, and a delete runs no
 ingest pipeline, so a key that may delete goes past the fence. The operator refuses a key that also
 holds `manage`, `all`, `write`, `delete_index` or `delete` on one of these indexes, or the cluster
-privileges `all`, `manage`, `manage_pipeline`, `manage_ingest_pipelines` or `manage_security`. The
-optional `monitor` below it admits.
+privileges `all`, `manage`, `manage_pipeline`, `manage_ingest_pipelines` or `manage_security`. It
+refuses the same by action, for a role that names an action and no privilege above it: the action
+that updates an index's settings, and the cluster actions that write or delete a pipeline, restore
+a snapshot, or write a role, a role mapping, a user or a password
+([`local-cutover.md`](local-cutover.md)). The optional `monitor` below it admits.
 
 ## Physical design checks and one optional grant
 
