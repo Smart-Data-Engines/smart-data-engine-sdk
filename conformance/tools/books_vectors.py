@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Write conformance/vectors/books/: what every library's book stream sends (contract §8c).
 
-    python3 conformance/tools/books_vectors.py
+    python3 conformance/tools/books_vectors.py [--check]
+
+`--check` writes nothing and fails if a vector would change, or if a case directory is there that
+this file no longer writes: CI's contract job runs it, so the vectors cannot drift from what is
+written here.
 
 One directory a case, `NNN-<name>/case.json`, of two kinds:
 - `"kind": "diff"`: a side before and after, and the difference a stream sends - or the refusal;
@@ -15,6 +19,7 @@ the tree is idempotent, and it removes a case directory this file no longer writ
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from pathlib import Path
@@ -280,23 +285,39 @@ def _slug(name: str) -> str:
     return out
 
 
-def main() -> None:
+def main() -> int:
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
+    parser.add_argument("--check", action="store_true", help="fail if a vector would change")
+    args = parser.parse_args()
     cases = [{"kind": "diff", **case} for case in diff_cases()]
     cases += [{"kind": "stream", **case} for case in stream_cases()]
-    ROOT.mkdir(parents=True, exist_ok=True)
-    wanted = set()
-    for number, case in enumerate(cases, start=1):
-        folder = ROOT / f"{number:03d}-{_slug(case['name'])}"
-        wanted.add(folder.name)
-        folder.mkdir(exist_ok=True)
-        (folder / "case.json").write_text(_dump(case) + "\n")
-    for stale in ROOT.iterdir():
-        if stale.name not in wanted:
-            for item in stale.iterdir():
+    planned = {
+        f"{number:03d}-{_slug(case['name'])}": _dump(case) + "\n"
+        for number, case in enumerate(cases, start=1)
+    }
+    changed = []
+    for name, text in planned.items():
+        path = ROOT / name / "case.json"
+        if path.exists() and path.read_text(encoding="utf-8") == text:
+            continue
+        changed.append(f"{name}/case.json")
+        if not args.check:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+    stale = sorted(p for p in ROOT.iterdir() if p.name not in planned) if ROOT.exists() else []
+    for folder in stale:
+        changed.append(f"{folder.name}/ (no longer written)")
+        if not args.check:
+            for item in folder.iterdir():
                 item.unlink()
-            stale.rmdir()
-    print(f"{ROOT.relative_to(ROOT.parents[1])}: {len(cases)} case(s)")
+            folder.rmdir()
+    if args.check and changed:
+        print("books vectors would change:", *changed, sep="\n  ")
+        return 1
+    written = "unchanged" if not changed else f"{len(changed)} change(s) written"
+    print(f"{ROOT.relative_to(ROOT.parents[1])}: {len(cases)} case(s), {written}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
