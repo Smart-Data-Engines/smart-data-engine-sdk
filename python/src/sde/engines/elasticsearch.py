@@ -108,6 +108,15 @@ _CA_BYTES: Final = 1024 * 1024
 _TIMEOUT_RANGE: Final = (0.001, 2_147_483.647)
 
 
+class HttpStatus(Exception):
+    """The status of an answer Elasticsearch refused, beneath the adapter's error: what the session
+    tells a refused measurement (403) from a failed one by, as it reads PostgreSQL's SQLSTATE."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(status)
+        self.status = status
+
+
 @dataclass(frozen=True)
 class Connection:
     """A parsed connection profile. ``authorization`` is the header value, never logged."""
@@ -1150,6 +1159,54 @@ class ElasticsearchEngine:
                     _read_value(index.columns[column], last.get(column)) for column in columns
                 )
             after = [last.get(column) for column in columns]
+
+    @guarded
+    def storage_sizes(self, tables: Sequence[str]) -> dict[str, tuple[int, int]]:
+        """Each index's bytes on its primary shards, from ``_stats``, and no secondary index bytes.
+
+        One request for every index named, with ``ignore_unavailable``, so an index that does not
+        exist is absent from the answer rather than a zero: a missing table is not an empty one. An
+        alias is answered under the index behind it, so it is absent too - this measures indexes,
+        never what a name resolves to. The primaries are what a copy moves; replicas are the
+        cluster's own. An index keeps no secondary index beside its store - every field is indexed
+        in it, and a layout here declares none - so the second number is 0.
+
+        It needs the ``monitor`` index privilege, which nothing else here asks of a runtime key.
+        Without it the answer is a 403 and the size is unknown, ``refused`` (runtime-roles.md).
+        Measured on 9.5.5.
+        """
+        if not tables:
+            return {}
+        names = sorted(set(tables))
+        for name in names:
+            refusal = index_name_refusal(name)
+            if refusal is not None:
+                raise EngineError(f"{name!r} is not an Elasticsearch index name: {refusal}")
+        path = (
+            "/" + ",".join(urllib.parse.quote(name, safe="") for name in names)
+            + "/_stats/store?ignore_unavailable=true&level=indices"
+        )
+        status, body = self._request("GET", path)
+        if status != 200 or not isinstance(body, Mapping):
+            raise EngineError(
+                f"storage sizes could not be read: {self._error(status, body)}"
+            ) from HttpStatus(status)
+        self._whole(body, "the store sizes")
+        indices = body.get("indices")
+        if not isinstance(indices, Mapping):
+            raise EngineError("storage sizes came back without their indexes")
+        sizes: dict[str, tuple[int, int]] = {}
+        for name in names:
+            entry = indices.get(name)
+            if entry is None:
+                continue
+            primaries = entry.get("primaries") if isinstance(entry, Mapping) else None
+            store = primaries.get("store") if isinstance(primaries, Mapping) else None
+            size = store.get("size_in_bytes") if isinstance(store, Mapping) else None
+            if type(size) is not int or size < 0:
+                raise EngineError(f"the store size of {name} is not a number of bytes")
+            sizes[name] = (size, 0)
+        return sizes
 
     @guarded
     def count(self, table: str) -> int:

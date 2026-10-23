@@ -112,12 +112,14 @@ class ManagedEngine(Engine, Protocol):
 def _storage_refusal(exc: BaseException) -> str:
     """``refused`` when the catalogue denied the login, ``failed`` for any other engine error.
 
-    Read from the driver's own error beneath the adapter's: PostgreSQL's SQLSTATE 42501,
-    ClickHouse's access error 497 - what a login without the ``system.parts`` grant receives
-    (measured on 24.8).
+    Read from the error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access
+    error 497 - what a login without the ``system.parts`` grant receives (measured on 24.8) - and
+    Elasticsearch's 403, what a key without the ``monitor`` privilege receives (measured on 9.5.5).
     """
     cause = exc.__cause__ if exc.__cause__ is not None else exc
     if getattr(cause, "sqlstate", None) == "42501" or "Code: 497" in str(cause):
+        return "refused"
+    if getattr(cause, "status", None) == 403:
         return "refused"
     return "failed"
 

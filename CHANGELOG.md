@@ -8,6 +8,20 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: a group's size on Elasticsearch.** `Session.measure_storage()` / `measureStorage()` read
+nothing there, so a window of a group on Elasticsearch never knew its `total_bytes`, its
+`index_to_table_ratio` or its growth, and a decision to move it off had no evidence of what the copy
+would cost. The product loop of a move onto Elasticsearch found it. Both adapters now read each
+index's bytes on its primary shards from `_stats` - one request per engine, with
+`ignore_unavailable`, so a missing index is absent rather than a zero and an alias is never measured
+under its name. An index keeps no secondary index beside its store, so the ratio is a measured 0.
+- **It needs the index privilege `monitor`**, an optional grant in the key's role
+  ([`docs/runtime-roles.md`](docs/runtime-roles.md)). Without it the answer is a 403, and the size is
+  unknown with the reason `refused`, as on ClickHouse without its `system.parts` grant. The local
+  operator admits it.
+- The adapter's error carries the status beneath it (`HttpStatus`), which is how the session tells
+  `refused` from `failed`; never the engine's text.
+
 **Fixed: a float32 reads as the float32 it is, from every engine and in both languages.**
 PostgreSQL's text for a `real` - and ClickHouse's JSON, which the TypeScript adapter reads - is the
 shortest decimal that rounds back to the stored value: `0.1` for the float32 nearest 0.1. Parsed,

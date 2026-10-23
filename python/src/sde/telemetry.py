@@ -383,7 +383,8 @@ class StorageSize:
 STORAGE_UNAVAILABLE = ("failed", "missing_table", "refused", "unsupported")
 """Why a group's size stayed unknown: its engine's adapter has no catalogue to read (the orderbook
 engine), a table the map names does not exist, the catalogue refused the login (ClickHouse without
-the ``system.parts`` grant) or the read failed otherwise."""
+the ``system.parts`` grant, an Elasticsearch key without ``monitor``) or the read failed
+otherwise."""
 
 
 @dataclass(frozen=True)

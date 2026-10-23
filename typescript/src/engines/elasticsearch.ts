@@ -23,7 +23,7 @@ import { isIP } from 'node:net'
 import { isAbsolute } from 'node:path'
 
 import { UsageGate } from '../_usage.js'
-import { canonicalString } from '../canonical.js'
+import { canonicalString, compareCodePoints } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
@@ -769,6 +769,58 @@ export class ElasticsearchEngine {
     })
   }
 
+  /**
+   * Each index's bytes on its primary shards, from `_stats`, and no secondary index bytes.
+   *
+   * One request for every index named, with `ignore_unavailable`, so an index that does not exist is
+   * absent from the answer rather than a zero: a missing table is not an empty one. An alias is
+   * answered under the index behind it, so it is absent too - this measures indexes, never what a
+   * name resolves to. The primaries are what a copy moves; replicas are the cluster's own. An index
+   * keeps no secondary index beside its store - every field is indexed in it, and a layout here
+   * declares none - so the second number is 0.
+   *
+   * It needs the `monitor` index privilege, which nothing else here asks of a runtime key. Without it
+   * the answer is a 403 and the size is unknown, `refused` (runtime-roles.md). Measured on 9.5.5.
+   */
+  async storageSizes(tables: readonly string[]): Promise<Map<string, readonly [number, number]>> {
+    return this.usage.operation(async () => {
+      if (tables.length === 0) return new Map()
+      const names = [...new Set(tables)].sort(compareCodePoints)
+      for (const name of names) {
+        const refusal = indexNameRefusal(name)
+        if (refusal !== null) throw new EngineError(`'${name}' is not an Elasticsearch index name: ${refusal}`)
+      }
+      const path =
+        '/' + names.map((name) => encodeURIComponent(name)).join(',') +
+        '/_stats/store?ignore_unavailable=true&level=indices'
+      const [status, response] = await this.request('GET', path)
+      if (status !== 200 || response === null || typeof response !== 'object') {
+        throw new EngineError(`storage sizes could not be read: ${errorOf(status, response)}`, {
+          cause: new HttpStatus(status),
+        })
+      }
+      whole(response, 'the store sizes')
+      const indices = (response as { indices?: unknown }).indices
+      if (indices === null || typeof indices !== 'object') {
+        throw new EngineError('storage sizes came back without their indexes')
+      }
+      const sizes = new Map<string, readonly [number, number]>()
+      for (const name of names) {
+        if (!Object.hasOwn(indices, name)) continue
+        const entry = (indices as Record<string, unknown>)[name]
+        const size = (entry as { primaries?: { store?: { size_in_bytes?: unknown } } } | null)?.primaries
+          ?.store?.size_in_bytes
+        // A bigint past 2^53 converts to a number that is not a safe integer, and is refused below.
+        const bytes = typeof size === 'bigint' ? Number(size) : size
+        if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) {
+          throw new EngineError(`the store size of ${name} is not a number of bytes`)
+        }
+        sizes.set(name, [bytes, 0] as const)
+      }
+      return sizes
+    })
+  }
+
   /** Every document of the index, exactly. */
   async count(table: string): Promise<number> {
     return this.usage.operation(async () => {
@@ -987,6 +1039,17 @@ function sameJson(left: unknown, right: unknown): boolean {
 export function writeErrorOf(status: number, body: unknown): string {
   const error = (body as { error?: { type?: string } } | null)?.error
   return error === undefined ? String(status) : `${status} ${error.type ?? ''}`.trim()
+}
+
+/**
+ * The status of an answer Elasticsearch refused, beneath the adapter's error: what the session tells a
+ * refused measurement (403) from a failed one by, as it reads PostgreSQL's SQLSTATE.
+ */
+export class HttpStatus extends Error {
+  constructor(readonly status: number) {
+    super(String(status))
+    this.name = 'HttpStatus'
+  }
 }
 
 function errorOf(status: number, body: unknown): string {

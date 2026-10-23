@@ -441,7 +441,7 @@ export interface StorageSize {
 /**
  * Why a group's size stayed unknown: its engine's adapter has no catalogue to read, a table the map
  * names does not exist, the catalogue refused the login (ClickHouse without the `system.parts`
- * grant) or the read failed otherwise.
+ * grant, an Elasticsearch key without `monitor`) or the read failed otherwise.
  */
 export const STORAGE_UNAVAILABLE = ['failed', 'missing_table', 'refused', 'unsupported'] as const
 export type StorageUnavailable = (typeof STORAGE_UNAVAILABLE)[number]
