@@ -97,6 +97,24 @@ its owner and hold must still match afterward. The log is metadata in the custom
 that engine's durability guarantees. It contains no application rows or credentials. Deleting it
 before recovery can leave a detached table that requires explicit operator recovery.
 
+**Elasticsearch** keeps the same names and predicates in the `_meta` of the index's own ingest
+pipeline, `__sde_f_<index>`, set as its `index.final_pipeline`. A request cannot bypass that pipeline,
+not even with `pipeline=_none`. The pipeline's one `fail` processor is rendered from those
+constraints, and a reader renders it again and refuses a pipeline whose processor differs.
+- `__sde_write_epoch` is a `long` beside the layout's fields. The processor refuses a document
+  without it, with another type (`"3"`, `3.0`) or outside the bounds, per item in a `_bulk`.
+- **The drain** is `PUT /<index>/_block/write`, which waits for the operations already on the
+  index's shards. On 9.5.5 it waited 3.48 s and 1.67 s for a 150,000-document bulk, and the count at
+  its return was the final count. Adding the block again to an index already blocked proves nothing,
+  because no shard acknowledges it, so the drain lifts it and adds it again under the hold.
+- **The block stays as long as a hold does.** The pipeline checks a write where it arrives, the block
+  where it reaches the shard, and a write that passed an older pipeline on its way is refused at the
+  shard while the barrier holds.
+- **An index blocked with no hold recorded** reads as an interrupted setup, which `resume_prepare`
+  completes. A block or a pipeline that is not this library's is refused, never taken over.
+- **Pipeline changes** carry `if_version`, so a second, uncoordinated executor is refused rather
+  than overwritten.
+
 The initial scope is ordinary PostgreSQL tables without inheritance, and local MergeTree or
 ReplacingMergeTree tables in a ClickHouse Atomic database. Distributed and replicated tables, foreign
 tables, external writers and uncoordinated DDL changes require separate qualification. A bounded cutover executor, final verification under the barriers, map handoff, stale-reader

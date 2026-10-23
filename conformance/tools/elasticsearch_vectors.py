@@ -237,6 +237,12 @@ DOCUMENT_CASES: list[tuple[str, dict[str, Any], str]] = [
      {"id": datetime.fromisoformat("1969-07-20T20:17:40.000001"), "x": -0.0, "label": "b"},
      "An integer is framed with its minus sign: an instant before 1970 is a negative number of "
      "microseconds. A float32 keeps the sign of a zero."),
+    ("014-a-write-with-its-generation",
+     {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1.0, "label": "a",
+      "__sde_write_epoch": 7},
+     "A fenced index maps the write generation beside the layout's fields, and a session's write "
+     "carries it as a long in _source - where the index's pipeline checks it. It is no part of "
+     "the key, so the _id is the one the same row has without it."),
     ("013-a-lone-surrogate",
      {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1.0, "label": "a\ud800b"},
      "UTF-8 has no bytes for half of a surrogate pair: refused, rather than written as U+FFFD - "
@@ -248,6 +254,8 @@ def _documents() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for name, row, why in DOCUMENT_CASES:
         columns, key = (GAUGE, ["id"]) if int(name[:3]) >= 9 else (READING, KEY)
+        if "__sde_write_epoch" in row:
+            columns = {**columns, "__sde_write_epoch": "long"}
         case = {"columns": columns, "key": key,
                 "row": {column: _encoded(value) for column, value in row.items()}}
         try:

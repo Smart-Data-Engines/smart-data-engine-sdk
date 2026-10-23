@@ -115,7 +115,11 @@ TypeScript reads responses with every integer past 2^53 as a `bigint` and writes
 digits. `JSON.parse` would turn a microsecond after the year 2255, or an int64, into another number.
 
 The login needs `create_index`, `write`, `read` and `view_index_metadata` on the indexes of its
-layout, and the same on `sde_map_state` for the map's rollback protection.
+layout, and the same on `sde_map_state` for the map's rollback protection. A group carries a write
+generation (§7m), so a session reads its fence when it opens, which takes the cluster privilege
+`read_pipeline` as well. Provisioning the fence, and every barrier a migration takes, needs a
+separate login: `manage` on the layout's indexes and the cluster privilege `manage_pipeline`. A
+runtime key without them cannot lift a fence it writes under, which the live tests check.
 
 ## PostgreSQL
 

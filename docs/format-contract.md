@@ -1971,6 +1971,13 @@ request and is not atomic: on a refusal, the error says how many documents were 
 many refused, and never which values. A refused single write names the engine's error type, never
 its reason, which can quote the document's value.
 
+**Write generations.** A group on Elasticsearch carries a generation like a group on any other
+engine with fences (§7d), and a contract-6 map that leaves it out is refused, as §7k says of every
+engine that has them. Its fence is the protocol of `write-fences.md` in the index's final pipeline,
+with a write block as the drain. The generation is a `long` field beside the layout's, written into
+every document and returned in no row. It is no part of the `_id` (`documents/014`), and the whole
+mapping a reader compares may have exactly that one field more.
+
 **Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
 `020` and `documents/` are new, and no existing vector changed. The second review's `documents/009`
 to `013` changed no earlier case either.

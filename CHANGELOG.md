@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**A group on Elasticsearch carries a write generation** - breaking for maps written since #134,
+which no release contained. The library
+keeps the write-fence protocol there in the index's own final pipeline, with a write block as the
+drain ([`docs/write-fences.md`](docs/write-fences.md)), so a migration can move a group onto
+Elasticsearch or off it like any other.
+- A contract-6 map that leaves the generation out for an Elasticsearch group is now refused, as for
+  every engine with fences. No released version wrote one, and such a map is issued again with
+  one.
+- The runtime login also needs `read_pipeline`. Provisioning needs `manage` and `manage_pipeline`
+  ([`docs/engine-connections.md`](docs/engine-connections.md)).
+- Python first. The TypeScript adapter follows.
+
 **New: Elasticsearch in the TypeScript library** (`@smart-data-engines/sde/engines/elasticsearch`).
 The same engine in the same layout as the Python adapter, with the mapping and the documents held
 byte for byte by the shared vectors. Integers past 2^53 stay exact in both directions: responses are
