@@ -114,7 +114,7 @@ replays anything:
 TypeScript reads responses with every integer past 2^53 as a `bigint` and writes a `bigint` as its
 digits. `JSON.parse` would turn a microsecond after the year 2255, or an int64, into another number.
 
-The login needs `write`, `read` and `view_index_metadata` on the indexes of its layout, and the
+The login needs `index`, `read` and `view_index_metadata` on the indexes of its layout, and the
 same on `sde_map_state` for the map's rollback protection; the adapter reads that index before
 anything creates it, so no `create_index`. A group carries a write generation (§7m), so a session
 reads its fence when it opens, which takes the cluster privilege `read_pipeline` as well.

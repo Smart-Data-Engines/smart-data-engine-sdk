@@ -151,7 +151,8 @@ def test_a_block_that_outlived_its_hold_reads_as_an_interrupted_setup_and_resume
     with fresh_index() as (engine, index):
         fence = engine.write_fence(index, project_id=PROJECT)
         fence.prepare(5)
-        # As if a release stopped between dropping its hold and lifting the block.
+        # As if a setup stopped between blocking the index and recording its hold. A release no
+        # longer leaves this: it lifts the block before it drops the last hold.
         assert _raw(engine, "PUT", f"/{index}/_block/write")[0] == 200
         state = fence.state()
         assert state.closed and state.holds == ("setup",)
@@ -199,7 +200,7 @@ def _key_dsn(engine: ElasticsearchEngine, index: str, cluster: list[str],
 def test_a_runtime_key_reads_the_fence_and_cannot_change_it() -> None:
     with fresh_index() as (engine, index):
         runtime_dsn, runtime_id = _key_dsn(
-            engine, index, ["read_pipeline"], ["write", "read", "view_index_metadata",
+            engine, index, ["read_pipeline"], ["index", "read", "view_index_metadata",
                                                "create_index"]
         )
         provisioning_dsn, provisioning_id = _key_dsn(
@@ -266,3 +267,146 @@ def test_a_group_on_elasticsearch_without_a_generation_is_refused_now_that_it_ca
         placement = sde.load_map(_map(model, index), model=model)
         with pytest.raises(sde.MigrationRefused):
             sde.Session(model, placement, {"es": engine}, project_id=PROJECT)
+
+
+def opens_the_index(method: str, path: str, body: Any) -> bool:
+    """A request of the last hold's release: the pipeline written without a hold, or the block
+    lifted."""
+    if method != "PUT" or not isinstance(body, dict):
+        return False
+    if path.startswith("/_ingest/pipeline/"):
+        constraints = body.get("_meta", {}).get("sde", {}).get("constraints", {})
+        return not any(name.startswith("__sde_f_hold_") for name in constraints)
+    return body.get("index.blocks.write") is False
+
+
+def test_a_release_interrupted_between_its_two_requests_is_finished_by_a_retry() -> None:
+    """The last hold's release makes two requests. The first is made and its response lost: the
+    process is gone before the second. The block goes first now, so what is left is the hold - still
+    refusing every write a runtime key can make - and a retry removes it. When the pipeline went
+    first, what was left was a block with no hold to say whose it was, which no retry lifted: the
+    index in force stayed closed to writes after a published cutover (second review)."""
+    with fresh_index() as (engine, index):
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        hold = uuid4().hex
+        fence.freeze(hold)
+        backend = fence._backend  # type: ignore[attr-defined]
+        call = backend._call
+        lost: list[str] = []
+
+        def made_then_lost(method: str, path: str, body: Any = None) -> tuple[int, Any]:
+            answer = call(method, path, body)
+            if not lost and opens_the_index(method, path, body):
+                lost.append(path)
+                raise sde.EngineError("the response was lost")
+            return answer  # type: ignore[no-any-return]
+
+        backend._call = made_then_lost
+        with pytest.raises(sde.EngineError, match="lost"):
+            fence.release(hold)
+        assert lost, "the release never made the request that opens the index"
+        backend._call = call
+        state = fence.state()
+        assert state.closed and state.holds == (hold,), "the hold is there to be found"
+        assert _put(engine, index, "late", {"id": 1, "body": "x", EPOCH_COLUMN: 3}) >= 400
+        state = fence.release(hold)
+        assert (state.closed, state.holds, state.retired) == (False, (), (hold,))
+        assert _put(engine, index, "open", {"id": 2, "body": "x", EPOCH_COLUMN: 3}) in (200, 201)
+
+
+def _write_block(engine: ElasticsearchEngine, index: str) -> str:
+    status, body = _raw(engine, "GET", f"/{index}/_settings")
+    assert status == 200, body
+    return str(body[index]["settings"]["index"].get("blocks", {}).get("write", "false"))
+
+
+def test_the_block_stays_while_another_hold_does() -> None:
+    """Two holds, released one at a time: the block goes with the last of them and never earlier,
+    so a write that passed an older pipeline on its way is refused at the shard while any hold is
+    there."""
+    with fresh_index() as (engine, index):
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        first, second = uuid4().hex, uuid4().hex
+        fence.freeze(first)
+        fence.freeze(second)
+        state = fence.release(first)
+        assert (state.closed, state.holds) == (True, (second,))
+        assert _write_block(engine, index) == "true"
+        state = fence.release(second)
+        assert (state.closed, state.holds) == (False, ())
+        assert _write_block(engine, index) == "false"
+        assert _put(engine, index, "open", {"id": 1, "body": "x", EPOCH_COLUMN: 3}) in (200, 201)
+
+
+def test_a_hold_refuses_an_index_and_an_update_and_no_delete_without_its_block() -> None:
+    """Why a runtime key holds `index` and not `write` (runtime-roles.md), and what is left between
+    the two requests of the last hold's release: with the hold in the pipeline and no block, an
+    index and an update are refused, because both run the final pipeline, and a delete is not,
+    because it runs none (measured on 9.5.5)."""
+    with fresh_index() as (engine, index):
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        assert _put(engine, index, "a", {"id": 1, "body": "x", EPOCH_COLUMN: 3}) in (200, 201)
+        fence.freeze(uuid4().hex)
+        assert _raw(engine, "PUT", f"/{index}/_settings", {"index.blocks.write": False})[0] == 200
+        assert _write_block(engine, index) == "false" and fence.state().closed
+        assert _put(engine, index, "b", {"id": 2, "body": "x", EPOCH_COLUMN: 3}) >= 400
+        updated, _ = _raw(engine, "POST", f"/{index}/_update/a?refresh=wait_for",
+                          {"doc": {"body": "y"}})
+        assert updated >= 400
+        deleted, _ = _raw(engine, "DELETE", f"/{index}/_doc/a?refresh=wait_for")
+        assert deleted == 200
+        assert _count(engine, index) == 0
+
+
+def test_a_pipeline_that_is_not_the_indexs_final_one_fences_nothing_and_reads_so() -> None:
+    """Unset ``index.final_pipeline`` and nothing the pipeline holds is enforced. The fence reads
+    as an interrupted setup - closed to this library - and resume_prepare installs it again."""
+    with fresh_index() as (engine, index):
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        unset = {"index.final_pipeline": "_none"}
+        assert _raw(engine, "PUT", f"/{index}/_settings", unset)[0] == 200
+        # The engine admits a stale generation now, and the fence does not read as holding.
+        assert _put(engine, index, "stale", {"id": 1, "body": "x", EPOCH_COLUMN: 2}) in (200, 201)
+        state = fence.state()
+        assert state.closed and state.holds == ("setup",)
+        state = fence.resume_prepare(3)
+        assert (state.complete, state.epoch, state.closed) == (True, 3, False)
+        assert _put(engine, index, "stale2", {"id": 2, "body": "x", EPOCH_COLUMN: 2}) >= 400
+
+
+def test_a_pipeline_level_on_failure_is_refused() -> None:
+    """``on_failure`` on the pipeline catches the fence's own refusal and indexes the document."""
+    with fresh_index() as (engine, index):
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        name = fence_pipeline(index)
+        status, current = _raw(engine, "GET", f"/_ingest/pipeline/{name}")
+        assert status == 200
+        document = {key: value for key, value in current[name].items()
+                    if key in ("description", "version", "_meta", "processors")}
+        document["on_failure"] = [{"set": {"field": "body", "value": "admitted"}}]
+        assert _raw(engine, "PUT", f"/_ingest/pipeline/{name}", document)[0] == 200
+        with pytest.raises(sde.MigrationRefused, match="on_failure"):
+            fence.state()
+
+
+def test_a_pipeline_another_executor_moved_is_refused_by_name() -> None:
+    """Elasticsearch answers a conditional pipeline write that lost the race with a 400 reading
+    "version conflict" (measured on 9.5.5): refused as another executor's, not a failed request."""
+    with fresh_index() as (engine, index):
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        backend = fence._backend  # type: ignore[attr-defined]
+        pipeline = backend._pipeline
+
+        def stale(table: str) -> Any:
+            document, version = pipeline(table)
+            return document, (version or 0) - 1
+
+        backend._pipeline = stale
+        with pytest.raises(sde.MigrationRefused, match="another executor"):
+            fence.freeze(uuid4().hex)

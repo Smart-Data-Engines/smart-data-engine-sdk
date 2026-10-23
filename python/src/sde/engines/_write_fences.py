@@ -282,6 +282,18 @@ _HOLDS = re.compile(r"(?:setup|hold_[0-9a-f]{32})")
 _BOUND = re.compile(r"(min|max)_([1-9][0-9]*)")
 
 
+def _version_conflict(status: int, answer: Any) -> bool:
+    """Whether Elasticsearch refused a conditional write of a pipeline because it moved: a 400
+    ``illegal_argument_exception`` reading "version conflict ...", not a 409 (measured on 9.5.5)."""
+    error = answer.get("error") if isinstance(answer, Mapping) else None
+    return (
+        status == 400
+        and isinstance(error, Mapping)
+        and error.get("type") == "illegal_argument_exception"
+        and str(error.get("reason", "")).startswith("version conflict")
+    )
+
+
 def fence_pipeline(index: str) -> str:
     """The ingest pipeline holding ``index``'s write fence: one per index, named after it."""
     return FENCE_PREFIX + _index_name(index)
@@ -415,6 +427,13 @@ class ElasticsearchFences:
                 f"the write-fence pipeline of {table} was changed outside this library: its "
                 "processor is not the one its constraints render"
             )
+        if "on_failure" in document:
+            # A pipeline-level on_failure catches the fence's own refusal and indexes the
+            # document anyway: the processor would read right and refuse nothing.
+            raise MigrationRefused(
+                f"the write-fence pipeline of {table} was changed outside this library: an "
+                "on_failure handler would index every write the fence refuses"
+            )
         return dict(constraints)
 
     def metadata(self, table: str) -> FenceMetadata:
@@ -437,6 +456,11 @@ class ElasticsearchFences:
         )
         document, _ = self._pipeline(table)
         constraints = self._constraints(table, uuid, document)
+        if final != fence_pipeline(table) and constraints:
+            # Not the index's final pipeline, so not one of its constraints is enforced: a fence
+            # that read complete here would admit every write. It reads as an interrupted setup -
+            # closed to this library, and finished by resume_prepare, which sets it again.
+            constraints[FENCE_PREFIX + "setup"] = "0"
         blocked = str(settings.get("blocks", {}).get("write", "false")).lower() == "true"
         held = any(_HOLDS.fullmatch(name[len(FENCE_PREFIX):]) for name in constraints)
         if blocked and not held:
@@ -476,8 +500,8 @@ class ElasticsearchFences:
             path = f"/_ingest/pipeline/{fence_pipeline(table)}"
             if document is not None:
                 path += f"?if_version={version if version is not None else 0}"
-            status, _ = self._call("PUT", path, body)
-            if status == 409:
+            status, answer = self._call("PUT", path, body)
+            if status == 409 or _version_conflict(status, answer):
                 raise MigrationRefused(
                     f"the write fence of {table} changed while this command ran: another executor "
                     "is provisioning it. Serialize commands in one project state directory."
@@ -501,16 +525,23 @@ class ElasticsearchFences:
         self._write(table, change)
 
     def drop_constraint(self, table: str, name: str) -> None:
-        after = self._write(table, lambda constraints: {
+        uuid, settings = self._index(table)
+        document, _ = self._pipeline(table)
+        remaining = [key for key in self._constraints(table, uuid, document) if key != name]
+        last = not any(_HOLDS.fullmatch(key[len(FENCE_PREFIX):]) for key in remaining)
+        blocked = str(settings.get("blocks", {}).get("write", "false")).lower() == "true"
+        if last and blocked:
+            # The last hold: the shard-level block goes first, while the hold in the pipeline
+            # still refuses every write a runtime key can make (it may not delete: a delete runs
+            # no pipeline). An interruption between the two requests then leaves the hold, which a
+            # retry of the release finds and removes. The other order left a block with no hold to
+            # say whose it was, which no retry lifted.
+            status, _ = self._call("PUT", f"/{table}/_settings", {"index.blocks.write": False})
+            if status != 200:
+                raise EngineError(f"lifting the write block of {table} failed ({status})")
+        self._write(table, lambda constraints: {
             key: value for key, value in constraints.items() if key != name
         })
-        if not any(_HOLDS.fullmatch(key[len(FENCE_PREFIX):]) for key in after):
-            # The last hold: the shard-level block goes with it.
-            _, settings = self._index(table)
-            if str(settings.get("blocks", {}).get("write", "false")).lower() == "true":
-                status, _ = self._call("PUT", f"/{table}/_settings", {"index.blocks.write": False})
-                if status != 200:
-                    raise EngineError(f"lifting the write block of {table} failed ({status})")
 
     def drain(self, table: str, *, project_id: str, hold: str) -> None:
         # Repeated on a retry: the block proves that every operation already on the shards has

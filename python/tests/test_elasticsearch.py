@@ -448,6 +448,36 @@ def test_a_fence_change_carries_the_version_it_read() -> None:
     assert "/_ingest/pipeline/__sde_f_notes?if_version=5" in puts
 
 
+MOVED = ("version conflict, required version [5] for pipeline [__sde_f_notes] "
+         "but current version is [6]")
+
+
+@pytest.mark.parametrize(("status", "error", "race"), [
+    (409, {"type": "version_conflict_engine_exception", "reason": MOVED}, True),
+    (400, {"type": "illegal_argument_exception", "reason": MOVED}, True),
+    (400, {"type": "illegal_argument_exception", "reason": "pipeline is invalid"}, False),
+    (400, {"type": "parse_exception", "reason": MOVED}, False),
+])
+def test_only_a_pipeline_write_that_lost_the_race_is_another_executor_s(
+    status: int, error: dict[str, str], race: bool,
+) -> None:
+    """Elasticsearch answers a conditional pipeline write whose version moved with a 400
+    ``illegal_argument_exception`` reading "version conflict" (measured on 9.5.5), where a 409 was
+    expected: both are another executor's. Any other refusal is the engine's error, not a race."""
+    from sde.engines._write_fences import ElasticsearchFences
+
+    class Refusing(_FenceTransport):
+        def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+            if method == "PUT" and path.startswith("/_ingest/pipeline/"):
+                self.sent.append((method, path))
+                return status, {"error": error, "status": status}
+            return super().__call__(method, path, body)
+
+    with pytest.raises(sde.SdeError) as raised:
+        ElasticsearchFences(Refusing(version=5)).add_constraint("notes", "__sde_f_setup", "0")
+    assert type(raised.value) is (sde.MigrationRefused if race else sde.EngineError)
+
+
 def _bookkeeping_engine(answers: dict[tuple[str, str], tuple[int, Any]]) -> tuple[Any, list[Any]]:
     engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
     sent: list[Any] = []
@@ -545,12 +575,14 @@ def test_a_barrier_makes_what_it_drained_visible_before_it_returns() -> None:
     assert order == ["/notes/_block/write", "/notes/_refresh"]
 
 
-def _stats(sizes: dict[str, Any], **extra: Any) -> dict[str, Any]:
-    """An ``_stats/store`` answer: each index's primaries, and a total twice that (one replica)."""
+def _stats(sizes: dict[str, Any], answered: Any = 1, **extra: Any) -> dict[str, Any]:
+    """An ``_stats/store,shard_stats`` answer: each index's primaries - ``answered`` of them - and a
+    total twice that (one replica)."""
     return {
         "_shards": {"total": 2, "successful": 2, "failed": 0},
         "indices": {
-            name: {"primaries": {"store": {"size_in_bytes": size}},
+            name: {"primaries": {"store": {"size_in_bytes": size},
+                                 "shard_stats": {"total_count": answered}},
                    "total": {"store": {"size_in_bytes": size * 2 if type(size) is int else size}}}
             for name, size in sizes.items()
         },
@@ -558,46 +590,67 @@ def _stats(sizes: dict[str, Any], **extra: Any) -> dict[str, Any]:
     }
 
 
-def test_storage_sizes_are_the_primaries_in_one_request_and_a_missing_index_is_absent() -> None:
+def _settings(shards: dict[str, Any]) -> dict[str, Any]:
+    """A ``_settings/index.number_of_shards`` answer: the indexes that exist, and their shards."""
+    return {name: {"settings": {"index": {"number_of_shards": count}}}
+            for name, count in shards.items()}
+
+
+def _answering(settings: Any, stats: Any, sent: list[tuple[str, str]] | None = None) -> Any:
+    def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
+        if sent is not None:
+            sent.append((method, path))
+        return settings if "/_settings/" in path else stats
+    return request
+
+
+def test_storage_sizes_are_the_primaries_in_two_requests_and_a_missing_index_is_absent() -> None:
     sent: list[tuple[str, str]] = []
     engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
-
-    def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
-        sent.append((method, path))
-        return 200, _stats({"note": 4096, "empty": 225})
-
-    engine._request = request  # type: ignore[method-assign]
+    engine._request = _answering(  # type: ignore[method-assign]
+        (200, _settings({"note": "1", "empty": "1"})), (200, _stats({"note": 4096, "empty": 225})),
+        sent,
+    )
     assert engine.storage_sizes(["note", "missing", "empty", "note"]) == {
         "empty": (225, 0), "note": (4096, 0),
     }
-    # One request for every index, each named once; the replicas' bytes are the cluster's own.
-    query = "ignore_unavailable=true&level=indices"
-    assert sent == [("GET", f"/empty,missing,note/_stats/store?{query}")]
+    # Each index named once in each request; the replicas' bytes are the cluster's own.
+    assert sent == [
+        ("GET", "/empty,missing,note/_settings/index.number_of_shards?ignore_unavailable=true"),
+        ("GET", "/empty,missing,note/_stats/store,shard_stats?ignore_unavailable=true"
+                "&level=indices"),
+    ]
     assert engine.storage_sizes([]) == {}
-    assert len(sent) == 1
+    assert len(sent) == 2
 
 
 def test_a_refused_store_read_carries_its_status_and_an_odd_one_is_refused() -> None:
     from sde.engines.elasticsearch import HttpStatus
 
     engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
-    denied = {"error": {"type": "security_exception", "reason": "action is unauthorized"}}
-    engine._request = lambda method, path, body=None, **_: (403, denied)  # type: ignore[method-assign]
-    with pytest.raises(sde.EngineError, match="storage sizes could not be read") as caught:
-        engine.storage_sizes(["note"])
-    assert isinstance(caught.value.__cause__, HttpStatus)
-    assert caught.value.__cause__.status == 403
+    denied = (403, {"error": {"type": "security_exception", "reason": "action is unauthorized"}})
+    shards = (200, _settings({"note": "1"}))
+    for settings, stats in ((denied, (200, _stats({"note": 1}))), (shards, denied)):
+        engine._request = _answering(settings, stats)  # type: ignore[method-assign]
+        with pytest.raises(sde.EngineError, match="storage sizes could not be read") as caught:
+            engine.storage_sizes(["note"])
+        assert isinstance(caught.value.__cause__, HttpStatus)
+        assert caught.value.__cause__.status == 403
     partial = {"total": 2, "successful": 1, "failed": 1}
-    for answer, refusal in (
-        (_stats({"note": 1}, _shards=partial), "partial"),
-        (_stats({"note": -1}), "not a number of bytes"),
-        (_stats({"note": "12"}), "not a number of bytes"),
-        (_stats({"note": True}), "not a number of bytes"),
-        ({"_shards": partial | {"failed": 0}}, "without their indexes"),
+    for settings, stats, refusal in (
+        (shards, _stats({"note": 1}, _shards=partial), "partial"),
+        (shards, _stats({"note": -1}), "not a number of bytes"),
+        (shards, _stats({"note": "12"}), "not a number of bytes"),
+        (shards, _stats({"note": True}), "not a number of bytes"),
+        (shards, {"_shards": partial | {"failed": 0}}, "without their indexes"),
+        # A primary that did not answer counts in neither successful nor failed shards.
+        ((200, _settings({"note": "2"})), _stats({"note": 9}), "from 1 of its 2 primary shards"),
+        (shards, _stats({}), "from 0 of its 1 primary shards"),
+        (shards, _stats({"note": 9}, answered=True), "from True of its 1 primary shards"),
+        (shards, _stats({"note": 9}, answered="1"), "from 1 of its 1 primary shards"),
+        ((200, _settings({"note": "two"})), _stats({"note": 9}), "number of primary shards"),
     ):
-        engine._request = (  # type: ignore[method-assign]
-            lambda method, path, body=None, _answer=answer, **_: (200, _answer)
-        )
+        engine._request = _answering(settings, (200, stats))  # type: ignore[method-assign]
         with pytest.raises(sde.EngineError, match=refusal):
             engine.storage_sizes(["note"])
     with pytest.raises(sde.EngineError, match="not an Elasticsearch index name"):

@@ -114,10 +114,27 @@ constraints, and a reader renders it again and refuses a pipeline whose processo
 - **The block stays as long as a hold does.** The pipeline checks a write where it arrives, the block
   where it reaches the shard, and a write that passed an older pipeline on its way is refused at the
   shard while the barrier holds.
+- **Releasing the last hold lifts the block first, then rewrites the pipeline.** An interruption
+  between the two leaves the hold in the pipeline. It still refuses every index and update, which
+  is every write a runtime key can make: a delete runs no pipeline, so a key that may delete is
+  refused by the local operator ([`local-cutover.md`](local-cutover.md)). A retry of the release
+  finds the hold and removes it. The other order left a block with no hold to say whose it was,
+  which no retry lifted: the index in force stayed closed to writes after a published cutover.
+- **The pipeline enforces only as the index's final pipeline.** An index whose
+  `index.final_pipeline` is not its fence's pipeline enforces nothing the pipeline holds. Its fence
+  reads as an interrupted setup, closed to this library, and `resume_prepare` sets the pipeline
+  again. A pipeline-level `on_failure` would index every write the processor refuses, so a
+  pipeline carrying one is refused.
+- **A default pipeline is not read by the fence.** It runs before the final one and could set
+  `__sde_write_epoch` before the fence checks it, as a trigger could change a row before a CHECK.
+  Setting one updates the index's settings, which `manage` grants, and the protocol fences no
+  administrator on any engine. The local operator refuses to stage or cut over an index that has
+  one, as it refuses a table with user triggers ([`local-cutover.md`](local-cutover.md)).
 - **An index blocked with no hold recorded** reads as an interrupted setup, which `resume_prepare`
   completes. A block or a pipeline that is not this library's is refused, never taken over.
 - **Pipeline changes** carry `if_version`, so a second, uncoordinated executor is refused rather
-  than overwritten.
+  than overwritten. Elasticsearch answers that conflict with a 400 `illegal_argument_exception`
+  reading "version conflict", not a 409 (measured on 9.5.5); both are refused as another executor's.
 
 The initial scope is ordinary PostgreSQL tables without inheritance, and local MergeTree or
 ReplacingMergeTree tables in a ClickHouse Atomic database. Distributed and replicated tables, foreign

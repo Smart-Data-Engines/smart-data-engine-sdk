@@ -21,6 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from test_elasticsearch_fence_live import opens_the_index
 from test_runtime_privileges_live import runtime_roles
 from test_staging_operator_live import cutover
 
@@ -34,7 +35,7 @@ pytestmark = pytest.mark.skipif(
     DSN is None or not os.environ.get("SDE_POSTGRES_DSN"),
     reason="set SDE_ELASTICSEARCH_DSN and SDE_POSTGRES_DSN to run",
 )
-RUNTIME = ("read", "write", "view_index_metadata")
+RUNTIME = ("read", "index", "view_index_metadata")
 """What the runtime key holds on its indexes: what docs/engine-connections.md asks for."""
 
 
@@ -410,6 +411,59 @@ def test_a_crash_after_the_decision_completes_the_move_off_elasticsearch(
         assert _blocks(move.es, move.source_table) == {"read": "true", "write": "true"}
 
 
+def test_a_move_lost_while_it_opens_the_index_in_force_is_finished_by_a_resume(
+    tmp_path: Path,
+) -> None:
+    """The move's last step releases the final hold on the index in force: the block lifted, then
+    the pipeline written without the hold. The first request is made, its response lost, and the
+    process is gone. What is left is the hold, still refusing every write a runtime key can make,
+    and a resume finishes the release. In the old order the pipeline went first, and what was left
+    was a block with no hold to say whose it was: the resume refused, and the published map's index
+    stayed closed to its writes (second review)."""
+    with moving("postgres", tmp_path) as move:
+        move.operator.stage(move.stage)
+        es = move.es.operator
+        actual = es._request
+        releasing: list[tuple[dict[str, str], tuple[str, ...]]] = []
+        lost: list[str] = []
+
+        def made_then_lost(method: str, path: str, body: Any = None, **options: Any) -> Any:
+            answer = actual(method, path, body, **options)
+            if releasing and not lost and opens_the_index(method, path, body):
+                lost.append(path)
+                raise Crash("the response was lost")
+            return answer
+
+        def step(name: str) -> None:
+            if name == "release_runtime:intent":
+                # The premise: a block to lift, or the release is one request and nothing between;
+                # and the final hold, the one a resume must find.
+                fence = es.write_fence(move.copy, project_id=PROJECT)
+                releasing.append((_blocks(move.es, move.copy), fence.state().holds))
+
+        move.operator._after_step = step
+        es._request = made_then_lost  # type: ignore[method-assign]
+        try:
+            with pytest.raises(Crash):
+                move.operator.execute(cutover(move.stage, move.signed, move.model, move.public))
+        finally:
+            es._request = actual  # type: ignore[method-assign]
+        [(blocks, final)] = releasing
+        assert blocks == {"write": "true"} and len(final) == 1
+        assert lost, "the release never made the request that opens the index"
+        state = es.write_fence(move.copy, project_id=PROJECT).state()
+        assert (state.closed, state.holds) == (True, final), "the hold is there to be found"
+        receipt = move.fresh_operator().resume().as_record()
+        assert (receipt["outcome"], receipt["recovered"]) == ("success", True)
+        state = es.write_fence(move.copy, project_id=PROJECT).state()
+        assert (state.epoch, state.closed, state.holds) == (3, False, ())
+        assert _blocks(move.es, move.copy) == {}
+        moved = move.session()
+        moved.save("Event", ROWS[3])
+        assert moved.get("Event", {"id": 3}) == ROWS[3]
+        assert moved.get("Event", {"id": 1}) == ROWS[1]
+
+
 def test_a_mismatch_aborts_and_the_source_on_elasticsearch_writes_again(tmp_path: Path) -> None:
     with moving("elasticsearch", tmp_path) as move:
         move.operator.stage(move.stage)
@@ -477,6 +531,10 @@ def test_an_index_of_the_staging_name_without_its_marker_is_left_alone(tmp_path:
 @pytest.mark.parametrize(("privileges", "cluster", "refusal"), [
     ([*RUNTIME, "manage"], ["read_pipeline"], "holds manage on"),
     ([*RUNTIME, "delete_index"], ["read_pipeline"], "holds delete_index on"),
+    # A delete runs no ingest pipeline: a key that may delete documents goes past the fence.
+    ([*RUNTIME, "delete"], ["read_pipeline"], "holds delete on"),
+    # What runtime-roles.md said before the second review: named by the privilege given.
+    (["read", "write", "view_index_metadata"], ["read_pipeline"], "holds write on"),
     (RUNTIME, ["read_pipeline", "manage_pipeline"], "cluster privilege manage_pipeline"),
     (RUNTIME, [], "needs the cluster privilege read_pipeline"),
 ])

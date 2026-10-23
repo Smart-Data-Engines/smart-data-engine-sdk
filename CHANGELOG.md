@@ -31,6 +31,9 @@ under its name. An index keeps no secondary index beside its store, so the ratio
   operator admits it.
 - The adapter's error carries the status beneath it (`HttpStatus`), which is how the session tells
   `refused` from `failed`; never the engine's text.
+- A size from fewer primary shards than the index's `number_of_shards` is refused (second review).
+  An unassigned primary counts as neither a success nor a failure in `_shards`, so the sum came
+  back short of it with nothing to say so.
 
 **Fixed: a float32 reads as the float32 it is, from every engine and in both languages.**
 PostgreSQL's text for a `real` - and ClickHouse's JSON, which the TypeScript adapter reads - is the
@@ -57,10 +60,12 @@ comparison and the cutover then take it like a group on any other engine
   nothing is revoked from one login. The side a decision retires is blocked for reads for good and
   keeps the holds that block its writes, against the runtime, an unknown login and the
   administrator's own search alike. The pause refuses writes and leaves the frozen data readable.
-- **Runtime keys are qualified through `_has_privileges`.** No `manage`, `all` or `delete_index` on
-  their indexes, no cluster privilege that rewrites a fence, `read_pipeline`, and the fresh
-  `sde_m_*` names covered in advance, because the operator grants nothing. The operator's own
-  login reads the cluster's identity (`monitor`).
+- **Runtime keys are qualified through `_has_privileges`.** No `manage`, `all`, `write`,
+  `delete_index` or `delete` on their indexes, no cluster privilege that rewrites a fence,
+  `read_pipeline`, and the fresh `sde_m_*` names covered in advance, because the operator grants
+  nothing. A key holds `index`, not `write`: a delete runs no ingest pipeline, where an index or an
+  update runs the final one (measured on 9.5.5), so a key that may delete goes past the fence. The
+  operator's own login reads the cluster's identity (`monitor`).
 - **Both adapters copy and compare in key order** (`key_range`, `nth_key`, `count`, `copy_in`,
   backfill markers in `sde_backfill_state`), so `backfill` and `verify` work between Elasticsearch
   and the SQL engines in both languages. A copy is `create`: a document already there stays.
@@ -73,6 +78,20 @@ comparison and the cutover then take it like a group on any other engine
   one.
 - Both libraries render the same fence pipeline, pinned by `conformance/fence-processors.json`, and
   a fence one library provisions is read by the other in the live tests.
+- **Fixed after a second review, in both languages**
+  ([`docs/write-fences.md`](docs/write-fences.md)):
+  - Releasing the last hold lifts the block first, then rewrites the pipeline. In the other order
+    an interruption between the two requests left a block with no hold to say whose it was. No
+    retry lifted it, a resume refused, and the index of a published map stayed closed to its
+    writes. What is left now is the hold, still refusing every write a runtime key can make, which
+    a retry or a resume removes.
+  - A fence whose pipeline is not the index's `final_pipeline` enforces nothing, and read as in
+    force. It reads as an interrupted setup now, closed, and `resume_prepare` sets the pipeline
+    again. A pipeline-level `on_failure` would index every write the processor refuses, so a
+    pipeline carrying one is refused.
+  - Elasticsearch answers an `if_version` conflict with a 400 reading "version conflict", not a
+    409, so another executor's change to a fence came back as an engine error. Both are refused as
+    another executor's.
 
 **New: Elasticsearch in the TypeScript library** (`@smart-data-engines/sde/engines/elasticsearch`).
 The same engine in the same layout as the Python adapter, with the mapping and the documents held

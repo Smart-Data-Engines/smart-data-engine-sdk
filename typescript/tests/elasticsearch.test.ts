@@ -4,7 +4,7 @@ import { inspect } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
-import { EngineError, searchEngine, SearchRefused } from '../src/index.js'
+import { EngineError, MigrationRefused, searchEngine, SearchRefused } from '../src/index.js'
 import { decimalBound, stored } from '../src/elasticsearch-document.js'
 import { ElasticsearchEngine, HttpStatus, parseDsn, WATERMARK_MAPPING, whole, writeErrorOf } from '../src/engines/elasticsearch.js'
 import { OrderbookEngine } from '../src/engines/orderbook.js'
@@ -225,6 +225,34 @@ describe('the write fence', () => {
       expect(fenceProcessor(constraints), name).toEqual(FENCE_PROCESSORS.processors[name])
     }
   })
+
+  // Elasticsearch answers a conditional pipeline write whose version moved with a 400
+  // `illegal_argument_exception` reading "version conflict" (measured on 9.5.5), where a 409 was
+  // expected: both are another executor's. Any other refusal is the engine's error, not a race.
+  const MOVED = 'version conflict, required version [5] for pipeline [__sde_f_notes] but current version is [6]'
+  it.each([
+    [409, { type: 'version_conflict_engine_exception', reason: MOVED }, true],
+    [400, { type: 'illegal_argument_exception', reason: MOVED }, true],
+    [400, { type: 'illegal_argument_exception', reason: 'pipeline is invalid' }, false],
+    [400, { type: 'parse_exception', reason: MOVED }, false],
+  ] as const)('reads a %i %o to a pipeline write as a race: %s', async (status, error, race) => {
+    const { ElasticsearchFences, fenceProcessor } = await import('../src/engines/_write-fences.js')
+    const request = async (method: string, path: string): Promise<[number, unknown]> => {
+      if (method === 'GET' && path === '/notes/_settings') return [200, { notes: { settings: { index: { uuid: 'u1' } } } }]
+      if (method === 'GET' && path === '/notes/_mapping') return [200, { notes: { mappings: { properties: { id: { type: 'long' } } } } }]
+      if (method === 'GET' && path.startsWith('/_ingest/pipeline/')) {
+        return [200, { __sde_f_notes: {
+          version: 5, _meta: { sde: { contract: 1, index: 'notes', uuid: 'u1', constraints: {} } },
+          processors: [fenceProcessor({})],
+        } }]
+      }
+      if (method === 'PUT' && path.startsWith('/_ingest/pipeline/')) return [status, { error, status }]
+      return [200, { acknowledged: true }]
+    }
+    const refused = await new ElasticsearchFences(request).addConstraint('notes', '__sde_f_setup', '0')
+      .then(() => null, (thrown: unknown) => thrown)
+    expect((refused as Error | null)?.constructor).toBe(race ? MigrationRefused : EngineError)
+  })
 })
 
 describe('the bookkeeping and the staging marker', () => {
@@ -277,55 +305,72 @@ describe('the bookkeeping and the staging marker', () => {
 })
 
 describe('the store sizes', () => {
-  /** An `_stats/store` answer: each index's primaries, and a total twice that (one replica). */
-  function stats(sizes: Record<string, unknown>, extra: Record<string, unknown> = {}): unknown {
+  /** An `_stats/store,shard_stats` answer: each index's primaries - `answered` of them - and a total twice that. */
+  function stats(sizes: Record<string, unknown>, extra: Record<string, unknown> = {}, answered: unknown = 1): unknown {
     const indices = Object.fromEntries(Object.entries(sizes).map(([name, size]) => [name, {
-      primaries: { store: { size_in_bytes: size } },
+      primaries: { store: { size_in_bytes: size }, shard_stats: { total_count: answered } },
       total: { store: { size_in_bytes: typeof size === 'number' ? size * 2 : size } },
     }]))
     return { _shards: { total: 2, successful: 2, failed: 0 }, indices, ...extra }
   }
 
-  function answering(status: number, body: unknown): { engine: ElasticsearchEngine; sent: string[] } {
+  /** A `_settings/index.number_of_shards` answer: the indexes that exist, and their shards. */
+  function settings(shards: Record<string, string>): unknown {
+    return Object.fromEntries(Object.entries(shards).map(([name, count]) => [name, { settings: { index: { number_of_shards: count } } }]))
+  }
+
+  function answering(declared: [number, unknown], measured: [number, unknown]): { engine: ElasticsearchEngine; sent: string[] } {
     const engine = new ElasticsearchEngine('elasticsearch+http://127.0.0.1:9200')
     const sent: string[] = []
     ;(engine as unknown as { request: unknown }).request = async (method: string, path: string): Promise<[number, unknown]> => {
       sent.push(`${method} ${path}`)
-      return [status, body]
+      return path.includes('/_settings/') ? declared : measured
     }
     return { engine, sent }
   }
 
-  it('are the primaries, in one request, and a missing index is absent', async () => {
-    const { engine, sent } = answering(200, stats({ note: 4096, empty: 225 }))
+  it('are the primaries, in two requests, and a missing index is absent', async () => {
+    const { engine, sent } = answering([200, settings({ note: '1', empty: '1' })], [200, stats({ note: 4096, empty: 225 })])
     expect(await engine.storageSizes(['note', 'missing', 'empty', 'note'])).toEqual(
       new Map([['empty', [225, 0]], ['note', [4096, 0]]]),
     )
-    // One request for every index, each named once; the replicas' bytes are the cluster's own.
-    expect(sent).toEqual(['GET /empty,missing,note/_stats/store?ignore_unavailable=true&level=indices'])
+    // Each index named once in each request; the replicas' bytes are the cluster's own.
+    expect(sent).toEqual([
+      'GET /empty,missing,note/_settings/index.number_of_shards?ignore_unavailable=true',
+      'GET /empty,missing,note/_stats/store,shard_stats?ignore_unavailable=true&level=indices',
+    ])
     expect(await engine.storageSizes([])).toEqual(new Map())
-    expect(sent).toHaveLength(1)
+    expect(sent).toHaveLength(2)
   })
 
   it('carry the status of a refused read, and refuse a partial or odd answer', async () => {
-    const denied = answering(403, { error: { type: 'security_exception', reason: 'action is unauthorized' } })
-    const refused = await denied.engine.storageSizes(['note']).catch((error: unknown) => error)
-    expect(refused).toBeInstanceOf(EngineError)
-    expect((refused as Error).message).toMatch(/storage sizes could not be read/)
-    expect((refused as Error).cause).toBeInstanceOf(HttpStatus)
-    expect(((refused as Error).cause as HttpStatus).status).toBe(403)
-    const partial = { total: 2, successful: 1, failed: 1 }
-    for (const [body, refusal] of [
-      [stats({ note: 1 }, { _shards: partial }), /partial/],
-      [stats({ note: -1 }), /not a number of bytes/],
-      [stats({ note: '12' }), /not a number of bytes/],
-      [stats({ note: true }), /not a number of bytes/],
-      [stats({ note: 2n ** 60n }), /not a number of bytes/],
-      [{ _shards: { ...partial, failed: 0 } }, /without their indexes/],
-    ] as const) {
-      await expect(answering(200, body).engine.storageSizes(['note'])).rejects.toThrow(refusal)
+    const denied: [number, unknown] = [403, { error: { type: 'security_exception', reason: 'action is unauthorized' } }]
+    const shards: [number, unknown] = [200, settings({ note: '1' })]
+    for (const [declared, measured] of [[denied, [200, stats({ note: 1 })]], [shards, denied]] as [[number, unknown], [number, unknown]][]) {
+      const refused = await answering(declared, measured).engine.storageSizes(['note']).catch((error: unknown) => error)
+      expect(refused).toBeInstanceOf(EngineError)
+      expect((refused as Error).message).toMatch(/storage sizes could not be read/)
+      expect((refused as Error).cause).toBeInstanceOf(HttpStatus)
+      expect(((refused as Error).cause as HttpStatus).status).toBe(403)
     }
-    await expect(answering(200, stats({})).engine.storageSizes(['note*'])).rejects.toThrow(
+    const partial = { total: 2, successful: 1, failed: 1 }
+    for (const [declared, body, refusal] of [
+      [shards, stats({ note: 1 }, { _shards: partial }), /partial/],
+      [shards, stats({ note: -1 }), /not a number of bytes/],
+      [shards, stats({ note: '12' }), /not a number of bytes/],
+      [shards, stats({ note: true }), /not a number of bytes/],
+      [shards, stats({ note: 2n ** 60n }), /not a number of bytes/],
+      [shards, { _shards: { ...partial, failed: 0 } }, /without their indexes/],
+      // A primary that did not answer counts in neither successful nor failed shards.
+      [[200, settings({ note: '2' })], stats({ note: 9 }), /from 1 of its 2 primary shards/],
+      [shards, stats({}), /from 0 of its 1 primary shards/],
+      [shards, stats({ note: 9 }, {}, true), /from true of its 1 primary shards/],
+      [shards, stats({ note: 9 }, {}, '1'), /from 1 of its 1 primary shards/],
+      [[200, settings({ note: 'two' })], stats({ note: 9 }), /number of primary shards/],
+    ] as [[number, unknown], unknown, RegExp][]) {
+      await expect(answering(declared, [200, body]).engine.storageSizes(['note'])).rejects.toThrow(refusal)
+    }
+    await expect(answering(shards, [200, stats({})]).engine.storageSizes(['note*'])).rejects.toThrow(
       /not an Elasticsearch index name/,
     )
   })
