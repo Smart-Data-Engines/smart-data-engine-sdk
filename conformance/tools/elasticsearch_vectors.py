@@ -197,6 +197,9 @@ ROW = {
     "note": "Red apple, RED apples", "home_code": "WAW",
 }
 
+GAUGE = {"id": "long/timestamp", "x": "float", "label": "keyword"}
+"""Columns of the later cases: a float32 and a key that can be negative - an instant before 1970."""
+
 DOCUMENT_CASES: list[tuple[str, dict[str, Any], str]] = [
     ("001-every-type", ROW,
      "Every type as the index keeps it: microseconds since the epoch for both instants - a naive "
@@ -219,21 +222,42 @@ DOCUMENT_CASES: list[tuple[str, dict[str, Any], str]] = [
      "An int32 field takes no value outside int32."),
     ("008-a-key-without-a-value", {**ROW, "station": None},
      "A document is addressed by its key, so a key field cannot be null."),
+    ("009-a-float32-as-the-engine-indexes-it",
+     {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 0.1, "label": "a"},
+     "A float field is indexed as a float32 and returned as written, so the library writes the "
+     "float32: the value a filter compares is the value a read returns."),
+    ("010-a-float32-out-of-range",
+     {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1e39, "label": "a"},
+     "Past the largest float32 there is nothing the engine could index: refused before sending."),
+    ("011-a-token-longer-than-a-term",
+     {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1.0, "label": "\u023a" * 16383},
+     "The text is 32,766 UTF-8 bytes and folds to 49,149: a token is a term too, so it is "
+     "refused before sending although the text itself fits."),
+    ("012-a-key-before-1970",
+     {"id": datetime.fromisoformat("1969-07-20T20:17:40.000001"), "x": -0.0, "label": "b"},
+     "An integer is framed with its minus sign: an instant before 1970 is a negative number of "
+     "microseconds. A float32 keeps the sign of a zero."),
+    ("013-a-lone-surrogate",
+     {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1.0, "label": "a\ud800b"},
+     "UTF-8 has no bytes for half of a surrogate pair: refused, rather than written as U+FFFD - "
+     "another text than the one saved."),
 ]
 
 
 def _documents() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for name, row, why in DOCUMENT_CASES:
-        case = {"columns": READING, "key": KEY,
+        columns, key = (GAUGE, ["id"]) if int(name[:3]) >= 9 else (READING, KEY)
+        case = {"columns": columns, "key": key,
                 "row": {column: _encoded(value) for column, value in row.items()}}
         try:
-            identity, source = document(READING, KEY, row)
+            identity, source = document(columns, key, row)
             expected: dict[str, Any] = {"id": identity, "source": _json(source)}
         except EngineError as exc:
             match = {
                 "005": "fractional digits", "006": "cannot index", "007": "outside int32",
-                "008": "needs its key",
+                "008": "needs its key", "010": "outside float32",
+                "011": "once normalised and folded", "013": "lone surrogate",
             }[name[:3]]
             assert match in str(exc), str(exc)
             expected = {"error": "EngineError", "match": match}

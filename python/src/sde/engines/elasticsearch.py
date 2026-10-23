@@ -35,9 +35,11 @@ import http.client
 import json
 import math
 import os
+import re
 import select
 import ssl
 import stat
+import struct
 import urllib.parse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -48,6 +50,7 @@ from typing import Any, Final
 from uuid import UUID
 
 from .._usage import UsageGate, guarded
+from ..canonical import CanonicalError, canonical_bytes
 from ..errors import EngineError
 from ..layout import index_name_refusal
 from ..logging import log
@@ -105,11 +108,24 @@ def _loopback(host: str) -> bool:
         return False
 
 
-def _seconds(name: str, text: str) -> float:
+def _unquoted(text: str) -> str:
+    """Percent-decoding as the TypeScript profile reads it: a malformed escape, or bytes that are
+    not UTF-8, are refused - not kept as they stand, nor replaced by U+FFFD."""
+    refusal = "the user and password of an Elasticsearch DSN are percent-encoded UTF-8"
+    if re.search(r"%(?![0-9A-Fa-f]{2})", text) is not None:
+        raise EngineError(refusal)
     try:
-        value = float(text)
-    except ValueError:
-        raise EngineError(f"{name} is a number of seconds") from None
+        return urllib.parse.unquote(text, errors="strict")
+    except UnicodeDecodeError:
+        raise EngineError(refusal) from None
+
+
+def _seconds(name: str, text: str) -> float:
+    # Digits and one optional fraction, as the TypeScript profile reads it: `1e1` or `inf` would
+    # be seconds in one language and a refusal in the other.
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", text) is None:
+        raise EngineError(f"{name} is a number of seconds")
+    value = float(text)
     low, high = _TIMEOUT_RANGE
     if not math.isfinite(value) or not low <= value <= high:
         raise EngineError(f"{name} is between {low} and {high} seconds")
@@ -126,7 +142,10 @@ def parse_dsn(dsn: str) -> Connection:
     """
     if not isinstance(dsn, str) or any(c.isspace() or c == "\\" for c in dsn):
         raise EngineError("an Elasticsearch DSN is one URL without whitespace or backslashes")
-    parts = urllib.parse.urlsplit(dsn)
+    try:
+        parts = urllib.parse.urlsplit(dsn)
+    except ValueError:
+        raise EngineError("an Elasticsearch DSN is a URL") from None
     if parts.scheme not in _SCHEMES:
         raise EngineError(f"an Elasticsearch DSN starts {' or '.join(sorted(_SCHEMES))}://")
     tls = _SCHEMES[parts.scheme]
@@ -134,7 +153,7 @@ def parse_dsn(dsn: str) -> Connection:
         raise EngineError("an Elasticsearch DSN has no path and no fragment")
     try:
         host, port = parts.hostname, parts.port
-    except ValueError:
+    except (ValueError, TypeError):
         raise EngineError("the port of an Elasticsearch DSN is a number up to 65535") from None
     if not host or "%" in host:
         raise EngineError("an Elasticsearch DSN names a host, without an IPv6 zone")
@@ -164,8 +183,8 @@ def parse_dsn(dsn: str) -> Connection:
             raise EngineError("ca_cert names no readable file") from None
         if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= _CA_BYTES:
             raise EngineError("ca_cert is a nonempty regular file of at most 1 MiB")
-    user = urllib.parse.unquote(parts.username) if parts.username is not None else None
-    password = urllib.parse.unquote(parts.password) if parts.password is not None else ""
+    user = _unquoted(parts.username) if parts.username is not None else None
+    password = _unquoted(parts.password) if parts.password is not None else ""
     if user is not None and "api_key" in options:
         raise EngineError("an Elasticsearch DSN gives a user or an api_key, not both")
     authorization = None
@@ -230,14 +249,32 @@ def stored(kind: str, value: Any) -> Any:
     if kind in ("float", "double"):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise EngineError("a float field takes a number")
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            raise EngineError("the value is outside float64") from None
         if not math.isfinite(number):
             raise EngineError("Elasticsearch stores no NaN or infinity")
+        if kind == "float":
+            # Indexed as a float32 and returned as written: rounded here, so that the value the
+            # engine filters and sorts on is the value a read returns - as a PostgreSQL `real` and a
+            # ClickHouse `Float32` return it.
+            try:
+                number = struct.unpack("<f", struct.pack("<f", number))[0]
+            except OverflowError:
+                raise EngineError("the value is outside float32") from None
+            if not math.isfinite(number):
+                raise EngineError("the value is outside float32")
         return number
     if kind == "keyword":
         if not isinstance(value, str):
             raise EngineError("a text field takes a str")
-        if len(value.encode("utf-8")) > KEYWORD_BYTES:
+        try:
+            size = len(value.encode("utf-8"))
+        except UnicodeEncodeError:
+            raise EngineError("a text value holds a lone surrogate, which UTF-8 cannot carry") \
+                from None
+        if size > KEYWORD_BYTES:
             raise EngineError(
                 f"a text value longer than {KEYWORD_BYTES} UTF-8 bytes is one term Elasticsearch "
                 f"cannot index; refused before it is sent"
@@ -256,22 +293,78 @@ def stored(kind: str, value: Any) -> Any:
         return _micros(value)
     if kind.startswith("long/decimal("):
         digits, scale = _decimal_parts(kind)
-        if isinstance(value, (bool, float)):
-            raise EngineError("a decimal field takes a Decimal or an int, never a float")
-        try:
-            exact = value if isinstance(value, Decimal) else Decimal(str(value))
-        except InvalidOperation:
-            raise EngineError("a decimal field takes a decimal") from None
-        if not exact.is_finite():
-            raise EngineError("a decimal field takes a finite decimal")
-        scaled = exact.scaleb(scale)
-        if scaled != scaled.to_integral_value():
+        coefficient, shift = _scaled(value, scale)
+        if shift < 0:
             raise EngineError(f"the value has more than {scale} fractional digits")
-        integer = int(scaled)
-        if abs(integer) >= 10**digits:
+        if coefficient and len(str(abs(coefficient))) + shift > digits:
             raise EngineError(f"the value has more than {digits} digits")
-        return integer
+        return coefficient * int(10**shift)
     raise EngineError(f"{kind!r} is not a column type this adapter writes")
+
+
+def _scaled(value: Any, scale: int) -> tuple[int, int]:
+    """``value`` as ``coefficient * 10**(shift - scale)``, with the coefficient's trailing zeros
+    taken off while that leaves a fraction: integer arithmetic only.
+
+    Not ``Decimal.scaleb``, which rounds to the thread's decimal context - an application that set
+    a precision of ten would have stored its decimals rounded and two keys under one ``_id``.
+    """
+    if isinstance(value, (bool, float)):
+        raise EngineError("a decimal field takes a Decimal or an int, never a float")
+    try:
+        exact = value if isinstance(value, Decimal) else Decimal(str(value))
+    except InvalidOperation:
+        raise EngineError("a decimal field takes a decimal") from None
+    if not exact.is_finite():
+        raise EngineError("a decimal field takes a finite decimal")
+    sign, figures, exponent = exact.as_tuple()
+    assert isinstance(exponent, int)
+    coefficient = int("".join(str(figure) for figure in figures) or "0")
+    if coefficient == 0:
+        return 0, 0
+    while exponent + scale < 0 and coefficient % 10 == 0:
+        coefficient //= 10
+        exponent += 1
+    return (-coefficient if sign else coefficient), exponent + scale
+
+
+def _decimal_bound(kind: str, value: Any, operation: str) -> int | None:
+    """A decimal predicate's bound in the column's scaled integers, or ``None`` for an equality no
+    stored value can meet.
+
+    A predicate is a question about the column, not a value to store: ``>= 0.005`` on a scale of
+    2 is ``>= 0.01``, and ``< 0.005`` is ``< 0.01`` - what PostgreSQL and ClickHouse answer -
+    rather than a refusal. A bound at or past the column's digits becomes the first value beyond
+    them, where it keeps the same answer without leaving a ``long``. No power of ten is computed
+    past the digits the value itself has: ``Decimal("1E-999999999")`` is one comparison.
+    """
+    digits, scale = _decimal_parts(kind)
+    coefficient, shift = _scaled(value, scale)
+    if coefficient == 0:
+        return 0
+    limit = int(10**digits)
+    width = len(str(abs(coefficient))) + shift
+    if width > digits:
+        # At least 10**digits in magnitude: beyond every value the column holds.
+        return None if operation == "eq" else (limit if coefficient > 0 else -limit)
+    if shift >= 0:
+        return coefficient * int(10**shift)
+    if operation == "eq":
+        return None
+    if width <= 0:
+        # Less than one step of the scale in magnitude: the ceiling is 1 or 0.
+        return 1 if coefficient > 0 else 0
+    ceiling: int = -((-coefficient) // int(10**-shift))
+    return ceiling
+
+
+def _same_json(left: Any, right: Any) -> bool:
+    """Two JSON documents equal as values: key order aside, nothing the canonical encoding cannot
+    hold - a float or a value of no canonical form is in nothing this library renders."""
+    try:
+        return canonical_bytes(left) == canonical_bytes(right)
+    except (CanonicalError, TypeError, ValueError):
+        return False
 
 
 def _read_value(kind: str, value: Any) -> Any:
@@ -290,7 +383,9 @@ def _read_value(kind: str, value: Any) -> Any:
         return instant.replace(tzinfo=None) if kind == "long/timestamp" else instant
     if kind.startswith("long/decimal("):
         _, scale = _decimal_parts(kind)
-        return Decimal(int(value)).scaleb(-scale)
+        integer = int(value)
+        figures = tuple(int(figure) for figure in str(abs(integer)))
+        return Decimal((int(integer < 0), figures, -scale))
     raise EngineError(f"{kind!r} is not a column type this adapter reads")
 
 
@@ -343,6 +438,14 @@ def document(
         source[column] = value
         if kind == "keyword" and value is not None:
             found = search_tokens(value)
+            # Normalising and folding can lengthen a text: a run of U+023A folds to three bytes a
+            # letter. A token is one term too, and one past the limit fails the document in the
+            # engine after it was sent.
+            if any(len(token.encode("utf-8")) > KEYWORD_BYTES for token in found):
+                raise EngineError(
+                    f"a token of {column} is longer than {KEYWORD_BYTES} UTF-8 bytes once "
+                    f"normalised and folded, one term Elasticsearch cannot index"
+                )
             if found:
                 tokens[column] = found
     if tokens:
@@ -367,6 +470,7 @@ class _Index:
     columns: Mapping[str, str]
     """Column -> layout type (``long/timestamptz``), read back from the mapping."""
     key: tuple[str, ...]
+    entity: str = ""
 
     def document(self, values: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         try:
@@ -523,6 +627,25 @@ class ElasticsearchEngine:
             ) from None
 
     @staticmethod
+    def _whole(response: Mapping[str, Any], what: str) -> None:
+        """Refuse an answer some shard did not contribute to: a page missing rows would move the
+        cursor past them for good, and a count would not be exact."""
+        shards = response.get("_shards")
+        failed = shards.get("failed", 0) if isinstance(shards, Mapping) else 0
+        if response.get("timed_out") is True or failed:
+            raise EngineError(
+                f"{what} came back partial - timed out or with {failed} failed shard(s) - and a "
+                f"partial answer is not one this library returns"
+            )
+
+    @staticmethod
+    def _write_error(status: int, body: Any) -> str:
+        """A refused write, by its type only: the engine's reason can quote the document's value."""
+        if isinstance(body, Mapping) and isinstance(body.get("error"), Mapping):
+            return f"{status} {body['error'].get('type', '')}".strip()
+        return str(status)
+
+    @staticmethod
     def _error(status: int, body: Any) -> str:
         if isinstance(body, Mapping) and isinstance(body.get("error"), Mapping):
             error = body["error"]
@@ -584,11 +707,12 @@ class ElasticsearchEngine:
             expected = elasticsearch_mapping(layout, entity, keys)
             wanted = dict(layout.columns.get(entity, {}))
             key = list(expected["_meta"]["sde"]["key"])
-            if dict(found.columns) != wanted or list(found.key) != key:
+            if dict(found.columns) != wanted or list(found.key) != key or found.entity != entity:
                 raise EngineError(
-                    f"index {index} exists with fields {dict(sorted(found.columns.items()))} and "
-                    f"key {list(found.key)}, and the layout needs {dict(sorted(wanted.items()))} "
-                    f"and key {key}. Elasticsearch changes no field in place."
+                    f"index {index} exists for {found.entity} with fields "
+                    f"{dict(sorted(found.columns.items()))} and key {list(found.key)}, and the "
+                    f"layout needs {entity} with {dict(sorted(wanted.items()))} and key {key}. "
+                    f"Elasticsearch changes no field in place."
                 )
 
     def _index(self, name: str) -> _Index:
@@ -618,7 +742,24 @@ class ElasticsearchEngine:
         }
         if any(column not in columns for column in key):
             raise EngineError(f"index {name} names a key field it does not map")
-        index = _Index(name, columns, tuple(str(column) for column in key))
+        entity = meta.get("entity")
+        if not isinstance(entity, str) or not entity:
+            raise EngineError(f"index {name} names no entity in _meta.sde")
+        # The whole mapping, not only each field's type: a normalizer, a null_value, an
+        # ignore_above, a token field mapped as text or a disabled _source would each change an
+        # answer while every type still matched. It is what this library creates or nothing.
+        rendered = elasticsearch_mapping(
+            PhysicalLayout(tables={entity: name}, columns={entity: columns}),
+            entity,
+            {entity: [str(column) for column in key]},
+        )
+        if not _same_json(rendered, mapping):
+            raise EngineError(
+                f"index {name} has a mapping this library would not create: something beyond each "
+                f"field's type differs - a field parameter, the token fields or _source - and "
+                f"each of those can change an answer"
+            )
+        index = _Index(name, columns, tuple(str(column) for column in key), entity)
         self._indexes[name] = index
         return index
 
@@ -636,7 +777,7 @@ class ElasticsearchEngine:
         )
         if status not in (200, 201):
             log("sde.write.failed", table=table, error=str(status))
-            raise EngineError(f"insert into {table} failed: {self._error(status, body)}")
+            raise EngineError(f"insert into {table} failed: {self._write_error(status, body)}")
 
     @guarded
     def insert_many(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -653,7 +794,9 @@ class ElasticsearchEngine:
         payload = b"\n".join(lines) + b"\n"
         status, body = self._request("POST", "/_bulk?refresh=wait_for", ndjson=payload)
         if status != 200 or not isinstance(body, Mapping):
-            raise EngineError(f"batch insert into {table} failed: {self._error(status, body)}")
+            raise EngineError(
+                f"batch insert into {table} failed: {self._write_error(status, body)}"
+            )
         if body.get("errors"):
             items = [item.get("index", {}) for item in body.get("items", ())]
             failed = [item for item in items if item.get("status", 500) >= 300]
@@ -689,12 +832,19 @@ class ElasticsearchEngine:
 
     def _filter(self, index: _Index, predicate: ReadFilter) -> dict[str, Any]:
         name = predicate.column.name
+        kind = index.columns[name]
+        if predicate.operation == "eq" and predicate.value is None:
+            return {"bool": {"must_not": [{"exists": {"field": name}}]}}
+        if kind.startswith("long/decimal("):
+            bound = _decimal_bound(kind, predicate.value, predicate.operation)
+            if bound is None:
+                return {"bool": {"must_not": [{"match_all": {}}]}}
+            value: Any = bound
+        else:
+            value = self._value(index, name, predicate.value)
         if predicate.operation == "eq":
-            if predicate.value is None:
-                return {"bool": {"must_not": [{"exists": {"field": name}}]}}
-            return {"term": {name: self._value(index, name, predicate.value)}}
-        bound = "gte" if predicate.operation == "ge" else "lt"
-        return {"range": {name: {bound: self._value(index, name, predicate.value)}}}
+            return {"term": {name: value}}
+        return {"range": {name: {"gte" if predicate.operation == "ge" else "lt": value}}}
 
     def _after(self, index: _Index, plan: ReadPlan) -> dict[str, Any]:
         """Rows past ``plan.after`` in the plan's order, nulls last: the keyset rule of the SQL
@@ -731,9 +881,11 @@ class ElasticsearchEngine:
             "size": plan.limit + 1,
             "track_total_hits": False,
         }
-        status, response = self._request("POST", self._path(table, "_search"), body)
+        path = self._path(table, "_search") + "?allow_partial_search_results=false"
+        status, response = self._request("POST", path, body)
         if status != 200 or not isinstance(response, Mapping):
             raise EngineError(f"logical scan of {table} failed: {self._error(status, response)}")
+        self._whole(response, f"a page of {table}")
         hits = response.get("hits", {}).get("hits", [])
         return [read_row(plan.columns, index.row(hit.get("_source") or {})) for hit in hits]
 
@@ -769,6 +921,7 @@ class ElasticsearchEngine:
         status, response = self._request("POST", self._path(table, "_count"), body)
         if status != 200 or not isinstance(response, Mapping) or "count" not in response:
             raise EngineError(f"count of {table} failed: {self._error(status, response)}")
+        self._whole(response, f"the count of {table}")
         return int(response["count"])
 
     # --- rollback protection ------------------------------------------------------------------
@@ -798,9 +951,11 @@ class ElasticsearchEngine:
     def map_watermark(self) -> int | None:
         self._watermark_index()
         body = {"size": 1, "sort": [{"map_version": {"order": "desc"}}], "_source": ["map_version"]}
-        status, response = self._request("POST", self._path(WATERMARK_TABLE, "_search"), body)
+        path = self._path(WATERMARK_TABLE, "_search") + "?allow_partial_search_results=false"
+        status, response = self._request("POST", path, body)
         if status != 200 or not isinstance(response, Mapping):
             raise EngineError(f"reading {WATERMARK_TABLE} failed: {self._error(status, response)}")
+        self._whole(response, f"the watermark in {WATERMARK_TABLE}")
         hits = response.get("hits", {}).get("hits", [])
         return int(hits[0]["_source"]["map_version"]) if hits else None
 

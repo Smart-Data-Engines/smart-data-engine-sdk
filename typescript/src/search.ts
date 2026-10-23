@@ -62,6 +62,19 @@ export function textIndex(engine: object): TextIndex | null {
   return 'searchRows' in engine && typeof engine.searchRows === 'function' ? (engine as TextIndex) : null
 }
 
+/**
+ * The adapter, for a search, or its named refusal: an adapter refuses by naming a reason
+ * (`searchRefusal`), as it does for a count, before anything is timed or sent.
+ */
+export function searchEngine(engine: object): object {
+  const reason = (engine as { searchRefusal?: unknown }).searchRefusal
+  if (typeof reason === 'string' && reason !== '') throw new SearchRefused(reason)
+  if (textIndex(engine) === null && !('selectRows' in engine && typeof engine.selectRows === 'function')) {
+    throw new SearchRefused('this adapter supports neither a text index nor logical reads')
+  }
+  return engine
+}
+
 const WORD = /^[\p{L}\p{N}]$/u
 
 function foldCodePoint(char: string): string {

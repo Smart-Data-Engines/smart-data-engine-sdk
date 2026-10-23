@@ -41,7 +41,7 @@ import type { NumericSummary, ReadOptions, ReadPlan, ScanPage } from './query.js
 import type { Materialization, PhysicalLayout, PlacementMap } from './placement.js'
 import { placementOf } from './placement.js'
 import { resolve } from './routing.js'
-import { DEFAULT_MAX_EXAMINED, matches, MAX_EXAMINED, MAX_SEARCH_LIMIT, queryTokens, SearchRefused, textIndex } from './search.js'
+import { DEFAULT_MAX_EXAMINED, matches, MAX_EXAMINED, MAX_SEARCH_LIMIT, queryTokens, searchEngine, SearchRefused, textIndex } from './search.js'
 import type { SearchOptions, SearchPage } from './search.js'
 import { schemaIsFixed } from './schema.js'
 import type { OperationShape, ShapeKind } from './shapes.js'
@@ -1000,6 +1000,7 @@ export class Session {
       const [engine, material] = this.target(shape, false)
       this.readProjection(material, target, first, false)
       const table = tableFor(material.layout, target)
+      searchEngine(engine)
       const indexed = textIndex(engine)
       const reader = indexed === null ? queryEngine(engine) : null
       const started = this.recorder === undefined ? 0 : now()

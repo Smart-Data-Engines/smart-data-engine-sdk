@@ -1889,12 +1889,18 @@ type when the native type alone does not say how to read the value back.
 |---|---|---|
 | `bool` | `boolean` | `true` or `false` |
 | `int32`, `int64` | `integer`, `long` | the integer |
-| `float32`, `float64` | `float`, `double` | the number; NaN and infinity are refused |
-| `string` | `keyword` | the text exactly as written, at most 32,766 UTF-8 bytes |
+| `float32` | `float` | the nearest float32, as a number; NaN, infinity and a value past the largest float32 are refused |
+| `float64` | `double` | the number; NaN and infinity are refused |
+| `string` | `keyword` | the text exactly as written, at most 32,766 UTF-8 bytes; a lone surrogate is refused |
 | `uuid` | `keyword/uuid` | lowercase canonical text |
 | `date` | `date` | `YYYY-MM-DD`, mapped with `"format": "strict_date"` |
 | `timestamp`, `timestamptz` | `long/timestamp`, `long/timestamptz` | microseconds since the epoch; a naive value counted as UTC |
 | `decimal(p,s)`, `p ≤ 18` | `long/decimal(p,s)` | the value times `10^s`, refused rather than rounded |
+
+A `float` field is indexed as a float32 and its `_source` is returned as written, so the library
+writes the float32 (`documents/009`, `010`): the value a filter compares is then the value a read
+returns, as from PostgreSQL's `real` and ClickHouse's `Float32`. A decimal is scaled with integer
+arithmetic: a caller's decimal context, which rounds, has no say (`decimal.getcontext()` in Python).
 
 `bytes`, `json` and a decimal of more than eighteen digits have no column type, so a group with one
 cannot be laid out here (`can_store`). An entity's index name is its table name, which has to be a
@@ -1915,21 +1921,29 @@ A key column of a float type is refused - an `_id` needs exact bytes - as are a 
 empty, contains a dot or starts with `__sde_`, and a column type outside the table above. Creating
 an index that exists is the `IF NOT EXISTS` of the other dialects: the adapter then compares the
 existing mapping with this one and refuses a difference, because Elasticsearch changes no field in
-place.
+place. The comparison is of the whole mapping, as values, every time an adapter first reads an
+index - not of each field's type alone. A `normalizer`, a `null_value`, an `ignore_above`, a token
+field mapped as `text` or a disabled `_source` would each change an answer while every type still
+matched; and an index whose `_meta` names another entity is another entity's.
 
 **A document** (`documents/`). Its `_source` holds every column of the index - `null` where the row
 has none - as the table above keeps it, and `__sde_tokens` holds, for each `keyword` column with a
-value, its tokens by §7l: distinct, in code point order. Its `_id` is the SHA-256, in lowercase
-hexadecimal, of its key values as stored, in declared key order, each framed as
+value, its tokens by §7l: distinct, in code point order. A token is one term, so a token longer than
+32,766 UTF-8 bytes is refused before anything is sent, although its text may be shorter: NFC and the
+fold can lengthen a text (`documents/011`). Its `_id` is the SHA-256, in lowercase hexadecimal, of
+its key values as stored, in declared key order, each framed as
 
 ```text
 tag (one byte) || length (four bytes, big-endian) || payload
-s: the UTF-8 of a text exactly as stored     i: the decimal digits of an integer     b: true or false
+s: the UTF-8 of a text exactly as stored
+i: the decimal digits of an integer, after a `-` when it is negative (an instant before 1970)
+b: true or false
 ```
 
 Not the canonical encoding: §1 normalises text to NFC, and two keys that differ only in how an
 accent is composed are two rows in every other engine, so they are two documents here
-(`documents/003`, `004`). A second save of a key replaces the first (`newest_wins`).
+(`documents/003`, `004`, and `012` for a negative key). A second save of a key replaces the first
+(`newest_wins`).
 
 **Reads.** By key: the document under its `_id`, checked to hold that key. A page: a `bool` filter
 of `term` for equality, `must_not exists` for null and `range` for a bound, sorted by the plan's
@@ -1940,10 +1954,23 @@ value. A count is `_count` over the same filter. A search adds, for each query t
 the token field of some chosen field. No other text predicate is ever sent, so no analyzer of the
 engine's is in any answer. Summaries are refused: Elasticsearch aggregates in double precision.
 
+A bound on a decimal column is a question about the column, not a value to store: with more
+fractional digits than the scale, `>= v` and `< v` both become their bound at the ceiling of
+`v × 10^s` - `>= 0.005` on a scale of 2 is `>= 0.01` - and an equality matches nothing. A bound whose
+`v × 10^s` is at least `10^p` in magnitude becomes `±10^p`, past every value the column holds, and
+an equality with it matches nothing. That is what PostgreSQL and ClickHouse answer, where it was a
+refusal.
+
+Every search is sent with `allow_partial_search_results=false`, and an answer with `"timed_out":
+true` or a failed shard is refused, a count's too. A page missing a shard's rows would move the
+position past them for good, and a count would not be exact.
+
 **Writes** return once a search and a scan can see them (`refresh=wait_for`), which waits for the
 index's refresh, a second by default. A read by key sees a write at once. A batch is one `_bulk`
 request and is not atomic: on a refusal, the error says how many documents were written and how
-many refused, and never which values.
+many refused, and never which values. A refused single write names the engine's error type, never
+its reason, which can quote the document's value.
 
 **Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
-`020` and `documents/` are new, and no existing vector changed.
+`020` and `documents/` are new, and no existing vector changed. The second review's `documents/009`
+to `013` changed no earlier case either.

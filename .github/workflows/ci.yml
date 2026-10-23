@@ -262,6 +262,30 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: start Elasticsearch
+        # The engine behind Session.search's text index (format contract 7m). Started with its own
+        # TLS - on by default since 8.0 - and its CA copied out, so the slice verifies the server as
+        # a client would. Not a service container, because the CA exists only after it starts. The
+        # wait is bounded: an unbounded one turns a broken probe into a job that hangs in silence.
+        run: |
+          docker run -d --name sde_test_es -p 127.0.0.1:59200:9200 \
+            -e discovery.type=single-node -e ELASTIC_PASSWORD=sde -e ES_JAVA_OPTS="-Xms1g -Xmx1g" \
+            -e cluster.routing.allocation.disk.threshold_enabled=false elasticsearch:9.5.5
+          ca="$RUNNER_TEMP/sde_es_ca.crt"
+          for n in $(seq 1 90); do
+            if docker cp sde_test_es:/usr/share/elasticsearch/config/certs/http_ca.crt "$ca" 2>/dev/null \
+              && curl -fsS --cacert "$ca" -u elastic:sde -o /dev/null \
+                "https://127.0.0.1:59200/_cluster/health?wait_for_status=yellow&timeout=1s"; then
+              encoded=$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$ca")
+              echo "SDE_ELASTICSEARCH_DSN=elasticsearch+https://elastic:sde@127.0.0.1:59200/?ca_cert=$encoded" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Elasticsearch was not ready after 180 s"
+          docker logs --tail 30 sde_test_es
+          exit 1
+
       - name: Python peer for the live interoperability slice
         run: |
           python -m venv python/.venv

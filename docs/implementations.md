@@ -23,7 +23,7 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 | Library | Language | Tier | Hashing (§2a) | IR contract | Map contract | Engines |
 |---|---|---|---|---|---|---|
 | `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `elasticsearch`, `orderbook`, `postgres` |
-| `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
+| `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `elasticsearch`, `orderbook`, `postgres` |
 | `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 1 | yes | 1 | 1–6 | none |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
@@ -34,8 +34,8 @@ eight exist per row above. `postgres` is PostgreSQL and `orderbook` is our own L
 whose schema is fixed in its own source — a group either is that shape or it cannot be placed there, and rendering DDL for it
 yields no statements rather than no tables. `elasticsearch` is Elasticsearch 9: an index per entity,
 documents addressed by their key's digest, and the text index behind `Session.search` (format
-contract §7m). The TypeScript library renders its mappings and documents byte for byte, held by the
-same vectors, and has no adapter for it yet, so its row does not name it.
+contract §7m). The TypeScript adapter is the same engine in the same layout, with the mappings and
+documents held byte for byte by the same vectors, and integers past 2^53 kept exact in its JSON.
 
 **Python is the reference implementation.** Where it disagrees with the contract, the contract is
 right and the library is wrong — with one exception, stated in the contract itself:

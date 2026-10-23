@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -47,7 +49,15 @@ def test_a_profile_is_read_as_written_and_never_printed_with_its_secret(tmp_path
         ("elasticsearch+https://host/?unknown=1", "unknown"),
         ("elasticsearch+https://host/?connect_timeout=1&connect_timeout=2", "twice"),
         ("elasticsearch+https://host/?connect_timeout=0", "between"),
-        ("elasticsearch+https://host/?connect_timeout=nan", "between"),
+        ("elasticsearch+https://host/?connect_timeout=nan", "number of seconds"),
+        ("elasticsearch+https://host/?connect_timeout=1e1", "number of seconds"),
+        ("elasticsearch+https://[127.0.0.1]:9200", "IPv6|URL|port|host"),
+        ("elasticsearch+http://:secret@127.0.0.1:9200", "nonempty"),
+        ("elasticsearch+http://@127.0.0.1:9200", "nonempty"),
+        ("elasticsearch+https://:secret@host/?api_key=Zm9v", "not both"),
+        ("elasticsearch+https://host/?api_key=Zm9vY", "encoded key"),
+        ("elasticsearch+https://us%zzer:pw@host/", "percent-encoded"),
+        ("elasticsearch+https://user:%ff@host/", "percent-encoded"),
         ("elasticsearch+https://host/?ca_cert=relative.pem", "absolute"),
         ("elasticsearch+https://host/?ca_cert=%2Fno%2Fsuch%2Ffile.pem", "readable"),
         ("elasticsearch+https://u:p@host/?api_key=Zm9v", "not both"),
@@ -191,3 +201,163 @@ def test_the_facts_say_what_the_adapter_does() -> None:
     assert callable(ElasticsearchEngine.search_rows)
     with pytest.raises(sde.EngineError, match="no multi-document transactions"):
         ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200").transaction()
+
+
+def test_a_decimal_is_exact_whatever_the_callers_decimal_context() -> None:
+    """``Decimal.scaleb`` rounds to the thread's context; at a precision of ten a value with
+    eighteen digits was stored rounded, and two keys shared one _id (second review, finding 1)."""
+    from decimal import localcontext
+
+    from sde.engines.elasticsearch import _read_value
+
+    with localcontext() as context:
+        context.prec = 10
+        assert stored("long/decimal(18,2)", Decimal("1234567890123456.78")) == 123456789012345678
+        assert stored("long/decimal(18,2)", Decimal("-0.10")) == -10
+        back = _read_value("long/decimal(18,2)", 123456789012345678)
+        assert back == Decimal("1234567890123456.78") and str(back) == "1234567890123456.78"
+        assert str(_read_value("long/decimal(12,4)", -5)) == "-0.0005"
+        assert document_id([stored("long/decimal(18,2)", Decimal("1234567890123456.78"))]) != (
+            document_id([stored("long/decimal(18,2)", Decimal("1234567890123456.79"))])
+        )
+    with pytest.raises(sde.EngineError, match="18 digits"):
+        stored("long/decimal(18,2)", Decimal("1E+999999999"))
+    with pytest.raises(sde.EngineError, match="fractional"):
+        stored("long/decimal(18,2)", Decimal("1E-999999999"))
+    assert stored("long/decimal(18,2)", Decimal("1.500000000000")) == 150
+
+
+@pytest.mark.parametrize(
+    ("value", "operation", "bound"),
+    [
+        (Decimal("0.005"), "ge", 1),
+        (Decimal("0.005"), "lt", 1),
+        (Decimal("-0.005"), "ge", 0),
+        (Decimal("0.01"), "ge", 1),
+        (Decimal("0.005"), "eq", None),
+        (Decimal("0.01"), "eq", 1),
+        (Decimal("1E+30"), "ge", 10**18),
+        (Decimal("-1E+30"), "lt", -(10**18)),
+        (Decimal("1E+30"), "eq", None),
+        (Decimal("1E+16"), "eq", None),
+        (Decimal("-1.234"), "ge", -123),
+        (Decimal("1.234"), "lt", 124),
+        (Decimal("9999999999999999.995"), "ge", 10**18),
+        (Decimal("1E-999999999"), "ge", 1),
+    ],
+)
+def test_a_decimal_predicate_is_a_question_about_the_column(
+    value: Decimal, operation: str, bound: int | None
+) -> None:
+    from sde.engines.elasticsearch import _decimal_bound
+
+    assert _decimal_bound("long/decimal(18,2)", value, operation) == bound
+
+
+def test_a_float32_is_kept_as_the_float32_the_engine_indexes() -> None:
+    assert stored("float", 0.99999999) == 1.0
+    assert stored("float", 0.1) == 0.10000000149011612
+    assert stored("double", 0.1) == 0.1
+    with pytest.raises(sde.EngineError, match="outside float32"):
+        stored("float", 1e39)
+    with pytest.raises(sde.EngineError, match="outside float64"):
+        stored("double", 10**400)
+
+
+def test_a_token_longer_than_a_term_is_refused_although_its_text_is_not() -> None:
+    from sde.engines.elasticsearch import document
+
+    text = "\u023a" * 16383  # 32,766 bytes, folding to three bytes a letter
+    assert len(text.encode("utf-8")) == KEYWORD_BYTES
+    with pytest.raises(sde.EngineError, match="once normalised and folded"):
+        document({"id": "long", "t": "keyword"}, ["id"], {"id": 1, "t": text})
+    with pytest.raises(sde.EngineError, match="lone surrogate"):
+        stored("keyword", "\ud800")
+
+
+def test_an_answer_some_shard_did_not_contribute_to_is_refused() -> None:
+    whole = ElasticsearchEngine._whole
+    whole({"timed_out": False, "_shards": {"total": 2, "failed": 0}}, "a page")
+    with pytest.raises(sde.EngineError, match="partial"):
+        whole({"timed_out": True, "_shards": {"failed": 0}}, "a page")
+    with pytest.raises(sde.EngineError, match="1 failed shard"):
+        whole({"timed_out": False, "_shards": {"failed": 1}}, "a count")
+    refused = ElasticsearchEngine._write_error(
+        400, {"error": {"type": "illegal_argument_exception", "reason": "Preview: 'secret'"}}
+    )
+    assert refused == "400 illegal_argument_exception" and "secret" not in refused
+
+
+def test_every_read_asks_the_engine_to_fail_rather_than_answer_in_part() -> None:
+    """A shard that fails or times out fails the search (``allow_partial_search_results=false``),
+    and an answer that still says it is partial is refused - a page, a count and the watermark."""
+    from sde.query import ReadColumn, ReadPlan
+    from sde.schema import elasticsearch_mapping
+
+    layout = sde.PhysicalLayout(tables={"Note": "note"}, columns={"Note": {"id": "long"}})
+    mapping = elasticsearch_mapping(layout, "Note", {"Note": ["id"]})
+    column = ReadColumn("id", "int64")
+    plan = ReadPlan((column,), (), (column,), False, None, 10)
+    sent: list[str] = []
+
+    def answering(partial: dict[str, Any]) -> Any:
+        def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
+            sent.append(path)
+            if path.endswith("/_mapping"):
+                return 200, {"note": {"mappings": mapping}}
+            if path.startswith("/sde_map_state") and method == "PUT":
+                return 200, {}
+            if "/_count" in path:
+                return 200, {"count": 3, **partial}
+            return 200, {"hits": {"hits": []}, **partial}
+        return request
+
+    whole = {"timed_out": False, "_shards": {"total": 1, "successful": 1, "failed": 0}}
+    for partial, refused in (
+        (whole, False),
+        ({"timed_out": True, "_shards": {"failed": 0}}, True),
+        ({"timed_out": False, "_shards": {"failed": 1}}, True),
+    ):
+        engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
+        engine._request = answering(partial)  # type: ignore[method-assign]
+        calls: tuple[Callable[[], object], ...] = (
+            functools.partial(engine.select_rows, "note", plan),
+            functools.partial(engine.search_rows, "note", plan, ("x",), ()),
+            functools.partial(engine.count_rows, "note", plan),
+            engine.map_watermark,
+        )
+        for call in calls:
+            if refused:
+                with pytest.raises(sde.EngineError, match="partial"):
+                    call()
+            else:
+                call()
+    searches = [path for path in sent if "_search" in path]
+    assert searches
+    assert all(path.endswith("?allow_partial_search_results=false") for path in searches)
+
+
+def test_a_refused_write_names_the_error_type_and_never_the_value() -> None:
+    """The engine's reason for refusing a document can quote its value (second review, item 5)."""
+    from sde.schema import elasticsearch_mapping
+
+    layout = sde.PhysicalLayout(tables={"Note": "note"},
+                                columns={"Note": {"id": "long", "body": "keyword"}})
+    mapping = elasticsearch_mapping(layout, "Note", {"Note": ["id"]})
+    refusal = {"error": {"type": "document_parsing_exception",
+                         "reason": "Preview of field's value: 'secret'"}}
+
+    def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
+        if path.endswith("/_mapping"):
+            return 200, {"note": {"mappings": mapping}}
+        return 400, refusal
+
+    engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
+    engine._request = request  # type: ignore[method-assign]
+    row = {"id": 1, "body": "secret"}
+    for call in (functools.partial(engine.insert, "note", row),
+                 functools.partial(engine.insert_many, "note", [row])):
+        with pytest.raises(sde.EngineError) as caught:
+            call()
+        assert "document_parsing_exception" in str(caught.value)
+        assert "secret" not in str(caught.value)
