@@ -810,7 +810,8 @@ export class ElasticsearchEngine {
         const entry = (indices as Record<string, unknown>)[name]
         const size = (entry as { primaries?: { store?: { size_in_bytes?: unknown } } } | null)?.primaries
           ?.store?.size_in_bytes
-        const bytes = typeof size === 'bigint' && size <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(size) : size
+        // A bigint past 2^53 converts to a number that is not a safe integer, and is refused below.
+        const bytes = typeof size === 'bigint' ? Number(size) : size
         if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) {
           throw new EngineError(`the store size of ${name} is not a number of bytes`)
         }
