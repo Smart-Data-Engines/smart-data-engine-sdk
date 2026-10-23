@@ -384,12 +384,14 @@ which changes its version.
 ```
 
 `kind` is one of `point_read`, `range_read`, `aggregate`, `full_scan`, `relation_walk`, `write`,
-`bulk_write`.
+`bulk_write`, `search`.
 
 Enumeration, per entity: one `point_read` on the key, one `write`, one `bulk_write`, one `full_scan`,
 one `aggregate`, and one `range_read` per field whose type is ordered — `int32`, `int64`, `float32`,
-`float64`, `decimal(...)`, `date`, `timestamp`, `timestamptz`. Per relation: one `relation_walk` from
-the source entity, with the relation name in `fields` and the target in `target`.
+`float64`, `decimal(...)`, `date`, `timestamp`, `timestamptz`. One `search`, with no fields, when the
+entity has a field of type `string`: which fields a call looked in is the window's to report (§6a,
+`searched_on`), as a filter is. Per relation: one `relation_walk` from the source entity, with the
+relation name in `fields` and the target in `target`.
 
 Ranges over `string` and `uuid` are not enumerated. They are legal in every engine and almost never
 what anybody means.
@@ -514,6 +516,8 @@ model's own field names, digests when the client hashes them.
 | `errors` | failed calls |
 | `rows` | the total the calls returned or wrote, as the recorder was given it: a bulk write counts its rows, a failed call counts none |
 | `latency_p50_ms`, `latency_p99_ms` | the shape's own histogram, by the rules below |
+| `examined` | on a `search` only: the rows its calls checked, which are the candidates their engine supplied. Next to `rows` it is what the searches cost where they ran: an engine with a text index supplies rows that hold the tokens, one without supplies rows in key order (§7l) |
+| `searched_on` | on a `search` only: one entry per combination of `fields` the calls looked in (sorted), with its `calls`, in code point order; the entries' calls add up to the shape's. Never the text |
 | `filtered_on` | for a read that takes a `where` - `range_read`, `full_scan`, `aggregate` - what its calls filtered on: one entry per combination of `equal` (the fields compared by equality, sorted) and `range` (the field a range bounded, **absent** when none), with its `calls`, in code point order of `equal` then `range`; the entries' calls add up to the shape's. Absent on a shape whose operations take no filter |
 
 `filtered_on` exists because one shape can want two layouts. A range read over `at` is the same
@@ -1314,15 +1318,22 @@ routing key that is not a shape of this model is a divergence too: the model ver
 so the two sides enumerated shapes differently, and that is how one library's write lands in a table
 another library never looks at.
 
-Three conditions, then a lookup:
+Four conditions, then a lookup:
 
 1. `write` and `bulk_write` go to the source. Always, before anything else is consulted.
-2. An operation inside a transaction that has already written goes to the source.
-3. An operation that asked for no staleness goes to the source.
-4. Otherwise: `routing[shape.id]`, and the source if there is no entry.
+2. `search` goes to the source, always (§7l).
+3. An operation inside a transaction that has already written goes to the source.
+4. An operation that asked for no staleness goes to the source.
+5. Otherwise: `routing[shape.id]`, and the source if there is no entry.
 
-Conditions 2 and 3 are correctness rather than policy — a derived copy is behind by design, so it
-cannot show a write the caller just made. Everything else is a lookup, which is the point: decisions
+Conditions 2 to 4 are correctness rather than policy — a derived copy is behind by design, so it
+cannot show a write the caller just made, and a search over it would miss rows nobody could tell
+were missing.
+
+**A routing entry for a `search` shape is refused at load**, even one naming the source, while an
+entry for a write is accepted and ignored. The asymmetry is §11's rule and not a preference: a
+library that predates the kind refuses an entry for a shape it does not enumerate, so a library that
+knows the kind refuses the same document, and one stored map loads, or does not, in both. Everything else is a lookup, which is the point: decisions
 need telemetry, a cost model and an explanation, and reimplementing that judgement four times and
 keeping the four identical forever is not a plan.
 
@@ -1482,7 +1493,7 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are eleven kinds:
+There are twelve kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -1497,6 +1508,7 @@ There are eleven kinds:
 | `telemetry/` | a window document, compared parsed rather than as bytes — see below |
 | `migration/` | taking part in a migration: the record a gate reads **and** the calls that produced it |
 | `books/` | a side's difference, and what a book stream sends on a clock - whole sides and changes, with their times - or refuses |
+| `search/` | the tokens of a text, and whether a row matches a query in its chosen fields - or the refusal of a query with no token |
 
 This table said "five" and listed five for as long as there were nine, with the other four argued
 in the prose below it. Nothing counted them, which is the failure mode of a number about our own
@@ -1798,3 +1810,66 @@ A signed contract-6 map reports write generations only for the groups that carry
 contract 6, since no such group can appear through one. Each carries the group byte for byte when it
 acts on another (`migration/192`-`199`). The Python local operator needs no binding for an engine
 that hosts only such groups, refuses one offered for it, and reads none of its tables.
+
+## 7l. Search
+
+`Session.search(entity, text, fields, after, limit, max_examined)` returns the rows of an entity
+whose chosen text fields hold every token of `text`, in key order, a page at a time. It is a filter,
+not a ranking: the answer is a set of rows this section determines, so it is the same in every engine
+and in every language.
+
+**The rule.**
+- A **token** is a maximal run of code points, in the text normalised to NFC, whose general category
+  is a letter (`L*`) or a number (`N*`). Everything else separates tokens: spaces, punctuation, `_`,
+  `-`, `'`, symbols, and combining marks NFC did not compose.
+- Two tokens **match** when they are equal after each code point is replaced by its simple lower-case
+  mapping: one code point for one, without context. Where a language's lower-casing of one code
+  point gives more than one, the code point stays as it is, except `U+0130`, whose simple mapping is
+  `i`. That is the simple mapping of the Unicode Character Database, which Java's
+  `Character.toLowerCase` also gives. `ß` stays `ß`, so `strasse` does not match `Straße`: this is
+  equality without case, not linguistics.
+- A row **matches** when every token of the query matches some token of some chosen field. A field
+  that is null holds no token.
+
+Categories and mappings come from the runtime's own Unicode database, so a code point assigned in a
+version one runtime knows and another does not can tokenise differently. The vectors use code points
+assigned by Unicode 1.1.
+
+**The engine supplies candidates, the library decides.** The rule is applied to every row before it
+is returned. An engine with a text index supplies rows its index says hold every token. An engine
+without one supplies rows in key order, a page at a time, and is never given a text predicate:
+PostgreSQL's `lower()` under the `C` collation changes ASCII only, the Kelvin sign is a letter whose
+lower case is `k`, and a candidate an engine wrongly leaves out is a wrong answer nobody would see.
+
+**The page.**
+- `fields` are the entity's `string` fields to look in, all of them when absent.
+- `limit` is 1 to 1000. `max_examined`, 1 to 1,000,000 and 100,000 when absent, is the most rows
+  one call checks.
+- `after` is a position in key order, exactly as for a scan.
+- The call stops when the page holds `limit` rows or `max_examined` rows have been checked. The
+  next position is the key of the last row checked when anything is left after it, and absent
+  only when nothing is. A page cut short by the bound has fewer rows than the limit and still a
+  position: a short page is not the last page.
+- A search reads the group's source, always (§8).
+
+**Refused before any engine is asked:**
+- a query with no token;
+- `fields` empty, not a list, or naming a field the entity does not declare or one whose type is
+  not `string`;
+- an entity with no `string` field;
+- `limit` or `max_examined` outside its range, and `after` that is not exactly the key.
+
+**Telemetry.** One `search` shape per entity that has a `string` field, with no fields (§6). The
+window reports the rows the calls examined and the fields they looked in (§6a). The text of a query
+is never recorded.
+
+**Which number moves: neither.** The IR is unchanged, so `contract-version.txt` stays. A map means
+what it meant: a library that predates the kind refuses a routing entry for a shape it does not
+enumerate, and one that knows the kind refuses the same entry (§8). The only vector files that
+changed are `shapes.json` in `model/002`-`004`, and only by the `search` shapes they gained. Every
+existing identifier is unchanged.
+
+`search/001`-`014` pin the rule. A library runs them without an engine, from `case.json`: a
+`tokens` case gives the tokens of a text, and a `match` case gives the folded, sorted, distinct
+tokens of a query and whether a row matches it in the chosen fields, or the refusal of a query
+without a token.

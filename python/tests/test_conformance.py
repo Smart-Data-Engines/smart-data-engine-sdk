@@ -262,6 +262,8 @@ def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: P
             failed=bool(operation.get("failed", False)),
             equal=operation.get("equal"),
             ranged=operation.get("range"),
+            examined=int(operation.get("examined", 0)),
+            searched=operation.get("searched"),
         )
     fan_out = case / "fan_out.json"
     if fan_out.is_file():
@@ -1153,3 +1155,33 @@ def _drive_staging_vector(case: Path, model: sde.LogicalModel) -> None:
         json.loads(plan.prepared_payload()), model=model, public_key=keys, require_signature=True
     )
     assert decoded.fingerprint == wanted["map_fingerprints"]["prepared"]
+
+
+# --- search vectors ---------------------------------------------------------------------------
+#
+# Contract 7l: what a token is and when a row matches. Every library computes these itself; the
+# engines only ever supply candidates, so this rule is the whole of what a search answers.
+
+
+@pytest.mark.parametrize("case", _cases("search"), ids=_ident)
+def test_search_vector(case: Path) -> None:
+    from sde.search import SearchRefused, matches, query_tokens, tokens
+
+    spec = _read_json(case / "case.json")
+    want = _read_json(case / "expected.json")
+    if spec["kind"] == "tokens":
+        assert tokens(spec["text"]) == want["tokens"], (case / "why.txt").read_text()
+        return
+    if "refused" in want:
+        with pytest.raises(SearchRefused):
+            query_tokens(spec["query"])
+        return
+    query = query_tokens(spec["query"])
+    assert list(query) == want["query_tokens"], (case / "why.txt").read_text()
+    assert matches(spec["row"], query, spec["fields"]) is want["match"], (
+        case / "why.txt"
+    ).read_text()
+
+
+def test_there_are_search_vectors() -> None:
+    assert len(_cases("search")) >= 14, "the search family is missing or was cut short"

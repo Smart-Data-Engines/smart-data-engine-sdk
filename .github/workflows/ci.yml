@@ -103,13 +103,13 @@ jobs:
 
       - name: lint
         working-directory: python
-        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py
+        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py
 
       - name: types
         working-directory: python
         # Not decoration: several guarantees in this design are enforced by types rather than by
         # runtime checks, so a weakened annotation is a deleted guarantee.
-        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py
+        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py
 
       - name: tests, including both engine slices
         working-directory: python
@@ -624,6 +624,12 @@ jobs:
         # the separator, the prefix outside the message, fields hashed with their entity - none of
         # which any ASCII-only test can see.
         run: python3 conformance/tools/hashing_vectors.py --verify
+
+      - name: the search vectors are what the rule derives
+        # The search/ family, and the routing and error cases it adds, are written by the reference
+        # implementation of the rule in section 7l. This re-derives every one of them and fails on a
+        # difference, so a change to the rule cannot land with vectors that describe the old one.
+        run: python3 -I conformance/tools/search_vectors.py --check
 
       - name: the hand-written vector is unchanged
         # model/001-single-entity was typed out from docs/format-contract.md rather than generated,

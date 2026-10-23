@@ -26,7 +26,7 @@ import {
   parseKeyOrder,
   parsePartitionBy,
 } from './physical.js'
-import { enumerateShapes, shapeId } from './shapes.js'
+import { enumerateShapes, shapeId, SOURCE_ONLY_KINDS } from './shapes.js'
 
 export interface PhysicalLayout {
   readonly tables: Readonly<Record<string, string>>
@@ -552,6 +552,14 @@ function checkRoutingTargets(
           'that shape. The model version matched, so the two sides enumerated shapes differently - ' +
           "which is the divergence that puts one library's write in a table another library never " +
           'looks at.',
+      )
+    }
+    if (SOURCE_ONLY_KINDS.has(shape.kind)) {
+      throw new MapError(
+        `the routing table has an entry for shape '${shapeIdent}', a ${shape.kind} on ` +
+          `${shape.entity}. A ${shape.kind} always goes to the group's source, and a library ` +
+          'that predates the kind refuses this entry as a shape it does not know - so this one ' +
+          'refuses it too, and one stored map means the same thing to both.',
       )
     }
     if (!declared[shape.group]?.has(target as string)) {

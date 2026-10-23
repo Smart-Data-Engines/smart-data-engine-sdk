@@ -8,6 +8,22 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: search, Python and TypeScript** ([`docs/logical-reads.md`](docs/logical-reads.md#search)).
+`Session.search` returns the rows whose chosen text fields hold every token of a query, a page in
+key order. The library applies one rule to every row - tokens of letters and digits after NFC,
+matched without case one code point for one - so the answer is the same on every engine.
+- On PostgreSQL and ClickHouse the library reads rows in key order and checks each one, at most
+  `max_examined` rows a call. An engine's own `lower()` or collation never decides an answer.
+- A search always reads the group's source. A map that routes a `search` shape is refused at load:
+  a library that predates the kind refuses it as an unknown shape, so this one refuses it too.
+- §6 enumerates one `search` shape for each entity with a `string` field, and the C++ library
+  enumerates it as well. The window reports `examined` and `searched_on` for it, never the text.
+- `conformance/vectors/search/` is the suite's twelfth family, with `routing/003`, `errors/083` and
+  `telemetry/017` beside it, and [`format-contract.md` §7l](docs/format-contract.md#7l-search)
+  states the rule. Neither the IR's number nor the map's moves: `model/002`-`004` gained their
+  `search` shapes in `shapes.json`, and every existing identifier is unchanged.
+- `QueryRefused` in TypeScript declares `name` as a `string`, so that `SearchRefused` can extend it.
+
 **New: book streams and books by price, Python and TypeScript** ([`docs/orderbook.md`](docs/orderbook.md#books-by-price)).
 `Session.book_stream` sends one book of the orderbook engine either whole, each side as `MREPLACE`,
 or as its changes, with a whole side at the first send, after a failed one and at every resync.

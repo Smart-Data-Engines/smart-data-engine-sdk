@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from threading import Lock
 from time import perf_counter_ns
 from types import MappingProxyType
@@ -49,6 +50,7 @@ from .model import LogicalModel
 from .physical import PhysicalFinding
 from .placement import Materialization, PlacementMap
 from .query import (
+    MAX_PAGE_ROWS,
     NumericSummary,
     QueryRefused,
     Range,
@@ -59,10 +61,21 @@ from .query import (
     numeric_summary,
     plan_read,
     query_engine,
+    query_value,
     summary_engine,
     summary_scale,
 )
 from .routing import Router
+from .search import (
+    DEFAULT_MAX_EXAMINED,
+    MAX_EXAMINED,
+    MAX_SEARCH_LIMIT,
+    SearchPage,
+    SearchRefused,
+    matches,
+    query_tokens,
+    text_index,
+)
 from .shapes import OperationShape, enumerate_shapes
 from .telemetry import Recorder, StorageMeasurement, StorageSize
 from .verification import check_project_id
@@ -968,6 +981,130 @@ class Session:
                           predicates={"equal": equal, "ranged": moment})
 
     @session_call
+    def search(
+        self, entity: str, text: str, *, fields: Sequence[str] | None = None,
+        after: Mapping[str, Any] | None = None, limit: int = 100,
+        max_examined: int = DEFAULT_MAX_EXAMINED,
+    ) -> SearchPage:
+        """The rows of ``entity`` whose chosen text fields hold every token of ``text``.
+
+        At most ``limit`` of them, in key order, with the position to continue from - a page, as
+        :meth:`scan` reads one. ``fields`` are the entity's ``string`` fields to look in, all of
+        them when omitted. What a token is and when a row matches is the format contract's rule
+        (section 7l), applied by :mod:`sde.search` to every row before it is returned: the engine
+        supplies candidates and never decides, so the answer is the same in every engine.
+
+        A search always reads the group's source, the one materialisation known to hold every
+        row. An engine with a text index supplies only rows that hold the tokens; one without
+        supplies rows in key order and the library examines them, at most ``max_examined`` in one
+        call. A page cut short by that bound keeps the position of the last row examined, so
+        ``next_after`` is ``None`` only when nothing is left - a short page is not the last page.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise SearchRefused(f"limit must be an integer between 1 and {MAX_SEARCH_LIMIT}")
+        if not 1 <= limit <= MAX_SEARCH_LIMIT:
+            raise SearchRefused(f"limit must be an integer between 1 and {MAX_SEARCH_LIMIT}")
+        if isinstance(max_examined, bool) or not isinstance(max_examined, int):
+            raise SearchRefused(f"max_examined must be an integer between 1 and {MAX_EXAMINED}")
+        if not 1 <= max_examined <= MAX_EXAMINED:
+            raise SearchRefused(f"max_examined must be an integer between 1 and {MAX_EXAMINED}")
+        query = query_tokens(text)
+        target, plan = self._prepare_read(
+            entity, where=None, bounds=None, after=after, limit=MAX_PAGE_ROWS
+        )
+        chosen = self._search_fields(entity, target, fields)
+        shape = self._shape(target, "search")
+        engine, material = self._target(shape, fresh=False)
+        self._read_projection(material, target, plan, count=False)
+        table = material.layout.table_for(target)
+        indexed = text_index(engine)
+        reader = None if indexed is not None else query_engine(engine)
+        started = perf_counter_ns() if self._recorder else 0
+        failed, examined = False, 0
+        found: list[dict[str, Any]] = []
+        try:
+            position: Mapping[str, Any] | None = None
+            while True:
+                # An index supplies rows that hold the tokens, so it is asked for what the page
+                # still needs; a scan supplies everything, so it reads as far as the bound allows.
+                wanted = max_examined - examined
+                if indexed is not None:
+                    wanted = min(wanted, limit - len(found))
+                plan = replace(plan, limit=min(MAX_PAGE_ROWS, wanted))
+                if indexed is not None:
+                    rows = indexed.search_rows(table, plan, query, chosen)
+                else:
+                    assert reader is not None
+                    rows = reader.select_rows(table, plan)
+                self._session_usage.check()
+                candidates = rows[:plan.limit]
+                more = len(rows) > plan.limit
+                stopped = None
+                for index, row in enumerate(candidates):
+                    examined += 1
+                    if matches(row, query, chosen):
+                        found.append(row)
+                    if len(found) == limit or examined == max_examined:
+                        stopped = index
+                        break
+                if stopped is not None:
+                    if more or stopped < len(candidates) - 1:
+                        position = candidates[stopped]
+                    break
+                if not more or not candidates:
+                    break
+                last = candidates[-1]
+                plan = replace(
+                    plan,
+                    after=tuple(query_value(column, last[column.name]) for column in plan.order),
+                )
+            next_after = None
+            if position is not None:
+                key = {column.name: position[column.name] for column in plan.order}
+                next_after = MappingProxyType(snapshot_rows([self._fields_out(entity, key)])[0])
+            return SearchPage(
+                tuple(self._fields_out(entity, row) for row in found), next_after, examined
+            )
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(
+                shape, started, rows=0 if failed else len(found), failed=failed,
+                examined=examined, searched=chosen,
+            )
+
+    def _search_fields(
+        self, entity: str, target: str, fields: Sequence[str] | None
+    ) -> tuple[str, ...]:
+        """The model's names of the text fields a search looks in, sorted."""
+        declared = {f.name: f.type for f in self._model.entity(target).fields}
+        text = sorted(name for name, kind in declared.items() if kind == "string")
+        if not text:
+            raise SearchRefused(f"{entity} has no field of type string, so nothing to search")
+        if fields is None:
+            return tuple(text)
+        refusal = "fields must be a non-empty list of the entity's text field names"
+        if isinstance(fields, str) or not isinstance(fields, Sequence) or not fields:
+            raise SearchRefused(refusal)
+        chosen: set[str] = set()
+        for name in fields:
+            if not isinstance(name, str):
+                raise SearchRefused(refusal)
+            try:
+                chosen.update(self._fields_in(entity, {name: None}))
+            except ModelPlanningError as exc:
+                raise SearchRefused(str(exc)) from exc
+        unknown = sorted(chosen - set(declared))
+        if unknown:
+            raise SearchRefused(f"{entity} declares no field named {unknown}")
+        other = chosen - set(text)
+        if other:
+            named = sorted(self._fields_out(entity, dict.fromkeys(other)))
+            raise SearchRefused(f"a search looks in fields of type string only, not in {named}")
+        return tuple(sorted(chosen))
+
+    @session_call
     def count(
         self, entity: str, *, where: Mapping[str, Any] | None = None,
         bounds: Range | None = None, fresh: bool = False,
@@ -1110,6 +1247,8 @@ class Session:
         failed: bool,
         plan: ReadPlan | None = None,
         predicates: Mapping[str, Any] | None = None,
+        examined: int = 0,
+        searched: Sequence[str] | None = None,
     ) -> None:
         """Hand one observation to the recorder, if there is one.
 
@@ -1129,6 +1268,8 @@ class Session:
             rows=rows,
             failed=failed,
             **(_predicates(plan) if plan is not None else dict(predicates or {})),
+            examined=examined,
+            searched=searched,
         )
 
     # --- transactions ----------------------------------------------------------------------

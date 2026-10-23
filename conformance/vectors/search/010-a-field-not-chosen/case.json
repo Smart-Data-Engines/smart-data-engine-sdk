@@ -1,0 +1,11 @@
+{
+  "fields": [
+    "title"
+  ],
+  "kind": "match",
+  "query": "apple fresh",
+  "row": {
+    "notes": "fresh fruit",
+    "title": "Red apple"
+  }
+}

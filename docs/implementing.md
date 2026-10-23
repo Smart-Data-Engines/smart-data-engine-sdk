@@ -531,3 +531,14 @@ its next send, after which the stream must send that side whole. Compare the sen
 included, and refusals by substring; a refused step must send nothing. The rules are §8c of the
 contract. Then run your stream against a live engine and read the book back: the vectors pin what
 you send, and only the engine's own composition shows that it is the book you meant.
+
+**14. Search (Tier 2). Vectors: `search/`.**
+
+The rule is a function of a text, so the vectors need no engine: implement tokens, folding and
+matching from §7l of the contract and compare tokens exactly, as code point sequences. Two cases
+carry most of the risk. `005` is the Kelvin sign, which your language lower-cases to `k` only if it
+uses the Unicode database rather than ASCII. `006` is `U+0130`, whose full lower case most languages
+return as two code points, so a fold that takes `lower()` whole fails it. Then put `search` on your
+session: candidates from your engine in key order, every row checked by your rule before it is
+returned, and the page rules of §7l. Run it against a live engine with rows only the rule can tell
+apart, a decomposed accent and the Kelvin sign among them.
