@@ -143,14 +143,16 @@ function shapeKey(entity: string, kind: string, fields: readonly string[]): stri
 
 /**
  * `refused` when the catalogue denied the login, `failed` for any other engine error - read from the
- * driver's own error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access error
- * 497 (what a login without the `system.parts` grant receives, measured on 24.8).
+ * error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access error 497 (what a
+ * login without the `system.parts` grant receives, measured on 24.8) and Elasticsearch's 403 (what a
+ * key without the `monitor` privilege receives, measured on 9.5.5).
  */
 function storageRefusal(error: unknown): StorageUnavailable {
   const cause = error instanceof Error && error.cause !== undefined ? error.cause : error
   const code = typeof cause === 'object' && cause !== null ? (cause as { code?: unknown }).code : undefined
+  const status = typeof cause === 'object' && cause !== null ? (cause as { status?: unknown }).status : undefined
   const text = cause instanceof Error ? cause.message : String(cause)
-  return code === '42501' || text.includes('Code: 497') ? 'refused' : 'failed'
+  return code === '42501' || text.includes('Code: 497') || status === 403 ? 'refused' : 'failed'
 }
 
 export class Session {

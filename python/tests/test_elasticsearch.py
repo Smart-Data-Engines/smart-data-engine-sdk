@@ -543,3 +543,62 @@ def test_a_barrier_makes_what_it_drained_visible_before_it_returns() -> None:
         ElasticsearchFences(failed).drain("notes", project_id="0" * 32, hold="a" * 32)
     order = [path for _, path in failed.sent if path.endswith(("_block/write", "_refresh"))]
     assert order == ["/notes/_block/write", "/notes/_refresh"]
+
+
+def _stats(sizes: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """An ``_stats/store`` answer: each index's primaries, and a total twice that (one replica)."""
+    return {
+        "_shards": {"total": 2, "successful": 2, "failed": 0},
+        "indices": {
+            name: {"primaries": {"store": {"size_in_bytes": size}},
+                   "total": {"store": {"size_in_bytes": size * 2 if type(size) is int else size}}}
+            for name, size in sizes.items()
+        },
+        **extra,
+    }
+
+
+def test_storage_sizes_are_the_primaries_in_one_request_and_a_missing_index_is_absent() -> None:
+    sent: list[tuple[str, str]] = []
+    engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
+
+    def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
+        sent.append((method, path))
+        return 200, _stats({"note": 4096, "empty": 225})
+
+    engine._request = request  # type: ignore[method-assign]
+    assert engine.storage_sizes(["note", "missing", "empty", "note"]) == {
+        "empty": (225, 0), "note": (4096, 0),
+    }
+    # One request for every index, each named once; the replicas' bytes are the cluster's own.
+    query = "ignore_unavailable=true&level=indices"
+    assert sent == [("GET", f"/empty,missing,note/_stats/store?{query}")]
+    assert engine.storage_sizes([]) == {}
+    assert len(sent) == 1
+
+
+def test_a_refused_store_read_carries_its_status_and_an_odd_one_is_refused() -> None:
+    from sde.engines.elasticsearch import HttpStatus
+
+    engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
+    denied = {"error": {"type": "security_exception", "reason": "action is unauthorized"}}
+    engine._request = lambda method, path, body=None, **_: (403, denied)  # type: ignore[method-assign]
+    with pytest.raises(sde.EngineError, match="storage sizes could not be read") as caught:
+        engine.storage_sizes(["note"])
+    assert isinstance(caught.value.__cause__, HttpStatus)
+    assert caught.value.__cause__.status == 403
+    partial = {"total": 2, "successful": 1, "failed": 1}
+    for answer, refusal in (
+        (_stats({"note": 1}, _shards=partial), "partial"),
+        (_stats({"note": -1}), "not a number of bytes"),
+        (_stats({"note": "12"}), "not a number of bytes"),
+        (_stats({"note": True}), "not a number of bytes"),
+        ({"_shards": partial | {"failed": 0}}, "without their indexes"),
+    ):
+        engine._request = (  # type: ignore[method-assign]
+            lambda method, path, body=None, _answer=answer, **_: (200, _answer)
+        )
+        with pytest.raises(sde.EngineError, match=refusal):
+            engine.storage_sizes(["note"])
+    with pytest.raises(sde.EngineError, match="not an Elasticsearch index name"):
+        engine.storage_sizes(["note*"])

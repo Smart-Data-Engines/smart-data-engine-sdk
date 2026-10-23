@@ -489,6 +489,13 @@ def test_a_runtime_key_that_could_lift_a_block_or_a_fence_is_refused(
         assert move.es.operator._request("GET", f"/{move.copy}/_mapping")[0] == 404
 
 
+def test_a_runtime_key_that_may_also_measure_its_indexes_is_admitted(tmp_path: Path) -> None:
+    """``monitor`` reads statistics and nothing of a document, and lifts no block: the optional
+    privilege a size takes (runtime-roles.md) does not stop the key's group from moving."""
+    with moving("postgres", tmp_path, privileges=(*RUNTIME, "monitor")) as move:
+        assert move.operator.stage(move.stage).as_record()["outcome"] == "prepared"
+
+
 def test_a_runtime_key_that_does_not_cover_the_fresh_name_is_refused_before_anything(
     tmp_path: Path,
 ) -> None:

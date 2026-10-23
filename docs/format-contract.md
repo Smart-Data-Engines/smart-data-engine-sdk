@@ -490,8 +490,9 @@ list was wrong by one the day a sixth field was added, which is why it is derive
 
 **The sizes come from the engine's catalogue, read on the client's side.** `Session.measure_storage()`
 reads each group's source materialisation - one catalogue statement per engine: PostgreSQL's
-`pg_total_relation_size` and its non-primary indexes, ClickHouse's active `system.parts` - and records a
-sample per group; `Recorder.record_storage()` takes one directly. A sample belongs to the window in
+`pg_total_relation_size` and its non-primary indexes, ClickHouse's active `system.parts`,
+Elasticsearch's `_stats` of each index's primary shards with no secondary index beside the store -
+and records a sample per group; `Recorder.record_storage()` takes one directly. A sample belongs to the window in
 which it was recorded, by the recorder's own state rather than by comparing clock readings. A size is
 a number about the customer's storage, never a row. The two features that need time use the
 recorder's clock: growth is projected to a day only from samples at least an hour apart, because a
@@ -2003,6 +2004,12 @@ cluster, and a copy's marker named by its materialization id across the cluster.
 names every staged copy afresh (`stage-<id>`), and a hand-written map that reuses an id for a new
 copy resumes from the old marker - which the cutover's repair, rebuilding the copy whole, does not
 depend on.
+
+**The size** of an index is its primary shards' store, read from `_stats` with `ignore_unavailable`:
+an index that does not exist is absent from the answer rather than a zero, and an alias is never
+measured under its name. Its secondary index bytes are 0, because an index keeps none beside its
+store, so a window's `index_to_table_ratio` is a measured 0. The read takes the index privilege
+`monitor` ([`runtime-roles.md`](runtime-roles.md)); without it the size is unknown, `refused`.
 
 **Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
 `020` and `documents/` are new, and no existing vector changed. The second review's `documents/009`
