@@ -358,6 +358,7 @@ Json Window::shape_records(const Model& model, std::string_view group) const {
     entry.set("calls", stats.calls);
     entry.set("errors", stats.errors);
     entry.set("rows", stats.rows);
+    if (shape.kind == "search") entry.set("examined", stats.examined);
     entry.set("latency_p50_ms", optional_number(stats.latency.percentile_ms(0.5)));
     entry.set("latency_p99_ms", optional_number(stats.latency.percentile_ms(0.99)));
     if (!stats.filtered.empty()) {
@@ -372,6 +373,20 @@ Json Window::shape_records(const Model& model, std::string_view group) const {
         filtered.as_array().push_back(std::move(item));
       }
       entry.set("filtered_on", std::move(filtered));
+    }
+    if (!stats.searched.empty()) {
+      // Which fields the searches looked in, one entry per combination in code point order - the
+      // byte order of UTF-8. Never the text they looked for.
+      Json searched = Json::array();
+      for (const auto& [looked_in, calls] : stats.searched) {
+        Json item = Json::object();
+        Json names = Json::array();
+        for (const std::string& name : looked_in) names.as_array().emplace_back(name);
+        item.set("fields", std::move(names));
+        item.set("calls", calls);
+        searched.as_array().push_back(std::move(item));
+      }
+      entry.set("searched_on", std::move(searched));
     }
     out.as_array().push_back(std::move(entry));
   }

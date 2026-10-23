@@ -118,7 +118,7 @@ TEST(Window, TheSpanCoversEverySecondAWriteLandedIn) {
   sde::Window late;
   late.started_ns = 0;
   late.ended_ns = 3'000'000'000;
-  late.shapes.push_back(sde::ShapeStats{"w", "Event", "Event", "write", 1, 4, 0, {}, {}});
+  late.shapes.push_back(sde::ShapeStats{"w", "Event", "Event", "write", 1, 4, 0, {}, {}, 0, {}});
   late.shapes.back().latency.record(1000);
   late.write_seconds["Event"][5] = 4;
   EXPECT_EQ(late.features("Event").write_burstiness, 4.0 * 6.0 / 4.0);
@@ -163,7 +163,7 @@ TEST(Window, GrowthPastSixtyFourBitsIsExact) {
   // A terabyte's change over an hour and a nanosecond: |delta| * a day is past 2^64, and the
   // projection is the reference's exact integer, truncated toward zero.
   sde::Window window;
-  window.shapes.push_back(sde::ShapeStats{"x", "G", "E", "write", 1, 1, 0, {}, {}});
+  window.shapes.push_back(sde::ShapeStats{"x", "G", "E", "write", 1, 1, 0, {}, {}, 0, {}});
   window.shapes.back().latency.record(1000);
   const std::int64_t tb = 1'000'000'000'000;
   window.storage = {{"G", sde::GROWTH_MIN_NS + 1, 5 * tb, 0}};

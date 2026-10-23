@@ -142,7 +142,19 @@ export {
   schemaStatements,
 } from './schema.js'
 export type { OperationShape, ShapeKind } from './shapes.js'
-export { enumerateShapes, SHAPE_KINDS, shapeId, shapeIr, WRITE_KINDS } from './shapes.js'
+export { enumerateShapes, SHAPE_KINDS, shapeId, shapeIr, SOURCE_ONLY_KINDS, WRITE_KINDS } from './shapes.js'
+export {
+  DEFAULT_MAX_EXAMINED,
+  fold,
+  matches,
+  MAX_EXAMINED,
+  MAX_SEARCH_LIMIT,
+  queryTokens,
+  SearchRefused,
+  textIndex,
+  tokens,
+} from './search.js'
+export type { SearchOptions, SearchPage, TextIndex } from './search.js'
 export { guard, internalFailures, resetInternalFailures } from './internal.js'
 export type {
   CopyFreshness,

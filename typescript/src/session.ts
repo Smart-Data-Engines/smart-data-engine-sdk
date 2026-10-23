@@ -36,11 +36,13 @@ import type { NameMap } from './hashing.js'
 import { groupColumns } from './layout.js'
 import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
-import { countEngine, isQueryMapping, numericSummary, planRead, QueryRefused, queryEngine, summaryEngine, summaryScale } from './query.js'
+import { countEngine, isQueryMapping, MAX_PAGE_ROWS, numericSummary, planRead, QueryRefused, queryEngine, queryValue, summaryEngine, summaryScale } from './query.js'
 import type { NumericSummary, ReadOptions, ReadPlan, ScanPage } from './query.js'
 import type { Materialization, PhysicalLayout, PlacementMap } from './placement.js'
 import { placementOf } from './placement.js'
 import { resolve } from './routing.js'
+import { DEFAULT_MAX_EXAMINED, matches, MAX_EXAMINED, MAX_SEARCH_LIMIT, queryTokens, SearchRefused, textIndex } from './search.js'
+import type { SearchOptions, SearchPage } from './search.js'
 import { schemaIsFixed } from './schema.js'
 import type { OperationShape, ShapeKind } from './shapes.js'
 import { enumerateShapes, shapeId } from './shapes.js'
@@ -966,6 +968,118 @@ export class Session {
     })
   }
 
+  /**
+   * The rows of `entity` whose chosen text fields hold every token of `text`, a page in key order.
+   *
+   * What a token is and when a row matches is the format contract's rule (section 7l), applied to
+   * every row before it is returned: the engine supplies candidates and never decides, so the answer
+   * is the same in every engine. A search always reads the group's source. An engine with a text
+   * index supplies rows that hold the tokens; one without supplies rows in key order, and at most
+   * `maxExamined` of them are checked in one call. A page cut short by that bound keeps the position
+   * of the last row checked, so `nextAfter` is `null` only when nothing is left.
+   */
+  async search(entity: string, text: string, options: SearchOptions = {}): Promise<SearchPage> {
+    return this.usage.operation(async () => {
+      const limit = options.limit ?? 100
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH_LIMIT) {
+        throw new SearchRefused(`limit must be an integer between 1 and ${MAX_SEARCH_LIMIT}`)
+      }
+      const maxExamined = options.maxExamined ?? DEFAULT_MAX_EXAMINED
+      if (
+        typeof maxExamined !== 'number' || !Number.isInteger(maxExamined) ||
+        maxExamined < 1 || maxExamined > MAX_EXAMINED
+      ) {
+        throw new SearchRefused(`maxExamined must be an integer between 1 and ${MAX_EXAMINED}`)
+      }
+      const query = queryTokens(text)
+      const [target, first] = this.prepareRead(entity, {
+        after: options.after ?? null, limit: MAX_PAGE_ROWS, paginate: true,
+      })
+      const chosen = this.searchFields(entity, target, options.fields)
+      const shape = this.shapeFor(target, 'search')
+      const [engine, material] = this.target(shape, false)
+      this.readProjection(material, target, first, false)
+      const table = tableFor(material.layout, target)
+      const indexed = textIndex(engine)
+      const reader = indexed === null ? queryEngine(engine) : null
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false, examined = 0
+      const found: Row[] = []
+      try {
+        let plan = first
+        let position: Row | null = null
+        for (;;) {
+          // An index supplies rows that hold the tokens, so it is asked for what the page still
+          // needs; a scan supplies everything, so it reads as far as the bound allows.
+          let wanted = maxExamined - examined
+          if (indexed !== null) wanted = Math.min(wanted, limit - found.length)
+          plan = { ...plan, limit: Math.min(MAX_PAGE_ROWS, wanted) }
+          const rows = indexed !== null
+            ? await indexed.searchRows(table, plan, query, chosen)
+            : await reader!.selectRows(table, plan)
+          this.usage.check()
+          const candidates = rows.slice(0, plan.limit)
+          const more = rows.length > plan.limit
+          let stopped: number | null = null
+          for (const [index, row] of candidates.entries()) {
+            examined += 1
+            if (matches(row, query, chosen)) found.push(row)
+            if (found.length === limit || examined === maxExamined) {
+              stopped = index
+              break
+            }
+          }
+          if (stopped !== null) {
+            if (more || stopped < candidates.length - 1) position = candidates[stopped]!
+            break
+          }
+          if (!more || candidates.length === 0) break
+          const last = candidates[candidates.length - 1]!
+          plan = { ...plan, after: plan.order.map(column => queryValue(column, last[column.name])) }
+        }
+        let nextAfter: Readonly<Row> | null = null
+        if (position !== null) {
+          const key = Object.fromEntries(plan.order.map(column => [column.name, position![column.name]]))
+          nextAfter = Object.freeze(snapshotRows([this.fieldsOut(entity, key)!])[0]!)
+        }
+        return { rows: found.map(row => this.fieldsOut(entity, row)!), nextAfter, examined }
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, failed ? 0 : found.length, failed, undefined, undefined, {
+          examined, searched: chosen,
+        })
+      }
+    })
+  }
+
+  /** The model's names of the text fields a search looks in, in code point order. */
+  private searchFields(entity: string, target: string, fields: readonly string[] | undefined): string[] {
+    const spec = this.model.entities.find(item => item.name === target)!
+    const declared = new Map(spec.fields.map(field => [field.name, field.type]))
+    const text = [...declared].filter(([, type]) => type === 'string').map(([name]) => name)
+      .sort(compareCodePoints)
+    if (text.length === 0) throw new SearchRefused(`${entity} has no field of type string, so nothing to search`)
+    if (fields === undefined) return text
+    const refusal = "fields must be a non-empty list of the entity's text field names"
+    if (!Array.isArray(fields) || fields.length === 0) throw new SearchRefused(refusal)
+    const chosen = new Set<string>()
+    for (const name of fields) {
+      if (typeof name !== 'string') throw new SearchRefused(refusal)
+      for (const mapped of Object.keys(this.fieldsIn(entity, { [name]: null }))) chosen.add(mapped)
+    }
+    const unknown = [...chosen].filter(name => !declared.has(name)).sort(compareCodePoints)
+    if (unknown.length > 0) throw new SearchRefused(`${entity} declares no field named ${JSON.stringify(unknown)}`)
+    const other = [...chosen].filter(name => declared.get(name) !== 'string')
+    if (other.length > 0) {
+      const named = Object.keys(this.fieldsOut(entity, Object.fromEntries(other.map(name => [name, null])))!)
+        .sort(compareCodePoints)
+      throw new SearchRefused(`a search looks in fields of type string only, not in ${JSON.stringify(named)}`)
+    }
+    return [...chosen].sort(compareCodePoints)
+  }
+
   /** An exact count; the result value itself is never telemetry. */
   async count(entity: string, options: CountOptions = {}): Promise<bigint> {
     return this.usage.operation(async () => {
@@ -1023,6 +1137,7 @@ export class Session {
   private observe(
     shape: OperationShape, started: number, rows: number, failed: boolean, plan?: ReadPlan,
     predicates?: { equal: string[]; ranged: string | null },
+    search?: { examined: number; searched: readonly string[] },
   ): void {
     const recorder = this.recorder
     if (recorder === undefined) return
@@ -1035,6 +1150,7 @@ export class Session {
       rows,
       failed,
       ...(plan === undefined ? (predicates ?? {}) : readPredicates(plan)),
+      ...(search ?? {}),
     })
   }
 

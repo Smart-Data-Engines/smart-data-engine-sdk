@@ -155,6 +155,8 @@ def _replay(
                 failed=bool(entry.get("failed", False)),
                 equal=entry.get("equal"),
                 ranged=entry.get("range"),
+                examined=int(entry.get("examined", 0)),
+                searched=entry.get("searched"),
             )
 
 
@@ -932,6 +934,69 @@ def _sixteen() -> None:
     )
 
 
+def _seventeen() -> None:
+    """What the searches examined, and the fields they looked in: what a search costs where it is.
+
+    A search takes no ``where``. Its cost is the rows its engine supplied for the library to check,
+    which is every row in key order on an engine without a text index and only the rows that hold
+    the tokens on one with it - so ``examined`` next to ``rows`` is the evidence a placement for
+    search is decided on.
+    """
+    sde.clear_registry()
+    model = model_from_neutral(
+        {
+            "entities": [
+                {
+                    "name": "Note",
+                    "fields": [
+                        {"name": "id", "type": "int64"},
+                        {"name": "title", "type": "string"},
+                        {"name": "body", "type": "string"},
+                        {"name": "at", "type": "timestamptz"},
+                    ],
+                    "key": ["id"],
+                }
+            ],
+            "relations": [],
+            "atomic": [],
+        }
+    )
+    shapes = {(s.kind, s.fields): s for s in sde.enumerate_shapes(model)}
+    search = shapes[("search", ())].id
+    operations = [
+        {"shape": search, "searched": ["title", "body"], "examined": 100_000,
+         "ns": 180_000_000, "rows": 3},
+        # The same fields named in another order: one combination.
+        {"shape": search, "searched": ["body", "title"], "examined": 2_400, "ns": 4_000_000,
+         "rows": 20},
+        {"shape": search, "searched": ["title"], "examined": 800, "ns": 1_500_000, "rows": 0},
+        # A failed search counts what it examined before it failed, and returned nothing.
+        {"shape": search, "searched": ["title"], "examined": 1_000, "ns": 2_000_000, "rows": 0,
+         "failed": True},
+        {"shape": shapes[("point_read", ("id",))].id, "ns": 3_000, "rows": 1},
+    ]
+    _write(
+        "017-what-a-search-examined",
+        {
+            "model.json": sde.neutral_declaration(model),
+            "operations.json": operations,
+            "window.json": _record(model, operations),
+            "why.json": {
+                "why": (
+                    "A search reports `examined`, the rows its calls checked - the candidates "
+                    "their engine supplied, every one checked by the library - and `searched_on`, "
+                    "one entry per combination of fields the calls looked in, sorted, with the "
+                    "number of calls, in code point order. Two calls that named the same fields in "
+                    "another order are one entry, and a failed call counts what it examined before "
+                    "it failed. A search takes no filter, so it has no `filtered_on`, and it "
+                    "filtered on no time: time_filtered_share is a measured 0. The text the "
+                    "searches looked for is in no document."
+                )
+            },
+        },
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true")
@@ -958,6 +1023,7 @@ def main() -> int:
     _fourteen()
     _fifteen()
     _sixteen()
+    _seventeen()
     return 0
 
 

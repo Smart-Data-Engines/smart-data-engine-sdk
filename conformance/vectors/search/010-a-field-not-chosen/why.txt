@@ -1,0 +1,1 @@
+a token found only in a field that was not chosen does not count

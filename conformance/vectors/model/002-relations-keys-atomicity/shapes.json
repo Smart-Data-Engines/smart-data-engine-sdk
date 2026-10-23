@@ -45,6 +45,14 @@
   },
   {
     "group": "Event",
+    "kind": "search",
+    "entity": "Event",
+    "fields": [],
+    "target": null,
+    "id": "9cbc9bb5cb3541e1"
+  },
+  {
+    "group": "Event",
     "kind": "write",
     "entity": "Event",
     "fields": [],
@@ -209,6 +217,14 @@
     ],
     "target": null,
     "id": "d2f9cce926765b6e"
+  },
+  {
+    "group": "Order",
+    "kind": "search",
+    "entity": "User",
+    "fields": [],
+    "target": null,
+    "id": "306539e984eecf0d"
   },
   {
     "group": "Order",

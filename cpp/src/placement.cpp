@@ -562,6 +562,13 @@ std::map<std::string, std::string> check_routing(const Json& routing,
                      "the two sides enumerated shapes differently - which is the divergence that "
                      "puts one library's write in a table another library never looks at.");
     }
+    if (is_source_only_kind(shape->kind)) {
+      throw MapError("the routing table has an entry for shape " + python_repr(shape_id) + ", a " +
+                     shape->kind + " on " + shape->entity + ". A " + shape->kind +
+                     " always goes to the group's source, and a library that predates the kind "
+                     "refuses this entry as a shape it does not know - so this one refuses it too, "
+                     "and one stored map means the same thing to both.");
+    }
     const auto group = declared.find(shape->group);
     if (group == declared.end() || group->second.count(target) == 0) {
       throw MapError("the routing table sends shape " + python_repr(shape_id) +

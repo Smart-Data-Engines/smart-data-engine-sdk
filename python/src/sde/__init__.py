@@ -124,8 +124,9 @@ from .query import (
 )
 from .routing import Router, resolve
 from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
+from .search import SearchPage, SearchRefused
 from .session import Engine, ManagedEngine, Session
-from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
+from .shapes import SHAPE_KINDS, SOURCE_ONLY_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .staging import (
     STAGING_PROTOCOL,
     STAGING_RELAYOUT_PROTOCOL,
@@ -190,6 +191,7 @@ __all__ = [
     "PRECISION_INDEPENDENT",
     "RESERVED_TABLES",
     "SHAPE_KINDS",
+    "SOURCE_ONLY_KINDS",
     "STAGING_PROTOCOL",
     "STAGING_RELAYOUT_PROTOCOL",
     "WATERMARK_TABLE",
@@ -258,6 +260,8 @@ __all__ = [
     "Router",
     "ScanPage",
     "SdeError",
+    "SearchPage",
+    "SearchRefused",
     "Session",
     "ShapeStats",
     "StagingPlan",

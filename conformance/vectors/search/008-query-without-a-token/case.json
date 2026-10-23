@@ -1,0 +1,10 @@
+{
+  "fields": [
+    "t"
+  ],
+  "kind": "match",
+  "query": "--- !!! ___",
+  "row": {
+    "t": "anything"
+  }
+}
