@@ -42,8 +42,38 @@ a delete runs no ingest pipeline, where an index or an update runs the final one
 9.5.5). The library never deletes a document, so a key needs ``index``, not ``write``, as a SQL
 runtime login needs INSERT and not DELETE. Broadest first, for the same reason."""
 
+FORBIDDEN_CLUSTER_ACTIONS = (
+    "cluster:admin/ingest/pipeline/put",
+    "cluster:admin/ingest/pipeline/delete",
+    "cluster:admin/snapshot/restore",
+    "cluster:admin/xpack/security/role/put",
+    "cluster:admin/xpack/security/role_mapping/put",
+    "cluster:admin/xpack/security/user/put",
+    "cluster:admin/xpack/security/user/change_password",
+)
+"""Cluster actions a role can name without any privilege above: a key granted one reads false for
+every named privilege that implies it (measured on 9.5.5), so each is asked by its own name.
+Writing or deleting a pipeline rewrites a fence, a restore puts an index back from before its fence,
+and the security actions make a user, a role or a password through which a key grants itself
+more."""
+
+FORBIDDEN_INDEX_ACTIONS = ("indices:admin/settings/update",)
+"""Index actions a role can name without ``manage``. Updating an index's settings lifts its write
+block or unsets its fence's final pipeline: measured on 9.5.5, a key holding this action and no
+privilege the operator refused did both. A raw delete needs no entry: ``_has_privileges`` reads it
+as ``delete``, which FORBIDDEN_INDEX refuses."""
+
 REQUIRED_INDEX = ("index", "read", "view_index_metadata")
 """What a runtime key needs on each index it uses: write, read, and read the mapping it checks."""
+
+
+def _cluster_reason(name: str) -> str:
+    """What a runtime key holding the cluster privilege or action ``name`` could do."""
+    if name == "manage_security" or name.startswith("cluster:admin/xpack/security/"):
+        return "grant itself more"
+    if name == "cluster:admin/snapshot/restore":
+        return "restore an index from before its write fence"
+    return "rewrite a write fence"
 
 FOREIGN_BLOCKS = ("metadata", "read_only", "read_only_allow_delete")
 """Blocks this protocol never sets: an index carrying one is somebody else's to release."""
@@ -189,9 +219,10 @@ class ElasticsearchOperator:
         self, probe: Any, names: Sequence[str]
     ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
         body = {
-            "cluster": sorted({*FORBIDDEN_CLUSTER, "read_pipeline"}),
-            "index": [{"names": sorted(names), "privileges": sorted({*FORBIDDEN_INDEX,
-                                                                     *REQUIRED_INDEX})}],
+            "cluster": sorted({*FORBIDDEN_CLUSTER, *FORBIDDEN_CLUSTER_ACTIONS, "read_pipeline"}),
+            "index": [{"names": sorted(names), "privileges": sorted(
+                {*FORBIDDEN_INDEX, *FORBIDDEN_INDEX_ACTIONS, *REQUIRED_INDEX}
+            )}],
         }
         status, answer = self._call(probe, "POST", "/_security/user/_has_privileges", body)
         cluster = answer.get("cluster") if isinstance(answer, Mapping) else None
@@ -227,11 +258,15 @@ class ElasticsearchOperator:
             if who == operator:
                 raise MigrationRefused("a runtime probe logs in as the operator")
             cluster, index = self._privileges(probe, names)
-            held = [name for name in FORBIDDEN_CLUSTER if cluster.get(name)]
+            # Named privileges first, so a refusal names what a role was given rather than an
+            # action it implies.
+            held = [name for name in (*FORBIDDEN_CLUSTER, *FORBIDDEN_CLUSTER_ACTIONS)
+                    if cluster.get(name)]
             if held:
+                kind = "action" if ":" in held[0] else "privilege"
                 raise MigrationRefused(
-                    f"cutover runtime holds the cluster privilege {held[0]}, with which it could "
-                    f"rewrite a write fence; a runtime key needs read_pipeline and no more"
+                    f"cutover runtime holds the cluster {kind} {held[0]}, with which it could "
+                    f"{_cluster_reason(held[0])}; a runtime key needs read_pipeline and no more"
                 )
             if required_access and not cluster.get("read_pipeline"):
                 raise MigrationRefused(
@@ -241,13 +276,15 @@ class ElasticsearchOperator:
             for name in names:
                 rights = index.get(name)
                 rights = rights if isinstance(rights, Mapping) else {}
-                held = [privilege for privilege in FORBIDDEN_INDEX if rights.get(privilege)]
+                held = [privilege for privilege in (*FORBIDDEN_INDEX, *FORBIDDEN_INDEX_ACTIONS)
+                        if rights.get(privilege)]
                 if held:
-                    why = (
-                        "delete its documents past the write fence - give it index, not write"
-                        if held[0] in ("write", "delete")
-                        else "lift the index's blocks or delete it"
-                    )
+                    if held[0] in ("write", "delete"):
+                        why = "delete its documents past the write fence - give it index, not write"
+                    elif held[0] in FORBIDDEN_INDEX_ACTIONS:
+                        why = "lift the index's blocks or unset its fence's pipeline"
+                    else:
+                        why = "lift the index's blocks or delete it"
                     raise MigrationRefused(
                         f"cutover runtime holds {held[0]} on {name}, with which it could {why}"
                     )

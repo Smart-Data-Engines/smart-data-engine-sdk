@@ -536,6 +536,25 @@ def test_an_index_of_the_staging_name_without_its_marker_is_left_alone(tmp_path:
     # What runtime-roles.md said before the second review: named by the privilege given.
     (["read", "write", "view_index_metadata"], ["read_pipeline"], "holds write on"),
     (RUNTIME, ["read_pipeline", "manage_pipeline"], "cluster privilege manage_pipeline"),
+    (RUNTIME, ["read_pipeline", "manage_security"], "manage_security, with which it could grant"),
+    # A role can name an action and no privilege above it, and then every named privilege that
+    # implies the action reads false (measured on 9.5.5). These are asked by the action's name.
+    ([*RUNTIME, "indices:admin/settings/update"], ["read_pipeline"],
+     "holds indices:admin/settings/update on .*unset its fence's pipeline"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/ingest/pipeline/put"],
+     "cluster action cluster:admin/ingest/pipeline/put, with which it could rewrite"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/ingest/pipeline/delete"],
+     "cluster action cluster:admin/ingest/pipeline/delete"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/snapshot/restore"],
+     "snapshot/restore, with which it could restore an index from before its write fence"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/xpack/security/role/put"],
+     "security/role/put, with which it could grant itself more"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/xpack/security/role_mapping/put"],
+     "cluster action cluster:admin/xpack/security/role_mapping/put"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/xpack/security/user/put"],
+     "cluster action cluster:admin/xpack/security/user/put"),
+    (RUNTIME, ["read_pipeline", "cluster:admin/xpack/security/user/change_password"],
+     "cluster action cluster:admin/xpack/security/user/change_password"),
     (RUNTIME, [], "needs the cluster privilege read_pipeline"),
 ])
 def test_a_runtime_key_that_could_lift_a_block_or_a_fence_is_refused(

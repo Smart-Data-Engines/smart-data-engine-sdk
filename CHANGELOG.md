@@ -64,8 +64,11 @@ comparison and the cutover then take it like a group on any other engine
   `delete_index` or `delete` on their indexes, no cluster privilege that rewrites a fence,
   `read_pipeline`, and the fresh `sde_m_*` names covered in advance, because the operator grants
   nothing. A key holds `index`, not `write`: a delete runs no ingest pipeline, where an index or an
-  update runs the final one (measured on 9.5.5), so a key that may delete goes past the fence. The
-  operator's own login reads the cluster's identity (`monitor`).
+  update runs the final one (measured on 9.5.5), so a key that may delete goes past the fence.
+  A role can also name an action and none of those privileges. So the operator asks by action, too,
+  and refuses the update of an index's settings, which lifts a block. It also refuses the cluster
+  actions that write or delete a pipeline, restore a snapshot, or write a role, a role mapping, a
+  user or a password. The operator's own login reads the cluster's identity (`monitor`).
 - **Both adapters copy and compare in key order** (`key_range`, `nth_key`, `count`, `copy_in`,
   backfill markers in `sde_backfill_state`), so `backfill` and `verify` work between Elasticsearch
   and the SQL engines in both languages. A copy is `create`: a document already there stays.
