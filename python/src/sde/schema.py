@@ -559,8 +559,8 @@ def compatibility_views(
         )
 
     if dialect == "elasticsearch":
-        # No group arrives here by a move - an index takes no write generation, so a placement on
-        # it is final - and a query written by hand against an index is not SQL to keep working.
+        # A group can arrive here by a move, but a query written by hand against a SQL table is
+        # not one an index can answer under the old name: there is no view to keep it working.
         return CompatibilityViews(
             create=(),
             drop=(),

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +15,7 @@ import pytest
 import sde
 from sde.engines.elasticsearch import (
     KEYWORD_BYTES,
+    WATERMARK_MAPPING,
     ElasticsearchEngine,
     document_id,
     parse_dsn,
@@ -191,12 +194,13 @@ def test_an_entity_whose_name_cannot_be_an_index_cannot_be_laid_out(
 
 def test_the_facts_say_what_the_adapter_does() -> None:
     facts = sde.engine_facts("elasticsearch")
-    assert facts["transactions"] is False and facts["write_generations"] is False
+    assert facts["transactions"] is False
+    assert facts["write_generations"] is True
     assert facts["reads"] == {
         "get": True, "scan": True, "count": True, "summarize": False, "search": True,
     }
     assert facts["text_index"] is True
-    assert not hasattr(ElasticsearchEngine, "write_fence")
+    assert callable(ElasticsearchEngine.write_fence)
     assert not hasattr(ElasticsearchEngine, "summarize_rows")
     assert callable(ElasticsearchEngine.search_rows)
     with pytest.raises(sde.EngineError, match="no multi-document transactions"):
@@ -303,10 +307,10 @@ def test_every_read_asks_the_engine_to_fail_rather_than_answer_in_part() -> None
     def answering(partial: dict[str, Any]) -> Any:
         def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
             sent.append(path)
+            if path == "/sde_map_state/_mapping":
+                return 200, {"sde_map_state": {"mappings": WATERMARK_MAPPING}}
             if path.endswith("/_mapping"):
                 return 200, {"note": {"mappings": mapping}}
-            if path.startswith("/sde_map_state") and method == "PUT":
-                return 200, {}
             if "/_count" in path:
                 return 200, {"count": 3, **partial}
             return 200, {"hits": {"hits": []}, **partial}
@@ -361,3 +365,181 @@ def test_a_refused_write_names_the_error_type_and_never_the_value() -> None:
             call()
         assert "document_parsing_exception" in str(caught.value)
         assert "secret" not in str(caught.value)
+
+
+
+FENCE_PROCESSORS = Path(__file__).resolve().parents[2] / "conformance" / "fence-processors.json"
+"""Written by conformance/tools/elasticsearch_vectors.py and read by the TypeScript tests too."""
+
+
+def test_a_fence_pipeline_renders_the_same_processor_in_both_languages() -> None:
+    from sde.engines._write_fences import fence_processor
+
+    table = json.loads(FENCE_PROCESSORS.read_text(encoding="utf-8"))
+    assert len(table["cases"]) == 5
+    for name, constraints in table["cases"].items():
+        assert fence_processor(constraints) == table["processors"][name], name
+
+
+class _FenceTransport:
+    """An Elasticsearch that answers the fence backend's reads from a dict, and records writes."""
+
+    def __init__(self, *, final_pipeline: str | None = None, version: int | None = None) -> None:
+        self.sent: list[tuple[str, str]] = []
+        self.final_pipeline = final_pipeline
+        self.version = version
+
+    def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        self.sent.append((method, path))
+        if path == "/notes/_settings" and method == "GET":
+            index: dict[str, Any] = {"uuid": "u1"}
+            if self.final_pipeline is not None:
+                index["final_pipeline"] = self.final_pipeline
+            return 200, {"notes": {"settings": {"index": index}}}
+        if path == "/notes/_mapping":
+            return 200, {"notes": {"mappings": {"properties": {"id": {"type": "long"}}}}}
+        if path.startswith("/_ingest/pipeline/") and method == "GET":
+            if self.version is None:
+                return 404, {}
+            from sde.engines._write_fences import fence_processor
+
+            return 200, {"__sde_f_notes": {
+                "version": self.version,
+                "_meta": {"sde": {"contract": 1, "index": "notes", "uuid": "u1",
+                                  "constraints": {}}},
+                "processors": [fence_processor({})],
+            }}
+        return 200, {"acknowledged": True}
+
+
+@pytest.mark.parametrize("name", ["a/../_cluster", "Upper", "_x", "a b", "a?x=1"])
+def test_a_fence_refuses_a_name_that_is_not_an_index_before_any_request(name: str) -> None:
+    from sde.engines._write_fences import ElasticsearchFences
+
+    transport = _FenceTransport()
+    fences = ElasticsearchFences(transport)
+    calls = (
+        lambda: fences.metadata(name),
+        lambda: fences.add_column(name),
+        lambda: fences.add_constraint(name, "__sde_f_setup", "0"),
+        lambda: fences.drop_constraint(name, "__sde_f_setup"),
+        lambda: fences.drain(name, project_id="0" * 32, hold="setup"),
+    )
+    for call in calls:
+        with pytest.raises(sde.MigrationRefused, match="not an Elasticsearch index name"):
+            call()
+    assert transport.sent == []
+
+
+def test_a_fence_is_not_installed_beside_another_final_pipeline() -> None:
+    from sde.engines._write_fences import ElasticsearchFences
+
+    with pytest.raises(sde.MigrationRefused, match="runs another final pipeline"):
+        ElasticsearchFences(_FenceTransport(final_pipeline="theirs")).metadata("notes")
+
+
+def test_a_fence_change_carries_the_version_it_read() -> None:
+    """A second, uncoordinated executor is refused (409), not overwritten."""
+    from sde.engines._write_fences import ElasticsearchFences
+
+    transport = _FenceTransport(version=5)
+    ElasticsearchFences(transport).add_constraint("notes", "__sde_f_setup", "0")
+    puts = [path for method, path in transport.sent if method == "PUT"]
+    assert "/_ingest/pipeline/__sde_f_notes?if_version=5" in puts
+
+
+def _bookkeeping_engine(answers: dict[tuple[str, str], tuple[int, Any]]) -> tuple[Any, list[Any]]:
+    engine = ElasticsearchEngine("elasticsearch+http://127.0.0.1:9200")
+    sent: list[Any] = []
+
+    def request(method: str, path: str, body: Any = None, **_: Any) -> tuple[int, Any]:
+        sent.append((method, path))
+        answer = answers.get((method, path.split("?")[0]))
+        if answer is None:
+            return 200, {"hits": {"hits": []}, "timed_out": False, "_shards": {"failed": 0}}
+        if isinstance(answer, list):
+            return answer.pop(0)  # type: ignore[no-any-return]
+        return answer
+
+    engine._request = request  # type: ignore[method-assign]
+    return engine, sent
+
+
+def test_bookkeeping_is_read_before_anything_creates_it() -> None:
+    """A login that only reads and writes `sde_map_state` needs no `create_index`: it is created
+    only where it is missing, as the SQL adapters look in their catalogue before CREATE."""
+    from sde.engines.elasticsearch import BACKFILL_MAPPING
+
+    watermark = {"sde_map_state": {"mappings": WATERMARK_MAPPING}}
+    engine, sent = _bookkeeping_engine({
+        ("GET", "/sde_map_state/_mapping"): (200, watermark),
+        ("GET", "/sde_backfill_state/_mapping"): [
+            (404, {}), (200, {"sde_backfill_state": {"mappings": BACKFILL_MAPPING}})],
+        ("PUT", "/sde_backfill_state"): (400, {"error": {
+            "type": "resource_already_exists_exception"}}),
+    })
+    assert engine.map_watermark() is None
+    assert ("PUT", "/sde_map_state") not in sent
+    # Missing, then created by somebody else in between: what they created is read and compared.
+    assert engine.backfill_marker(materialization="copy", entity="Note") == 0
+    assert [entry for entry in sent if "sde_backfill_state" in entry[1]][:3] == [
+        ("GET", "/sde_backfill_state/_mapping"), ("PUT", "/sde_backfill_state"),
+        ("GET", "/sde_backfill_state/_mapping")]
+
+
+@pytest.mark.parametrize("name", ["sde_map_state", "sde_backfill_state"])
+def test_bookkeeping_under_another_mapping_is_refused_rather_than_read(name: str) -> None:
+    """`map_version` as a keyword would make the watermark the lexicographic maximum."""
+    other = {"dynamic": "strict", "properties": {"map_version": {"type": "keyword"}}}
+    engine, sent = _bookkeeping_engine({("GET", f"/{name}/_mapping"): (200, {name: {
+        "mappings": other}})})
+    call = engine.map_watermark if name == "sde_map_state" else functools.partial(
+        engine.backfill_marker, materialization="copy", entity="Note")
+    with pytest.raises(sde.EngineError, match="mapping this library would not create"):
+        call()
+    assert all(method == "GET" for method, _ in sent)
+
+
+def test_a_staging_marker_is_accepted_beside_the_mapping_and_nothing_else_is() -> None:
+    """A staging's index names its creator in `_meta.sde.stage`, in the protocol's form."""
+    from sde.schema import elasticsearch_mapping
+
+    layout = sde.PhysicalLayout(tables={"Note": "note"}, columns={"Note": {"id": "long"}})
+    marker = "sde.stage1." + "1" * 32 + "." + "2" * 32 + "." + "3" * 16
+    for stage, accepted in ((marker, True), (marker + "x", False), (7, False),
+                            ("sde.stage1.short", False)):
+        mapping = elasticsearch_mapping(layout, "Note", {"Note": ["id"]})
+        mapping["_meta"]["sde"]["stage"] = stage
+        engine, _ = _bookkeeping_engine({("GET", "/note/_mapping"): (200, {"note": {
+            "mappings": mapping}})})
+        if accepted:
+            assert engine.validate_schema(layout, keys={"Note": ["id"]}) == ()
+        else:
+            with pytest.raises(sde.EngineError, match="staging marker"):
+                engine.validate_schema(layout, keys={"Note": ["id"]})
+
+
+def test_a_barrier_makes_what_it_drained_visible_before_it_returns() -> None:
+    """The refresh comes after the block every shard confirmed, and a failed one is an error."""
+    from sde.engines._write_fences import ElasticsearchFences
+
+    class Draining(_FenceTransport):
+        def __init__(self, refreshed: Any) -> None:
+            super().__init__()
+            self.refreshed = refreshed
+
+        def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+            if path == "/notes/_block/write":
+                self.sent.append((method, path))
+                return 200, {"acknowledged": True, "shards_acknowledged": True,
+                             "indices": [{"name": "notes", "blocked": True}]}
+            if path == "/notes/_refresh":
+                self.sent.append((method, path))
+                return self.refreshed  # type: ignore[no-any-return]
+            return super().__call__(method, path, body)
+
+    failed = Draining((200, {"_shards": {"total": 2, "successful": 0, "failed": 1}}))
+    with pytest.raises(sde.EngineError, match="could not be made visible"):
+        ElasticsearchFences(failed).drain("notes", project_id="0" * 32, hold="a" * 32)
+    order = [path for _, path in failed.sent if path.endswith(("_block/write", "_refresh"))]
+    assert order == ["/notes/_block/write", "/notes/_refresh"]

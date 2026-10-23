@@ -206,7 +206,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **428 of them, in thirteen families** — that every
+And [`conformance/`](conformance/) holds the vectors — **429 of them, in thirteen families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 
@@ -369,4 +369,4 @@ reports.
 
 A group on an engine that cannot fence writes (placement map contract 6):
 [generation-bearing maps](docs/generation-maps.md) - a group on the orderbook engine next to groups on
-PostgreSQL and ClickHouse, which still move, while it stays where it was placed.
+PostgreSQL, ClickHouse and Elasticsearch, which still move, while it stays where it was placed.

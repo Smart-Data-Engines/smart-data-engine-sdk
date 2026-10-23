@@ -1,0 +1,17 @@
+{
+  "columns": {
+    "id": "long/timestamp",
+    "x": "float",
+    "label": "keyword",
+    "__sde_write_epoch": "long"
+  },
+  "key": [
+    "id"
+  ],
+  "row": {
+    "id": "2026-10-23T08:00:00",
+    "x": 1.0,
+    "label": "a",
+    "__sde_write_epoch": 7
+  }
+}

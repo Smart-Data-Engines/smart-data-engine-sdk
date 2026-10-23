@@ -2,9 +2,10 @@
 
 What this engine is for, in this library, is ``Session.search``: it supplies the candidates of a
 search from an index of its own instead of every row in key order. It also takes writes, reads by
-key, bounded scans and exact counts, so a group can live here whole. It has no transactions and no
-write generations, so such a group is placed once and not moved (map contract 6, no
-``write_epoch``), as on our orderbook engine.
+key, bounded scans and exact counts, so a group can live here whole. It has no transactions. It has
+write generations - a fence in each index's final pipeline, with a write block as its drain
+(``write-fences.md``) - so a group is copied onto it and off it by the local operator like a group
+on any other engine with fences.
 
 **The layout.** One index per entity, its mapping strict (`dynamic: strict`), every column typed by
 :data:`sde.layout.ELASTICSEARCH_TYPES`. Where Elasticsearch's own type does not say how to read a
@@ -54,8 +55,9 @@ from ..canonical import CanonicalError, canonical_bytes
 from ..errors import EngineError
 from ..layout import index_name_refusal
 from ..logging import log
+from ..migration import key_columns, same_width
 from ..physical import PhysicalFinding
-from ..placement import PhysicalLayout
+from ..placement import BACKFILL_TABLE, PhysicalLayout
 from ..query import ReadFilter, ReadPlan, read_row
 from ..schema import (
     TOKENS_FIELD,
@@ -65,6 +67,9 @@ from ..schema import (
 )
 from ..search import tokens as text_tokens
 from ..watermark import WATERMARK_TABLE
+from ..write_fence import EPOCH_COLUMN, WriteFence
+from ._staging import CREATION_MARKER
+from ._write_fences import ElasticsearchFences
 
 __all__ = ["KEYWORD_BYTES", "ElasticsearchEngine", "document", "document_id", "parse_dsn"]
 
@@ -73,6 +78,26 @@ KEYWORD_BYTES: Final = 32_766
 
 MAX_RESPONSE_BYTES: Final = 256 * 1024 * 1024
 """The most this adapter reads of one response. A page is at most 1001 documents."""
+
+KEY_PAGE: Final = 1000
+"""Documents per search when a migration reads in key order: a copy's chunk, a window of the
+copy compared with it, or the keys counted towards a resume point."""
+
+WATERMARK_MAPPING: Final = {
+    "dynamic": "strict",
+    "properties": {"map_version": {"type": "long"}, "model_version": {"type": "keyword"}},
+}
+"""The mapping of ``sde_map_state`` here: one document per map version applied."""
+
+BACKFILL_MAPPING: Final = {
+    "dynamic": "strict",
+    "properties": {
+        "entity": {"type": "keyword"},
+        "materialization": {"type": "keyword"},
+        "rows_copied": {"type": "long"},
+    },
+}
+"""The mapping of ``sde_backfill_state`` here: one document per chunk copied, never updated."""
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _SCHEMES: Final = {"elasticsearch+https": True, "elasticsearch+http": False}
@@ -456,6 +481,16 @@ def document(
     return document_id(keyed), source
 
 
+def _already_there(item: Mapping[str, Any]) -> bool:
+    """A ``create`` refused because its document exists: what a copy leaves as it is."""
+    error = item.get("error")
+    return (
+        item.get("status") == 409
+        and isinstance(error, Mapping)
+        and error.get("type") == "version_conflict_engine_exception"
+    )
+
+
 def search_tokens(text: Any) -> list[str]:
     """What a text field contributes to its token field: distinct tokens, in code point order."""
     return sorted(set(text_tokens(text))) if isinstance(text, str) else []
@@ -471,10 +506,17 @@ class _Index:
     """Column -> layout type (``long/timestamptz``), read back from the mapping."""
     key: tuple[str, ...]
     entity: str = ""
+    fenced: bool = False
+    """The index has a write generation field: every document a session writes carries one."""
+
+    @property
+    def stored_columns(self) -> Mapping[str, str]:
+        """What a document holds: the layout's columns, and the generation where it is fenced."""
+        return {**self.columns, EPOCH_COLUMN: "long"} if self.fenced else self.columns
 
     def document(self, values: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         try:
-            return document(self.columns, self.key, values)
+            return document(self.stored_columns, self.key, values)
         except EngineError as exc:
             raise EngineError(f"{self.name}: {exc}") from None
 
@@ -658,6 +700,23 @@ class ElasticsearchEngine:
             raise EngineError(f"{index!r} is not an Elasticsearch index name: {refusal}")
         return "/" + "/".join([urllib.parse.quote(index, safe=""), *rest])
 
+    # --- write generations -------------------------------------------------------------------
+
+    def write_fence(self, table: str, *, project_id: str) -> WriteFence:
+        """The write-fence protocol on this index (``write-fences.md``), for a provisioning login.
+
+        Its pipeline and its write block need the cluster privilege ``manage_pipeline`` and
+        ``manage`` on the index; reading its state at session open needs ``read_pipeline``. A
+        runtime key holds neither of the first two, so it cannot lift a fence it writes under.
+        """
+        self._indexes.pop(table, None)
+        return WriteFence(ElasticsearchFences(self._fence_request), table, project_id=project_id)
+
+    def _fence_request(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        # A fence changes the index's mapping and settings: forget what was read of it.
+        self._indexes.clear()
+        return self._request(method, path, body)
+
     # --- schema ----------------------------------------------------------------------------
 
     @guarded
@@ -735,16 +794,29 @@ class ElasticsearchEngine:
                 f"index {name} was not created by this library: its mapping is not strict or "
                 f"names no key in _meta.sde"
             )
+        properties = mapping.get("properties", {})
         columns = {
             column: _layout_type(column, field)
-            for column, field in sorted(mapping.get("properties", {}).items())
-            if column != TOKENS_FIELD
+            for column, field in sorted(properties.items())
+            if column not in (TOKENS_FIELD, EPOCH_COLUMN)
         }
+        # The write generation is the fence's field, not the layout's: present exactly as the
+        # fence adds it, or absent.
+        fenced = EPOCH_COLUMN in properties
+        if fenced and properties[EPOCH_COLUMN] != {"type": "long"}:
+            raise EngineError(f"index {name} maps {EPOCH_COLUMN} as something other than a long")
         if any(column not in columns for column in key):
             raise EngineError(f"index {name} names a key field it does not map")
         entity = meta.get("entity")
         if not isinstance(entity, str) or not entity:
             raise EngineError(f"index {name} names no entity in _meta.sde")
+        # A staging's index says which staging created it, in the request that created it - as a
+        # SQL staging comments its table in the transaction that creates it. Its form is fixed.
+        stage = meta.get("stage")
+        if stage is not None and (
+            not isinstance(stage, str) or CREATION_MARKER.fullmatch(stage) is None
+        ):
+            raise EngineError(f"index {name} carries a staging marker that is not one")
         # The whole mapping, not only each field's type: a normalizer, a null_value, an
         # ignore_above, a token field mapped as text or a disabled _source would each change an
         # answer while every type still matched. It is what this library creates or nothing.
@@ -753,13 +825,17 @@ class ElasticsearchEngine:
             entity,
             {entity: [str(column) for column in key]},
         )
+        if fenced:
+            rendered["properties"][EPOCH_COLUMN] = {"type": "long"}
+        if stage is not None:
+            rendered["_meta"]["sde"]["stage"] = stage
         if not _same_json(rendered, mapping):
             raise EngineError(
                 f"index {name} has a mapping this library would not create: something beyond each "
                 f"field's type differs - a field parameter, the token fields or _source - and "
                 f"each of those can change an answer"
             )
-        index = _Index(name, columns, tuple(str(column) for column in key), entity)
+        index = _Index(name, columns, tuple(str(column) for column in key), entity, fenced)
         self._indexes[name] = index
         return index
 
@@ -924,28 +1000,299 @@ class ElasticsearchEngine:
         self._whole(response, f"the count of {table}")
         return int(response["count"])
 
-    # --- rollback protection ------------------------------------------------------------------
+    # --- migration ---------------------------------------------------------------------------
     #
-    # One document per map version applied, in an index of our own. `max` over them is the
-    # watermark, as in the SQL engines' append-only table.
+    # `sde.migration.Migratable`, so a group can be copied onto this engine and off it. A
+    # migration reads in key order, and a key is never null: the position is a filter, as a
+    # page's is (§7m), so the engine's sort values stand in for no value. A copy is `create`, so a
+    # document already there stays - PostgreSQL's ON CONFLICT DO NOTHING, not an overwrite: a
+    # chunk copied again changes nothing, and an older row from a backfill never covers a newer
+    # one the fan-out wrote.
+
+    @staticmethod
+    def _beyond(column: str, value: Any, *, above: bool) -> dict[str, Any]:
+        """``column`` strictly above ``value`` (or below), the value as stored: a boolean too,
+        which Elasticsearch orders false before true."""
+        return {"range": {column: {"gt" if above else "lt": value}}}
+
+    def _keyset(
+        self, order: Sequence[str], bound: Sequence[Any], *, above: bool, inclusive: bool
+    ) -> dict[str, Any]:
+        """Keys beyond ``bound`` in ``order`` - after it when ``above``, before it otherwise - and
+        the bound itself when ``inclusive``: for each column, equality on the ones before it and
+        beyond the bound on it, the row-value comparison of the SQL dialects."""
+        alternatives: list[dict[str, Any]] = []
+        for position, column in enumerate(order):
+            clauses: list[dict[str, Any]] = [
+                {"term": {earlier: bound[at]}} for at, earlier in enumerate(order[:position])
+            ]
+            clauses.append(self._beyond(column, bound[position], above=above))
+            alternatives.append({"bool": {"filter": clauses}})
+        if inclusive:
+            alternatives.append(
+                {"bool": {"filter": [{"term": {c: bound[at]}} for at, c in enumerate(order)]}}
+            )
+        return {"bool": {"should": alternatives, "minimum_should_match": 1}}
+
+    def _stored_key(
+        self, index: _Index, order: Sequence[str], bound: Sequence[Any], name: str
+    ) -> list[Any]:
+        same_width(bound, order, name)
+        if any(value is None for value in bound):
+            raise EngineError(f"{name} holds a null, and no key does")
+        return [
+            stored(index.columns[column], value)
+            for column, value in zip(order, bound, strict=True)
+        ]
+
+    def _key_page(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        after: Sequence[Any] | None,
+        upto: Sequence[Any] | None,
+        size: int,
+        fields: Sequence[str] | None = None,
+    ) -> list[Mapping[str, Any]]:
+        """One search in key order: the sources of up to ``size`` documents after ``after`` and
+        up to ``upto`` inclusive, both as stored."""
+        clauses: list[dict[str, Any]] = []
+        if after is not None:
+            clauses.append(self._keyset(order, after, above=True, inclusive=False))
+        if upto is not None:
+            clauses.append(self._keyset(order, upto, above=False, inclusive=True))
+        body: dict[str, Any] = {
+            "query": {"bool": {"filter": clauses}},
+            "sort": [{column: {"order": "asc"}} for column in order],
+            "size": size,
+            "track_total_hits": False,
+        }
+        if fields is not None:
+            body["_source"] = list(fields)
+        path = self._path(table, "_search") + "?allow_partial_search_results=false"
+        status, response = self._request("POST", path, body)
+        if status != 200 or not isinstance(response, Mapping):
+            raise EngineError(
+                f"key range select from {table} failed: {self._error(status, response)}"
+            )
+        self._whole(response, f"a key range of {table}")
+        return [hit.get("_source") or {} for hit in response.get("hits", {}).get("hits", [])]
+
+    def _ordered(self, table: str, order: Sequence[str]) -> tuple[_Index, tuple[str, ...]]:
+        index = self._index(table)
+        columns = key_columns(order, table)
+        unknown = [column for column in columns if column not in index.columns]
+        if unknown:
+            raise EngineError(f"{table} has no field {unknown} to order by")
+        return index, columns
+
+    @guarded
+    def key_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        after: Sequence[Any] | None = None,
+        upto: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows in key order, strictly after one key and up to another inclusive, with the write
+        generation where the index has one - what ``SELECT *`` returns in the SQL dialects.
+
+        In searches of at most :data:`KEY_PAGE` documents, each starting after the last one read:
+        a window with no limit, which verification reads, is not one search's worth.
+        """
+        index, columns = self._ordered(table, order)
+        position = None if after is None else self._stored_key(index, columns, after, "after")
+        ceiling = None if upto is None else self._stored_key(index, columns, upto, "upto")
+        if limit is not None and limit < 1:
+            return []
+        rows: list[dict[str, Any]] = []
+        while limit is None or len(rows) < limit:
+            size = KEY_PAGE if limit is None else min(KEY_PAGE, limit - len(rows))
+            sources = self._key_page(table, columns, after=position, upto=ceiling, size=size)
+            for source in sources:
+                row = index.row(source)
+                if index.fenced:
+                    row[EPOCH_COLUMN] = source.get(EPOCH_COLUMN)
+                rows.append(row)
+            if len(sources) < size:
+                break
+            position = [sources[-1].get(column) for column in columns]
+        return rows
+
+    @guarded
+    def nth_key(
+        self, table: str, order: Sequence[str], *, position: int
+    ) -> tuple[Any, ...] | None:
+        """The key of the ``position``-th row in key order, one-based, or None if there is none.
+
+        Counted through searches of keys alone: Elasticsearch has no ``OFFSET`` past its result
+        window, and this is paid once per resume, not per chunk.
+        """
+        index, columns = self._ordered(table, order)
+        if position < 1:
+            raise EngineError(f"position is one-based; {position} is not a row")
+        seen = 0
+        after: list[Any] | None = None
+        while True:
+            size = min(KEY_PAGE, position - seen)
+            sources = self._key_page(
+                table, columns, after=after, upto=None, size=size, fields=columns
+            )
+            if len(sources) < size:
+                return None
+            seen += size
+            last = sources[-1]
+            if seen == position:
+                return tuple(
+                    _read_value(index.columns[column], last.get(column)) for column in columns
+                )
+            after = [last.get(column) for column in columns]
+
+    @guarded
+    def count(self, table: str) -> int:
+        """Every document of the index, exactly."""
+        self._index(table)
+        status, response = self._request(
+            "POST", self._path(table, "_count"), {"query": {"match_all": {}}}
+        )
+        if status != 200 or not isinstance(response, Mapping) or "count" not in response:
+            raise EngineError(f"count on {table} failed: {self._error(status, response)}")
+        self._whole(response, f"the count of {table}")
+        return int(response["count"])
+
+    @guarded
+    def copy_in(self, table: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Copy rows in, leaving any document whose key is already there.
+
+        One ``_bulk`` of ``create`` actions, visible to a search on return (``refresh=true``): a
+        verification reads the copy by searching it. A document already there is refused with
+        409 and kept, which is what makes a chunk copied twice idempotent.
+        """
+        if not rows:
+            return
+        columns = sorted(rows[0])
+        for row in rows:
+            if sorted(row) != columns:
+                raise EngineError(
+                    f"copy_in into {table} was given rows with different columns "
+                    f"({columns} and {sorted(row)}). A chunk comes from one table, so this is a "
+                    f"caller assembling it from two."
+                )
+        index = self._index(table)
+        lines: list[bytes] = []
+        for row in rows:
+            identity, source = index.document(row)
+            lines.append(json.dumps({"create": {"_index": table, "_id": identity}}).encode())
+            lines.append(json.dumps(source, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+        payload = b"\n".join(lines) + b"\n"
+        status, body = self._request("POST", "/_bulk?refresh=true", ndjson=payload)
+        if status != 200 or not isinstance(body, Mapping):
+            log("sde.write.failed", table=table, error=str(status))
+            raise EngineError(
+                f"copying {len(rows)} rows into {table} failed: {self._write_error(status, body)}"
+            )
+        items = [item.get("create", {}) for item in body.get("items", ())]
+        present = [item for item in items if _already_there(item)]
+        failed = [
+            item for item in items if item.get("status", 500) >= 300 and not _already_there(item)
+        ]
+        if len(items) != len(rows) or failed:
+            first = failed[0].get("error", {}) if failed else {}
+            log("sde.write.failed", table=table, error=str(first.get("type", "unknown")))
+            raise EngineError(
+                f"copying {len(rows)} rows into {table}: {len(failed)} were refused "
+                f"({first.get('type', 'unknown')}), {len(present)} were there already and "
+                f"{len(items) - len(failed) - len(present)} were written"
+            )
+
+    @guarded
+    def backfill_marker(self, *, materialization: str, entity: str) -> int:
+        """How many rows of this entity have been copied into this engine. Zero if none.
+
+        The maximum over an index that is only ever appended to, as the SQL engines' table: a
+        stale document can never lower the marker.
+        """
+        self._bookkeeping(BACKFILL_TABLE, BACKFILL_MAPPING)
+        body = {
+            "size": 1,
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"materialization": str(materialization)}},
+                        {"term": {"entity": str(entity)}},
+                    ]
+                }
+            },
+            "sort": [{"rows_copied": {"order": "desc"}}],
+            "_source": ["rows_copied"],
+            "track_total_hits": False,
+        }
+        path = self._path(BACKFILL_TABLE, "_search") + "?allow_partial_search_results=false"
+        status, response = self._request("POST", path, body)
+        if status != 200 or not isinstance(response, Mapping):
+            raise EngineError(f"reading {BACKFILL_TABLE} failed: {self._error(status, response)}")
+        self._whole(response, f"the marker in {BACKFILL_TABLE}")
+        hits = response.get("hits", {}).get("hits", [])
+        return int(hits[0]["_source"]["rows_copied"]) if hits else 0
+
+    @guarded
+    def record_backfill_marker(self, *, materialization: str, entity: str, rows: int) -> None:
+        """Append the new marker, visible on return. Never update, so a trail stays readable."""
+        self._bookkeeping(BACKFILL_TABLE, BACKFILL_MAPPING)
+        source = {
+            "materialization": str(materialization),
+            "entity": str(entity),
+            "rows_copied": int(rows),
+        }
+        path = self._path(BACKFILL_TABLE, "_doc") + "?refresh=true"
+        status, body = self._request("POST", path, source)
+        if status != 201:
+            raise EngineError(
+                f"recording backfill progress in {BACKFILL_TABLE} failed: "
+                f"{self._error(status, body)}"
+            )
+
+    # --- bookkeeping ---------------------------------------------------------------------------
+    #
+    # Two indexes of our own, append-only, read as a maximum: the map watermark and the backfill
+    # markers, as the SQL engines' tables. Each is read before anything creates it, as the SQL
+    # adapters look in their catalogue before CREATE: a login that only reads and writes it needs
+    # no create_index, and an index of that name with another mapping - `map_version` as a
+    # keyword, whose maximum is the lexicographic one - is refused rather than trusted.
+
+    def _bookkeeping(self, name: str, mapping: Mapping[str, Any]) -> None:
+        for _ in range(2):
+            status, body = self._request("GET", self._path(name, "_mapping"))
+            if status == 200 and isinstance(body, Mapping):
+                found = body.get(name, {}).get("mappings") if isinstance(body.get(name), Mapping) \
+                    else None
+                if not _same_json(found, mapping):
+                    raise EngineError(
+                        f"{name} exists with a mapping this library would not create; it keeps "
+                        f"this library's bookkeeping, so it is refused rather than read"
+                    )
+                return
+            if status != 404:
+                raise EngineError(f"reading {name} failed: {self._error(status, body)}")
+            status, body = self._request("PUT", self._path(name), {"mappings": dict(mapping)})
+            if status == 200:
+                return
+            exists = (
+                status == 400
+                and isinstance(body, Mapping)
+                and isinstance(body.get("error"), Mapping)
+                and body["error"].get("type") == "resource_already_exists_exception"
+            )
+            if not exists:
+                raise EngineError(f"creating {name} failed: {self._error(status, body)}")
+            # Created by somebody else between the two requests: read what they created.
+        raise EngineError(f"{name} could not be read or created")
 
     def _watermark_index(self) -> None:
-        mapping = {
-            "dynamic": "strict",
-            "properties": {
-                "map_version": {"type": "long"},
-                "model_version": {"type": "keyword"},
-            },
-        }
-        status, body = self._request("PUT", self._path(WATERMARK_TABLE), {"mappings": mapping})
-        exists = (
-            status == 400
-            and isinstance(body, Mapping)
-            and isinstance(body.get("error"), Mapping)
-            and body["error"].get("type") == "resource_already_exists_exception"
-        )
-        if status != 200 and not exists:
-            raise EngineError(f"creating {WATERMARK_TABLE} failed: {self._error(status, body)}")
+        self._bookkeeping(WATERMARK_TABLE, WATERMARK_MAPPING)
 
     @guarded
     def map_watermark(self) -> int | None:

@@ -237,6 +237,12 @@ DOCUMENT_CASES: list[tuple[str, dict[str, Any], str]] = [
      {"id": datetime.fromisoformat("1969-07-20T20:17:40.000001"), "x": -0.0, "label": "b"},
      "An integer is framed with its minus sign: an instant before 1970 is a negative number of "
      "microseconds. A float32 keeps the sign of a zero."),
+    ("014-a-write-with-its-generation",
+     {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1.0, "label": "a",
+      "__sde_write_epoch": 7},
+     "A fenced index maps the write generation beside the layout's fields, and a session's write "
+     "carries it as a long in _source - where the index's pipeline checks it. It is no part of "
+     "the key, so the _id is the one the same row has without it."),
     ("013-a-lone-surrogate",
      {"id": datetime.fromisoformat("2026-10-23T08:00:00"), "x": 1.0, "label": "a\ud800b"},
      "UTF-8 has no bytes for half of a surrogate pair: refused, rather than written as U+FFFD - "
@@ -248,6 +254,8 @@ def _documents() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for name, row, why in DOCUMENT_CASES:
         columns, key = (GAUGE, ["id"]) if int(name[:3]) >= 9 else (READING, KEY)
+        if "__sde_write_epoch" in row:
+            columns = {**columns, "__sde_write_epoch": "long"}
         case = {"columns": columns, "key": key,
                 "row": {column: _encoded(value) for column, value in row.items()}}
         try:
@@ -273,6 +281,34 @@ def _text(filename: str, body: Any) -> str:
     return json.dumps(body, indent=2, ensure_ascii=True) + "\n"
 
 
+FENCE_PROCESSORS = ROOT / "conformance" / "fence-processors.json"
+"""The fence pipeline's processor for a fixed set of constraints (``docs/write-fences.md``). Not
+a vector family: a table both libraries' tests read, so a fence one provisions the other reads."""
+
+_OWNER = "__sde_f_owner_" + "0" * 31 + "1"
+
+
+def _bounds(*epochs: int) -> dict[str, str]:
+    out = {}
+    for epoch in epochs:
+        out[f"__sde_f_min_{epoch}"] = f"__sde_write_epoch >= {epoch}"
+        out[f"__sde_f_max_{epoch}"] = f"__sde_write_epoch <= {epoch}"
+    return out
+
+
+def _fence_processors() -> dict[str, Any]:
+    from sde.engines._write_fences import fence_processor
+
+    cases: dict[str, dict[str, str]] = {
+        "nothing": {},
+        "owner only": {_OWNER: "1"},
+        "one generation": {_OWNER: "1", **_bounds(3)},
+        "held": {_OWNER: "1", **_bounds(3), "__sde_f_hold_" + "a" * 32: "0"},
+        "mid-advance": {_OWNER: "1", **_bounds(3, 10)},
+    }
+    return {"cases": cases, "processors": {name: fence_processor(c) for name, c in cases.items()}}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--check", action="store_true", help="fail if a vector would change")
@@ -289,6 +325,11 @@ def main() -> int:
             if not args.check:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
+    table = json.dumps(_fence_processors(), indent=2, ensure_ascii=True) + "\n"
+    if not (FENCE_PROCESSORS.exists() and FENCE_PROCESSORS.read_text(encoding="utf-8") == table):
+        changed.append(str(FENCE_PROCESSORS.relative_to(ROOT)))
+        if not args.check:
+            FENCE_PROCESSORS.write_text(table, encoding="utf-8")
     if args.check and changed:
         print("Elasticsearch vectors would change:", *changed, sep="\n  ")
         return 1

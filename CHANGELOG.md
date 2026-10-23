@@ -8,6 +8,48 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a float32 reads as the float32 it is, from every engine and in both languages.**
+PostgreSQL's text for a `real` - and ClickHouse's JSON, which the TypeScript adapter reads - is the
+shortest decimal that rounds back to the stored value: `0.1` for the float32 nearest 0.1. Parsed,
+that is another double than the float32 itself, `0.10000000149011612`, which the Python ClickHouse
+adapter and both Elasticsearch adapters return. So one stored value read differently by engine, and
+a group with a float32 column never verified between two of them. The first copy from PostgreSQL to
+Elasticsearch found it.
+- Python's PostgreSQL adapter and TypeScript's PostgreSQL and ClickHouse adapters - reads by key
+  and TypeScript's ClickHouse scans alike - now return the float32 exactly. Stored values are
+  unchanged; a read that returned `0.1` returns `0.10000000149011612`.
+- Exactly, rather than the shortest decimal most of them gave, because every library can widen alike
+  and only the engines' own formatter prints alike: PostgreSQL and ClickHouse print 2^87 as
+  `1.5474251e+26`, where the first precision that round-trips gives `1.54742505e+26`.
+- The agreement tests write `0.1` to a float32 column, not `0.5`, which every engine read alike.
+
+**New: the local operator moves a group onto Elasticsearch and off it** - breaking for maps
+written since #134, which no release contained. A group there carries a write generation: the
+library keeps the write-fence protocol in the index's own final pipeline, with a write block and a
+refresh as the drain ([`docs/write-fences.md`](docs/write-fences.md)). Staging, the frozen
+comparison and the cutover then take it like a group on any other engine
+([`docs/local-cutover.md`](docs/local-cutover.md#elasticsearch-access-by-blocks)).
+- **Access moves by blocks, not grants.** An API key's privileges are fixed when it is made, so
+  nothing is revoked from one login. The side a decision retires is blocked for reads for good and
+  keeps the holds that block its writes, against the runtime, an unknown login and the
+  administrator's own search alike. The pause refuses writes and leaves the frozen data readable.
+- **Runtime keys are qualified through `_has_privileges`.** No `manage`, `all` or `delete_index` on
+  their indexes, no cluster privilege that rewrites a fence, `read_pipeline`, and the fresh
+  `sde_m_*` names covered in advance, because the operator grants nothing. The operator's own
+  login reads the cluster's identity (`monitor`).
+- **Both adapters copy and compare in key order** (`key_range`, `nth_key`, `count`, `copy_in`,
+  backfill markers in `sde_backfill_state`), so `backfill` and `verify` work between Elasticsearch
+  and the SQL engines in both languages. A copy is `create`: a document already there stays.
+- `sde_map_state` and `sde_backfill_state` are read before anything creates them, so a runtime key
+  needs no `create_index`, and one under another mapping is refused.
+- A staging's index carries its creation marker in `_meta.sde.stage`, which every reader accepts
+  (§7m). A relayout and an in-place index build on Elasticsearch are refused by name.
+- A contract-6 map that leaves the generation out for an Elasticsearch group is now refused, as for
+  every engine with fences. No released version wrote one, and such a map is issued again with
+  one.
+- Both libraries render the same fence pipeline, pinned by `conformance/fence-processors.json`, and
+  a fence one library provisions is read by the other in the live tests.
+
 **New: Elasticsearch in the TypeScript library** (`@smart-data-engines/sde/engines/elasticsearch`).
 The same engine in the same layout as the Python adapter, with the mapping and the documents held
 byte for byte by the shared vectors. Integers past 2^53 stay exact in both directions: responses are

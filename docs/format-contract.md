@@ -1879,8 +1879,8 @@ without a token.
 
 Dialect `elasticsearch`. A group placed there is held whole: writes, reads by key, bounded scans,
 exact counts and searches (§7l), with an index of its own supplying a search's candidates. It has
-no transactions and no write generations, so the group carries no `write_epoch` (map contract 6)
-and is not moved.
+no transactions. It has write generations (below), so the local operator copies a group onto it and
+off it as on the SQL engines.
 
 **Column types.** A layout's column type is the Elasticsearch type, followed by `/` and the neutral
 type when the native type alone does not say how to read the value back.
@@ -1916,6 +1916,11 @@ name: the canonical JSON (§1) of `{"index": name, "mappings": m}`, where `m` is
 - `"properties"`: each column as `{"type": native}`, with `"format": "strict_date"` on a date and
   `"meta": {"sde_type": neutral}` where the column type has one; and, when the entity has a
   `keyword` column, `"__sde_tokens": {"properties": {column: {"type": "keyword"}}}` for each.
+
+`_meta.sde` may carry one key more, `stage`: the creation marker of the staging that created the
+index, `sde.stage1.<project id>.<stage id>.<16 hex digits>`, written in the request that creates it.
+A reader accepts exactly that key in exactly that form beside the rendered mapping, and anything
+else under `_meta.sde` is a mapping this library would not create.
 
 A key column of a float type is refused - an `_id` needs exact bytes - as are a column whose name is
 empty, contains a dot or starts with `__sde_`, and a column type outside the table above. Creating
@@ -1970,6 +1975,34 @@ index's refresh, a second by default. A read by key sees a write at once. A batc
 request and is not atomic: on a refusal, the error says how many documents were written and how
 many refused, and never which values. A refused single write names the engine's error type, never
 its reason, which can quote the document's value.
+
+**Write generations.** A group on Elasticsearch carries a generation like a group on any other
+engine with fences (§7d), and a contract-6 map that leaves it out is refused, as §7k says of every
+engine that has them. Its fence is the protocol of `write-fences.md` in the index's final pipeline,
+with a write block as the drain. The generation is a `long` field beside the layout's, written into
+every document and returned in no row. It is no part of the `_id` (`documents/014`), and the whole
+mapping a reader compares may have exactly that one field more.
+
+**A copy between engines.** A migration reads in key order, a key never null, with the position as
+a filter as a page's is, in searches of a thousand documents. A row read for a copy carries its
+generation, as `SELECT *` does in SQL. A copy is a `_bulk` of `create` actions, visible to a search
+on return (`refresh=true`). A document already there is refused with 409 and kept, so a chunk
+copied twice changes nothing: `ON CONFLICT DO NOTHING`, not an overwrite. A barrier's drain refreshes
+the index (`write-fences.md`), because a copy and a comparison read by searching.
+
+**The bookkeeping** is two indexes, read before anything creates them, so a login that only reads
+and writes them needs no `create_index`. An index of either name with another mapping is refused:
+- `sde_map_state`: `dynamic: strict`, `map_version` a `long`, `model_version` a `keyword`, a document
+  per map version applied, the watermark the largest;
+- `sde_backfill_state`: `dynamic: strict`, `materialization` and `entity` as `keyword`, `rows_copied`
+  a `long`, a document per chunk copied, the marker the largest for its copy and entity.
+
+Neither has a column the engine fills by default, so neither keeps `seen_at` or `at`. An index is
+cluster-wide, so the cluster is the namespace the SQL engines' database is: one stream of maps per
+cluster, and a copy's marker named by its materialization id across the cluster. The control plane
+names every staged copy afresh (`stage-<id>`), and a hand-written map that reuses an id for a new
+copy resumes from the old marker - which the cutover's repair, rebuilding the copy whole, does not
+depend on.
 
 **Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
 `020` and `documents/` are new, and no existing vector changed. The second review's `documents/009`
