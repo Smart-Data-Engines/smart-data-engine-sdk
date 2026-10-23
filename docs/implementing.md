@@ -542,3 +542,12 @@ return as two code points, so a fold that takes `lower()` whole fails it. Then p
 session: candidates from your engine in key order, every row checked by your rule before it is
 returned, and the page rules of §7l. Run it against a live engine with rows only the rule can tell
 apart, a decomposed accent and the Kelvin sign among them.
+
+**15. Elasticsearch documents (Tier 2, with Elasticsearch). Vectors: `documents/`.**
+
+A function of a row and its index's columns, so again no engine: from §7m, compute each column's
+stored value, the token field and the `_id`. Compare the `_id` exactly and the source by value. A
+value marked `{"$int": "..."}` is an integer past 2^53: carry it as one, not as a float, or `001`
+fails on its timestamp, its int64 and its decimal. Then `schema/019` and `020` hold the mapping you
+render. The adapter itself is the next step: one index per entity, writes that wait for a refresh,
+and reads that send no text predicate the engine would interpret.

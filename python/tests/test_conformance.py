@@ -1185,3 +1185,65 @@ def test_search_vector(case: Path) -> None:
 
 def test_there_are_search_vectors() -> None:
     assert len(_cases("search")) >= 14, "the search family is missing or was cut short"
+
+
+# --- documents vectors ------------------------------------------------------------------------
+#
+# Contract 7m: a row as an Elasticsearch document. Two libraries writing one row to one index have
+# to agree on its _id, or a second save is a second document, and on its _source, or a reader in
+# one language gets back another value than a writer in the other wrote.
+
+
+def _document_value(kind: str, value: Any) -> Any:
+    """A case's value decoded by its column's type, as an application would hand it over."""
+    from datetime import date, datetime
+    from decimal import Decimal
+    from uuid import UUID
+
+    if isinstance(value, dict) and set(value) == {"$int"}:
+        return int(value["$int"])
+    if value is None:
+        return None
+    if kind in ("long/timestamp", "long/timestamptz"):
+        return datetime.fromisoformat(value)
+    if kind == "date":
+        return date.fromisoformat(value)
+    if kind == "keyword/uuid":
+        return UUID(value)
+    if kind.startswith("long/decimal("):
+        return Decimal(value)
+    return value
+
+
+def _stored_json(value: Any) -> Any:
+    if isinstance(value, dict) and set(value) == {"$int"}:
+        return int(value["$int"])
+    if isinstance(value, dict):
+        return {name: _stored_json(item) for name, item in value.items()}
+    if isinstance(value, list):
+        return [_stored_json(item) for item in value]
+    return value
+
+
+@pytest.mark.parametrize("case", _cases("documents"), ids=_ident)
+def test_document_vector(case: Path) -> None:
+    from sde.engines.elasticsearch import document
+
+    spec = _read_json(case / "case.json")
+    want = _read_json(case / "expected.json")
+    why = (case / "why.txt").read_text()
+    row = {
+        column: _document_value(spec["columns"][column], value)
+        for column, value in spec["row"].items()
+    }
+    if "error" in want:
+        with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+            document(spec["columns"], spec["key"], row)
+        return
+    identity, source = document(spec["columns"], spec["key"], row)
+    assert identity == want["id"], why
+    assert source == _stored_json(want["source"]), why
+
+
+def test_there_are_document_vectors() -> None:
+    assert len(_cases("documents")) >= 8, "the documents family is missing or was cut short"

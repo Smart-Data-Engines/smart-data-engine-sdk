@@ -20,7 +20,7 @@
  * IR. `schema/003` pins it.
  */
 
-import { compareCodePoints } from './canonical.js'
+import { canonicalString, compareCodePoints } from './canonical.js'
 import { EngineError } from './errors.js'
 import {
   CLICKHOUSE_METHODS,
@@ -32,7 +32,7 @@ import {
 import type { PhysicalLayout } from './placement.js'
 
 /** Every dialect this library renders DDL for, sorted. */
-export const DIALECTS = ['clickhouse', 'orderbook', 'postgres'] as const
+export const DIALECTS = ['clickhouse', 'elasticsearch', 'orderbook', 'postgres'] as const
 
 export type Dialect = (typeof DIALECTS)[number]
 
@@ -293,8 +293,135 @@ function noStatements(layout: PhysicalLayout): string[] {
   return []
 }
 
+/**
+ * Where a document keeps the search tokens of each text field (format contract 7l, 7m).
+ *
+ * One keyword array per `keyword` field, computed by the library at write: the tokens of the text,
+ * distinct, in code point order. The engine's analyzer is not used - it does not normalise to NFC,
+ * so a decomposed accent would be cut in two and the row would never be a candidate for the word.
+ */
+export const TOKENS_FIELD = '__sde_tokens'
+
+/** Bytes in an Elasticsearch index name, which is the table name a layout gives an entity. */
+export const INDEX_NAME_LIMIT = 255
+
+const ELASTICSEARCH_TYPES: ReadonlySet<string> = new Set([
+  'boolean', 'integer', 'long', 'float', 'double', 'keyword', 'keyword/uuid', 'date',
+  'long/timestamp', 'long/timestamptz',
+])
+const ELASTICSEARCH_DECIMAL = /^long\/decimal\(([1-9]|1[0-8]),([0-9]|1[0-8])\)$/
+
+/** Why `name` cannot be an Elasticsearch index name, or `null` when it can. */
+export function indexNameRefusal(name: string): string | null {
+  if (name === '' || name === '.' || name === '..') {
+    return "an index needs a name other than '.' and '..'"
+  }
+  if (name !== name.toLowerCase()) return 'an index name is lowercase'
+  if ('-_+'.includes(name[0] as string)) return "an index name cannot start with '-', '_' or '+'"
+  const bad = [...new Set([...name].filter((char) => '\\/*?"<>|,# :'.includes(char)))].sort(
+    compareCodePoints,
+  )
+  if (bad.length > 0) return `an index name cannot contain ${JSON.stringify(bad)}`
+  if (new TextEncoder().encode(name).length > INDEX_NAME_LIMIT) {
+    return `an index name is at most ${INDEX_NAME_LIMIT} bytes`
+  }
+  return null
+}
+
+/** The mapping of one column: its native type, and the neutral type when that is needed to read it. */
+export function elasticsearchProperty(kind: string): Record<string, unknown> {
+  const decimal = ELASTICSEARCH_DECIMAL.exec(kind)
+  if (
+    !ELASTICSEARCH_TYPES.has(kind) &&
+    (decimal === null || Number(decimal[2]) > Number(decimal[1]))
+  ) {
+    throw new EngineError(
+      `'${kind}' is not a column type this library maps in Elasticsearch: it maps ` +
+        `${JSON.stringify([...ELASTICSEARCH_TYPES].sort(compareCodePoints))} and ` +
+        'long/decimal(p,s) up to eighteen digits',
+    )
+  }
+  const slash = kind.indexOf('/')
+  const native = slash < 0 ? kind : kind.slice(0, slash)
+  const field: Record<string, unknown> = { type: native }
+  // Only `yyyy-MM-dd`: the default format would also take an instant.
+  if (native === 'date') field['format'] = 'strict_date'
+  if (slash >= 0) field['meta'] = { sde_type: kind.slice(slash + 1) }
+  return field
+}
+
+/** The index mapping of one entity: strict, every column typed, the key and the token fields. */
+export function elasticsearchMapping(
+  layout: PhysicalLayout,
+  entity: string,
+  keys: Readonly<Record<string, readonly string[]>>,
+): Record<string, unknown> {
+  const { columns, key } = columnsAndKey(layout, entity, keys)
+  const absent = key.filter((column) => !columns.includes(column))
+  if (absent.length > 0) {
+    throw new EngineError(
+      `the key of '${entity}' names columns the layout does not have: ` +
+        `${JSON.stringify(absent)}. A document's _id is derived from its key, so it could not ` +
+        'be addressed.',
+    )
+  }
+  const floating = key.filter((column) => ['float', 'double'].includes(typeOf(layout, entity, column)))
+  if (floating.length > 0) {
+    throw new EngineError(
+      `the key of '${entity}' has a floating-point field ${JSON.stringify(floating)}: a ` +
+        "document's _id is derived from its key's exact bytes (contract 7m), and a float has " +
+        'none to agree on',
+    )
+  }
+  const properties: Record<string, unknown> = {}
+  const tokens: Record<string, unknown> = {}
+  for (const column of columns) {
+    if (column === '' || column.startsWith('__sde_') || column.includes('.')) {
+      throw new EngineError(
+        `'${column}' cannot be a field of an Elasticsearch document: a dot names an object ` +
+          "path, and names starting with __sde_ are the library's own",
+      )
+    }
+    const kind = typeOf(layout, entity, column)
+    properties[column] = elasticsearchProperty(kind)
+    if (kind === 'keyword') tokens[column] = { type: 'keyword' }
+  }
+  if (Object.keys(tokens).length > 0) properties[TOKENS_FIELD] = { properties: tokens }
+  return {
+    _meta: { sde: { entity, key: [...key] } },
+    dynamic: 'strict',
+    properties,
+  }
+}
+
+/**
+ * One index per entity, as the canonical JSON of what creates it: `{"index": name, "mappings":
+ * {...}}`, which an adapter sends as `PUT /name`. Canonical, so that two libraries render the same
+ * bytes and the `schema/` vectors pin them as they pin DDL.
+ */
+function elasticsearchStatements(layout: PhysicalLayout, options: SchemaOptions): string[] {
+  if (
+    Object.keys(layout.keyOrder ?? {}).length > 0 ||
+    Object.keys(layout.partitionBy).length > 0 ||
+    layout.indexes.length > 0
+  ) {
+    throw new EngineError(
+      'Elasticsearch takes no physical design from a map - key order, partition or indexes - ' +
+        'because every field it maps is indexed and a document has no key order.',
+    )
+  }
+  return tablesInOrder(layout).map(([entity, index]) => {
+    const refusal = indexNameRefusal(index)
+    if (refusal !== null) {
+      throw new EngineError(`'${index}' cannot be an Elasticsearch index: ${refusal}`)
+    }
+    return canonicalString({ index, mappings: elasticsearchMapping(layout, entity, options.keys) })
+  })
+}
+
 const BY_DIALECT: Readonly<Record<string, (l: PhysicalLayout, o: SchemaOptions) => string[]>> = {
   clickhouse: clickhouseStatements,
+  elasticsearch: elasticsearchStatements,
   orderbook: noStatements,
   postgres: postgresStatements,
 }
@@ -407,6 +534,21 @@ export function compatibilityViews(
           `${dialect} imposes its own schema and accepts no DDL from this library, so there is ` +
             `nowhere to put a view. Its table is '${table}' and the old name was ` +
             `'${was[entity]}': a query naming the old one has to be edited.`,
+        ] as const,
+    )
+    return { create: [], drop: [], notPossible, complete: notPossible.length === 0 }
+  }
+
+  if (dialect === 'elasticsearch') {
+    // No group arrives here by a move - an index takes no write generation, so a placement on it
+    // is final - and a query written by hand against an index is not SQL to keep working.
+    const notPossible = entities.map(
+      ([entity, table]) =>
+        [
+          entity,
+          'Elasticsearch takes no SQL, so a view of a SQL table has no equivalent here. Its ' +
+            `index is '${table}' and the old name was '${was[entity]}': a query naming the old ` +
+            'one has to be rewritten.',
         ] as const,
     )
     return { create: [], drop: [], notPossible, complete: notPossible.length === 0 }

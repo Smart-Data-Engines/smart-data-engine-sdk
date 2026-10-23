@@ -8,6 +8,21 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: Elasticsearch in the Python library** ([`docs/format-contract.md` §7m](docs/format-contract.md#7m-elasticsearch-an-index-per-entity-a-document-per-row)).
+`sde.engines.elasticsearch.ElasticsearchEngine` holds a group in Elasticsearch 9: an index per
+entity with a strict mapping, a document per row under its key's digest, writes, reads by key,
+bounded scans, exact counts and `Session.search` from a text index of the library's own.
+- Every value comes back as written: microseconds in a `long` for both instants, a decimal of up
+  to eighteen digits times `10^scale`. `bytes`, `json` and wider decimals are refused at layout.
+- The tokens a search matches are computed by the library and kept beside each text field, so the
+  engine's analyzer decides nothing: `Session.search` reads only the rows that hold the tokens.
+- No transactions, no summaries and no write generations: a group placed here is not moved.
+- The transport is the standard library's, with TLS verified against `ca_cert`; plain HTTP is
+  accepted to a loopback address only. `make es-up` starts one with its own CA and prints the DSN.
+- `conformance/vectors/documents/` is the suite's thirteenth family: a row's `_id` and `_source`.
+  `schema/019` and `020` pin the mapping. The TypeScript library renders both byte for byte and
+  has no adapter yet.
+
 **New: search, Python and TypeScript** ([`docs/logical-reads.md`](docs/logical-reads.md#search)).
 `Session.search` returns the rows whose chosen text fields hold every token of a query, a page in
 key order. The library applies one rule to every row - tokens of letters and digits after NFC,

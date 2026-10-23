@@ -36,3 +36,6 @@ telemetry-*.json
 .vscode/
 .DS_Store
 Thumbs.db
+
+# The CA `make es-up` copies out of the test container
+.sde_es_ca.crt

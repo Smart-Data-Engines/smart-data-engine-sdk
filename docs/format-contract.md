@@ -1493,7 +1493,7 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are twelve kinds:
+There are thirteen kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -1509,6 +1509,7 @@ There are twelve kinds:
 | `migration/` | taking part in a migration: the record a gate reads **and** the calls that produced it |
 | `books/` | a side's difference, and what a book stream sends on a clock - whole sides and changes, with their times - or refuses |
 | `search/` | the tokens of a text, and whether a row matches a query in its chosen fields - or the refusal of a query with no token |
+| `documents/` | a row as an Elasticsearch document - its `_id` and `_source` - or the refusal of a value the index would not keep exactly |
 
 This table said "five" and listed five for as long as there were nine, with the other four argued
 in the prose below it. Nothing counted them, which is the failure mode of a number about our own
@@ -1873,3 +1874,76 @@ existing identifier is unchanged.
 `tokens` case gives the tokens of a text, and a `match` case gives the folded, sorted, distinct
 tokens of a query and whether a row matches it in the chosen fields, or the refusal of a query
 without a token.
+
+## 7m. Elasticsearch: an index per entity, a document per row
+
+Dialect `elasticsearch`. A group placed there is held whole: writes, reads by key, bounded scans,
+exact counts and searches (§7l), with an index of its own supplying a search's candidates. It has
+no transactions and no write generations, so the group carries no `write_epoch` (map contract 6)
+and is not moved.
+
+**Column types.** A layout's column type is the Elasticsearch type, followed by `/` and the neutral
+type when the native type alone does not say how to read the value back.
+
+| Neutral | Column type | Kept as |
+|---|---|---|
+| `bool` | `boolean` | `true` or `false` |
+| `int32`, `int64` | `integer`, `long` | the integer |
+| `float32`, `float64` | `float`, `double` | the number; NaN and infinity are refused |
+| `string` | `keyword` | the text exactly as written, at most 32,766 UTF-8 bytes |
+| `uuid` | `keyword/uuid` | lowercase canonical text |
+| `date` | `date` | `YYYY-MM-DD`, mapped with `"format": "strict_date"` |
+| `timestamp`, `timestamptz` | `long/timestamp`, `long/timestamptz` | microseconds since the epoch; a naive value counted as UTC |
+| `decimal(p,s)`, `p ≤ 18` | `long/decimal(p,s)` | the value times `10^s`, refused rather than rounded |
+
+`bytes`, `json` and a decimal of more than eighteen digits have no column type, so a group with one
+cannot be laid out here (`can_store`). An entity's index name is its table name, which has to be a
+valid index name - lowercase, none of `\ / * ? " < > | , #`, space or `:`, not starting with `-`,
+`_` or `+`, at most 255 bytes - or the layout is refused. No layout here carries a key order, a
+partition or an index: every field is indexed already.
+
+**The mapping** (`schema/019`, `020`). One statement per entity, in code point order of the entity
+name: the canonical JSON (§1) of `{"index": name, "mappings": m}`, where `m` is
+
+- `"dynamic": "strict"`;
+- `"_meta": {"sde": {"entity": entity, "key": [the key in declared order]}}`;
+- `"properties"`: each column as `{"type": native}`, with `"format": "strict_date"` on a date and
+  `"meta": {"sde_type": neutral}` where the column type has one; and, when the entity has a
+  `keyword` column, `"__sde_tokens": {"properties": {column: {"type": "keyword"}}}` for each.
+
+A key column of a float type is refused - an `_id` needs exact bytes - as are a column whose name is
+empty, contains a dot or starts with `__sde_`, and a column type outside the table above. Creating
+an index that exists is the `IF NOT EXISTS` of the other dialects: the adapter then compares the
+existing mapping with this one and refuses a difference, because Elasticsearch changes no field in
+place.
+
+**A document** (`documents/`). Its `_source` holds every column of the index - `null` where the row
+has none - as the table above keeps it, and `__sde_tokens` holds, for each `keyword` column with a
+value, its tokens by §7l: distinct, in code point order. Its `_id` is the SHA-256, in lowercase
+hexadecimal, of its key values as stored, in declared key order, each framed as
+
+```text
+tag (one byte) || length (four bytes, big-endian) || payload
+s: the UTF-8 of a text exactly as stored     i: the decimal digits of an integer     b: true or false
+```
+
+Not the canonical encoding: §1 normalises text to NFC, and two keys that differ only in how an
+accent is composed are two rows in every other engine, so they are two documents here
+(`documents/003`, `004`). A second save of a key replaces the first (`newest_wins`).
+
+**Reads.** By key: the document under its `_id`, checked to hold that key. A page: a `bool` filter
+of `term` for equality, `must_not exists` for null and `range` for a bound, sorted by the plan's
+order with `"missing": "_last"`. The position of a page is a filter, not `search_after`, built as
+the SQL dialects build theirs: for each order column with a value, equality on the columns before
+it and, on it, beyond the value or null. So the engine's own sort values never stand in for a
+value. A count is `_count` over the same filter. A search adds, for each query token, a `term` on
+the token field of some chosen field. No other text predicate is ever sent, so no analyzer of the
+engine's is in any answer. Summaries are refused: Elasticsearch aggregates in double precision.
+
+**Writes** return once a search and a scan can see them (`refresh=wait_for`), which waits for the
+index's refresh, a second by default. A read by key sees a write at once. A batch is one `_bulk`
+request and is not atomic: on a refusal, the error says how many documents were written and how
+many refused, and never which values.
+
+**Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
+`020` and `documents/` are new, and no existing vector changed.

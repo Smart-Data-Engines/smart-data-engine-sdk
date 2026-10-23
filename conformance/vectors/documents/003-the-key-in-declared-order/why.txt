@@ -1,0 +1,1 @@
+The _id frames each key value by type and length, in the declared key order, from the text exactly as written. This row's station is a decomposed e-acute.

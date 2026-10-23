@@ -43,6 +43,7 @@ __all__ = [
     "fold",
     "matches",
     "query_tokens",
+    "search_engine",
     "text_index",
     "tokens",
 ]
@@ -93,6 +94,21 @@ class TextIndex(Protocol):
 def text_index(engine: object) -> TextIndex | None:
     """The adapter, when its engine has a text index (``search_rows``); otherwise ``None``."""
     return cast(TextIndex, engine) if callable(getattr(engine, "search_rows", None)) else None
+
+
+def search_engine(engine: object) -> object:
+    """The adapter, for a search, or its named refusal.
+
+    An adapter refuses by naming a reason (``search_refusal``), as it does for a count, so that a
+    search an engine cannot answer is refused before anything is timed or sent. Otherwise one with
+    a text index answers through it and one without through its pages (``select_rows``).
+    """
+    reason = getattr(engine, "search_refusal", None)
+    if isinstance(reason, str) and reason:
+        raise SearchRefused(reason)
+    if text_index(engine) is None and not callable(getattr(engine, "select_rows", None)):
+        raise SearchRefused("this adapter supports neither a text index nor logical reads")
+    return engine
 
 
 def _is_word(char: str) -> bool:
