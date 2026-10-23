@@ -58,6 +58,32 @@ models. This SDK change permits restricted credentials; it does not yet audit th
 graph or implement cutover's grant revocation. Qualifying that configuration remains part of the
 local cutover executor's work.
 
+On Elasticsearch the runtime login is an API key, or a realm user, whose role covers the layout's
+indexes, `sde_map_state` and - for a group that may be moved there - the staged copies' fresh names
+by a pattern, because the operator grants nothing ([access by blocks](local-cutover.md#elasticsearch-access-by-blocks)):
+
+```json
+POST /_security/api_key
+{
+  "name": "app-runtime",
+  "role_descriptors": {
+    "runtime": {
+      "cluster": ["read_pipeline"],
+      "indices": [{
+        "names": ["events", "sde_map_state", "sde_m_*"],
+        "privileges": ["read", "write", "view_index_metadata"]
+      }]
+    }
+  }
+}
+```
+
+It needs no `create_index`: the adapter reads `sde_map_state` before anything creates it, and
+provisioning creates it. `read_pipeline` lets a session read the write fence of each index it
+opens. The operator refuses a key that also holds `manage`, `all` or `delete_index` on one of
+these indexes, or the cluster privileges `all`, `manage`, `manage_pipeline`,
+`manage_ingest_pipelines` or `manage_security`.
+
 ## Physical design checks and one optional grant
 
 Since placement map contract 5 a session also compares each table's physical design - primary key

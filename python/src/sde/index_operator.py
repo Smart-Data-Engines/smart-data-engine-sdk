@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from functools import partial
 from time import monotonic_ns
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .errors import MigrationRefused
 from .generation import fenced_groups
@@ -24,6 +24,7 @@ from .physical import METHODS_BY_DIALECT, index_method, refuse_findings
 from .placement import WATERMARK_TABLE
 
 if TYPE_CHECKING:
+    from .engines._operator import NativeOperator
     from .local_cutover import LocalCutover
 
 
@@ -36,6 +37,11 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
     if source.engine not in operator.engines:
         raise MigrationRefused("an index build is missing its configured local engine binding")
     native = operator.native[source.engine]
+    if native.dialect == "elasticsearch":
+        raise MigrationRefused(
+            "Elasticsearch builds no index in place: every field of a layout there is indexed "
+            "already, and a map gives it no index to add or remove"
+        )
     for index in plan.added:
         if index_method(index) not in METHODS_BY_DIALECT.get(native.dialect, ()):
             raise MigrationRefused(
@@ -47,7 +53,7 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
     keys = {entity: operator.model.entity(entity).key for entity in source.layout.tables}
     refuse_findings(engine.validate_schema(source.layout, keys=keys), MigrationRefused)
     tables: dict[str, dict[str, str]] = {}
-    builder = NativeIndexBuild(native)
+    builder = NativeIndexBuild(cast("NativeOperator", native))
     for entity, table in sorted(source.layout.tables.items()):
         identity = native.identity(table)
         observed = engine.write_fence(table, project_id=operator.project_id).state()
@@ -147,7 +153,7 @@ def _finish(
     from .engines._operator import TableIdentity
 
     execution = state["execution"]
-    builder = NativeIndexBuild(operator.native[execution["engine"]])
+    builder = NativeIndexBuild(cast("NativeOperator", operator.native[execution["engine"]]))
     if execution["decision"] == "abandoned":
         # Removing our own indexes publishes nothing, so it needs only the same database - each
         # drop checks its table's identity - and neither the logins nor a barrier-free table.

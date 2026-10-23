@@ -22,6 +22,15 @@ def creation_marker(project_id: str, stage_id: str, table: str) -> str:
     return f"sde.stage1.{project_id}.{stage_id}.{suffix}"
 
 
+def native_staging(native: Any) -> Any:
+    """A staging's own tables through ``native``: SQL tables, or Elasticsearch indexes."""
+    if native.dialect == "elasticsearch":
+        from ._elasticsearch_operator import ElasticsearchStaging
+
+        return ElasticsearchStaging(native)
+    return NativeStaging(native)
+
+
 class NativeStaging:
     def __init__(self, native: NativeOperator) -> None:
         self.native = native

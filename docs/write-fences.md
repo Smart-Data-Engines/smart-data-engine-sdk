@@ -107,6 +107,10 @@ constraints, and a reader renders it again and refuses a pipeline whose processo
   index's shards. On 9.5.5 it waited 3.48 s and 1.67 s for a 150,000-document bulk, and the count at
   its return was the final count. Adding the block again to an index already blocked proves nothing,
   because no shard acknowledges it, so the drain lifts it and adds it again under the hold.
+- **The drain then refreshes the index.** A write the block waited for has finished on its shard,
+  but one that waits for a refresh may not be searchable yet, and a copy and a comparison read by
+  searching. A row neither of them can see would be missing from both at once. A refresh works
+  under the write block, and the live test turns the index's own refresh off to show the barrier's.
 - **The block stays as long as a hold does.** The pipeline checks a write where it arrives, the block
   where it reaches the shard, and a write that passed an older pipeline on its way is refused at the
   shard while the barrier holds.

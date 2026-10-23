@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from ..errors import EngineError, MigrationRefused
 from ..schema import QUOTE
@@ -33,6 +33,56 @@ class TableIdentity:
             "namespace": self.namespace,
             "name": self.name,
         }
+
+
+class NativeOperations(Protocol):
+    """What the local operator asks of one engine binding, in a SQL dialect or Elasticsearch."""
+
+    engine: Any
+    runtime: tuple[Any, ...]
+    dialect: str
+    principals: tuple[str, ...]
+    principal_ids: dict[str, str]
+
+    def endpoint(self, engine: Any = None) -> tuple[str, str, str]: ...
+
+    def identity(self, table: str, *, engine: Any = None) -> TableIdentity: ...
+
+    def qualify(
+        self,
+        tables: Sequence[str],
+        allowed_tables: Sequence[str],
+        *,
+        required_access: bool = True,
+        readers: bool = True,
+    ) -> tuple[str, ...]: ...
+
+    def access(self, tables: Sequence[TableIdentity], *, enabled: bool) -> None: ...
+
+    def pause(self, tables: Sequence[TableIdentity]) -> None: ...
+
+    def retire(self, tables: Sequence[TableIdentity]) -> None: ...
+
+    def retired(self, tables: Sequence[TableIdentity]) -> None: ...
+
+    def truncate(self, tables: Sequence[TableIdentity]) -> None: ...
+
+
+def native_operator(engine: Any, runtime: Sequence[Any]) -> NativeOperations:
+    """The native operations for one binding: grants in a SQL dialect, blocks in Elasticsearch."""
+    if not callable(getattr(engine, "write_fence", None)):
+        # The orderbook engine. Its groups carry no write generation (map contract 6), so no
+        # staging, cutover or index build reaches them and there is nothing to bind it for.
+        raise MigrationRefused(
+            f"a local operator acts only on groups whose writes carry a generation, and "
+            f"{type(engine).__name__} cannot fence writes: leave its engine out of the "
+            f"operator bindings"
+        )
+    if getattr(engine, "dialect", None) == "elasticsearch":
+        from ._elasticsearch_operator import ElasticsearchOperator
+
+        return ElasticsearchOperator(engine, runtime)
+    return NativeOperator(engine, runtime)
 
 
 class NativeOperator:
@@ -494,6 +544,17 @@ class NativeOperator:
                         raise MigrationRefused(
                             "runtime still reads a table after its grants were revoked"
                         )
+
+    def pause(self, tables: Sequence[TableIdentity]) -> None:
+        """The runtime's grants on ``tables`` revoked for the pause."""
+        self.access(tables, enabled=False)
+
+    def retire(self, tables: Sequence[TableIdentity]) -> None:
+        """The runtime's grants on the side a decision retired, revoked and seen revoked."""
+        self.access(tables, enabled=False)
+
+    def retired(self, tables: Sequence[TableIdentity]) -> None:
+        """Nothing further: :meth:`retire` saw every runtime login refused."""
 
     def truncate(self, tables: Sequence[TableIdentity]) -> None:
         for table in tables:
