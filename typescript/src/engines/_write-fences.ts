@@ -448,6 +448,16 @@ export class ElasticsearchFences implements FenceBackend {
           'to writes - inspect or resume',
       )
     }
+    // Every write the block waited for has finished on its shards, but one that waits for a refresh
+    // may not be visible yet: a copy and a comparison read by searching, and a row they cannot see
+    // is missing from both at once. So the barrier makes them visible.
+    const [refreshed, answer] = await this.call('POST', `/${table}/_refresh`)
+    const failed = (answer as { _shards?: { failed?: unknown } } | null)?._shards?.failed
+    if (refreshed !== 200 || failed === undefined || Number(failed) !== 0) {
+      throw new EngineError(
+        `the writes before the barrier on ${table} could not be made visible (${refreshed}); inspect or resume`,
+      )
+    }
     held(await this.metadata(table), options.projectId, options.hold)
   }
 

@@ -27,6 +27,7 @@ import { canonicalString } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
+import { keyColumns, sameWidth } from '../migration.js'
 import { readRow, type ReadFilter, type ReadPlan } from '../query.js'
 import { elasticsearchMapping, elasticsearchProperty, indexNameRefusal, schemaStatements, TOKENS_FIELD } from '../schema.js'
 import type { Row } from '../session.js'
@@ -41,6 +42,28 @@ export const MAX_RESPONSE_BYTES = 256 * 1024 * 1024
 const OPTIONS = new Set(['api_key', 'ca_cert', 'connect_timeout', 'send_receive_timeout', 'verify'])
 const IDLE_MS = 20_000
 const WATERMARK = 'sde_map_state'
+const BACKFILL = 'sde_backfill_state'
+
+/**
+ * Documents per search when a migration reads in key order: a copy's chunk, a window of the copy
+ * compared with it, or the keys counted towards a resume point.
+ */
+export const KEY_PAGE = 1000
+
+/** The mapping of `sde_map_state` here: one document per map version applied. */
+export const WATERMARK_MAPPING = {
+  dynamic: 'strict',
+  properties: { map_version: { type: 'long' }, model_version: { type: 'keyword' } },
+} as const
+
+/** The mapping of `sde_backfill_state` here: one document per chunk copied, never updated. */
+export const BACKFILL_MAPPING = {
+  dynamic: 'strict',
+  properties: { entity: { type: 'keyword' }, materialization: { type: 'keyword' }, rows_copied: { type: 'long' } },
+} as const
+
+/** What a staging writes on the index it creates: its project, its stage and the index's name. */
+const CREATION_MARKER = /^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
 /** A shard that fails or times out fails the search, rather than leaving its rows out. */
 const PARTIAL_REFUSED = '?allow_partial_search_results=false'
 
@@ -431,7 +454,7 @@ export class ElasticsearchEngine {
     const document = body as Record<string, { mappings?: Record<string, unknown> }> | null
     const mapping = status === 200 ? document?.[name]?.mappings : undefined
     if (mapping === undefined) throw new EngineError(`the mapping of ${name} could not be read: ${errorOf(status, body)}`)
-    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown } } | undefined)?.sde
+    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown; stage?: unknown } } | undefined)?.sde
     const key = meta?.key
     if (mapping['dynamic'] !== 'strict' || !Array.isArray(key) || key.length === 0) {
       throw new EngineError(
@@ -455,14 +478,22 @@ export class ElasticsearchEngine {
     }
     const entity = meta?.entity
     if (typeof entity !== 'string' || entity === '') throw new EngineError(`index ${name} names no entity in _meta.sde`)
+    // A staging's index says which staging created it, in the request that created it - as a SQL
+    // staging comments its table in the transaction that creates it. Its form is fixed.
+    const stage = meta?.stage
+    if (stage !== undefined && (typeof stage !== 'string' || !CREATION_MARKER.test(stage))) {
+      throw new EngineError(`index ${name} carries a staging marker that is not one`)
+    }
     // The whole mapping, not only each field's type: a normalizer, a null_value, an ignore_above, a
     // token field mapped as text or a disabled _source would each change an answer while every type
     // still matched. It is what this library creates or nothing.
     const layout = { tables: { [entity]: name }, columns: { [entity]: columns }, indexes: [], partitionBy: {} }
     const rendered = elasticsearchMapping(layout, entity, { [entity]: key as string[] }) as {
       properties: Record<string, unknown>
+      _meta: { sde: Record<string, unknown> }
     }
     if (fenced) rendered.properties[EPOCH_COLUMN] = { type: 'long' }
+    if (stage !== undefined) rendered._meta.sde['stage'] = stage
     if (!sameJson(rendered, mapping)) {
       throw new EngineError(
         `index ${name} has a mapping this library would not create: something beyond each ` +
@@ -623,15 +654,240 @@ export class ElasticsearchEngine {
     })
   }
 
-  // --- rollback protection -------------------------------------------------------------------
+  // --- migration -------------------------------------------------------------------------------
+  //
+  // `Migratable`, so a group can be copied onto this engine and off it. A migration reads in key
+  // order, and a key is never null: the position is a filter, as a page's is (§7m), so the engine's
+  // sort values stand in for no value. A copy is `create`, so a document already there stays -
+  // PostgreSQL's ON CONFLICT DO NOTHING, not an overwrite.
+
+  /** Keys beyond `bound` in `order` - after it when `above`, before it otherwise - as stored. */
+  private keyset(order: readonly string[], bound: readonly StoredValue[], above: boolean, inclusive: boolean): Record<string, unknown> {
+    const alternatives: Record<string, unknown>[] = order.map((column, position) => {
+      const clauses: Record<string, unknown>[] = order.slice(0, position).map((earlier, at) => ({ term: { [earlier]: bound[at] } }))
+      clauses.push(beyond(column, bound[position] as StoredValue, above))
+      return { bool: { filter: clauses } }
+    })
+    if (inclusive) alternatives.push({ bool: { filter: order.map((column, at) => ({ term: { [column]: bound[at] } })) } })
+    return { bool: { should: alternatives, minimum_should_match: 1 } }
+  }
+
+  private storedKey(index: Index, order: readonly string[], bound: readonly unknown[], name: string): StoredValue[] {
+    sameWidth(bound, order, name)
+    if (bound.some((value) => value === null || value === undefined)) {
+      throw new EngineError(`${name} holds a null, and no key does`)
+    }
+    return order.map((column, at) => stored(index.columns[column] as string, bound[at]))
+  }
+
+  private async ordered(table: string, order: readonly string[]): Promise<[Index, readonly string[]]> {
+    const index = await this.index(table)
+    const columns = keyColumns(order, table)
+    const unknown = columns.filter((column) => index.columns[column] === undefined)
+    if (unknown.length > 0) throw new EngineError(`${table} has no field ${JSON.stringify(unknown)} to order by`)
+    return [index, columns]
+  }
+
+  /** One search in key order: the sources of up to `size` documents after `after` and up to `upto`. */
+  private async keyPage(
+    table: string,
+    order: readonly string[],
+    after: readonly StoredValue[] | null,
+    upto: readonly StoredValue[] | null,
+    size: number,
+    fields?: readonly string[],
+  ): Promise<Record<string, unknown>[]> {
+    const clauses: Record<string, unknown>[] = []
+    if (after !== null) clauses.push(this.keyset(order, after, true, false))
+    if (upto !== null) clauses.push(this.keyset(order, upto, false, true))
+    const body: Record<string, unknown> = {
+      query: { bool: { filter: clauses } },
+      sort: order.map((column) => ({ [column]: { order: 'asc' } })),
+      size,
+      track_total_hits: false,
+    }
+    if (fields !== undefined) body['_source'] = [...fields]
+    const [status, response] = await this.request('POST', this.path(table, '_search') + PARTIAL_REFUSED, body)
+    const hits = (response as { hits?: { hits?: { _source?: Record<string, unknown> }[] } } | null)?.hits?.hits
+    if (status !== 200 || hits === undefined) throw new EngineError(`key range select from ${table} failed: ${errorOf(status, response)}`)
+    whole(response, `a key range of ${table}`)
+    return hits.map((hit) => hit._source ?? {})
+  }
+
+  /**
+   * Rows in key order, strictly after one key and up to another inclusive, with the write generation
+   * where the index has one - what `SELECT *` returns in the SQL dialects. In searches of at most
+   * `KEY_PAGE` documents, each starting after the last one read.
+   */
+  async keyRange(
+    table: string,
+    order: readonly string[],
+    options: { readonly after?: readonly unknown[]; readonly upto?: readonly unknown[]; readonly limit?: number } = {},
+  ): Promise<Row[]> {
+    return this.usage.operation(async () => {
+      const [index, columns] = await this.ordered(table, order)
+      let position = options.after === undefined ? null : this.storedKey(index, columns, options.after, 'after')
+      const ceiling = options.upto === undefined ? null : this.storedKey(index, columns, options.upto, 'upto')
+      const limit = options.limit
+      if (limit !== undefined && limit < 1) return []
+      const rows: Row[] = []
+      while (limit === undefined || rows.length < limit) {
+        const size = limit === undefined ? KEY_PAGE : Math.min(KEY_PAGE, limit - rows.length)
+        const sources = await this.keyPage(table, columns, position, ceiling, size)
+        for (const source of sources) {
+          const row = rowOf(index, source)
+          if (index.fenced) {
+            const epoch = source[EPOCH_COLUMN]
+            row[EPOCH_COLUMN] = epoch === null || epoch === undefined ? null : BigInt(epoch as number | bigint)
+          }
+          rows.push(row)
+        }
+        if (sources.length < size) break
+        const last = sources[sources.length - 1] as Record<string, unknown>
+        position = columns.map((column) => last[column] as StoredValue)
+      }
+      return rows
+    })
+  }
+
+  /** The key of the `position`-th row in key order, one-based, or null: counted through searches. */
+  async nthKey(table: string, order: readonly string[], options: { readonly position: number }): Promise<unknown[] | null> {
+    return this.usage.operation(async () => {
+      const [index, columns] = await this.ordered(table, order)
+      if (options.position < 1) throw new EngineError(`position is one-based; ${options.position} is not a row`)
+      let seen = 0
+      let after: StoredValue[] | null = null
+      for (;;) {
+        const size = Math.min(KEY_PAGE, options.position - seen)
+        const sources = await this.keyPage(table, columns, after, null, size, columns)
+        if (sources.length < size) return null
+        seen += size
+        const last = sources[sources.length - 1] as Record<string, unknown>
+        if (seen === options.position) return columns.map((column) => readValue(index.columns[column] as string, last[column]))
+        after = columns.map((column) => last[column] as StoredValue)
+      }
+    })
+  }
+
+  /** Every document of the index, exactly. */
+  async count(table: string): Promise<number> {
+    return this.usage.operation(async () => {
+      await this.index(table)
+      const [status, response] = await this.request('POST', this.path(table, '_count'), { query: { match_all: {} } })
+      const count = (response as { count?: number | bigint } | null)?.count
+      if (status !== 200 || count === undefined) throw new EngineError(`count on ${table} failed: ${errorOf(status, response)}`)
+      whole(response, `the count of ${table}`)
+      return Number(count)
+    })
+  }
+
+  /**
+   * Copy rows in, leaving any document whose key is already there: one `_bulk` of `create` actions,
+   * visible to a search on return. A document already there is refused with 409 and kept.
+   */
+  async copyIn(table: string, rows: readonly Row[]): Promise<void> {
+    return this.usage.operation(async () => {
+      if (rows.length === 0) return
+      const columns = Object.keys(rows[0] as Row).sort()
+      for (const row of rows) {
+        const here = Object.keys(row).sort()
+        if (here.join(' ') !== columns.join(' ')) {
+          throw new EngineError(
+            `copyIn into ${table} was given rows with different columns ([${columns.join(', ')}] ` +
+              `and [${here.join(', ')}]). A chunk comes from one table, so this is a caller ` +
+              'assembling it from two.',
+          )
+        }
+      }
+      const index = await this.index(table)
+      const lines: string[] = []
+      for (const row of rows) {
+        const { id, source } = documentOf(index, row)
+        lines.push(JSON.stringify({ create: { _index: table, _id: id } }), stringifyExactJson(source))
+      }
+      const [status, body] = await this.request('POST', '/_bulk?refresh=true', undefined, lines.join('\n') + '\n')
+      const result = body as { items?: { create?: BulkItem }[] } | null
+      if (status !== 200 || result === null) {
+        throw new EngineError(`copying ${rows.length} rows into ${table} failed: ${writeErrorOf(status, body)}`)
+      }
+      const items = (result.items ?? []).map((item) => item.create ?? {})
+      const present = items.filter(alreadyThere)
+      const failed = items.filter((item) => (item.status ?? 500) >= 300 && !alreadyThere(item))
+      if (items.length !== rows.length || failed.length > 0) {
+        throw new EngineError(
+          `copying ${rows.length} rows into ${table}: ${failed.length} were refused ` +
+            `(${failed[0]?.error?.type ?? 'unknown'}), ${present.length} were there already and ` +
+            `${items.length - failed.length - present.length} were written`,
+        )
+      }
+    })
+  }
+
+  /** How many rows of this entity have been copied into this engine: the largest marker, or zero. */
+  async backfillMarker(options: { readonly materialization: string; readonly entity: string }): Promise<number> {
+    return this.usage.operation(async () => {
+      await this.bookkeeping(BACKFILL, BACKFILL_MAPPING)
+      const body = {
+        size: 1,
+        query: { bool: { filter: [{ term: { materialization: options.materialization } }, { term: { entity: options.entity } }] } },
+        sort: [{ rows_copied: { order: 'desc' } }],
+        _source: ['rows_copied'],
+        track_total_hits: false,
+      }
+      const [status, response] = await this.request('POST', this.path(BACKFILL, '_search') + PARTIAL_REFUSED, body)
+      const hits = (response as { hits?: { hits?: { _source?: { rows_copied?: number | bigint } }[] } } | null)?.hits?.hits
+      if (status !== 200 || hits === undefined) throw new EngineError(`reading ${BACKFILL} failed: ${errorOf(status, response)}`)
+      whole(response, `the marker in ${BACKFILL}`)
+      const rows = hits[0]?._source?.rows_copied
+      return rows === undefined ? 0 : Number(rows)
+    })
+  }
+
+  /** Append the new marker, visible on return. Never update, so a trail stays readable. */
+  async recordBackfillMarker(options: {
+    readonly materialization: string
+    readonly entity: string
+    readonly rows: number
+  }): Promise<void> {
+    return this.usage.operation(async () => {
+      await this.bookkeeping(BACKFILL, BACKFILL_MAPPING)
+      const source = { materialization: options.materialization, entity: options.entity, rows_copied: options.rows }
+      const [status, body] = await this.request('POST', this.path(BACKFILL, '_doc') + '?refresh=true', source)
+      if (status !== 201) throw new EngineError(`recording backfill progress in ${BACKFILL} failed: ${errorOf(status, body)}`)
+    })
+  }
+
+  // --- bookkeeping ---------------------------------------------------------------------------
+  //
+  // Two indexes of our own, append-only, read as a maximum: the map watermark and the backfill
+  // markers. Each is read before anything creates it, as the SQL adapters look in their catalogue
+  // before CREATE: a login that only reads and writes it needs no create_index, and an index of
+  // that name with another mapping is refused rather than trusted.
+
+  private async bookkeeping(name: string, mapping: Readonly<Record<string, unknown>>): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const [status, body] = await this.request('GET', this.path(name, '_mapping'))
+      if (status === 200) {
+        const found = (body as Record<string, { mappings?: unknown }> | null)?.[name]?.mappings
+        if (!sameJson(found, mapping)) {
+          throw new EngineError(
+            `${name} exists with a mapping this library would not create; it keeps this library's ` +
+              'bookkeeping, so it is refused rather than read',
+          )
+        }
+        return
+      }
+      if (status !== 404) throw new EngineError(`reading ${name} failed: ${errorOf(status, body)}`)
+      const [created, answer] = await this.request('PUT', this.path(name), { mappings: mapping })
+      if (created === 200) return
+      // Created by somebody else between the two requests: read what they created.
+      if (!alreadyExists(created, answer)) throw new EngineError(`creating ${name} failed: ${errorOf(created, answer)}`)
+    }
+    throw new EngineError(`${name} could not be read or created`)
+  }
 
   private async watermarkIndex(): Promise<void> {
-    const mappings = {
-      dynamic: 'strict',
-      properties: { map_version: { type: 'long' }, model_version: { type: 'keyword' } },
-    }
-    const [status, body] = await this.request('PUT', this.path(WATERMARK), { mappings })
-    if (status !== 200 && !alreadyExists(status, body)) throw new EngineError(`creating ${WATERMARK} failed: ${errorOf(status, body)}`)
+    await this.bookkeeping(WATERMARK, WATERMARK_MAPPING)
   }
 
   async mapWatermark(): Promise<number | null> {
@@ -676,6 +932,26 @@ function documentOf(index: Index, values: Readonly<Row>): { id: string; source: 
   } catch (error) {
     throw new EngineError(`${index.name}: ${(error as Error).message}`)
   }
+}
+
+interface BulkItem {
+  readonly status?: number
+  readonly error?: { readonly type?: string }
+}
+
+/** A `create` refused because its document exists: what a copy leaves as it is. */
+function alreadyThere(item: BulkItem): boolean {
+  return item.status === 409 && item.error?.type === 'version_conflict_engine_exception'
+}
+
+/** `column` strictly above `value` (or below), the value as stored. A boolean has no range. */
+function beyond(column: string, value: StoredValue, above: boolean): Record<string, unknown> {
+  if (typeof value === 'boolean') {
+    // Two values and no order to range over: above true and below false hold nothing.
+    if (above === value) return { bool: { must_not: [{ match_all: {} }] } }
+    return { term: { [column]: !value } }
+  }
+  return { range: { [column]: { [above ? 'gt' : 'lt']: value } } }
 }
 
 function normalised(value: unknown): string {

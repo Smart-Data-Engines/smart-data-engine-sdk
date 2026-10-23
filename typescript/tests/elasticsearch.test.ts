@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 import { EngineError, searchEngine, SearchRefused } from '../src/index.js'
 import { decimalBound, stored } from '../src/elasticsearch-document.js'
-import { ElasticsearchEngine, parseDsn, whole, writeErrorOf } from '../src/engines/elasticsearch.js'
+import { ElasticsearchEngine, parseDsn, WATERMARK_MAPPING, whole, writeErrorOf } from '../src/engines/elasticsearch.js'
 import { OrderbookEngine } from '../src/engines/orderbook.js'
 import { parseExactJson, stringifyExactJson } from '../src/engines/_json.js'
 
@@ -118,10 +118,10 @@ describe('values and predicates', () => {
     const plan = { columns: [column], filters: [], order: [column], descending: false, after: null, limit: 10 }
     const sent: string[] = []
     const answering = (partial: Record<string, unknown>) =>
-      async (method: string, path: string): Promise<[number, unknown]> => {
+      async (_method: string, path: string): Promise<[number, unknown]> => {
         sent.push(path)
+        if (path === '/sde_map_state/_mapping') return [200, { sde_map_state: { mappings: WATERMARK_MAPPING } }]
         if (path.endsWith('/_mapping')) return [200, { note: { mappings: mapping } }]
-        if (path.startsWith('/sde_map_state') && method === 'PUT') return [200, {}]
         if (path.includes('/_count')) return [200, { count: 3, ...partial }]
         return [200, { hits: { hits: [] }, ...partial }]
       }
@@ -223,6 +223,55 @@ describe('the write fence', () => {
     expect(Object.keys(FENCE_PROCESSORS.cases)).toHaveLength(5)
     for (const [name, constraints] of Object.entries(FENCE_PROCESSORS.cases)) {
       expect(fenceProcessor(constraints), name).toEqual(FENCE_PROCESSORS.processors[name])
+    }
+  })
+})
+
+describe('the bookkeeping and the staging marker', () => {
+  /** An engine whose transport answers from a table of (method, path) and records what it was asked. */
+  function answering(answers: Record<string, [number, unknown][]>): { engine: ElasticsearchEngine; sent: string[] } {
+    const engine = new ElasticsearchEngine('elasticsearch+http://127.0.0.1:9200')
+    const sent: string[] = []
+    ;(engine as unknown as { request: unknown }).request = async (method: string, path: string): Promise<[number, unknown]> => {
+      const at = `${method} ${path.split('?')[0]}`
+      sent.push(at)
+      const queue = answers[at]
+      if (queue !== undefined && queue.length > 0) return queue.length === 1 ? queue[0] as [number, unknown] : queue.shift() as [number, unknown]
+      return [200, { hits: { hits: [] }, timed_out: false, _shards: { failed: 0 } }]
+    }
+    return { engine, sent }
+  }
+
+  it('reads the bookkeeping before anything creates it, and refuses another mapping', async () => {
+    const { BACKFILL_MAPPING } = await import('../src/engines/elasticsearch.js')
+    const { engine, sent } = answering({
+      'GET /sde_map_state/_mapping': [[200, { sde_map_state: { mappings: WATERMARK_MAPPING } }]],
+      'GET /sde_backfill_state/_mapping': [[404, {}], [200, { sde_backfill_state: { mappings: BACKFILL_MAPPING } }]],
+      'PUT /sde_backfill_state': [[400, { error: { type: 'resource_already_exists_exception' } }]],
+    })
+    expect(await engine.mapWatermark()).toBeNull()
+    expect(sent).not.toContain('PUT /sde_map_state')
+    expect(await engine.backfillMarker({ materialization: 'copy', entity: 'Note' })).toBe(0)
+    expect(sent.filter((entry) => entry.includes('sde_backfill_state')).slice(0, 3)).toEqual([
+      'GET /sde_backfill_state/_mapping', 'PUT /sde_backfill_state', 'GET /sde_backfill_state/_mapping',
+    ])
+    const other = { dynamic: 'strict', properties: { map_version: { type: 'keyword' } } }
+    const refused = answering({ 'GET /sde_map_state/_mapping': [[200, { sde_map_state: { mappings: other } }]] })
+    await expect(refused.engine.mapWatermark()).rejects.toThrow(/mapping this library would not create/)
+    expect(refused.sent.every((entry) => entry.startsWith('GET'))).toBe(true)
+  })
+
+  it('accepts a staging marker beside the mapping in exactly its form', async () => {
+    const { elasticsearchMapping } = await import('../src/schema.js')
+    const layout = { tables: { Note: 'note' }, columns: { Note: { id: 'long' } }, indexes: [], partitionBy: {} }
+    const marker = `sde.stage1.${'1'.repeat(32)}.${'2'.repeat(32)}.${'3'.repeat(16)}`
+    for (const [stage, accepted] of [[marker, true], [marker + 'x', false], [7, false], ['sde.stage1.short', false]] as const) {
+      const mapping = elasticsearchMapping(layout, 'Note', { Note: ['id'] }) as { _meta: { sde: Record<string, unknown> } }
+      mapping._meta.sde['stage'] = stage
+      const { engine } = answering({ 'GET /note/_mapping': [[200, { note: { mappings: mapping } }]] })
+      const check = engine.validateSchema(layout, { keys: { Note: ['id'] } })
+      if (accepted) await expect(check).resolves.toEqual([])
+      else await expect(check).rejects.toThrow(/staging marker/)
     }
   })
 })
