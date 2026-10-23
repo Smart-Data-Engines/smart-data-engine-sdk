@@ -190,6 +190,9 @@ the book they make.
 A server without the capability `replace_side` composes a book by position and cannot replace a
 side. `book_stream` and `book_at` refuse it, before sending or reading anything.
 
+[`examples/book-stream/`](../examples/book-stream/README.md) sends one exchange feed both ways, from
+Python and from TypeScript, and checks the book the engine composes at every tenth step.
+
 **`Session.save_many` writes updates by price too.** An update of the top levels of a book leaves in it
 every price that dropped out of them, unless the update removes it with a quantity of 0. A writer of
 whole books uses a full book stream.

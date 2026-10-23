@@ -8,6 +8,10 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: `examples/book-stream/`**, Python and TypeScript. One exchange feed is sent to the orderbook
+engine whole and as its changes. The book the engine composes is read back at every tenth step and
+compared with the feed's own. Both halves send the same updates, and the `orderbook` CI job runs them.
+
 **The orderbook engine's pin moves to `31b4390`**, which has its #244 and #245. In local mode:
 - `flush()` keeps the engine open, where it closed it and opened it again.
 - A flush after a write syncs before its checkpoint: 2.48-2.74 ms median after one row, on an
