@@ -246,7 +246,7 @@ def test_a_key_scoped_to_the_layouts_indexes_is_all_the_adapter_needs() -> None:
                     "indices": [
                         {
                             "names": [table, "sde_map_state"],
-                            "privileges": ["create_index", "write", "read", "view_index_metadata"],
+                            "privileges": ["create_index", "index", "read", "view_index_metadata"],
                         }
                     ],
                 }

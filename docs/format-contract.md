@@ -2007,7 +2007,9 @@ depend on.
 
 **The size** of an index is its primary shards' store, read from `_stats` with `ignore_unavailable`:
 an index that does not exist is absent from the answer rather than a zero, and an alias is never
-measured under its name. Its secondary index bytes are 0, because an index keeps none beside its
+measured under its name. A size that came back from fewer primary shards than the index's
+`number_of_shards` is refused, because an unassigned primary counts as neither a success nor a
+failure in `_shards`. Its secondary index bytes are 0, because an index keeps none beside its
 store, so a window's `index_to_table_ratio` is a measured 0. The read takes the index privilege
 `monitor` ([`runtime-roles.md`](runtime-roles.md)); without it the size is unknown, `refused`.
 

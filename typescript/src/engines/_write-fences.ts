@@ -215,6 +215,16 @@ function indexName(index: string): string {
   return index
 }
 
+/**
+ * Whether Elasticsearch refused a conditional write of a pipeline because it moved: a 400
+ * `illegal_argument_exception` reading "version conflict ...", not a 409 (measured on 9.5.5).
+ */
+function versionConflict(status: number, answer: unknown): boolean {
+  const error = (answer as { error?: { type?: unknown; reason?: unknown } } | null)?.error
+  return status === 400 && error?.type === 'illegal_argument_exception' &&
+    String(error.reason ?? '').startsWith('version conflict')
+}
+
 /** The ingest pipeline holding `index`'s write fence: one per index, named after it. */
 export function fencePipeline(index: string): string {
   return FENCE_PREFIX + indexName(index)
@@ -327,6 +337,14 @@ export class ElasticsearchFences implements FenceBackend {
           'the one its constraints render',
       )
     }
+    if (Object.hasOwn(document, 'on_failure')) {
+      // A pipeline-level on_failure catches the fence's own refusal and indexes the document anyway:
+      // the processor would read right and refuse nothing.
+      throw new MigrationRefused(
+        `the write-fence pipeline of ${table} was changed outside this library: an on_failure handler ` +
+          'would index every write the fence refuses',
+      )
+    }
     return { ...(constraints as Record<string, string>) }
   }
 
@@ -349,6 +367,12 @@ export class ElasticsearchFences implements FenceBackend {
     const column: ColumnState = field === undefined ? 'absent' : sameJson(field, { type: 'long' }) ? 'valid' : 'conflict'
     const [document] = await this.pipeline(table)
     const constraints = this.constraintsOf(table, uuid, document)
+    if (final !== fencePipeline(table) && Object.keys(constraints).length > 0) {
+      // Not the index's final pipeline, so not one of its constraints is enforced: a fence that read
+      // complete here would admit every write. It reads as an interrupted setup - closed to this
+      // library, and finished by resumePrepare, which sets it again.
+      constraints[FENCE_PREFIX + 'setup'] = '0'
+    }
     const blocked = String((settings['blocks'] as Record<string, unknown> | undefined)?.['write'] ?? 'false').toLowerCase() === 'true'
     const held = Object.keys(constraints).some((name) => HOLDS.test(name.slice(FENCE_PREFIX.length)))
     if (blocked && !held) {
@@ -388,8 +412,8 @@ export class ElasticsearchFences implements FenceBackend {
       }
       let path = `/_ingest/pipeline/${fencePipeline(table)}`
       if (document !== null) path += `?if_version=${version ?? 0}`
-      const [status] = await this.call('PUT', path, body)
-      if (status === 409) {
+      const [status, answer] = await this.call('PUT', path, body)
+      if (status === 409 || versionConflict(status, answer)) {
         throw new MigrationRefused(
           `the write fence of ${table} changed while this command ran: another executor is provisioning it. ` +
             'Serialize commands in one project state directory.',
@@ -414,16 +438,22 @@ export class ElasticsearchFences implements FenceBackend {
   }
 
   async dropConstraint(table: string, name: string): Promise<void> {
-    const after = await this.write(table, (constraints) =>
-      Object.fromEntries(Object.entries(constraints).filter(([key]) => key !== name)))
-    if (!Object.keys(after).some((key) => HOLDS.test(key.slice(FENCE_PREFIX.length)))) {
-      // The last hold: the shard-level block goes with it.
-      const [, settings] = await this.index(table)
-      if (String((settings['blocks'] as Record<string, unknown> | undefined)?.['write'] ?? 'false').toLowerCase() === 'true') {
-        const [status] = await this.call('PUT', `/${table}/_settings`, { 'index.blocks.write': false })
-        if (status !== 200) throw new EngineError(`lifting the write block of ${table} failed (${status})`)
-      }
+    const [uuid, settings] = await this.index(table)
+    const [document] = await this.pipeline(table)
+    const remaining = Object.keys(this.constraintsOf(table, uuid, document)).filter((key) => key !== name)
+    const last = !remaining.some((key) => HOLDS.test(key.slice(FENCE_PREFIX.length)))
+    const blocked = String((settings['blocks'] as Record<string, unknown> | undefined)?.['write'] ?? 'false').toLowerCase() === 'true'
+    if (last && blocked) {
+      // The last hold: the shard-level block goes first, while the hold in the pipeline still refuses
+      // every write a runtime key can make (it may not delete: a delete runs no pipeline). An
+      // interruption between the two requests then leaves the hold, which a retry of the release
+      // finds and removes. The other order left a block with no hold to say whose it was, which no
+      // retry lifted.
+      const [status] = await this.call('PUT', `/${table}/_settings`, { 'index.blocks.write': false })
+      if (status !== 200) throw new EngineError(`lifting the write block of ${table} failed (${status})`)
     }
+    await this.write(table, (constraints) =>
+      Object.fromEntries(Object.entries(constraints).filter(([key]) => key !== name)))
   }
 
   async drain(table: string, options: { projectId: string; hold: string }): Promise<void> {

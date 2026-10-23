@@ -69,11 +69,14 @@ What the operator checks:
   `monitor`. With `manage_pipeline` for the fences and `all` on the layout's indexes, `sde_m_*`,
   `sde_map_state` and `sde_backfill_state`, that is what a login of its own needs; the cluster's
   administrator has it.
-- **Each runtime key**, through `_has_privileges` asked as that key. It needs `index` (or `write`),
-  `read` and `view_index_metadata` on each index it uses and on the fresh names of a staging, and
-  the cluster privilege `read_pipeline`. It may not hold `manage`, `all` or `delete_index` on any
-  of them, nor the cluster privileges `all`, `manage`, `manage_pipeline`, `manage_ingest_pipelines`
-  or `manage_security`: each could lift a block, rewrite a fence or grant itself more. A key that
+- **Each runtime key**, through `_has_privileges` asked as that key. It needs `index`, `read` and
+  `view_index_metadata` on each index it uses and on the fresh names of a staging, and the cluster
+  privilege `read_pipeline`. It may not hold `manage`, `all`, `write`, `delete_index` or `delete`
+  on any of them, nor the cluster privileges `all`, `manage`, `manage_pipeline`,
+  `manage_ingest_pipelines` or `manage_security`: each could lift a block, rewrite a fence, grant
+  itself more or - `delete`, and `write`, which includes it - remove documents past the fence. A
+  delete runs no ingest pipeline, where an index or an update runs the final one (measured on 9.5.5),
+  and the library never deletes a document. A key that
   does not cover a staging's fresh name, `sde_m_<stage>_<position>`, is refused before anything is
   created. Give it a pattern such as `sde_m_*`, because nothing here grants a privilege.
 - **No list of other principals.** A block refuses every principal whatever it holds, so the SQL

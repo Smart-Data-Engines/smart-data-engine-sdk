@@ -22,7 +22,7 @@ from sde.engines.elasticsearch import ElasticsearchEngine, HttpStatus
 
 DSN = os.environ.get("SDE_ELASTICSEARCH_DSN")
 pytestmark = pytest.mark.skipif(DSN is None, reason="set SDE_ELASTICSEARCH_DSN to run")
-RUNTIME = ("read", "write", "view_index_metadata")
+RUNTIME = ("read", "index", "view_index_metadata")
 """What a runtime key holds on its indexes (runtime-roles.md), without the optional ``monitor``."""
 
 
@@ -35,12 +35,28 @@ def administrator() -> ElasticsearchEngine:
 
 def remove(method: str, path: str, body: Any = None) -> None:
     """Cleanup on a connection of its own: one that lost a response is dropped, and a test that
-    failed on it must not leave its indexes and keys behind."""
+    failed on it must not leave its indexes and keys behind. A refused cleanup fails the test."""
     engine = administrator()
     try:
-        engine._request(method, path, body)
+        status, answer = engine._request(method, path, body)
+        assert status in (200, 404), (path, answer)
     finally:
         engine.close()
+
+
+def remove_indexes(prefix: str) -> None:
+    """Every index whose name starts with ``prefix``, each by name. The cluster refuses a wildcard
+    in a destructive request (``action.destructive_requires_name``, true by default since 8.0), so
+    ``DELETE /<prefix>*`` removed nothing, and until 24 October every run left its indexes."""
+    engine = administrator()
+    try:
+        status, body = engine._request("GET", f"/_resolve/index/{prefix}*?expand_wildcards=all")
+        assert status == 200, body
+        names = [entry["name"] for entry in body["indices"]]
+    finally:
+        engine.close()
+    for name in names:
+        remove("DELETE", f"/{name}")
 
 
 @contextmanager
@@ -98,7 +114,7 @@ def notes() -> Iterator[tuple[ElasticsearchEngine, sde.LogicalModel, sde.Placeme
         yield admin, model, placement, table
     finally:
         admin.close()
-        remove("DELETE", f"/{table}*")
+        remove_indexes(table)
 
 
 def settle(admin: ElasticsearchEngine, *indexes: str) -> None:
@@ -174,3 +190,34 @@ def test_a_session_on_elasticsearch_measures_its_group_and_the_window_carries_it
             assert body["index_to_table_ratio"] == 0.0
             assert "total_bytes" not in body["missing"]
             assert "index_to_table_ratio" not in body["missing"]
+
+
+def test_a_size_from_fewer_primaries_than_the_index_has_is_refused_not_reported() -> None:
+    """An unassigned primary counts as neither a success nor a failure in ``_shards``: summed
+    without it, the size read smaller than it is, and an index whose only primary is unassigned
+    read as missing. It is refused, and a session's reason for the unknown size is ``failed``, not
+    ``missing_table`` (second review)."""
+    with notes() as (admin, model, _placement, table):
+        stranded = table + "_stranded"
+        status, body = admin._request("GET", f"/{table}/_mapping")
+        assert status == 200, body
+        # The library's own mapping, on a primary no node may take. Closing an index and opening it
+        # under the same filter does not strand it: an existing primary is allocated anyway.
+        status, body = admin._request("PUT", f"/{stranded}?wait_for_active_shards=0", {
+            "settings": {"index.routing.allocation.require._name": "no-such-node",
+                         "index.number_of_replicas": 0},
+            "mappings": body[table]["mappings"],
+        })
+        assert status == 200, body
+        with pytest.raises(sde.EngineError, match="from 0 of its 1 primary shards"):
+            admin.storage_sizes([table, stranded])
+        assert set(admin.storage_sizes([table])) == {table}, "a healthy index still measures"
+        on_stranded = sde.load_map(
+            {"contract": 3, "model_version": model.version, "map_version": 1,
+             "groups": {"Note": {"source": {"id": "es", "engine": "es", "layout": {
+                 "tables": {"Note": stranded},
+                 "columns": {"Note": {"id": "long", "title": "keyword"}}}}}}},
+            model=model,
+        )
+        session = sde.Session(model, on_stranded, {"es": admin})
+        assert session.measure_storage().unavailable == {"Note": "failed"}

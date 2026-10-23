@@ -35,9 +35,12 @@ FORBIDDEN_CLUSTER = ("all", "manage", "manage_security", "manage_pipeline",
 """Cluster privileges a runtime key may not hold: each can rewrite a fence or grant itself more.
 Broadest first, so a refusal names the privilege a role was given rather than one it implies."""
 
-FORBIDDEN_INDEX = ("all", "manage", "delete_index")
-"""Index privileges a runtime key may not hold: each can lift an index's blocks or delete it.
-Broadest first, for the same reason."""
+FORBIDDEN_INDEX = ("all", "manage", "write", "delete_index", "delete")
+"""Index privileges a runtime key may not hold. ``all`` and ``manage`` can lift an index's blocks,
+``delete_index`` deletes it, and ``delete`` - in ``write`` too - removes documents past the fence:
+a delete runs no ingest pipeline, where an index or an update runs the final one (measured on
+9.5.5). The library never deletes a document, so a key needs ``index``, not ``write``, as a SQL
+runtime login needs INSERT and not DELETE. Broadest first, for the same reason."""
 
 REQUIRED_INDEX = ("index", "read", "view_index_metadata")
 """What a runtime key needs on each index it uses: write, read, and read the mapping it checks."""
@@ -240,9 +243,13 @@ class ElasticsearchOperator:
                 rights = rights if isinstance(rights, Mapping) else {}
                 held = [privilege for privilege in FORBIDDEN_INDEX if rights.get(privilege)]
                 if held:
+                    why = (
+                        "delete its documents past the write fence - give it index, not write"
+                        if held[0] in ("write", "delete")
+                        else "lift the index's blocks or delete it"
+                    )
                     raise MigrationRefused(
-                        f"cutover runtime holds {held[0]} on {name}, with which it could lift "
-                        f"the index's blocks or delete it"
+                        f"cutover runtime holds {held[0]} on {name}, with which it could {why}"
                     )
                 if required_access and not all(rights.get(p) for p in REQUIRED_INDEX):
                     raise MigrationRefused(

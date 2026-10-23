@@ -71,7 +71,7 @@ POST /_security/api_key
       "cluster": ["read_pipeline"],
       "indices": [{
         "names": ["events", "sde_map_state", "sde_m_*"],
-        "privileges": ["read", "write", "view_index_metadata"]
+        "privileges": ["read", "index", "view_index_metadata"]
       }]
     }
   }
@@ -80,9 +80,11 @@ POST /_security/api_key
 
 It needs no `create_index`: the adapter reads `sde_map_state` before anything creates it, and
 provisioning creates it. `read_pipeline` lets a session read the write fence of each index it
-opens. The operator refuses a key that also holds `manage`, `all` or `delete_index` on one of
-these indexes, or the cluster privileges `all`, `manage`, `manage_pipeline`,
-`manage_ingest_pipelines` or `manage_security`. The optional `monitor` below it admits.
+opens. `index` rather than `write`: the library never deletes a document, and a delete runs no
+ingest pipeline, so a key that may delete goes past the fence. The operator refuses a key that also
+holds `manage`, `all`, `write`, `delete_index` or `delete` on one of these indexes, or the cluster
+privileges `all`, `manage`, `manage_pipeline`, `manage_ingest_pipelines` or `manage_security`. The
+optional `monitor` below it admits.
 
 ## Physical design checks and one optional grant
 
@@ -124,10 +126,10 @@ Without it the size is unknown, not an error: the session reports `refused` for 
 before. The Weather starter gives this grant at setup.
 
 Elasticsearch answers a size from `_stats`, which takes the index privilege `monitor`: add it to the
-runtime key's indexes, beside `read`, `write` and `view_index_metadata`. It reads statistics of the
+runtime key's indexes, beside `read`, `index` and `view_index_metadata`. It reads statistics of the
 indexes it names and nothing of their documents. Without it the answer is a 403 and the size is
 unknown, `refused`, the same way (measured on 9.5.5). The local operator's qualification refuses
-`manage`, `all` and `delete_index`, never `monitor`.
+`manage`, `all`, `write`, `delete_index` and `delete`, never `monitor`.
 
 The local cutover and staging operator qualifies the runtime login's grants before it may revoke
 and restore them, and it admits exactly these two optional grants besides `system.settings`: the

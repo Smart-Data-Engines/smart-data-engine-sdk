@@ -30,7 +30,7 @@ it.skipIf(!LIVE)('survives a Python move onto Elasticsearch with a delayed old T
   const [created, key] = await raw.request('POST', '/_security/api_key', {
     name: 'sde-ts-cutover-' + randomBytes(4).toString('hex'),
     role_descriptors: { runtime: { cluster: ['read_pipeline'], indices: [{
-      names: [index, WATERMARK_TABLE], privileges: ['read', 'write', 'view_index_metadata'] }] } },
+      names: [index, WATERMARK_TABLE], privileges: ['read', 'index', 'view_index_metadata'] }] } },
   })
   expect(created).toBe(200)
   const { id: keyId, encoded } = key as { id: string; encoded: string }

@@ -14,7 +14,7 @@ import { ElasticsearchEngine, HttpStatus } from '../src/engines/elasticsearch.js
 
 const DSN = process.env['SDE_ELASTICSEARCH_DSN']
 /** What a runtime key holds on its indexes (runtime-roles.md), without the optional `monitor`. */
-const RUNTIME = ['read', 'write', 'view_index_metadata']
+const RUNTIME = ['read', 'index', 'view_index_metadata']
 const COLUMNS = { id: 'long', title: 'keyword' }
 
 type Raw = { request(method: string, path: string, body?: unknown): Promise<[number, unknown]> }
@@ -27,15 +27,34 @@ async function administrator(): Promise<ElasticsearchEngine> {
 
 /**
  * Cleanup on a connection of its own: one that lost a response is dropped, and a test that failed on
- * it must not leave its indexes and keys behind.
+ * it must not leave its indexes and keys behind. A refused cleanup fails the test.
  */
 async function remove(method: string, path: string, body?: unknown): Promise<void> {
   const engine = await administrator()
   try {
-    await (engine as unknown as Raw).request(method, path, body)
+    const [status] = await (engine as unknown as Raw).request(method, path, body)
+    expect([200, 404], path).toContain(status)
   } finally {
     await engine.close()
   }
+}
+
+/**
+ * Every index whose name starts with `prefix`, each by name. The cluster refuses a wildcard in a
+ * destructive request (`action.destructive_requires_name`, true by default since 8.0), so
+ * `DELETE /<prefix>*` removed nothing, and until 24 October every run left its indexes.
+ */
+async function removeIndexes(prefix: string): Promise<void> {
+  const engine = await administrator()
+  let names: string[]
+  try {
+    const [status, body] = await (engine as unknown as Raw).request('GET', `/_resolve/index/${prefix}*?expand_wildcards=all`)
+    expect(status).toBe(200)
+    names = (body as { indices: { name: string }[] }).indices.map((entry) => entry.name)
+  } finally {
+    await engine.close()
+  }
+  for (const name of names) await remove('DELETE', `/${name}`)
 }
 
 /** An adapter on an API key with `privileges` on `names`, removed afterwards. */
@@ -87,7 +106,7 @@ async function notes(body: (admin: ElasticsearchEngine, model: ReturnType<typeof
     await body(admin, model, placement, table)
   } finally {
     await admin.close()
-    await remove('DELETE', `/${table}*`)
+    await removeIndexes(table)
   }
 }
 
@@ -166,6 +185,30 @@ describe.skipIf(DSN === undefined)('the store sizes on Elasticsearch, live', () 
         expect(body['missing']).not.toContain('total_bytes')
         expect(body['missing']).not.toContain('index_to_table_ratio')
       })
+    })
+  })
+})
+
+describe.skipIf(DSN === undefined)('a partial store size, live', () => {
+  it('is refused when a primary did not answer, not reported smaller', async () => {
+    // An unassigned primary counts as neither a success nor a failure in `_shards`: summed without it,
+    // the size read smaller than it is, and an index whose only primary is unassigned read as missing.
+    // It is refused, and a session's reason for the unknown size is `failed`, not `missing_table`.
+    await notes(async (admin, model, _placement, table) => {
+      const stranded = table + '_stranded'
+      const [read, mapping] = await (admin as unknown as Raw).request('GET', `/${table}/_mapping`)
+      expect(read).toBe(200)
+      // The library's own mapping, on a primary no node may take. Closing an index and opening it under
+      // the same filter does not strand it: an existing primary is allocated anyway.
+      const [status] = await (admin as unknown as Raw).request('PUT', `/${stranded}?wait_for_active_shards=0`, {
+        settings: { 'index.routing.allocation.require._name': 'no-such-node', 'index.number_of_replicas': 0 },
+        mappings: (mapping as Record<string, { mappings: unknown }>)[table]!.mappings,
+      })
+      expect(status).toBe(200)
+      await expect(admin.storageSizes([table, stranded])).rejects.toThrow(/from 0 of its 1 primary shards/)
+      expect([...(await admin.storageSizes([table])).keys()]).toEqual([table])
+      const session = await Session.open(model, noteMap(model, stranded), { es: admin })
+      expect((await session.measureStorage()).unavailable).toEqual({ Note: 'failed' })
     })
   })
 })

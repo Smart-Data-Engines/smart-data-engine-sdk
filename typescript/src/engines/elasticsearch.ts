@@ -772,12 +772,14 @@ export class ElasticsearchEngine {
   /**
    * Each index's bytes on its primary shards, from `_stats`, and no secondary index bytes.
    *
-   * One request for every index named, with `ignore_unavailable`, so an index that does not exist is
+   * Two requests for every index named, each with `ignore_unavailable`: how many primary shards each
+   * has, from `_settings`, and their store and count, from `_stats`. An index that does not exist is
    * absent from the answer rather than a zero: a missing table is not an empty one. An alias is
    * answered under the index behind it, so it is absent too - this measures indexes, never what a
-   * name resolves to. The primaries are what a copy moves; replicas are the cluster's own. An index
-   * keeps no secondary index beside its store - every field is indexed in it, and a layout here
-   * declares none - so the second number is 0.
+   * name resolves to. A size that came back from fewer primaries than the index has is refused: an
+   * unassigned primary counts in neither `successful` nor `failed`. The primaries are what a copy
+   * moves; replicas are the cluster's own. An index keeps no secondary index beside its store - every
+   * field is indexed in it, and a layout here declares none - so the second number is 0.
    *
    * It needs the `monitor` index privilege, which nothing else here asks of a runtime key. Without it
    * the answer is a 403 and the size is unknown, `refused` (runtime-roles.md). Measured on 9.5.5.
@@ -790,10 +792,21 @@ export class ElasticsearchEngine {
         const refusal = indexNameRefusal(name)
         if (refusal !== null) throw new EngineError(`'${name}' is not an Elasticsearch index name: ${refusal}`)
       }
-      const path =
-        '/' + names.map((name) => encodeURIComponent(name)).join(',') +
-        '/_stats/store?ignore_unavailable=true&level=indices'
-      const [status, response] = await this.request('GET', path)
+      const joined = names.map((name) => encodeURIComponent(name)).join(',')
+      // How many primary shards each index has, so that a size summed over fewer of them - an
+      // unassigned primary counts in neither `successful` nor `failed` - is refused, not reported
+      // smaller than it is.
+      const [declaredStatus, declared] = await this.request(
+        'GET', `/${joined}/_settings/index.number_of_shards?ignore_unavailable=true`,
+      )
+      if (declaredStatus !== 200 || declared === null || typeof declared !== 'object') {
+        throw new EngineError(`storage sizes could not be read: ${errorOf(declaredStatus, declared)}`, {
+          cause: new HttpStatus(declaredStatus),
+        })
+      }
+      const [status, response] = await this.request(
+        'GET', `/${joined}/_stats/store,shard_stats?ignore_unavailable=true&level=indices`,
+      )
       if (status !== 200 || response === null || typeof response !== 'object') {
         throw new EngineError(`storage sizes could not be read: ${errorOf(status, response)}`, {
           cause: new HttpStatus(status),
@@ -806,10 +819,19 @@ export class ElasticsearchEngine {
       }
       const sizes = new Map<string, readonly [number, number]>()
       for (const name of names) {
-        if (!Object.hasOwn(indices, name)) continue
-        const entry = (indices as Record<string, unknown>)[name]
-        const size = (entry as { primaries?: { store?: { size_in_bytes?: unknown } } } | null)?.primaries
-          ?.store?.size_in_bytes
+        if (!Object.hasOwn(declared, name)) continue
+        const shards = shardCount((declared as Record<string, unknown>)[name])
+        const entry = Object.hasOwn(indices, name) ? (indices as Record<string, unknown>)[name] : undefined
+        const primaries = (entry as { primaries?: { store?: { size_in_bytes?: unknown }; shard_stats?: { total_count?: unknown } } } | null | undefined)
+          ?.primaries
+        const answered = primaries?.shard_stats?.total_count ?? 0
+        if (typeof answered !== 'number' || answered !== shards) {
+          throw new EngineError(
+            `the store size of ${name} came back from ${String(answered)} of its ${shards} primary shards, ` +
+              'and a partial size is not one this library returns',
+          )
+        }
+        const size = primaries?.store?.size_in_bytes
         // A bigint past 2^53 converts to a number that is not a safe integer, and is refused below.
         const bytes = typeof size === 'bigint' ? Number(size) : size
         if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) {
@@ -1039,6 +1061,16 @@ function sameJson(left: unknown, right: unknown): boolean {
 export function writeErrorOf(status: number, body: unknown): string {
   const error = (body as { error?: { type?: string } } | null)?.error
   return error === undefined ? String(status) : `${status} ${error.type ?? ''}`.trim()
+}
+
+/** An index's `number_of_shards`, from its settings as `_settings` answers them. */
+function shardCount(settings: unknown): number {
+  const value = (settings as { settings?: { index?: { number_of_shards?: unknown } } } | null)?.settings?.index
+    ?.number_of_shards
+  if (typeof value !== 'string' || !/^[0-9]+$/.test(value) || Number(value) < 1) {
+    throw new EngineError("an index's number of primary shards could not be read")
+  }
+  return Number(value)
 }
 
 /**

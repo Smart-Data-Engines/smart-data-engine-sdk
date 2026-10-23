@@ -108,6 +108,15 @@ _CA_BYTES: Final = 1024 * 1024
 _TIMEOUT_RANGE: Final = (0.001, 2_147_483.647)
 
 
+def _shard_count(settings: Any) -> int:
+    """An index's ``number_of_shards``, from its settings as ``_settings`` answers them."""
+    index = settings.get("settings", {}).get("index", {}) if isinstance(settings, Mapping) else {}
+    value = index.get("number_of_shards") if isinstance(index, Mapping) else None
+    if not isinstance(value, str) or not value.isdigit() or int(value) < 1:
+        raise EngineError("an index's number of primary shards could not be read")
+    return int(value)
+
+
 class HttpStatus(Exception):
     """The status of an answer Elasticsearch refused, beneath the adapter's error: what the session
     tells a refused measurement (403) from a failed one by, as it reads PostgreSQL's SQLSTATE."""
@@ -1164,12 +1173,16 @@ class ElasticsearchEngine:
     def storage_sizes(self, tables: Sequence[str]) -> dict[str, tuple[int, int]]:
         """Each index's bytes on its primary shards, from ``_stats``, and no secondary index bytes.
 
-        One request for every index named, with ``ignore_unavailable``, so an index that does not
-        exist is absent from the answer rather than a zero: a missing table is not an empty one. An
-        alias is answered under the index behind it, so it is absent too - this measures indexes,
-        never what a name resolves to. The primaries are what a copy moves; replicas are the
-        cluster's own. An index keeps no secondary index beside its store - every field is indexed
-        in it, and a layout here declares none - so the second number is 0.
+        Two requests for every index named, each with ``ignore_unavailable``: how many primary
+        shards each has, from ``_settings``, and their store and count, from ``_stats``. An index
+        that does not exist is absent from the answer rather than a zero: a missing table is not an
+        empty one. An alias is answered under the index behind it, so it is absent too - this
+        measures indexes, never what a name resolves to. A size that came back from fewer primaries
+        than the index has is refused: an unassigned primary counts in neither ``successful`` nor
+        ``failed``, so ``_shards`` alone would let it through, summed smaller than it is. The
+        primaries are what a copy moves; replicas are the cluster's own. An index keeps no
+        secondary index beside its store - every field is indexed in it, and a layout here declares
+        none - so the second number is 0.
 
         It needs the ``monitor`` index privilege, which nothing else here asks of a runtime key.
         Without it the answer is a 403 and the size is unknown, ``refused`` (runtime-roles.md).
@@ -1182,11 +1195,20 @@ class ElasticsearchEngine:
             refusal = index_name_refusal(name)
             if refusal is not None:
                 raise EngineError(f"{name!r} is not an Elasticsearch index name: {refusal}")
-        path = (
-            "/" + ",".join(urllib.parse.quote(name, safe="") for name in names)
-            + "/_stats/store?ignore_unavailable=true&level=indices"
+        joined = ",".join(urllib.parse.quote(name, safe="") for name in names)
+        # How many primary shards each index has, so that a size summed over fewer of them - an
+        # unassigned primary counts in neither ``successful`` nor ``failed`` - is refused, not
+        # reported smaller than it is.
+        status, declared = self._request(
+            "GET", f"/{joined}/_settings/index.number_of_shards?ignore_unavailable=true"
         )
-        status, body = self._request("GET", path)
+        if status != 200 or not isinstance(declared, Mapping):
+            raise EngineError(
+                f"storage sizes could not be read: {self._error(status, declared)}"
+            ) from HttpStatus(status)
+        status, body = self._request(
+            "GET", f"/{joined}/_stats/store,shard_stats?ignore_unavailable=true&level=indices"
+        )
         if status != 200 or not isinstance(body, Mapping):
             raise EngineError(
                 f"storage sizes could not be read: {self._error(status, body)}"
@@ -1197,10 +1219,19 @@ class ElasticsearchEngine:
             raise EngineError("storage sizes came back without their indexes")
         sizes: dict[str, tuple[int, int]] = {}
         for name in names:
-            entry = indices.get(name)
-            if entry is None:
+            settings = declared.get(name)
+            if settings is None:
                 continue
+            shards = _shard_count(settings)
+            entry = indices.get(name)
             primaries = entry.get("primaries") if isinstance(entry, Mapping) else None
+            counted = primaries.get("shard_stats") if isinstance(primaries, Mapping) else None
+            answered = counted.get("total_count") if isinstance(counted, Mapping) else 0
+            if type(answered) is not int or answered != shards:
+                raise EngineError(
+                    f"the store size of {name} came back from {answered} of its {shards} primary "
+                    f"shards, and a partial size is not one this library returns"
+                )
             store = primaries.get("store") if isinstance(primaries, Mapping) else None
             size = store.get("size_in_bytes") if isinstance(store, Mapping) else None
             if type(size) is not int or size < 0:
