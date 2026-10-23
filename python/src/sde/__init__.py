@@ -33,6 +33,7 @@ mode, not a loophole.
 
 from __future__ import annotations
 
+from .books import ENGINE_DEPTH, BookStream, Resync, book_diff
 from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .capabilities import members_of, satisfies
@@ -170,6 +171,7 @@ __all__ = [
     "CUTOVER_RELAYOUT_PROTOCOL",
     "DIALECTS",
     "DIALECT_PRECISION",
+    "ENGINE_DEPTH",
     "FACTS_VERSION",
     "FIXED_SCHEMA",
     "INDEX_CHANGE_PROTOCOL",
@@ -194,6 +196,7 @@ __all__ = [
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
     "BackfillProgress",
+    "BookStream",
     "BulkWritable",
     "BulkWriteRefused",
     "CanonicalError",
@@ -251,6 +254,7 @@ __all__ = [
     "Ref",
     "ResourceBusy",
     "ResourceClosed",
+    "Resync",
     "Router",
     "ScanPage",
     "SdeError",
@@ -271,6 +275,7 @@ __all__ = [
     "WriteFence",
     "__version__",
     "backfill",
+    "book_diff",
     "build_model",
     "can_store",
     "canonical_bytes",

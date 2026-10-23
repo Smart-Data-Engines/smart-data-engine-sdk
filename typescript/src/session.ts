@@ -26,6 +26,8 @@ import { ResourceBusy, ResourceClosed } from './errors.js'
  */
 
 import { batchColumns, bulkWriter, snapshotRows } from './bulk.js'
+import { BookStream } from './books.js'
+import type { BookEngine, BookUpdate, Level, Mode, Resync, Side } from './books.js'
 import { compareCodePoints } from './canonical.js'
 import { BulkWriteRefused, EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
 import type { Group } from './groups.js'
@@ -669,6 +671,124 @@ export class Session {
     })
   }
 
+  /**
+   * A stream of one book of `entity` - one symbol on one exchange - to the orderbook engine, sent
+   * whole or as its changes (`books.ts`).
+   *
+   * The entity's group must be placed on the orderbook engine, which reads an update by price and
+   * replaces a side whole (`MREPLACE`): refused otherwise, and refused for a server that does not
+   * announce `replace_side`, before anything is sent. Each update the stream sends is one write of
+   * the entity, under this session's rules and timed like `saveMany`'s.
+   */
+  async bookStream(
+    entity: string,
+    options: { readonly symbol: string; readonly exchange: string; readonly mode?: Mode; readonly resync?: Resync },
+  ): Promise<BookStream> {
+    return this.usage.operation(async () => {
+      const target = this.entityName(entity)
+      const shape = this.shapeFor(target, 'bulk_write')
+      const [engine] = this.target(shape, false)
+      const books = engine as Partial<BookEngine>
+      if (typeof books.supportsReplaceSide !== 'function') {
+        throw new EngineError(
+          `${entity} is placed on an engine that does not take a book by price: a book stream writes to the ` +
+            'orderbook engine, which applies an update by price and replaces a side whole',
+        )
+      }
+      if (!books.supportsReplaceSide()) {
+        throw new EngineError(
+          'this orderbook server does not replace a side of a book (capability replace_side), which a book ' +
+            'stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the ' +
+            'server; nothing was sent.',
+        )
+      }
+      const { symbol, exchange } = options
+      if (typeof books.checkBook === 'function') books.checkBook.call(engine, symbol, exchange)
+      const write = (whole: boolean) => async (side: Side, levels: readonly Level[], timestampNs: bigint) =>
+        this.bookWrite(target, shape, { symbol, exchange, side, levels, timestampNs }, whole)
+      return new BookStream(
+        { sendWhole: write(true), sendChanges: write(false) },
+        { ...(options.mode === undefined ? {} : { mode: options.mode }), ...(options.resync === undefined ? {} : { resync: options.resync }) },
+      )
+    })
+  }
+
+  /** One update of a book stream: a whole side, or changes by price. */
+  private async bookWrite(target: string, shape: OperationShape, update: BookUpdate, whole: boolean): Promise<void> {
+    return this.usage.operation(async () => {
+      const [engine, materialization] = this.target(shape, false)
+      if (placementOf(this.placement, shape.group).alsoWrite.length > 0) {
+        // Unreachable while a map refuses copies of a group without generations, which every group on
+        // the orderbook engine is. Refused rather than skipped if that ever changes: a copy that misses
+        // the stream's updates is a copy that is silently wrong.
+        throw new EngineError(`${target} has copies being written, and a book stream writes only the source`)
+      }
+      const books = engine as Partial<BookEngine>
+      const write = whole ? books.replaceLevels : books.applyLevels
+      if (typeof write !== 'function') throw new EngineError(`${target} is placed on an engine that does not take a book by price`)
+      const table = tableFor(materialization.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      try {
+        await write.call(engine, table, update)
+        this.usage.check()
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, update.levels.length, failed)
+      }
+    })
+  }
+
+  /**
+   * The book of `entity` for one symbol on one exchange as of `atNs`, composed by the orderbook
+   * engine from what was written - by price, in time order: `{ bid, ask }`, each side best first as
+   * [price, quantity, order count], at most `depth` levels a side.
+   *
+   * The read side of `bookStream`: a stream that sends only changes stores only changes, and this
+   * answers the book they make. Recorded as a range read of the entity's time, which is what it is:
+   * a book is its history up to `atNs`.
+   */
+  async bookAt(
+    entity: string,
+    options: {
+      readonly symbol: string; readonly exchange: string; readonly atNs: bigint | number
+      readonly depth?: number; readonly fresh?: boolean
+    },
+  ): Promise<{ bid: Level[]; ask: Level[] }> {
+    return this.usage.operation(async () => {
+      if (options.fresh !== undefined && typeof options.fresh !== 'boolean') throw new QueryRefused('fresh must be a bool')
+      const target = this.entityName(entity)
+      const field = (name: string): string => Object.keys(this.fieldsIn(entity, { [name]: null }))[0]!
+      const moment = field('timestamp_ns')
+      const equal = [field('symbol'), field('exchange')].sort(compareCodePoints)
+      const shape = this.shapeFor(target, 'range_read', [moment])
+      const [engine, material] = this.target(shape, options.fresh === true)
+      const books = engine as Partial<BookEngine>
+      if (typeof books.bookAt !== 'function') {
+        throw new QueryRefused(`${entity} is placed on an engine that does not compose a book: the orderbook engine does`)
+      }
+      const table = tableFor(material.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false, returned = 0
+      try {
+        const book = await books.bookAt.call(engine, table, {
+          symbol: options.symbol, exchange: options.exchange, atNs: options.atNs,
+          ...(options.depth === undefined ? {} : { depth: options.depth }),
+        })
+        this.usage.check()
+        returned = book.bid.length + book.ask.length
+        return { bid: [...book.bid], ask: [...book.ask] }
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, returned, failed, undefined, { equal, ranged: moment })
+      }
+    })
+  }
+
   async get(entity: string, key: Readonly<Row>, options: { fresh?: boolean } = {}): Promise<Row | null> {
     return this.usage.operation(async () => {
       const target = this.entityName(entity)
@@ -902,6 +1022,7 @@ export class Session {
 
   private observe(
     shape: OperationShape, started: number, rows: number, failed: boolean, plan?: ReadPlan,
+    predicates?: { equal: string[]; ranged: string | null },
   ): void {
     const recorder = this.recorder
     if (recorder === undefined) return
@@ -913,7 +1034,7 @@ export class Session {
       nanoseconds: now() - started,
       rows,
       failed,
-      ...(plan === undefined ? {} : readPredicates(plan)),
+      ...(plan === undefined ? (predicates ?? {}) : readPredicates(plan)),
     })
   }
 

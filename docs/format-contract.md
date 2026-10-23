@@ -1423,6 +1423,41 @@ The same model meant different things on different engines, and moving a group w
 which. `errors/078`-`082` pin the refusals at the `write` stage: a session is open on a valid map, one
 accepted write comes first, and `calls.json` holds that write and nothing of the refused one.
 
+## 8c. A book stream
+
+A Tier 2 library with the orderbook engine offers a **book stream**: one book - one symbol on one
+exchange - written as whole sides or as their changes. The engine applies an update by price (its
+#233): each level sets the quantity of its price, a quantity of 0 removes the price, and a price the
+update does not name stays. `MREPLACE` replaces a side whole, removing every price the update does
+not name. A stream sends a whole side as `MREPLACE` and changes as an ordinary update, and the rules
+below decide which, so that two libraries writing the same book send the same updates. `books/`
+pins them, and §10 says how to run it.
+
+- **A difference** (the `diff` cases of `books/`) between two whole sides is a quantity of 0 for every price the
+  first holds and the second does not, then every price the second holds that the first does not,
+  or holds with another quantity or count. Each part goes best first: bids from the highest price,
+  asks from the lowest. The removals go first because the engine applies an update in its order and
+  a full side has no room for a new price until they are applied. A whole side lists each price
+  once, none with a quantity of 0, or it is refused.
+- **Two modes.** `full` sends every side whole. `incremental` sends the difference against the side
+  it last sent, or changes as the application gives them - an exchange's diff stream - removals
+  first, then the rest, each best first and each price once. A removal of a price the stream does
+  not hold is sent too: the engine may hold it.
+- **An incremental stream sends a side whole** the first time it sends it, after a send that failed,
+  when the side's resync is due, and when the whole side has fewer levels than its changes. A resync
+  is due after `updates` updates of the side since it was last sent whole, or `seconds` of the policy
+  clock since then, whichever comes first; `0` turns a clause off. An update that changes nothing is
+  not sent, and it counts towards the resync.
+- **Depth.** A side holds at most the engine's 1000 prices. A whole side deeper than that is
+  refused, and a side that changes made deeper is sent whole as its best 1000.
+- **Time.** A side's times never go back: an update earlier than the last one accepted for its side
+  is refused, because the engine's history applies updates in time order and its live book in the
+  order they arrive. An update without a time takes the machine's clock, never earlier than the
+  side's last; an explicit resync without a time takes the side's last.
+- **A refused call sends nothing and changes nothing.**
+
+Neither number in §11 moves for this family: no IR and no map contains what a stream sends.
+
 ## 9. Capability tiers
 
 An implementation declares which tier it reaches, and "supported" has to mean the same thing across
@@ -1432,7 +1467,7 @@ languages or the word is worthless.
 |---|---|---|
 | 0 | model → IR → version; shape enumeration and ids; map parsing, signature, refusals; routing; error semantics | `model/`, `routing/`, `errors/` |
 | 1 | telemetry: measurement, window aggregation, local buffering | `telemetry/` |
-| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write) | `schema/`, `migration/`, `query/` |
+| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write); with the orderbook engine, book streams (§8c) | `schema/`, `migration/`, `query/`; `books/` |
 | 3 | ergonomics: framework integrations, async variants, pooling | — |
 
 Tier 0 is not optional. An implementation that does not pass the Tier 0 vectors is not an SDE
@@ -1447,7 +1482,7 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are ten kinds:
+There are eleven kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -1461,6 +1496,7 @@ There are ten kinds:
 | `schema/` | the DDL a layout renders, per dialect, and the compatibility view beside it |
 | `telemetry/` | a window document, compared parsed rather than as bytes — see below |
 | `migration/` | taking part in a migration: the record a gate reads **and** the calls that produced it |
+| `books/` | a side's difference, and what a book stream sends on a clock - whole sides and changes, with their times - or refuses |
 
 This table said "five" and listed five for as long as there were nine, with the other four argued
 in the prose below it. Nothing counted them, which is the failure mode of a number about our own

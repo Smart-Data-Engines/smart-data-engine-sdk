@@ -521,3 +521,13 @@ schema/migration vectors. It pins normalized filters, typed positions, bounds an
 summary results. Native tests must separately execute the generated SQL against each supported
 engine; a normalized plan alone does not prove ordering, null handling or arithmetic in that engine.
 The query family does not change the model/map bytes or migration checkpoint ordering.
+
+**13. Book streams (Tier 2, with the orderbook engine). Vectors: `books/`.**
+
+Cases of two kinds, and no connection anywhere. A `diff` case is a function of two sides. A `stream`
+case drives a stream with clocks you inject - the policy clock in seconds and, for a step without a
+time, the machine's - into a sink that records what it is handed; `fail_next` makes the sink refuse
+its next send, after which the stream must send that side whole. Compare the sends exactly, times
+included, and refusals by substring; a refused step must send nothing. The rules are §8c of the
+contract. Then run your stream against a live engine and read the book back: the vectors pin what
+you send, and only the engine's own composition shows that it is the book you meant.

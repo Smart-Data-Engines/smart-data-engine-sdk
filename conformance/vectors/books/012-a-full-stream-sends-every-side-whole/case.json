@@ -1,0 +1,64 @@
+{
+ "kind": "stream",
+ "name": "a full stream sends every side whole",
+ "mode": "full",
+ "resync": {
+  "updates": 1000,
+  "seconds": 60
+ },
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [101, 2, 1],
+    [99, 3, 1]
+   ],
+   "ts": 20
+  },
+  {
+   "at": 2,
+   "op": "update",
+   "side": "ask",
+   "levels": [],
+   "ts": 30
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 20,
+   "levels": [
+    [101, 2, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "ask",
+   "ts": 30,
+   "levels": []
+  }
+ ]
+}

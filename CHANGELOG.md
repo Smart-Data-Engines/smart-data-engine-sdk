@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: book streams and books by price, Python and TypeScript** ([`docs/orderbook.md`](docs/orderbook.md#books-by-price)).
+`Session.book_stream` sends one book of the orderbook engine either whole, each side as `MREPLACE`,
+or as its changes, with a whole side at the first send, after a failed one and at every resync.
+`Session.book_at` reads the book the engine composes from them at an instant.
+- Both need an orderbook engine that reads updates by price and announces `replace_side` (its #233),
+  and refuse one that does not before sending or reading anything. The pinned engine is one.
+- `conformance/vectors/books/` is the suite's eleventh family, and
+  [`format-contract.md` §8c](docs/format-contract.md#8c-a-book-stream) states its rules. Neither the
+  IR's number nor the map's moves: no IR and no map contains what a stream sends.
+- `Session.save_many` writes updates by price on such an engine too: an update of a book's top
+  levels leaves in it the prices that dropped out of them, unless it removes them with a quantity of 0.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
