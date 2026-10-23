@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**The orderbook engine's pin moves to `31b4390`**, which has its #244 and #245. In local mode:
+- `flush()` keeps the engine open, where it closed it and opened it again.
+- A flush after a write syncs before its checkpoint: 2.48-2.74 ms median after one row, on an
+  i3-7100U.
+- A process that ends without a flush or a close loses none of its writes, because the engine
+  replays its WAL when it opens.
+
 **New: Elasticsearch in the Python library** ([`docs/format-contract.md` §7m](docs/format-contract.md#7m-elasticsearch-an-index-per-entity-a-document-per-row)).
 `sde.engines.elasticsearch.ElasticsearchEngine` holds a group in Elasticsearch 9: an index per
 entity with a strict mapping, a document per row under its key's digest, writes, reads by key,

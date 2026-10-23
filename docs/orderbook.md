@@ -244,7 +244,12 @@ the last flush. **Another connection sees a write at the server's next flush tic
 two processes, a read can miss the last tick's writes. Measured on 2 October 2026: a reader in another
 process found none of a book written a moment earlier, until the writer flushed. Call `flush()` on
 the writer where a reader elsewhere must see the data at once; it is not done after every write,
-because a flush in local mode costs 3.4 ms (measured).
+because a flush after a write waits for the device. In local mode the engine syncs its segments
+before the checkpoint that claims them (its #245): 2.48-2.74 ms median after one row, 4.92-5.06 ms
+at the 90th percentile, measured at the pinned engine on an i3-7100U with ext4 over LUKS on NVMe.
+
+In local mode the engine replays its WAL when it opens (its #245), so a process that ends without a
+flush or a close loses none of its writes. A power cut can lose those since the last flush or close.
 
 ## Running the slices
 

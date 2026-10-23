@@ -67,9 +67,9 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # watching it needs to see it move. The marker itself is a row count and never a key value:
         # a log line is the last place a client's own data should turn up.
         "sde.migration.backfill_progress",
-        # The orderbook engine only. A write there is invisible to a query until flush(), and
-        # flush() in local mode tears the engine down and reopens it - 3.4 ms measured. Reads flush
-        # lazily, so this line is where the cost shows up and how many rows it bought.
+        # The orderbook engine only. A write there is invisible to a query until flush(), and a
+        # flush after a write waits for the device - 2.48-2.74 ms median measured in local mode.
+        # Reads flush lazily, so this line is where the cost shows up and how many rows it bought.
         "sde.orderbook.flushed",
         # A ClickHouse server whose analyzer does not answer EXPLAIN QUERY TREE, so the table
         # names behind a plan come from EXPLAIN ESTIMATE instead. Not a failure - the plan is

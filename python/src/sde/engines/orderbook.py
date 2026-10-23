@@ -45,11 +45,12 @@ rows (its query language refuses a time filter on an aggregate), so ``Session.co
 ``Session.summarize`` are refused here by name rather than computed from a full scan.
 
 One more property that is a cost rather than a refusal. A write is invisible to a query until
-``flush()``, and ``flush()`` in local mode tears the engine down and reopens it - **3.4 ms
-measured** on an i3-7100U with one row. So reads flush lazily, only when there is something
-unflushed, and the cost lands on the first read after a write rather than on every write. The
-alternative - not flushing and returning nothing for a row that was just written - is a silent wrong
-answer, which is never the cheaper option.
+``flush()``, and a flush after a write waits for the device: in local mode the engine syncs its
+segments before the checkpoint that claims them (the engine's #245) - **2.48-2.74 ms median
+measured** on an i3-7100U with one row, at the pinned engine. So reads flush lazily, only when there
+is something unflushed, and the cost lands on the first read after a write rather than on every
+write. The alternative - not flushing and returning nothing for a row that was just written - is a
+silent wrong answer, which is never the cheaper option.
 """
 
 from __future__ import annotations
