@@ -63,8 +63,6 @@ class NativeOperations(Protocol):
 
     def retire(self, tables: Sequence[TableIdentity]) -> None: ...
 
-    def retired(self, tables: Sequence[TableIdentity]) -> None: ...
-
     def truncate(self, tables: Sequence[TableIdentity]) -> None: ...
 
 
@@ -552,9 +550,6 @@ class NativeOperator:
     def retire(self, tables: Sequence[TableIdentity]) -> None:
         """The runtime's grants on the side a decision retired, revoked and seen revoked."""
         self.access(tables, enabled=False)
-
-    def retired(self, tables: Sequence[TableIdentity]) -> None:
-        """Nothing further: :meth:`retire` saw every runtime login refused."""
 
     def truncate(self, tables: Sequence[TableIdentity]) -> None:
         for table in tables:

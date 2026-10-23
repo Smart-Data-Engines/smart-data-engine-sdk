@@ -15,9 +15,12 @@ that is another double than the float32 itself, `0.10000000149011612`, which the
 adapter and both Elasticsearch adapters return. So one stored value read differently by engine, and
 a group with a float32 column never verified between two of them. The first copy from PostgreSQL to
 Elasticsearch found it.
-- Python's PostgreSQL adapter and TypeScript's PostgreSQL and ClickHouse adapters now return the
-  float32 exactly. Stored values are unchanged; a read that returned `0.1` returns
-  `0.10000000149011612`.
+- Python's PostgreSQL adapter and TypeScript's PostgreSQL and ClickHouse adapters - reads by key
+  and TypeScript's ClickHouse scans alike - now return the float32 exactly. Stored values are
+  unchanged; a read that returned `0.1` returns `0.10000000149011612`.
+- Exactly, rather than the shortest decimal most of them gave, because every library can widen alike
+  and only the engines' own formatter prints alike: PostgreSQL and ClickHouse print 2^87 as
+  `1.5474251e+26`, where the first precision that round-trips gives `1.54742505e+26`.
 - The agreement tests write `0.1` to a float32 column, not `0.5`, which every engine read alike.
 
 **New: the local operator moves a group onto Elasticsearch and off it** - breaking for maps

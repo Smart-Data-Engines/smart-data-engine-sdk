@@ -279,6 +279,12 @@ def test_a_group_moves_onto_elasticsearch_and_the_copy_is_repaired_from_the_froz
         move.session().save("Event", ROWS[3])  # the prepared map: fanned out to Elasticsearch
         assert move.es.operator.get(move.copy, {"id": 3}) == ROWS[3]
         assert move.es.operator.get(move.copy, {"id": 2}) is None
+        # A document only the copy holds - a fan-out whose source write never committed - is
+        # removed by the repair, which empties the copy before it copies the frozen source.
+        identity, stray = move.es.operator._index(move.copy).document(
+            {"id": 9, "value": 99, "note": "stray", sde.WRITE_EPOCH_COLUMN: 1})
+        assert move.es.operator._request(
+            "PUT", f"/{move.copy}/_doc/{identity}?refresh=true", stray)[0] == 201
 
         final = move.operator.execute(
             cutover(move.stage, move.signed, move.model, move.public)).as_record()
@@ -287,6 +293,7 @@ def test_a_group_moves_onto_elasticsearch_and_the_copy_is_repaired_from_the_froz
         moved = move.session()
         for key, row in ROWS.items():
             assert moved.get("Event", {"id": key}) == row
+        assert moved.get("Event", {"id": 9}) is None
         moved.save("Event", {"id": 4, "value": 44, "note": "four"})
         assert move.es.operator.get(move.copy, {"id": 4}) == {"id": 4, "value": 44,
                                                              "note": "four"}
@@ -466,11 +473,14 @@ def test_a_runtime_key_that_does_not_cover_the_fresh_name_is_refused_before_anyt
 
 
 def test_a_relayout_on_elasticsearch_is_refused_by_name(tmp_path: Path) -> None:
-    with (
-        moving("elasticsearch", tmp_path, target="elasticsearch") as move,
-        pytest.raises(sde.MigrationRefused, match="no physical design to relayout"),
-    ):
-        move.operator.stage(move.stage)
+    with moving("elasticsearch", tmp_path, target="elasticsearch") as move:
+        with pytest.raises(sde.MigrationRefused, match="no physical design to relayout"):
+            move.operator.stage(move.stage)
+        # Its cutover too, whichever map is in force: refused before anything else is read.
+        relayout = cutover(move.stage, move.signed, move.model, move.public)
+        assert relayout.as_record()["protocol"] == 2
+        with pytest.raises(sde.MigrationRefused, match="no physical design to relayout"):
+            move.operator.execute(relayout)
 
 
 def test_an_index_with_a_default_pipeline_is_not_moved(tmp_path: Path) -> None:
@@ -561,4 +571,44 @@ def test_the_operator_cli_moves_a_group_onto_elasticsearch(tmp_path: Path) -> No
             assert secret not in stored
         assert "api_key=" not in stored
         assert move.session().get("Event", {"id": 1}) == ROWS[1]
+
+
+def test_an_alias_a_lifecycle_or_a_foreign_block_is_not_moved(tmp_path: Path) -> None:
+    """Something besides this protocol acts on such an index: an alias names another index, a
+    lifecycle policy can roll it over or delete it, and a block this protocol never sets is
+    somebody else's to release."""
+    with moving("elasticsearch", tmp_path) as move:
+        es = move.es.operator
+        native = move.operator.native["elasticsearch"]
+        index = move.source_table
+        assert native.identity(index).name == index
+        alias = index + "_alias"
+        policy = "sde_test_policy_" + uuid4().hex[:8]
+        assert es._request("POST", "/_aliases", {"actions": [
+            {"add": {"index": index, "alias": alias}}]})[0] == 200
+        try:
+            with pytest.raises(sde.MigrationRefused, match="alias or a pattern"):
+                native.identity(alias)
+        finally:
+            es._request("POST", "/_aliases", {"actions": [
+                {"remove": {"index": index, "alias": alias}}]})
+        assert es._request("PUT", f"/_ilm/policy/{policy}", {"policy": {"phases": {
+            "hot": {"actions": {}}}}})[0] == 200
+        try:
+            assert es._request("PUT", f"/{index}/_settings",
+                               {"index.lifecycle.name": policy})[0] == 200
+            with pytest.raises(sde.MigrationRefused, match="lifecycle policy"):
+                native.identity(index)
+        finally:
+            es._request("POST", f"/{index}/_ilm/remove")
+            es._request("DELETE", f"/_ilm/policy/{policy}")
+        assert native.identity(index).name == index
+        assert es._request("PUT", f"/{index}/_settings",
+                           {"index.blocks.read_only_allow_delete": True})[0] == 200
+        try:
+            with pytest.raises(sde.MigrationRefused, match="read_only_allow_delete block"):
+                move.operator.stage(move.stage)
+        finally:
+            es._request("PUT", f"/{index}/_settings",
+                        {"index.blocks.read_only_allow_delete": None})
 

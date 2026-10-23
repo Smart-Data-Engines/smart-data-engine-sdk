@@ -1011,12 +1011,8 @@ class ElasticsearchEngine:
 
     @staticmethod
     def _beyond(column: str, value: Any, *, above: bool) -> dict[str, Any]:
-        """``column`` strictly above ``value`` (or below), the value as stored."""
-        if isinstance(value, bool):
-            # Two values and no order to range over: above true and below false hold nothing.
-            if above == value:
-                return {"bool": {"must_not": [{"match_all": {}}]}}
-            return {"term": {column: not value}}
+        """``column`` strictly above ``value`` (or below), the value as stored: a boolean too,
+        which Elasticsearch orders false before true."""
         return {"range": {column: {"gt" if above else "lt": value}}}
 
     def _keyset(

@@ -369,4 +369,4 @@ reports.
 
 A group on an engine that cannot fence writes (placement map contract 6):
 [generation-bearing maps](docs/generation-maps.md) - a group on the orderbook engine next to groups on
-PostgreSQL and ClickHouse, which still move, while it stays where it was placed.
+PostgreSQL, ClickHouse and Elasticsearch, which still move, while it stays where it was placed.

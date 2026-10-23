@@ -214,6 +214,13 @@ class LocalCutover:
     def _snapshot(self, plan: CutoverPlan, state: dict[str, Any]) -> dict[str, Any]:
         import hashlib
 
+        relayout = plan.as_record()["protocol"] == 2
+        source = self.engines.get(plan.before.groups[plan.group].source.engine)
+        if relayout and getattr(source, "dialect", None) == "elasticsearch":
+            raise MigrationRefused(
+                "Elasticsearch has no physical design to relayout: a layout there names its "
+                "fields and nothing else, so a relayout (cutover protocol 2) has no object"
+            )
         plan.check_current(self.active_map())
         # Engines whose groups carry no write generation (contract 6) need no binding here.
         fenced = fenced_groups(plan.before)
@@ -221,13 +228,6 @@ class LocalCutover:
         if not needed <= set(self.engines):
             raise MigrationRefused("cutover is missing an operator binding")
         spot = plan.before.groups[plan.group]
-        if plan.as_record()["protocol"] == 2 and self.engines[spot.source.engine].dialect == (
-            "elasticsearch"
-        ):
-            raise MigrationRefused(
-                "Elasticsearch has no physical design to relayout: a layout there names its "
-                "fields and nothing else, so a relayout (cutover protocol 2) has no object"
-            )
         members = next(group for group in colocation_groups(self.model) if group.name == plan.group)
         for material in spot.all():
             if set(material.layout.tables) != set(members.members) or set(
@@ -358,7 +358,7 @@ class LocalCutover:
                 self._call(native.access, tables, enabled=enabled)
 
     def _native(self, execution: dict[str, Any], role: str, action: str) -> None:
-        """``pause``, ``retire`` or ``retired`` on each binding's tables of ``role``."""
+        """``pause`` or ``retire`` on each binding's tables of ``role``."""
         from .engines._operator import TableIdentity
 
         for name, native in self.native.items():
@@ -509,9 +509,6 @@ class LocalCutover:
             else [execution["holds"]["final"], execution["holds"]["source"]]
         )
         self._step(state, "release_runtime", lambda: self._release(execution, active_role, holds))
-        # The retired side stays closed for good: on Elasticsearch its read block and the holds
-        # that keep its write block, where SQL revoked the runtime's grants.
-        self._native(execution, "source" if outcome == "success" else "target", "retired")
         for fence in self._fences(execution, active_role):
             observed = fence.state()
             expected_epoch = (

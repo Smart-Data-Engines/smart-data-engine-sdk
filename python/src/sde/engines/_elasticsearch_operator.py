@@ -306,8 +306,8 @@ class ElasticsearchOperator:
                     )
 
     def pause(self, tables: Sequence[TableIdentity]) -> None:
-        """Nothing to revoke: the holds refuse writes, and frozen data stays readable."""
-        self._same(tables, "the pause")
+        """Nothing to revoke: the holds refuse writes, and frozen data stays readable. The freeze
+        on each side of this step reads each index through its fence, by its uuid."""
 
     def retire(self, tables: Sequence[TableIdentity]) -> None:
         """Block ``tables`` for reads, for good, and see every runtime key refused.
@@ -333,15 +333,6 @@ class ElasticsearchOperator:
                     raise EngineError(
                         "runtime access probe did not establish the expected denial"
                     )
-
-    def retired(self, tables: Sequence[TableIdentity]) -> None:
-        """The retired side, sealed: blocked for reads, and for writes by the holds it keeps."""
-        self._same(tables, "the receipt")
-        for table in tables:
-            if not (self._blocked(table.name, "read") and self._blocked(table.name, "write")):
-                raise MigrationRefused(
-                    f"the retired index {table.name} is not blocked for both reads and writes"
-                )
 
     # --- repair ------------------------------------------------------------------------------
 
