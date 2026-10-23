@@ -8,6 +8,16 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: an operation a newer map overtook says where and which versions.** A staging, a cutover
+or an index build that finds a newer map on one of its engines refused with "a newer map was
+adopted" and nothing else, so an operator had to read this library to find which engine held which
+map. The product loop of a move onto Elasticsearch met it on a test cluster carrying another
+stream of maps. The refusal now names the engine binding, the version it records and the version
+the operation was prepared from - the control plane's numbers, never the client's data - and on
+Elasticsearch adds that a cluster keeps one stream of maps whatever project wrote them (format
+contract 7m). After a durable decision the same refusal is the cause beneath the error that asks
+for a resume.
+
 **New: a group's size on Elasticsearch.** `Session.measure_storage()` / `measureStorage()` read
 nothing there, so a window of a group on Elasticsearch never knew its `total_bytes`, its
 `index_to_table_ratio` or its growth, and a decision to move it off had no evidence of what the copy

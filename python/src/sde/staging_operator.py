@@ -13,6 +13,7 @@ from .local_cutover import CutoverRecoveryRequired
 from .physical import refuse_findings
 from .placement import WATERMARK_TABLE
 from .staging import STAGING_RELAYOUT_PROTOCOL, StagingPlan, StagingReceipt, load_staging_plan
+from .watermark import newer_map
 
 if TYPE_CHECKING:
     from .local_cutover import LocalCutover
@@ -68,7 +69,8 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
     for name, native in operator.native.items():
         value = operator.engines[name].map_watermark()
         if value is not None and value > plan.current.map_version:
-            raise MigrationRefused("a newer map was adopted before local staging")
+            raise newer_map("a newer map was adopted before local staging", name,
+                            operator.engines[name].dialect, value, plan.current.map_version)
         native.qualify([WATERMARK_TABLE], sorted(allowed[name]))
         bindings[name] = {
             "endpoint": list(native.endpoint()),
@@ -212,10 +214,11 @@ def _finish(
     operator._after_step("stage_decision")
 
     def watermarks() -> None:
-        for engine in operator.engines.values():
+        for name, engine in operator.engines.items():
             observed = engine.map_watermark()
             if observed is not None and observed > plan.prepared.map_version:
-                raise MigrationRefused("a newer map appeared while finishing staging")
+                raise newer_map("a newer map appeared while finishing staging", name,
+                                engine.dialect, observed, plan.prepared.map_version)
             engine.record_map_version(
                 plan.prepared.map_version, model_version=operator.model.version
             )

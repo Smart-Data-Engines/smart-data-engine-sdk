@@ -645,3 +645,20 @@ def test_an_alias_a_lifecycle_or_a_foreign_block_is_not_moved(tmp_path: Path) ->
             es._request("PUT", f"/{index}/_settings",
                         {"index.blocks.read_only_allow_delete": None})
 
+
+
+def test_a_newer_map_on_an_elasticsearch_cluster_is_named_as_the_cluster_s(tmp_path: Path) -> None:
+    """The watermark is one index for the whole cluster, so the newer map can be another project's
+    or a test's on the same cluster, and the refusal says so. The version stays within the clock's
+    next milliseconds, so a later test's maps, which start from the clock, are still newer."""
+    with moving("postgres", tmp_path) as move:
+        newer = move.stage.prepared.map_version + 3
+        move.es.operator.record_map_version(newer, model_version=move.model.version)
+        with pytest.raises(sde.MigrationRefused) as refused:
+            move.operator.stage(move.stage)
+        assert str(refused.value) == (
+            f"a newer map was adopted before local staging: elasticsearch records map version "
+            f"{newer}, and the map this operation was prepared from is version "
+            f"{move.stage.current.map_version}. An Elasticsearch cluster keeps one stream of maps, "
+            f"whatever project wrote them (format contract 7m)."
+        )
