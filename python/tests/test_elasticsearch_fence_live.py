@@ -125,6 +125,28 @@ def test_a_barrier_waits_for_a_bulk_in_flight_and_admits_nothing_until_released(
             fence.freeze(hold)
 
 
+def test_a_barrier_makes_every_write_before_it_visible_to_a_search() -> None:
+    """The block waits for the writes on the shards, but a write may be indexed and not yet
+    searchable when it returns, and a copy and a comparison read by searching. With the index's own
+    refresh off, only the barrier's refresh can show this document."""
+    with fresh_index() as (engine, index):
+        assert _raw(engine, "PUT", f"/{index}/_settings", {"index.refresh_interval": "-1"})[0] \
+            == 200
+        fence = engine.write_fence(index, project_id=PROJECT)
+        fence.prepare(3)
+        assert _put_unrefreshed(engine, index, "a", {"id": 1, "body": "x", EPOCH_COLUMN: 3}) \
+            in (200, 201)
+        assert engine.count(index) == 0
+        fence.freeze(uuid4().hex)
+        assert engine.count(index) == 1
+
+
+def _put_unrefreshed(engine: ElasticsearchEngine, index: str, doc_id: str,
+                     document: dict[str, Any]) -> int:
+    status, _ = _raw(engine, "PUT", f"/{index}/_doc/{doc_id}", document)
+    return status
+
+
 def test_a_block_that_outlived_its_hold_reads_as_an_interrupted_setup_and_resumes() -> None:
     with fresh_index() as (engine, index):
         fence = engine.write_fence(index, project_id=PROJECT)

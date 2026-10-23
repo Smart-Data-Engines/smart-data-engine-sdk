@@ -343,10 +343,11 @@ class ElasticsearchFences:
       ``index.final_pipeline``, which no request can bypass. The pipeline's processor enforces
       them when a document is accepted.
     - ``drain`` is ``PUT /<index>/_block/write``, which waits for the operations already running on
-      the index's shards and refuses the rest, measured on 9.5.5. The block stays while any hold is
-      recorded and is lifted with the last one: the pipeline checks a write when it arrives, the
-      block when it reaches the shard, and a write that passed an older pipeline on its way is
-      refused at the shard while the barrier holds.
+      the index's shards and refuses the rest, measured on 9.5.5, and then a refresh, which makes
+      what it waited for visible to the searches a copy and a comparison read by. The block stays
+      while any hold is recorded and is lifted with the last one: the pipeline checks a write when
+      it arrives, the block when it reaches the shard, and a write that passed an older pipeline on
+      its way is refused at the shard while the barrier holds.
     - An index write-blocked with a fence of ours and no hold recorded is an interrupted change
       (the block outlived its hold, or a setup stopped half-way). It reads as an interrupted setup,
       which ``resume_prepare`` completes. One blocked without a fence of ours is somebody else's
@@ -536,6 +537,16 @@ class ElasticsearchFences:
             raise EngineError(
                 f"the write barrier on {table} was not confirmed by every shard ({status}); the "
                 "index may be closed to writes - inspect or resume"
+            )
+        # Every write the block waited for has finished on its shards, but one that waits for a
+        # refresh may not be visible yet: a copy and a comparison read by searching, and a row
+        # they cannot see is missing from both at once. So the barrier makes them visible.
+        refreshed, body = self._call("POST", f"/{table}/_refresh")
+        shards = body.get("_shards") if isinstance(body, Mapping) else None
+        if refreshed != 200 or not isinstance(shards, Mapping) or shards.get("failed") != 0:
+            raise EngineError(
+                f"the writes before the barrier on {table} could not be made visible "
+                f"({refreshed}); inspect or resume"
             )
         _held(self.metadata(table), project_id, hold)
 
