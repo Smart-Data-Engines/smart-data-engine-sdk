@@ -313,7 +313,9 @@ class ElasticsearchOperator:
         """Block ``tables`` for reads, for good, and see every runtime key refused.
 
         The holds the retired side keeps refuse its writes, so with this block nothing reads or
-        writes it again - no runtime key, and no principal the operator does not know.
+        writes it again - no runtime key, and no principal the operator does not know. The effect
+        is seen from each key's side: an acknowledgement is the engine's word, a refused read is
+        the block.
         """
         self._same(tables, "retirement")
         for table in tables:
@@ -322,8 +324,6 @@ class ElasticsearchOperator:
             if status != 200 or not isinstance(body, Mapping) or body.get("acknowledged") \
                     is not True:
                 raise EngineError(f"the read block on {table.name} was not confirmed ({status})")
-            if not self._blocked(table.name, "read"):
-                raise MigrationRefused(f"the read block on {table.name} did not take")
         for probe in self.runtime:
             for table in tables:
                 status, body = self._count(probe, table.name)

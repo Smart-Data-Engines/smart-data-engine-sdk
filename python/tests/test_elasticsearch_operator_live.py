@@ -336,6 +336,32 @@ def test_a_group_moves_off_elasticsearch_and_the_index_it_left_is_closed_to_ever
             move.old.save("Event", {"id": 5, "value": 55, "note": "five"})
 
 
+def test_a_read_block_the_engine_acknowledged_and_did_not_apply_is_noticed(tmp_path: Path) -> None:
+    """The retirement is seen from each runtime key's side. An engine that acknowledges a block it
+    did not apply leaves the decision durable and the receipt unwritten; a resume blocks it."""
+    with moving("elasticsearch", tmp_path) as move:
+        move.operator.stage(move.stage)
+        es = move.es.operator
+        actual = es._request
+
+        def acknowledged(method: str, path: str, body: Any = None, **options: Any) -> Any:
+            if method == "PUT" and path.endswith("/_block/read"):
+                return 200, {"acknowledged": True, "shards_acknowledged": True}
+            return actual(method, path, body, **options)
+
+        es._request = acknowledged  # type: ignore[method-assign]
+        try:
+            with pytest.raises(sde.CutoverRecoveryRequired):
+                move.operator.execute(cutover(move.stage, move.signed, move.model, move.public))
+        finally:
+            es._request = actual  # type: ignore[method-assign]
+        assert move.operator.status()["decision"] == "success"
+        assert _blocks(move.es, move.source_table) == {"write": "true"}
+        receipt = move.fresh_operator().resume().as_record()
+        assert (receipt["outcome"], receipt["recovered"]) == ("success", True)
+        assert _blocks(move.es, move.source_table) == {"read": "true", "write": "true"}
+
+
 @pytest.mark.parametrize("checkpoint", ["repair:done", "verify_frozen:done"])
 def test_a_crash_before_the_decision_aborts_and_retires_the_elasticsearch_copy(
     checkpoint: str, tmp_path: Path,
