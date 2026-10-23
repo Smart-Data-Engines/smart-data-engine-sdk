@@ -305,6 +305,11 @@ export class OrderbookEngine {
     'and its query language refuses a time filter on an aggregate. Refused rather than computed from a ' +
     'full scan, which is what a count here would have to be.'
 
+  /** Why `Session.search` is refused for a group on this engine (`searchEngine` in `search.ts`). */
+  readonly searchRefusal =
+    'this engine searches nothing over its history: its text is a symbol, an exchange and a side, ' +
+    'and a read of its history needs the symbol and the exchange already'
+
   /** Why `Session.summarize` is refused for a group on this engine. */
   readonly summaryRefusal =
     'this engine summarizes nothing over its history: its aggregates read the live book, not the stored ' +

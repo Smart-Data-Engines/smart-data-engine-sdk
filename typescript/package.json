@@ -38,6 +38,10 @@
       "types": "./dist/engines/clickhouse.d.ts",
       "import": "./dist/engines/clickhouse.js"
     },
+    "./engines/elasticsearch": {
+      "types": "./dist/engines/elasticsearch.d.ts",
+      "import": "./dist/engines/elasticsearch.js"
+    },
     "./engines/orderbook": {
       "types": "./dist/engines/orderbook.d.ts",
       "import": "./dist/engines/orderbook.js"

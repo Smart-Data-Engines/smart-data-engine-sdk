@@ -150,6 +150,7 @@ export {
   MAX_EXAMINED,
   MAX_SEARCH_LIMIT,
   queryTokens,
+  searchEngine,
   SearchRefused,
   textIndex,
   tokens,
