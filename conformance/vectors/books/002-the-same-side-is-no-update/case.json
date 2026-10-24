@@ -1,0 +1,15 @@
+{
+ "kind": "diff",
+ "name": "the same side is no update",
+ "side": "ask",
+ "before": [
+  [200, 5, 1],
+  [201, 6, 2]
+ ],
+ "after": [
+  [201, 6, 2],
+  [200, 5, 1]
+ ],
+ "diff": [],
+ "why": "an update that changes nothing is not sent, whatever order the levels came in"
+}

@@ -1,0 +1,1 @@
+A float field is indexed as a float32 and returned as written, so the library writes the float32: the value a filter compares is the value a read returns.

@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic_ns
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .canonical import canonical_bytes
 from .cutover import CutoverPlan, load_cutover_plan
@@ -32,10 +32,11 @@ from .model import LogicalModel
 from .physical import refuse_findings
 from .placement import WATERMARK_TABLE, PlacementMap, load_map
 from .staging import StagingPlan, StagingReceipt
+from .watermark import newer_map
 
 if TYPE_CHECKING:
     from ._cutover_project import ProjectState
-    from .engines._operator import NativeOperator, TableIdentity
+    from .engines._operator import NativeOperations, NativeOperator, TableIdentity
 
 
 class CutoverRecoveryRequired(EngineError):
@@ -128,7 +129,7 @@ class LocalCutover:
         if os.name != "posix":
             raise MigrationRefused("local cutover requires a local POSIX filesystem")
         from ._cutover_project import ProjectState
-        from .engines._operator import NativeOperator
+        from .engines._operator import native_operator
 
         if chunk_rows < 1 or set(runtime) != set(operators):
             raise MigrationRefused(
@@ -141,8 +142,8 @@ class LocalCutover:
             else {name: bytes(value) for name, value in public_key.items()}
         )
         self.engines = dict(operators)
-        self.native: dict[str, NativeOperator] = {
-            name: NativeOperator(engine, runtime[name]) for name, engine in self.engines.items()
+        self.native: dict[str, NativeOperations] = {
+            name: native_operator(engine, runtime[name]) for name, engine in self.engines.items()
         }
         self.store: ProjectState = ProjectState(Path(directory), project_id, model.version)
         self.chunk_rows = chunk_rows
@@ -214,6 +215,13 @@ class LocalCutover:
     def _snapshot(self, plan: CutoverPlan, state: dict[str, Any]) -> dict[str, Any]:
         import hashlib
 
+        relayout = plan.as_record()["protocol"] == 2
+        source = self.engines.get(plan.before.groups[plan.group].source.engine)
+        if relayout and getattr(source, "dialect", None) == "elasticsearch":
+            raise MigrationRefused(
+                "Elasticsearch has no physical design to relayout: a layout there names its "
+                "fields and nothing else, so a relayout (cutover protocol 2) has no object"
+            )
         plan.check_current(self.active_map())
         # Engines whose groups carry no write generation (contract 6) need no binding here.
         fenced = fenced_groups(plan.before)
@@ -289,7 +297,8 @@ class LocalCutover:
             }
             watermark = self.engines[name].map_watermark()
             if watermark is not None and watermark > plan.before.map_version:
-                raise MigrationRefused("a newer map was adopted before this local cutover")
+                raise newer_map("a newer map was adopted before this local cutover", name,
+                                self.engines[name].dialect, watermark, plan.before.map_version)
         tables = []
         for material in spot.all():
             for entity, table in sorted(material.layout.tables.items()):
@@ -349,6 +358,19 @@ class LocalCutover:
             ]
             if tables:
                 self._call(native.access, tables, enabled=enabled)
+
+    def _native(self, execution: dict[str, Any], role: str, action: str) -> None:
+        """``pause`` or ``retire`` on each binding's tables of ``role``."""
+        from .engines._operator import TableIdentity
+
+        for name, native in self.native.items():
+            tables = [
+                TableIdentity(**row["identity"])
+                for row in self._tables(execution, role)
+                if row["engine"] == name
+            ]
+            if tables:
+                self._call(getattr(native, action), tables)
 
     def _freeze(self, execution: dict[str, Any], role: str, hold: str) -> None:
         for fence in self._fences(execution, role):
@@ -425,7 +447,7 @@ class LocalCutover:
         self._enforce_budget = False
         if outcome == "success":
             self._step(
-                state, "confirm_source_denied", lambda: self._access(execution, "source", False)
+                state, "confirm_source_denied", lambda: self._native(execution, "source", "retire")
             )
             self._step(
                 state,
@@ -446,7 +468,7 @@ class LocalCutover:
                 hold=execution["holds"]["source"],
             )
             self._step(
-                state, "confirm_target_denied", lambda: self._access(execution, "target", False)
+                state, "confirm_target_denied", lambda: self._native(execution, "target", "retire")
             )
             self._step(
                 state,
@@ -467,10 +489,11 @@ class LocalCutover:
             candidate, active_role = plan.abort, "source"
 
         def watermark() -> None:
-            for engine in self.engines.values():
+            for name, engine in self.engines.items():
                 value = engine.map_watermark()
                 if value is not None and value > candidate.map_version:
-                    raise MigrationRefused("a newer map appeared while completing cutover")
+                    raise newer_map("a newer map appeared while completing cutover", name,
+                                    engine.dialect, value, candidate.map_version)
                 engine.record_map_version(candidate.map_version, model_version=self.model.version)
 
         self._step(state, "watermarks", watermark)
@@ -579,7 +602,7 @@ class LocalCutover:
             )
             self._alarm.arm(plan.pause_budget_ms)
             try:
-                self._step(state, "deny_target", lambda: self._access(execution, "target", False))
+                self._step(state, "deny_target", lambda: self._native(execution, "target", "pause"))
                 self._step(
                     state,
                     "freeze_target",
@@ -592,7 +615,7 @@ class LocalCutover:
                     lambda: self._freeze(execution, "source", execution["holds"]["source"]),
                     hold=execution["holds"]["source"],
                 )
-                self._step(state, "deny_source", lambda: self._access(execution, "source", False))
+                self._step(state, "deny_source", lambda: self._native(execution, "source", "pause"))
                 self._step(
                     state,
                     "maintenance_epoch",
@@ -790,7 +813,7 @@ class LocalCutover:
             native = self.native[row["engine"]]
             expected = TableIdentity(**row["identity"])
             if native.dialect == "clickhouse":
-                detached = native.rows(
+                detached = cast("NativeOperator", native).rows(
                     "SELECT toString(uuid) FROM system.detached_tables "
                     "WHERE database=currentDatabase() AND table={table:String} "
                     "AND is_permanently=1",

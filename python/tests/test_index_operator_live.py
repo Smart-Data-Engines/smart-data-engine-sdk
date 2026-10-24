@@ -274,12 +274,18 @@ def ch_indexes(role: Roles) -> dict[str, str]:
     return {str(name): str(kind) for name, kind in rows}
 
 
+def materializing(name: str) -> dict[str, str]:
+    """``{c}`` and ``{p}``: how the server records ``MATERIALIZE INDEX name`` - bare on 24.8, in
+    parentheses on 26.5 (measured)."""
+    return {"c": f"MATERIALIZE INDEX {name}", "p": f"(MATERIALIZE INDEX {name})"}
+
+
 def ch_materializations(role: Roles, name: str) -> list[bool]:
     """``is_done`` of every live MATERIALIZE INDEX mutation of ``name``, oldest first."""
     rows = role.operator._cx.query(
         "SELECT is_done FROM system.mutations WHERE database = {d:String} AND table = {t:String} "
-        "AND command = {c:String} AND NOT is_killed ORDER BY create_time",
-        parameters={"d": role.namespace, "t": TABLE, "c": f"MATERIALIZE INDEX {name}"},
+        "AND command IN ({c:String}, {p:String}) AND NOT is_killed ORDER BY create_time",
+        parameters={"d": role.namespace, "t": TABLE, **materializing(name)},
     ).result_rows
     return [bool(done) for (done,) in rows]
 
@@ -421,8 +427,8 @@ def wait_until_held(build: Build, run: Callable[..., Any], name: str) -> int | N
     wait_for(
         lambda: run(
             "SELECT 1 FROM system.mutations WHERE database = currentDatabase() "
-            "AND table = {t:String} AND command = {c:String} AND NOT is_done",
-            {"t": TABLE, "c": f"MATERIALIZE INDEX {name}"},
+            "AND table = {t:String} AND command IN ({c:String}, {p:String}) AND NOT is_done",
+            {"t": TABLE, **materializing(name)},
         ),
         "the materialization to be pending",
     )
@@ -436,8 +442,8 @@ def unfinished(build: Build, run: Callable[..., Any], name: str) -> bool:
     return bool(
         run(
             "SELECT 1 FROM system.mutations WHERE database = currentDatabase() "
-            "AND table = {t:String} AND command = {c:String} AND NOT is_done",
-            {"t": TABLE, "c": f"MATERIALIZE INDEX {name}"},
+            "AND table = {t:String} AND command IN ({c:String}, {p:String}) AND NOT is_done",
+            {"t": TABLE, **materializing(name)},
         )
     )
 
@@ -1255,3 +1261,42 @@ def test_the_operator_cli_abandons_an_unfinished_build_once(tmp_path: Path) -> N
             "error": "refused",
             "message": "there is no unfinished index build or staging to abandon",
         }
+
+
+@pytest.mark.parametrize("when", ["before", "while"])
+def test_a_newer_map_that_overtakes_an_index_build_is_named_with_both_versions(
+    when: str, tmp_path: Path
+) -> None:
+    with initial("postgres", tmp_path) as build:
+        newer = build.plan.prepared.map_version + 5
+
+        def adopt() -> None:
+            build.role.operator.record_map_version(newer, model_version=build.model.version)
+
+        if when == "before":
+            adopt()
+            event, in_force = "was adopted before this index build", build.plan.current.map_version
+        else:
+            build.operator._after_step = (
+                lambda step: adopt() if step == "index_watermarks:intent" else None
+            )
+            event = "appeared while finishing the index build"
+            in_force = build.plan.prepared.map_version
+        expected = (
+            f"a newer map {event}: postgres records map version {newer}, and the map this "
+            f"operation was prepared from is version {in_force}."
+        )
+        if when == "before":
+            with pytest.raises(sde.MigrationRefused) as refused:
+                build.operator.index(build.plan)
+            assert str(refused.value) == expected
+        else:
+            # After its durable decision the operation is resumed, not refused: the reason it
+            # stopped is beneath the error that says so.
+            with pytest.raises(CutoverRecoveryRequired) as stopped:
+                build.operator.index(build.plan)
+            reasons, error = [], stopped.value.__cause__
+            while error is not None:
+                reasons.append(str(error))
+                error = error.__cause__
+            assert expected in reasons

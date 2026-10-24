@@ -22,14 +22,16 @@ const std::map<std::string, int>& tier_of_family() {
   static const std::map<std::string, int> tiers = {
       {"canonical", 0}, {"model", 0},     {"routing", 0},   {"errors", 0},
       {"signature", 0}, {"hashing", 0},   {"telemetry", 1}, {"schema", 2},
-      {"migration", 2}, {"query", 2}};
+      {"migration", 2}, {"query", 2},     {"books", 2},     {"search", 2},
+      {"documents", 2}};
   return tiers;
 }
 
 /// The families this suite has a runner for, each in its own file.
 const std::set<std::string>& run_here() {
-  static const std::set<std::string> families = {"canonical", "model",   "routing",  "errors",
-                                                 "signature", "hashing", "telemetry"};
+  static const std::set<std::string> families = {"canonical", "model",   "routing",   "errors",
+                                                 "signature", "hashing", "telemetry", "schema",
+                                                 "query"};
   return families;
 }
 

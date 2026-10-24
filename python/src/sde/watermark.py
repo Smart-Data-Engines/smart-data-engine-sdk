@@ -61,7 +61,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from .capabilities import satisfies
-from .errors import MapRolledBack
+from .errors import MapRolledBack, MigrationRefused
 from .logging import log
 from .placement import WATERMARK_TABLE, PlacementMap
 
@@ -219,4 +219,26 @@ def enforce_forward_only(
             f"{highest if highest is not None else placement.map_version}, kept in "
             f"{WATERMARK_TABLE} in {list(able)}. A map older than that is refused."
         ),
+    )
+
+
+def newer_map(
+    event: str, engine: str, dialect: str, recorded: int, in_force: int
+) -> MigrationRefused:
+    """The refusal of an operation a newer map overtook, naming the engine and both versions.
+
+    A map version is the control plane's number, never the client's data, so the message can carry
+    it. Without it an operator learns that some engine holds a newer map, and has to read this
+    library to find which one and how much newer. On Elasticsearch the watermark is one index for
+    the whole cluster, so the newer map can be another project's or a test's on the same cluster.
+    """
+    shared = (
+        " An Elasticsearch cluster keeps one stream of maps, whatever project wrote them (format "
+        "contract 7m)."
+        if dialect == "elasticsearch"
+        else ""
+    )
+    return MigrationRefused(
+        f"{event}: {engine} records map version {recorded}, and the map this operation was "
+        f"prepared from is version {in_force}.{shared}"
     )

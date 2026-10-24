@@ -1,0 +1,15 @@
+{
+ "kind": "diff",
+ "name": "a side emptied",
+ "side": "ask",
+ "before": [
+  [200, 1, 1],
+  [201, 2, 2]
+ ],
+ "after": [],
+ "diff": [
+  [200, 0, 0],
+  [201, 0, 0]
+ ],
+ "why": "every price removed, as quantity 0"
+}

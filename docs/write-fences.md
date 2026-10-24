@@ -97,6 +97,45 @@ its owner and hold must still match afterward. The log is metadata in the custom
 that engine's durability guarantees. It contains no application rows or credentials. Deleting it
 before recovery can leave a detached table that requires explicit operator recovery.
 
+**Elasticsearch** keeps the same names and predicates in the `_meta` of the index's own ingest
+pipeline, `__sde_f_<index>`, set as its `index.final_pipeline`. A request cannot bypass that pipeline,
+not even with `pipeline=_none`. The pipeline's one `fail` processor is rendered from those
+constraints, and a reader renders it again and refuses a pipeline whose processor differs.
+- `__sde_write_epoch` is a `long` beside the layout's fields. The processor refuses a document
+  without it, with another type (`"3"`, `3.0`) or outside the bounds, per item in a `_bulk`.
+- **The drain** is `PUT /<index>/_block/write`, which waits for the operations already on the
+  index's shards. On 9.5.5 it waited 3.48 s and 1.67 s for a 150,000-document bulk, and the count at
+  its return was the final count. Adding the block again to an index already blocked proves nothing,
+  because no shard acknowledges it, so the drain lifts it and adds it again under the hold.
+- **The drain then refreshes the index.** A write the block waited for has finished on its shard,
+  but one that waits for a refresh may not be searchable yet, and a copy and a comparison read by
+  searching. A row neither of them can see would be missing from both at once. A refresh works
+  under the write block, and the live test turns the index's own refresh off to show the barrier's.
+- **The block stays as long as a hold does.** The pipeline checks a write where it arrives, the block
+  where it reaches the shard, and a write that passed an older pipeline on its way is refused at the
+  shard while the barrier holds.
+- **Releasing the last hold lifts the block first, then rewrites the pipeline.** An interruption
+  between the two leaves the hold in the pipeline. It still refuses every index and update, which
+  is every write a runtime key can make: a delete runs no pipeline, so a key that may delete is
+  refused by the local operator ([`local-cutover.md`](local-cutover.md)). A retry of the release
+  finds the hold and removes it. The other order left a block with no hold to say whose it was,
+  which no retry lifted: the index in force stayed closed to writes after a published cutover.
+- **The pipeline enforces only as the index's final pipeline.** An index whose
+  `index.final_pipeline` is not its fence's pipeline enforces nothing the pipeline holds. Its fence
+  reads as an interrupted setup, closed to this library, and `resume_prepare` sets the pipeline
+  again. A pipeline-level `on_failure` would index every write the processor refuses, so a
+  pipeline carrying one is refused.
+- **A default pipeline is not read by the fence.** It runs before the final one and could set
+  `__sde_write_epoch` before the fence checks it, as a trigger could change a row before a CHECK.
+  Setting one updates the index's settings, which `manage` grants, and the protocol fences no
+  administrator on any engine. The local operator refuses to stage or cut over an index that has
+  one, as it refuses a table with user triggers ([`local-cutover.md`](local-cutover.md)).
+- **An index blocked with no hold recorded** reads as an interrupted setup, which `resume_prepare`
+  completes. A block or a pipeline that is not this library's is refused, never taken over.
+- **Pipeline changes** carry `if_version`, so a second, uncoordinated executor is refused rather
+  than overwritten. Elasticsearch answers that conflict with a 400 `illegal_argument_exception`
+  reading "version conflict", not a 409 (measured on 9.5.5); both are refused as another executor's.
+
 The initial scope is ordinary PostgreSQL tables without inheritance, and local MergeTree or
 ReplacingMergeTree tables in a ClickHouse Atomic database. Distributed and replicated tables, foreign
 tables, external writers and uncoordinated DDL changes require separate qualification. A bounded cutover executor, final verification under the barriers, map handoff, stale-reader

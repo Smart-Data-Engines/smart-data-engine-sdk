@@ -18,7 +18,14 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..errors import DeclarationError
-from ..model import EntitySpec, FieldSpec, LogicalModel, RelationSpec, assemble
+from ..model import (
+    EntitySpec,
+    FieldSpec,
+    LogicalModel,
+    RelationSpec,
+    assemble,
+    checked_cost_ceiling,
+)
 from ..types import NEUTRAL_TYPES
 
 __all__ = ["model_from_neutral"]
@@ -75,6 +82,13 @@ def _check_shape(raw: Mapping[str, Any], name: str) -> None:
             raise DeclarationError(f"{name}: a field is an object with a name, not {field!r}")
         if not isinstance(field.get("type"), str):
             raise DeclarationError(f"{name}.{field['name']}: a field needs a type")
+        # Not `bool(...)`: TypeScript read this as `=== true`, so `1` and `"yes"` were nullable here
+        # and required there - one declaration, two models. Found by the C++ library, which has to
+        # give a value a type before it can read it.
+        if "nullable" in field and not isinstance(field["nullable"], bool):
+            raise DeclarationError(
+                f"{name}.{field['name']}: 'nullable' is true or false, not {field['nullable']!r}"
+            )
 
     key = raw.get("key")
     if key is not None and not isinstance(key, list):
@@ -97,6 +111,76 @@ def _check_shape(raw: Mapping[str, Any], name: str) -> None:
             not isinstance(value, list) or any(not isinstance(v, str) for v in value)
         ):
             raise DeclarationError(f"{name}: {plural!r} is a list of field names, not {value!r}")
+
+    residency = raw.get("residency")
+    if residency is not None and not isinstance(residency, str):
+        raise DeclarationError(
+            f"{name}: 'residency' is a jurisdiction's name or null, not {residency!r}"
+        )
+
+
+def _relations(data: Mapping[str, Any], names: set[str]) -> list[RelationSpec]:
+    """``relations``, each one an object of three strings. A missing ``to`` used to be a bare
+    ``KeyError`` from this loader - the failure section 7 names for a missing rule."""
+    raw_relations = data.get("relations")
+    if raw_relations is None:
+        return []
+    if not isinstance(raw_relations, list):
+        raise DeclarationError(
+            f"'relations' is a list of {{name, from, to}}, not {raw_relations!r}"
+        )
+    relations: list[RelationSpec] = []
+    for raw in raw_relations:
+        if not isinstance(raw, Mapping) or not all(
+            isinstance(raw.get(key), str) for key in ("name", "from", "to")
+        ):
+            raise DeclarationError(
+                f'a relation is {{"name", "from", "to"}}, each a string, not {raw!r}'
+            )
+        source, target = raw["from"], raw["to"]
+        for side in (source, target):
+            if side not in names:
+                raise DeclarationError(f"relation {raw['name']!r} names unknown entity {side!r}")
+        relations.append(RelationSpec(name=raw["name"], source=source, target=target))
+    return relations
+
+
+def _atomic(raw: Any, names: set[str]) -> tuple[tuple[str, ...], ...]:
+    """Atomic groups as declared: names checked, members distinct, two at least, no overlap.
+
+    Section 4 says the IR's groups are merged and transitive. This loader used to copy them as
+    written, so two overlapping groups reached the IR unmerged - a different ``model_version`` from
+    the same atomicity declared as one group, which is what `neutral_declaration` writes. Refused
+    rather than merged here, so that no library has to guess how another one merged.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise DeclarationError(f"'atomic' is a list of groups of entity names, not {raw!r}")
+    placed: set[str] = set()
+    groups: list[tuple[str, ...]] = []
+    for group in raw:
+        if not isinstance(group, list) or not all(isinstance(member, str) for member in group):
+            raise DeclarationError(f"an atomic group is a list of entity names, not {group!r}")
+        members = tuple(sorted(group))
+        unknown = [m for m in members if m not in names]
+        if unknown:
+            raise DeclarationError(f"atomic group names unknown entities {unknown}")
+        if len(set(members)) != len(members) or len(members) < 2:
+            raise DeclarationError(
+                "an atomic group names two or more distinct entities; one that names fewer, or "
+                "one twice, says nothing a placement could act on"
+            )
+        for member in members:
+            if member in placed:
+                raise DeclarationError(
+                    f"atomic groups overlap on {member!r}. Atomicity is transitive, so "
+                    "overlapping groups are one group: declare it once, with every member, as a "
+                    "library's own neutral declaration does"
+                )
+            placed.add(member)
+        groups.append(members)
+    return tuple(sorted(groups))
 
 
 def model_from_neutral(data: Mapping[str, Any]) -> LogicalModel:
@@ -130,7 +214,7 @@ def model_from_neutral(data: Mapping[str, Any]) -> LogicalModel:
             FieldSpec(
                 name=f["name"],
                 type=_check_type(f["type"], f"{name}.{f['name']}"),
-                nullable=bool(f.get("nullable", False)),
+                nullable=f.get("nullable", False),
             )
             for f in raw.get("fields", ())
         )
@@ -152,24 +236,12 @@ def model_from_neutral(data: Mapping[str, Any]) -> LogicalModel:
         )
 
     names = {e.name for e in entities}
-    relations: list[RelationSpec] = []
-    for raw in data.get("relations", ()):
-        source, target = raw["from"], raw["to"]
-        for side in (source, target):
-            if side not in names:
-                raise DeclarationError(f"relation {raw['name']!r} names unknown entity {side!r}")
-        relations.append(RelationSpec(name=raw["name"], source=source, target=target))
-
-    atomic_raw = data.get("atomic") or ()
-    atomic = tuple(sorted(tuple(sorted(group)) for group in atomic_raw))
-    for group in atomic:
-        unknown = [m for m in group if m not in names]
-        if unknown:
-            raise DeclarationError(f"atomic group names unknown entities {unknown}")
+    relations = _relations(data, names)
+    atomic = _atomic(data.get("atomic"), names)
 
     return assemble(
         entities=tuple(entities),
         relations=tuple(relations),
         atomic=atomic,
-        cost_ceiling=data.get("cost_ceiling"),
+        cost_ceiling=checked_cost_ceiling(data.get("cost_ceiling")),
     )

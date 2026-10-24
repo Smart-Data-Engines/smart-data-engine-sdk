@@ -111,7 +111,7 @@ artifacts under mixed traffic and checks scheduled latency, native recovery and 
 ownership for concurrent applications.
 The [Weather starter](docs/weather-starter.md) provides a local setup, restricted runtime clients in
 Python/TypeScript, measured telemetry, operator handoffs and an ownership-checked reset. It ships in the
-current releases, `smart-data-engine-sdk` 0.1.1 and `@smart-data-engines/sde` 0.1.0, and the runbook
+current releases, `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0, and the runbook
 distinguishes this demo from production qualification.
 
 
@@ -123,7 +123,7 @@ below has been rewritten.
 |---|---|---|
 | [`python/`](python/) | 0 and 1, plus 2 for PostgreSQL, ClickHouse and the orderbook engine, plus hashing | reference implementation |
 | [`typescript/`](typescript/) | 0, 1 and 2 for PostgreSQL and ClickHouse, plus hashing | passes the same vectors, byte for byte |
-| [`cpp/`](cpp/) | 0 and 1, plus hashing; engines next | passes every vector of its tiers; built from source with CMake |
+| [`cpp/`](cpp/) | 0 and 1, plus hashing; Tier 2 under way | passes every vector of its tiers, and `schema/` and `query/`; built from source with CMake |
 | `java/`, `rust/`, then C#, Go, Kotlin, PHP, Ruby | — | contributions welcome; the contract now has three implementations, which is what made it safe to invite them |
 
 That qualification used to say something different, and the change is the point of it. Until
@@ -206,7 +206,7 @@ Nothing about that fails at compile time.
 So the encoding is specified at the byte level in [`docs/format-contract.md`](docs/format-contract.md)
 — UTF-8, keys NFC-normalised then sorted by code point, no insignificant whitespace, minimal escaping,
 no float literals, a closed type vocabulary so that `Decimal` and `BigDecimal` land on the same bytes.
-And [`conformance/`](conformance/) holds the vectors — **370 of them, in ten families** — that every
+And [`conformance/`](conformance/) holds the vectors — **465 of them, in thirteen families** — that every
 library runs in its own test runner, so a divergence is a red test for whoever caused it rather than
 an operation written to the wrong engine in production.
 
@@ -294,10 +294,9 @@ Every vector of its tier passed. What it found is where the reference's behaviou
 its runtime rather than a rule. A materialisation id written as `true` is the string `"True"` in
 Python and `"true"` in TypeScript, so one map names two different copies. A lag budget written as a
 string is accepted by both. And seven rules no vector can see - a mutation removing each one left
-every vector green, among them a write routed at a copy rather than the source. C++ refuses each
-of those with the contract's own error, and the list is in
-[`docs/implementing.md`](docs/implementing.md#the-third-implementation-c), to become a vector and a
-rule in every library.
+every vector green, among them a write routed at a copy rather than the source. Each of those is a
+rule of the contract now, refused alike by all three libraries with a vector of its own; the list is
+in [`docs/implementing.md`](docs/implementing.md#the-third-implementation-c).
 
 ## What happens when something fails
 
@@ -369,4 +368,4 @@ reports.
 
 A group on an engine that cannot fence writes (placement map contract 6):
 [generation-bearing maps](docs/generation-maps.md) - a group on the orderbook engine next to groups on
-PostgreSQL and ClickHouse, which still move, while it stays where it was placed.
+PostgreSQL, ClickHouse and Elasticsearch, which still move, while it stays where it was placed.

@@ -1,0 +1,1 @@
+underscore, hyphen, apostrophe and space all separate; only letters and digits make a token

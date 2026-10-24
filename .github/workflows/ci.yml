@@ -71,6 +71,23 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # A current release beside the LTS above, used by the newest Python only. From 26.5 the
+      # catalogue keeps the parentheses of a single expression written in them - `ORDER BY (id)`
+      # reads back `(id)` - and while CI ran 24.8 alone every library read its own one-column key
+      # as another design. Moved by a deliberate edit, like the LTS.
+      clickhouse-current:
+        image: clickhouse/clickhouse-server:26.9-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["18123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -86,13 +103,37 @@ jobs:
 
       - name: lint
         working-directory: python
-        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py
+        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py
 
       - name: types
         working-directory: python
         # Not decoration: several guarantees in this design are enforced by types rather than by
         # runtime checks, so a weakened annotation is a deleted guarantee.
-        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py
+        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py
+
+      - name: start Elasticsearch
+        # The engine behind Session.search's text index (format contract 7m). Started with its own
+        # TLS - on by default since 8.0 - and its CA copied out, so the slice verifies the server as
+        # a client would. Not a service container, because the CA exists only after it starts. The
+        # wait is bounded: an unbounded one turns a broken probe into a job that hangs in silence.
+        run: |
+          docker run -d --name sde_test_es -p 127.0.0.1:59200:9200 \
+            -e discovery.type=single-node -e ELASTIC_PASSWORD=sde -e ES_JAVA_OPTS="-Xms1g -Xmx1g" \
+            -e cluster.routing.allocation.disk.threshold_enabled=false elasticsearch:9.5.5
+          ca="$RUNNER_TEMP/sde_es_ca.crt"
+          for n in $(seq 1 90); do
+            if docker cp sde_test_es:/usr/share/elasticsearch/config/certs/http_ca.crt "$ca" 2>/dev/null \
+              && curl -fsS --cacert "$ca" -u elastic:sde -o /dev/null \
+                "https://127.0.0.1:59200/_cluster/health?wait_for_status=yellow&timeout=1s"; then
+              encoded=$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$ca")
+              echo "SDE_ELASTICSEARCH_DSN=elasticsearch+https://elastic:sde@127.0.0.1:59200/?ca_cert=$encoded" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Elasticsearch was not ready after 180 s"
+          docker logs --tail 30 sde_test_es
+          exit 1
 
       - name: tests, including both engine slices
         working-directory: python
@@ -111,13 +152,19 @@ jobs:
         # `test_failure_semantics` is here because every row of docs/failure-semantics.md that a
         # client reads before buying is either measured by it or paired with a mechanism by it. A
         # document whose evidence skipped is a document with no evidence.
+        #
+        # On the newest Python they run once more against a current ClickHouse (the service above
+        # says why). One interpreter is enough: what moved is the server.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
-          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+          CLICKHOUSE_PORTS: ${{ matrix.python == '3.14' && '8123 18123' || '8123' }}
         run: |
-          for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_demo_resources.py tests/test_demo_verification.py tests/test_demo_query_count.py tests/test_*_live.py; do
-            pytest "$slice" -q --junitxml="$RUNNER_TEMP/sde-integration.xml"
-            python ../tools/check_junit.py "$RUNNER_TEMP/sde-integration.xml"
+          for port in $CLICKHOUSE_PORTS; do
+            export SDE_CLICKHOUSE_DSN="clickhouse://default:sde@127.0.0.1:$port/sde"
+            for slice in tests/test_postgres_slice.py tests/test_clickhouse_slice.py tests/test_engine_agreement.py tests/test_failure_semantics.py tests/test_demo_resources.py tests/test_demo_verification.py tests/test_demo_query_count.py tests/test_*_live.py; do
+              pytest "$slice" -q --junitxml="$RUNNER_TEMP/sde-integration.xml"
+              python ../tools/check_junit.py "$RUNNER_TEMP/sde-integration.xml"
+            done
           done
 
 
@@ -181,10 +228,27 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      # A current release beside the LTS above, used by the newest Node only. From 26.5 the
+      # catalogue keeps the parentheses of a single expression written in them - `ORDER BY (id)`
+      # reads back `(id)` - and while CI ran 24.8 alone every library read its own one-column key
+      # as another design. Moved by a deliberate edit, like the LTS.
+      clickhouse-current:
+        image: clickhouse/clickhouse-server:26.9-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["18123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -197,6 +261,30 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
+
+      - name: start Elasticsearch
+        # The engine behind Session.search's text index (format contract 7m). Started with its own
+        # TLS - on by default since 8.0 - and its CA copied out, so the slice verifies the server as
+        # a client would. Not a service container, because the CA exists only after it starts. The
+        # wait is bounded: an unbounded one turns a broken probe into a job that hangs in silence.
+        run: |
+          docker run -d --name sde_test_es -p 127.0.0.1:59200:9200 \
+            -e discovery.type=single-node -e ELASTIC_PASSWORD=sde -e ES_JAVA_OPTS="-Xms1g -Xmx1g" \
+            -e cluster.routing.allocation.disk.threshold_enabled=false elasticsearch:9.5.5
+          ca="$RUNNER_TEMP/sde_es_ca.crt"
+          for n in $(seq 1 90); do
+            if docker cp sde_test_es:/usr/share/elasticsearch/config/certs/http_ca.crt "$ca" 2>/dev/null \
+              && curl -fsS --cacert "$ca" -u elastic:sde -o /dev/null \
+                "https://127.0.0.1:59200/_cluster/health?wait_for_status=yellow&timeout=1s"; then
+              encoded=$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$ca")
+              echo "SDE_ELASTICSEARCH_DSN=elasticsearch+https://elastic:sde@127.0.0.1:59200/?ca_cert=$encoded" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Elasticsearch was not ready after 180 s"
+          docker logs --tail 30 sde_test_es
+          exit 1
 
       - name: Python peer for the live interoperability slice
         run: |
@@ -243,28 +331,34 @@ jobs:
         # wherever the suite runs rather than only where two databases happen to be. One of its
         # assertions has already caught a defect this adapter would have shipped: `pg` ignores a
         # `connect_timeout` in a connection string, so deferring to it left no bound at all.
+        #
+        # On the newest Node they run once more against a current ClickHouse (the service above says
+        # why). One runtime is enough: what moved is the server.
         env:
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
-          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+          CLICKHOUSE_PORTS: ${{ matrix.node == '26' && '8123 18123' || '8123' }}
         run: |
-          for file in tests/*.live.test.ts; do
-            slice=${file#tests/}
-            slice=${slice%.test.ts}
-            npx vitest run "$file" --reporter=json --outputFile="$RUNNER_TEMP/$slice.json"
-            node -e '
-              const report = require(process.env.RUNNER_TEMP + "/" + process.argv[1] + ".json")
-              const slice = process.argv[1]
-              if (report.numPendingTests > 0) {
-                console.error(slice + ": " + report.numPendingTests +
-                  " test(s) skipped, so the adapters were checked by nothing")
-                process.exit(1)
-              }
-              if (report.numPassedTests < 1) {
-                console.error(slice + ": ran no tests at all")
-                process.exit(1)
-              }
-              console.log(slice + ": " + report.numPassedTests + " passed, none skipped")
-            ' "$slice"
+          for port in $CLICKHOUSE_PORTS; do
+            export SDE_CLICKHOUSE_DSN="clickhouse://default:sde@127.0.0.1:$port/sde"
+            for file in tests/*.live.test.ts; do
+              slice=${file#tests/}
+              slice=${slice%.test.ts}
+              npx vitest run "$file" --reporter=json --outputFile="$RUNNER_TEMP/$slice.json"
+              node -e '
+                const report = require(process.env.RUNNER_TEMP + "/" + process.argv[1] + ".json")
+                const slice = process.argv[1] + " (ClickHouse :" + process.argv[2] + ")"
+                if (report.numPendingTests > 0) {
+                  console.error(slice + ": " + report.numPendingTests +
+                    " test(s) skipped, so the adapters were checked by nothing")
+                  process.exit(1)
+                }
+                if (report.numPassedTests < 1) {
+                  console.error(slice + ": ran no tests at all")
+                  process.exit(1)
+                }
+                console.log(slice + ": " + report.numPassedTests + " passed, none skipped")
+              ' "$slice" "$port"
+            done
           done
 
   orderbook:
@@ -327,7 +421,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config liblz4-dev libcurl4-openssl-dev
+            build-essential cmake ninja-build pkg-config liblz4-dev libzstd-dev libcurl4-openssl-dev
           cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOB_BUILD_TESTS=OFF
           cmake --build engine/build --target ob_tcp_server orderbook_shared
           engine/build/ob_tcp_server --version
@@ -384,7 +478,7 @@ jobs:
           dsn="orderbook://sde-ci:$secret@localhost:59091?tls=on&ca=$work/ca.pem"
           echo "SDE_ORDERBOOK_SECURE_DSN=$dsn" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -411,6 +505,7 @@ jobs:
           pytest tests/test_orderbook_slice.py tests/test_orderbook_session_slice.py \
             tests/test_orderbook_tcp.py tests/test_orderbook_adapter.py \
             tests/test_orderbook_three_engines.py tests/test_orderbook_trading_example.py \
+            tests/test_orderbook_books.py tests/test_orderbook_book_stream_example.py \
             -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
 
@@ -424,7 +519,7 @@ jobs:
           SDE_PYTHON: python
         run: |
           export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
-          npx vitest run tests/orderbook.test.ts tests/orderbook.slice.test.ts \
+          npx vitest run tests/orderbook.test.ts tests/orderbook.slice.test.ts tests/orderbook.books.test.ts \
             --reporter=json --outputFile="$RUNNER_TEMP/sde-orderbook-ts.json"
           node -e '
             const report = require(process.env.RUNNER_TEMP + "/sde-orderbook-ts.json")
@@ -578,6 +673,23 @@ jobs:
         # the separator, the prefix outside the message, fields hashed with their entity - none of
         # which any ASCII-only test can see.
         run: python3 conformance/tools/hashing_vectors.py --verify
+
+      - name: the Elasticsearch vectors are what the reference renders
+        # schema/019, 020 and documents/: the mapping and the document a row becomes, which two
+        # libraries writing one index have to agree on to the byte.
+        run: python3 -I conformance/tools/elasticsearch_vectors.py --check
+
+      - name: the books vectors are what their generator writes
+        # books/: what a book stream sends (section 8c). The expectations are written out by hand in
+        # the generator rather than computed by a library, and this fails on a vector that differs
+        # from it, or a case directory it no longer writes.
+        run: python3 -I conformance/tools/books_vectors.py --check
+
+      - name: the search vectors are what the rule derives
+        # The search/ family, and the routing and error cases it adds, are written by the reference
+        # implementation of the rule in section 7l. This re-derives every one of them and fails on a
+        # difference, so a change to the rule cannot land with vectors that describe the old one.
+        run: python3 -I conformance/tools/search_vectors.py --check
 
       - name: the hand-written vector is unchanged
         # model/001-single-entity was typed out from docs/format-contract.md rather than generated,

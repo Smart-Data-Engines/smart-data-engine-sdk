@@ -33,6 +33,7 @@ mode, not a loophole.
 
 from __future__ import annotations
 
+from .books import ENGINE_DEPTH, BookStream, Resync, book_diff
 from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .capabilities import members_of, satisfies
@@ -123,8 +124,9 @@ from .query import (
 )
 from .routing import Router, resolve
 from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
+from .search import SearchPage, SearchRefused
 from .session import Engine, ManagedEngine, Session
-from .shapes import SHAPE_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
+from .shapes import SHAPE_KINDS, SOURCE_ONLY_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
 from .staging import (
     STAGING_PROTOCOL,
     STAGING_RELAYOUT_PROTOCOL,
@@ -159,7 +161,7 @@ from .watermark import (
 from .write_fence import EPOCH_COLUMN as WRITE_EPOCH_COLUMN
 from .write_fence import FenceState, WriteFence
 
-__version__ = "0.1.2.dev0"
+__version__ = "0.2.1.dev0"
 
 __all__ = [
     "ALSO_WRITE_SINCE",
@@ -170,6 +172,7 @@ __all__ = [
     "CUTOVER_RELAYOUT_PROTOCOL",
     "DIALECTS",
     "DIALECT_PRECISION",
+    "ENGINE_DEPTH",
     "FACTS_VERSION",
     "FIXED_SCHEMA",
     "INDEX_CHANGE_PROTOCOL",
@@ -188,12 +191,14 @@ __all__ = [
     "PRECISION_INDEPENDENT",
     "RESERVED_TABLES",
     "SHAPE_KINDS",
+    "SOURCE_ONLY_KINDS",
     "STAGING_PROTOCOL",
     "STAGING_RELAYOUT_PROTOCOL",
     "WATERMARK_TABLE",
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
     "BackfillProgress",
+    "BookStream",
     "BulkWritable",
     "BulkWriteRefused",
     "CanonicalError",
@@ -251,9 +256,12 @@ __all__ = [
     "Ref",
     "ResourceBusy",
     "ResourceClosed",
+    "Resync",
     "Router",
     "ScanPage",
     "SdeError",
+    "SearchPage",
+    "SearchRefused",
     "Session",
     "ShapeStats",
     "StagingPlan",
@@ -271,6 +279,7 @@ __all__ = [
     "WriteFence",
     "__version__",
     "backfill",
+    "book_diff",
     "build_model",
     "can_store",
     "canonical_bytes",

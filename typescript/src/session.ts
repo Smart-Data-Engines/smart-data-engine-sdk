@@ -26,6 +26,8 @@ import { ResourceBusy, ResourceClosed } from './errors.js'
  */
 
 import { batchColumns, bulkWriter, snapshotRows } from './bulk.js'
+import { BookStream } from './books.js'
+import type { BookEngine, BookUpdate, Level, Mode, Resync, Side } from './books.js'
 import { compareCodePoints } from './canonical.js'
 import { BulkWriteRefused, EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
 import type { Group } from './groups.js'
@@ -34,11 +36,13 @@ import type { NameMap } from './hashing.js'
 import { groupColumns } from './layout.js'
 import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
-import { countEngine, isQueryMapping, numericSummary, planRead, QueryRefused, queryEngine, summaryEngine, summaryScale } from './query.js'
+import { countEngine, isQueryMapping, MAX_PAGE_ROWS, numericSummary, planRead, QueryRefused, queryEngine, queryValue, summaryEngine, summaryScale } from './query.js'
 import type { NumericSummary, ReadOptions, ReadPlan, ScanPage } from './query.js'
 import type { Materialization, PhysicalLayout, PlacementMap } from './placement.js'
 import { placementOf } from './placement.js'
 import { resolve } from './routing.js'
+import { DEFAULT_MAX_EXAMINED, matches, MAX_EXAMINED, MAX_SEARCH_LIMIT, queryTokens, searchEngine, SearchRefused, textIndex } from './search.js'
+import type { SearchOptions, SearchPage } from './search.js'
 import { schemaIsFixed } from './schema.js'
 import type { OperationShape, ShapeKind } from './shapes.js'
 import { enumerateShapes, shapeId } from './shapes.js'
@@ -139,14 +143,16 @@ function shapeKey(entity: string, kind: string, fields: readonly string[]): stri
 
 /**
  * `refused` when the catalogue denied the login, `failed` for any other engine error - read from the
- * driver's own error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access error
- * 497 (what a login without the `system.parts` grant receives, measured on 24.8).
+ * error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access error 497 (what a
+ * login without the `system.parts` grant receives, measured on 24.8) and Elasticsearch's 403 (what a
+ * key without the `monitor` privilege receives, measured on 9.5.5).
  */
 function storageRefusal(error: unknown): StorageUnavailable {
   const cause = error instanceof Error && error.cause !== undefined ? error.cause : error
   const code = typeof cause === 'object' && cause !== null ? (cause as { code?: unknown }).code : undefined
+  const status = typeof cause === 'object' && cause !== null ? (cause as { status?: unknown }).status : undefined
   const text = cause instanceof Error ? cause.message : String(cause)
-  return code === '42501' || text.includes('Code: 497') ? 'refused' : 'failed'
+  return code === '42501' || text.includes('Code: 497') || status === 403 ? 'refused' : 'failed'
 }
 
 export class Session {
@@ -669,6 +675,124 @@ export class Session {
     })
   }
 
+  /**
+   * A stream of one book of `entity` - one symbol on one exchange - to the orderbook engine, sent
+   * whole or as its changes (`books.ts`).
+   *
+   * The entity's group must be placed on the orderbook engine, which reads an update by price and
+   * replaces a side whole (`MREPLACE`): refused otherwise, and refused for a server that does not
+   * announce `replace_side`, before anything is sent. Each update the stream sends is one write of
+   * the entity, under this session's rules and timed like `saveMany`'s.
+   */
+  async bookStream(
+    entity: string,
+    options: { readonly symbol: string; readonly exchange: string; readonly mode?: Mode; readonly resync?: Resync },
+  ): Promise<BookStream> {
+    return this.usage.operation(async () => {
+      const target = this.entityName(entity)
+      const shape = this.shapeFor(target, 'bulk_write')
+      const [engine] = this.target(shape, false)
+      const books = engine as Partial<BookEngine>
+      if (typeof books.supportsReplaceSide !== 'function') {
+        throw new EngineError(
+          `${entity} is placed on an engine that does not take a book by price: a book stream writes to the ` +
+            'orderbook engine, which applies an update by price and replaces a side whole',
+        )
+      }
+      if (!books.supportsReplaceSide()) {
+        throw new EngineError(
+          'this orderbook server does not replace a side of a book (capability replace_side), which a book ' +
+            'stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the ' +
+            'server; nothing was sent.',
+        )
+      }
+      const { symbol, exchange } = options
+      if (typeof books.checkBook === 'function') books.checkBook.call(engine, symbol, exchange)
+      const write = (whole: boolean) => async (side: Side, levels: readonly Level[], timestampNs: bigint) =>
+        this.bookWrite(target, shape, { symbol, exchange, side, levels, timestampNs }, whole)
+      return new BookStream(
+        { sendWhole: write(true), sendChanges: write(false) },
+        { ...(options.mode === undefined ? {} : { mode: options.mode }), ...(options.resync === undefined ? {} : { resync: options.resync }) },
+      )
+    })
+  }
+
+  /** One update of a book stream: a whole side, or changes by price. */
+  private async bookWrite(target: string, shape: OperationShape, update: BookUpdate, whole: boolean): Promise<void> {
+    return this.usage.operation(async () => {
+      const [engine, materialization] = this.target(shape, false)
+      if (placementOf(this.placement, shape.group).alsoWrite.length > 0) {
+        // Unreachable while a map refuses copies of a group without generations, which every group on
+        // the orderbook engine is. Refused rather than skipped if that ever changes: a copy that misses
+        // the stream's updates is a copy that is silently wrong.
+        throw new EngineError(`${target} has copies being written, and a book stream writes only the source`)
+      }
+      const books = engine as Partial<BookEngine>
+      const write = whole ? books.replaceLevels : books.applyLevels
+      if (typeof write !== 'function') throw new EngineError(`${target} is placed on an engine that does not take a book by price`)
+      const table = tableFor(materialization.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false
+      try {
+        await write.call(engine, table, update)
+        this.usage.check()
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, update.levels.length, failed)
+      }
+    })
+  }
+
+  /**
+   * The book of `entity` for one symbol on one exchange as of `atNs`, composed by the orderbook
+   * engine from what was written - by price, in time order: `{ bid, ask }`, each side best first as
+   * [price, quantity, order count], at most `depth` levels a side.
+   *
+   * The read side of `bookStream`: a stream that sends only changes stores only changes, and this
+   * answers the book they make. Recorded as a range read of the entity's time, which is what it is:
+   * a book is its history up to `atNs`.
+   */
+  async bookAt(
+    entity: string,
+    options: {
+      readonly symbol: string; readonly exchange: string; readonly atNs: bigint | number
+      readonly depth?: number; readonly fresh?: boolean
+    },
+  ): Promise<{ bid: Level[]; ask: Level[] }> {
+    return this.usage.operation(async () => {
+      if (options.fresh !== undefined && typeof options.fresh !== 'boolean') throw new QueryRefused('fresh must be a bool')
+      const target = this.entityName(entity)
+      const field = (name: string): string => Object.keys(this.fieldsIn(entity, { [name]: null }))[0]!
+      const moment = field('timestamp_ns')
+      const equal = [field('symbol'), field('exchange')].sort(compareCodePoints)
+      const shape = this.shapeFor(target, 'range_read', [moment])
+      const [engine, material] = this.target(shape, options.fresh === true)
+      const books = engine as Partial<BookEngine>
+      if (typeof books.bookAt !== 'function') {
+        throw new QueryRefused(`${entity} is placed on an engine that does not compose a book: the orderbook engine does`)
+      }
+      const table = tableFor(material.layout, target)
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false, returned = 0
+      try {
+        const book = await books.bookAt.call(engine, table, {
+          symbol: options.symbol, exchange: options.exchange, atNs: options.atNs,
+          ...(options.depth === undefined ? {} : { depth: options.depth }),
+        })
+        this.usage.check()
+        returned = book.bid.length + book.ask.length
+        return { bid: [...book.bid], ask: [...book.ask] }
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, returned, failed, undefined, { equal, ranged: moment })
+      }
+    })
+  }
+
   async get(entity: string, key: Readonly<Row>, options: { fresh?: boolean } = {}): Promise<Row | null> {
     return this.usage.operation(async () => {
       const target = this.entityName(entity)
@@ -846,6 +970,119 @@ export class Session {
     })
   }
 
+  /**
+   * The rows of `entity` whose chosen text fields hold every token of `text`, a page in key order.
+   *
+   * What a token is and when a row matches is the format contract's rule (section 7l), applied to
+   * every row before it is returned: the engine supplies candidates and never decides, so the answer
+   * is the same in every engine. A search always reads the group's source. An engine with a text
+   * index supplies rows that hold the tokens; one without supplies rows in key order, and at most
+   * `maxExamined` of them are checked in one call. A page cut short by that bound keeps the position
+   * of the last row checked, so `nextAfter` is `null` only when nothing is left.
+   */
+  async search(entity: string, text: string, options: SearchOptions = {}): Promise<SearchPage> {
+    return this.usage.operation(async () => {
+      const limit = options.limit ?? 100
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH_LIMIT) {
+        throw new SearchRefused(`limit must be an integer between 1 and ${MAX_SEARCH_LIMIT}`)
+      }
+      const maxExamined = options.maxExamined ?? DEFAULT_MAX_EXAMINED
+      if (
+        typeof maxExamined !== 'number' || !Number.isInteger(maxExamined) ||
+        maxExamined < 1 || maxExamined > MAX_EXAMINED
+      ) {
+        throw new SearchRefused(`maxExamined must be an integer between 1 and ${MAX_EXAMINED}`)
+      }
+      const query = queryTokens(text)
+      const [target, first] = this.prepareRead(entity, {
+        after: options.after ?? null, limit: MAX_PAGE_ROWS, paginate: true,
+      })
+      const chosen = this.searchFields(entity, target, options.fields)
+      const shape = this.shapeFor(target, 'search')
+      const [engine, material] = this.target(shape, false)
+      this.readProjection(material, target, first, false)
+      const table = tableFor(material.layout, target)
+      searchEngine(engine)
+      const indexed = textIndex(engine)
+      const reader = indexed === null ? queryEngine(engine) : null
+      const started = this.recorder === undefined ? 0 : now()
+      let failed = false, examined = 0
+      const found: Row[] = []
+      try {
+        let plan = first
+        let position: Row | null = null
+        for (;;) {
+          // An index supplies rows that hold the tokens, so it is asked for what the page still
+          // needs; a scan supplies everything, so it reads as far as the bound allows.
+          let wanted = maxExamined - examined
+          if (indexed !== null) wanted = Math.min(wanted, limit - found.length)
+          plan = { ...plan, limit: Math.min(MAX_PAGE_ROWS, wanted) }
+          const rows = indexed !== null
+            ? await indexed.searchRows(table, plan, query, chosen)
+            : await reader!.selectRows(table, plan)
+          this.usage.check()
+          const candidates = rows.slice(0, plan.limit)
+          const more = rows.length > plan.limit
+          let stopped: number | null = null
+          for (const [index, row] of candidates.entries()) {
+            examined += 1
+            if (matches(row, query, chosen)) found.push(row)
+            if (found.length === limit || examined === maxExamined) {
+              stopped = index
+              break
+            }
+          }
+          if (stopped !== null) {
+            if (more || stopped < candidates.length - 1) position = candidates[stopped]!
+            break
+          }
+          if (!more || candidates.length === 0) break
+          const last = candidates[candidates.length - 1]!
+          plan = { ...plan, after: plan.order.map(column => queryValue(column, last[column.name])) }
+        }
+        let nextAfter: Readonly<Row> | null = null
+        if (position !== null) {
+          const key = Object.fromEntries(plan.order.map(column => [column.name, position![column.name]]))
+          nextAfter = Object.freeze(snapshotRows([this.fieldsOut(entity, key)!])[0]!)
+        }
+        return { rows: found.map(row => this.fieldsOut(entity, row)!), nextAfter, examined }
+      } catch (error) {
+        failed = true
+        throw error
+      } finally {
+        this.observe(shape, started, failed ? 0 : found.length, failed, undefined, undefined, {
+          examined, searched: chosen,
+        })
+      }
+    })
+  }
+
+  /** The model's names of the text fields a search looks in, in code point order. */
+  private searchFields(entity: string, target: string, fields: readonly string[] | undefined): string[] {
+    const spec = this.model.entities.find(item => item.name === target)!
+    const declared = new Map(spec.fields.map(field => [field.name, field.type]))
+    const text = [...declared].filter(([, type]) => type === 'string').map(([name]) => name)
+      .sort(compareCodePoints)
+    if (text.length === 0) throw new SearchRefused(`${entity} has no field of type string, so nothing to search`)
+    if (fields === undefined) return text
+    const refusal = "fields must be a non-empty list of the entity's text field names"
+    if (!Array.isArray(fields) || fields.length === 0) throw new SearchRefused(refusal)
+    const chosen = new Set<string>()
+    for (const name of fields) {
+      if (typeof name !== 'string') throw new SearchRefused(refusal)
+      for (const mapped of Object.keys(this.fieldsIn(entity, { [name]: null }))) chosen.add(mapped)
+    }
+    const unknown = [...chosen].filter(name => !declared.has(name)).sort(compareCodePoints)
+    if (unknown.length > 0) throw new SearchRefused(`${entity} declares no field named ${JSON.stringify(unknown)}`)
+    const other = [...chosen].filter(name => declared.get(name) !== 'string')
+    if (other.length > 0) {
+      const named = Object.keys(this.fieldsOut(entity, Object.fromEntries(other.map(name => [name, null])))!)
+        .sort(compareCodePoints)
+      throw new SearchRefused(`a search looks in fields of type string only, not in ${JSON.stringify(named)}`)
+    }
+    return [...chosen].sort(compareCodePoints)
+  }
+
   /** An exact count; the result value itself is never telemetry. */
   async count(entity: string, options: CountOptions = {}): Promise<bigint> {
     return this.usage.operation(async () => {
@@ -902,6 +1139,8 @@ export class Session {
 
   private observe(
     shape: OperationShape, started: number, rows: number, failed: boolean, plan?: ReadPlan,
+    predicates?: { equal: string[]; ranged: string | null },
+    search?: { examined: number; searched: readonly string[] },
   ): void {
     const recorder = this.recorder
     if (recorder === undefined) return
@@ -913,7 +1152,8 @@ export class Session {
       nanoseconds: now() - started,
       rows,
       failed,
-      ...(plan === undefined ? {} : readPredicates(plan)),
+      ...(plan === undefined ? (predicates ?? {}) : readPredicates(plan)),
+      ...(search ?? {}),
     })
   }
 
