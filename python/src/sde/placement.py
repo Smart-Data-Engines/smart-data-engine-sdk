@@ -1087,7 +1087,7 @@ def _check_routing_targets(
     if model is None:
         return
 
-    from .shapes import WRITE_KINDS  # late, as in _model_shapes
+    from .shapes import SOURCE_ONLY_KINDS, WRITE_KINDS  # late, like _model_shapes
 
     shapes = {shape.id: shape for shape in _model_shapes(model)}
     for shape_id, target in sorted(routing.items()):
@@ -1098,6 +1098,13 @@ def _check_routing_targets(
                 "produce that shape. The model version matched, so the two sides enumerated shapes "
                 "differently - which is the divergence that puts one library's write in a table "
                 "another library never looks at."
+            )
+        if shape.kind in SOURCE_ONLY_KINDS:
+            raise MapError(
+                f"the routing table has an entry for shape {shape_id!r}, a {shape.kind} on "
+                f"{shape.entity}. A {shape.kind} always goes to the group's source, and a library "
+                f"that predates the kind refuses this entry as a shape it does not know - so this "
+                f"one refuses it too, and one stored map means the same thing to both."
             )
         if target not in declared.get(shape.group, frozenset()):
             raise MapError(

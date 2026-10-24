@@ -1,0 +1,1 @@
+A fenced index maps the write generation beside the layout's fields, and a session's write carries it as a long in _source - where the index's pipeline checks it. It is no part of the key, so the _id is the one the same row has without it.

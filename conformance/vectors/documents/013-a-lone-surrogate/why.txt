@@ -1,0 +1,1 @@
+UTF-8 has no bytes for half of a surrogate pair: refused, rather than written as U+FFFD - another text than the one saved.

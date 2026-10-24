@@ -1,0 +1,1 @@
+a script written without spaces is one token: a prefix of it does not match

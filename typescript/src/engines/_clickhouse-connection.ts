@@ -118,11 +118,26 @@ export function parseDsn(dsn: string): ConnectionParameters {
 
 /** Read the selected CA once for this connection; never change process-global trust. */
 export function verifiedTls(target: ConnectionParameters): ConnectionOptions {
+  return verifiedTlsOptions(target.host, target.ca_cert)
+}
+
+/**
+ * The TLS options of a verified connection to `host`, with the CA file read once, for any engine
+ * this library speaks HTTPS to. Chain and peer identity are both verified; nothing turns either off.
+ */
+export function verifiedTlsOptions(
+  host: string,
+  caCert: string | null,
+  engine = 'ClickHouse',
+): ConnectionOptions {
+  const refuse = (field: string): never => {
+    throw new EngineError(`Invalid ${engine} connection ${field}; no connection was opened.`)
+  }
   let ca: Buffer | undefined
-  if (target.ca_cert !== null) {
+  if (caCert !== null) {
     try {
       const limit = 1024 * 1024
-      const fd = openSync(target.ca_cert, constants.O_RDONLY | constants.O_NONBLOCK)
+      const fd = openSync(caCert, constants.O_RDONLY | constants.O_NONBLOCK)
       try {
         const info = fstatSync(fd)
         if (!info.isFile() || info.size === 0 || info.size > limit) return refuse('CA file')
@@ -145,7 +160,7 @@ export function verifiedTls(target: ConnectionParameters): ConnectionOptions {
   }
   return {
     ...(ca === undefined ? {} : { ca }), rejectUnauthorized: true,
-    ...(isIP(target.host) === 0 ? { servername: target.host } : {}),
-    checkServerIdentity: (_host, certificate) => verifyPeerIdentity(target.host, certificate),
+    ...(isIP(host) === 0 ? { servername: host } : {}),
+    checkServerIdentity: (_host, certificate) => verifyPeerIdentity(host, certificate),
   }
 }

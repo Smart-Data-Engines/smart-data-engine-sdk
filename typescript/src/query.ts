@@ -9,7 +9,7 @@ export const MAX_PAGE_ROWS = 1000
 export const MAX_ORDER_FIELDS = 32
 
 export class QueryRefused extends ModelPlanningError {
-  override readonly name = 'QueryRefused'
+  override readonly name: string = 'QueryRefused'
 }
 
 export interface Range {

@@ -1,0 +1,12 @@
+{
+  "fields": [
+    "t",
+    "n"
+  ],
+  "kind": "match",
+  "query": "42",
+  "row": {
+    "n": 42,
+    "t": null
+  }
+}

@@ -1,0 +1,92 @@
+{
+ "kind": "stream",
+ "name": "changes may make a side deeper, and a whole side is its best",
+ "mode": "incremental",
+ "resync": {
+  "updates": 2,
+  "seconds": 0
+ },
+ "max_levels": 2,
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "apply",
+   "side": "bid",
+   "levels": [
+    [98, 1, 1]
+   ],
+   "ts": 20
+  },
+  {
+   "at": 2,
+   "op": "apply",
+   "side": "bid",
+   "levels": [
+    [97, 1, 1]
+   ],
+   "ts": 30
+  },
+  {
+   "at": 3,
+   "op": "apply",
+   "side": "bid",
+   "levels": [
+    [100, 0, 0]
+   ],
+   "ts": 40
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "bid",
+   "ts": 20,
+   "levels": [
+    [98, 1, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "bid",
+   "ts": 30,
+   "levels": [
+    [97, 1, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 40,
+   "levels": [
+    [99, 3, 1],
+    [98, 1, 1]
+   ]
+  }
+ ],
+ "book": {
+  "bid": [
+   [99, 3, 1],
+   [98, 1, 1],
+   [97, 1, 1]
+  ]
+ }
+}

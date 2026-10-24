@@ -58,6 +58,37 @@ models. This SDK change permits restricted credentials; it does not yet audit th
 graph or implement cutover's grant revocation. Qualifying that configuration remains part of the
 local cutover executor's work.
 
+On Elasticsearch the runtime login is an API key, or a realm user, whose role covers the layout's
+indexes, `sde_map_state` and - for a group that may be moved there - the staged copies' fresh names
+by a pattern, because the operator grants nothing ([access by blocks](local-cutover.md#elasticsearch-access-by-blocks)):
+
+```json
+POST /_security/api_key
+{
+  "name": "app-runtime",
+  "role_descriptors": {
+    "runtime": {
+      "cluster": ["read_pipeline"],
+      "indices": [{
+        "names": ["events", "sde_map_state", "sde_m_*"],
+        "privileges": ["read", "index", "view_index_metadata"]
+      }]
+    }
+  }
+}
+```
+
+It needs no `create_index`: the adapter reads `sde_map_state` before anything creates it, and
+provisioning creates it. `read_pipeline` lets a session read the write fence of each index it
+opens. `index` rather than `write`: the library never deletes a document, and a delete runs no
+ingest pipeline, so a key that may delete goes past the fence. The operator refuses a key that also
+holds `manage`, `all`, `write`, `delete_index` or `delete` on one of these indexes, or the cluster
+privileges `all`, `manage`, `manage_pipeline`, `manage_ingest_pipelines` or `manage_security`. It
+refuses the same by action, for a role that names an action and no privilege above it: the action
+that updates an index's settings, and the cluster actions that write or delete a pipeline, restore
+a snapshot, or write a role, a role mapping, a user or a password
+([`local-cutover.md`](local-cutover.md)). The optional `monitor` below it admits.
+
 ## Physical design checks and one optional grant
 
 Since placement map contract 5 a session also compares each table's physical design - primary key
@@ -97,6 +128,12 @@ Without it the size is unknown, not an error: the session reports `refused` for 
 `StorageMeasurement.unavailable`, logs `sde.telemetry.storage_unavailable`, and serves rows as
 before. The Weather starter gives this grant at setup.
 
+Elasticsearch answers a size from `_stats`, which takes the index privilege `monitor`: add it to the
+runtime key's indexes, beside `read`, `index` and `view_index_metadata`. It reads statistics of the
+indexes it names and nothing of their documents. Without it the answer is a 403 and the size is
+unknown, `refused`, the same way (measured on 9.5.5). The local operator's qualification refuses
+`manage`, `all`, `write`, `delete_index` and `delete`, never `monitor`.
+
 The local cutover and staging operator qualifies the runtime login's grants before it may revoke
 and restore them, and it admits exactly these two optional grants besides `system.settings`: the
 `system.parts` columns above and `SELECT ON system.data_skipping_indices`. Any other grant in
@@ -132,6 +169,15 @@ it, and those writes would be lost. An administrator is admitted because refusin
 nothing: it can grant itself anything, and this protocol does not revoke administrative powers. A
 build moves no authority, because the tables stay the same tables, so nobody beside it is affected.
 A role is never an administrator here.
+
+"A direct global `ACCESS MANAGEMENT`" means the whole group as the server itself defines it in
+`system.privileges`, held by the user's own grants: as the group, as a group above it (`ALL`), or
+member by member. A partial revoke of anything in it, at any level, leaves no administrator. The
+server decides how such a grant is listed, and it changed (measured): 24.8 lists one row,
+`ACCESS MANAGEMENT` with no database or table; from 26.5 seven members are granted per user name
+(`ON *` rather than `ON *.*`), so the group is listed member by member and never whole, and 26.9
+adds a member, `CREATE TOKEN`. Until 7 October 2026 the operator looked for the row of 24.8 alone,
+so on a current server it found no administrator and refused every staging and cutover beside one.
 
 Until 3 October 2026 ClickHouse refused an administrator who was not the operator's own login, and
 an index build refused any other grantee at all. No test had run an operator that was not the

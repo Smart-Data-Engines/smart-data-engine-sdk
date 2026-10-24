@@ -139,7 +139,9 @@ holds it until that transaction ends or the build budget does.
 function as the index clause in `CREATE TABLE`, and materializes it with an asynchronous
 `MATERIALIZE INDEX` mutation. Parts written after the ADD carry the index; the ones before carry it
 once the mutation is done, and a finished mutation is what "built" means. The mutation is found
-again by its recorded command after a restart rather than started twice. It runs on the server's
+again by its recorded command after a restart rather than started twice; the server records it as
+`MATERIALIZE INDEX <name>` on 24.8 and in parentheses on 26.5 and 26.9 (measured), and either is
+this build's. It runs on the server's
 merge pool, so a pool that is stopped or saturated holds the build until the budget ends. The
 server retries a failing mutation by itself; its last failure reason is carried in the Python
 exception that the budget ends the wait with.
@@ -238,6 +240,8 @@ abandoned one returns the abandonment.
 - It does not rename an index or change one in place - a change removes it and adds a new one under
   a new name - and it does not change a key order, a partition, a table or an engine. Those are
   relayouts or moves, through a copy.
+- It builds nothing on Elasticsearch, and refuses a build there by name: every field of a layout
+  there is indexed already, and a map gives it no index to add or remove.
 - It does not remove an index the map in force does not declare. One created by hand is neither
   verified nor touched.
 - It does not adopt an index somebody created under a bound name, even one of the right shape on

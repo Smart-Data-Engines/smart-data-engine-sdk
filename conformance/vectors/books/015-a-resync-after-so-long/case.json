@@ -1,0 +1,74 @@
+{
+ "kind": "stream",
+ "name": "a resync after so long",
+ "mode": "incremental",
+ "resync": {
+  "updates": 0,
+  "seconds": 10
+ },
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "ask",
+   "levels": [
+    [200, 1, 1],
+    [201, 1, 1],
+    [202, 1, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 5,
+   "op": "update",
+   "side": "ask",
+   "levels": [
+    [200, 1, 1],
+    [201, 2, 1],
+    [202, 1, 1]
+   ],
+   "ts": 20
+  },
+  {
+   "at": 10,
+   "op": "update",
+   "side": "ask",
+   "levels": [
+    [200, 1, 1],
+    [201, 2, 1],
+    [202, 3, 1]
+   ],
+   "ts": 30
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "ask",
+   "ts": 10,
+   "levels": [
+    [200, 1, 1],
+    [201, 1, 1],
+    [202, 1, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "ask",
+   "ts": 20,
+   "levels": [
+    [201, 2, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "ask",
+   "ts": 30,
+   "levels": [
+    [200, 1, 1],
+    [201, 2, 1],
+    [202, 3, 1]
+   ]
+  }
+ ]
+}

@@ -212,7 +212,7 @@ def model_vectors() -> list[str]:
     two_groups = copy.deepcopy(MODEL)
     return [
         _model_refusal(
-            "083-a-nullable-that-is-not-a-boolean",
+            "121-a-nullable-that-is-not-a-boolean",
             nullable,
             "'nullable' is true or false",
             "Python read this as truthy and TypeScript as `=== true`, so `1` made a field "
@@ -553,14 +553,14 @@ def routing_vectors() -> list[str]:
             assert got.id == "Event@pg", got.id
             cases.append({"shape": shape.id, "expect": got.id})
     _write(
-        VECTORS / "routing" / "003-an-empty-partition-below-contract-5-says-nothing",
+        VECTORS / "routing" / "004-an-empty-partition-below-contract-5-says-nothing",
         {
             "model.json": sde.neutral_declaration(model),
             "map.json": document,
             "cases.json": cases,
         },
     )
-    return ["routing/003"]
+    return ["routing/004"]
 
 
 def main() -> None:

@@ -1,0 +1,15 @@
+{
+ "kind": "diff",
+ "name": "a count alone is a change",
+ "side": "ask",
+ "before": [
+  [200, 5, 1]
+ ],
+ "after": [
+  [200, 5, 2]
+ ],
+ "diff": [
+  [200, 5, 2]
+ ],
+ "why": "the engine stores the order count: a book whose count moved is another book"
+}

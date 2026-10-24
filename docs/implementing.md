@@ -484,7 +484,7 @@ compared literally, both reference runners compiled it as a regular expression, 
 vectors wrote `Thing\.amount`, which only a regular expression reads as `Thing.amount`.
 
 **Each of these is a rule of the contract now, in all three libraries, with a vector**:
-- `errors/083`-`112` and `routing/003`, written by `conformance/tools/third_implementation_vectors.py`
+- `errors/084`-`112`, `121` and `routing/004`, written by `conformance/tools/third_implementation_vectors.py`
   only after the reference refuses each one with its `match`;
 - the rules are in §4a, §7 and §8a;
 - every runner compares `match` literally, and the four write-stage cases say `Thing.amount`.
@@ -534,3 +534,33 @@ schema/migration vectors. It pins normalized filters, typed positions, bounds an
 summary results. Native tests must separately execute the generated SQL against each supported
 engine; a normalized plan alone does not prove ordering, null handling or arithmetic in that engine.
 The query family does not change the model/map bytes or migration checkpoint ordering.
+
+**13. Book streams (Tier 2, with the orderbook engine). Vectors: `books/`.**
+
+Cases of two kinds, and no connection anywhere. A `diff` case is a function of two sides. A `stream`
+case drives a stream with clocks you inject - the policy clock in seconds and, for a step without a
+time, the machine's - into a sink that records what it is handed; `fail_next` makes the sink refuse
+its next send, after which the stream must send that side whole. Compare the sends exactly, times
+included, and refusals by substring; a refused step must send nothing. The rules are §8c of the
+contract. Then run your stream against a live engine and read the book back: the vectors pin what
+you send, and only the engine's own composition shows that it is the book you meant.
+
+**14. Search (Tier 2). Vectors: `search/`.**
+
+The rule is a function of a text, so the vectors need no engine: implement tokens, folding and
+matching from §7l of the contract and compare tokens exactly, as code point sequences. Two cases
+carry most of the risk. `005` is the Kelvin sign, which your language lower-cases to `k` only if it
+uses the Unicode database rather than ASCII. `006` is `U+0130`, whose full lower case most languages
+return as two code points, so a fold that takes `lower()` whole fails it. Then put `search` on your
+session: candidates from your engine in key order, every row checked by your rule before it is
+returned, and the page rules of §7l. Run it against a live engine with rows only the rule can tell
+apart, a decomposed accent and the Kelvin sign among them.
+
+**15. Elasticsearch documents (Tier 2, with Elasticsearch). Vectors: `documents/`.**
+
+A function of a row and its index's columns, so again no engine: from §7m, compute each column's
+stored value, the token field and the `_id`. Compare the `_id` exactly and the source by value. A
+value marked `{"$int": "..."}` is an integer past 2^53: carry it as one, not as a float, or `001`
+fails on its timestamp, its int64 and its decimal. Then `schema/019` and `020` hold the mapping you
+render. The adapter itself is the next step: one index per entity, writes that wait for a refresh,
+and reads that send no text predicate the engine would interpret.

@@ -1,0 +1,20 @@
+[
+  {
+    "shape": "0aa6ade1a9fdb423",
+    "expect": "Note@ch"
+  },
+  {
+    "shape": "b194eb66744de6f3",
+    "expect": "Note@pg"
+  },
+  {
+    "shape": "b194eb66744de6f3",
+    "fresh": true,
+    "expect": "Note@pg"
+  },
+  {
+    "shape": "b194eb66744de6f3",
+    "in_write_transaction": true,
+    "expect": "Note@pg"
+  }
+]

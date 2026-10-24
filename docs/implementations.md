@@ -22,8 +22,8 @@ implementation that does not pass the Tier 0 vectors is not an SDE library, whoe
 
 | Library | Language | Tier | Hashing (§2a) | IR contract | Map contract | Engines |
 |---|---|---|---|---|---|---|
-| `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
-| `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `orderbook`, `postgres` |
+| `smart-data-engine-sdk` | Python 3.11–3.14 | 2 | yes | 1 | 1–6 | `clickhouse`, `elasticsearch`, `orderbook`, `postgres` |
+| `@smart-data-engines/sde` | TypeScript / Node 18–26 | 2 | yes | 1 | 1–6 | `clickhouse`, `elasticsearch`, `orderbook`, `postgres` |
 | `sde` (CMake package) | C++20 / GCC 12+, Clang 16+ | 1 | yes | 1 | 1–6 | none |
 
 The engines column carries **dialect identifiers**, not product names: they are what a hand-written
@@ -32,7 +32,10 @@ Requirement 17.5 is where the real cost of this table lives: four languages time
 eight driver integrations, and each of them needs its own transaction-semantics tests. Two of the
 eight exist per row above. `postgres` is PostgreSQL and `orderbook` is our own L2 orderbook engine,
 whose schema is fixed in its own source — a group either is that shape or it cannot be placed there, and rendering DDL for it
-yields no statements rather than no tables.
+yields no statements rather than no tables. `elasticsearch` is Elasticsearch 9: an index per entity,
+documents addressed by their key's digest, and the text index behind `Session.search` (format
+contract §7m). The TypeScript adapter is the same engine in the same layout, with the mappings and
+documents held byte for byte by the same vectors, and integers past 2^53 kept exact in its JSON.
 
 **Python is the reference implementation.** Where it disagrees with the contract, the contract is
 right and the library is wrong — with one exception, stated in the contract itself:
@@ -78,8 +81,12 @@ compiled language. It reads, checks and measures: models and their versions, sha
 declaration, placement maps of contracts 1 to 6 with their signatures, routing, and the telemetry
 window of §6a. Its recorder takes no lock on an operation's path - a window is a block of atomic
 counters, swapped at a roll - which is a claim about memory ordering, so CI runs its threads under
-ThreadSanitizer. It has no engine adapters yet, so the engines cell says `none`, and it makes no
-network call. The adapters are planned in the order the other two have them - PostgreSQL,
+ThreadSanitizer. Of Tier 2 it has the parts that need no engine - values, the DDL of §7a and the
+read plans and exact summaries of the `query/` vectors - and it passes every `query/` vector and
+every `schema/` case of the dialects it renders. The Elasticsearch cases (`schema/019` and `020`)
+are the other two libraries', and its runner leaves them out by name. The tier moves to 2 when it
+takes part in a migration. It has no engine adapters yet, so the
+engines cell says `none`, and it makes no network call. The adapters are planned in the order the other two have them - PostgreSQL,
 ClickHouse, then our orderbook engine - and each moves the cell when it round-trips, not before.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
@@ -95,14 +102,15 @@ The tier in the table above is checked against each library's own `TIER` constan
 a list that says one thing while the code says another is the failure requirement 17.6 exists to
 prevent, and prose does not fail.
 
-**`pip install smart-data-engine-sdk` installs `0.1.1`**, a patch release of 28 September 2026 that
-fixes recovery of an interrupted PostgreSQL index build ([`CHANGELOG.md`](../CHANGELOG.md)).
-`0.1.0`, the first release, was published by the release workflow on 27 September with
-attestations, and so was `0.1.1`. The name was claimed on PyPI on 12 September with a development
-release, and the release candidate `0.1.0rc1` came through the same workflow earlier on
-27 September. **`npm install @smart-data-engines/sde` installs `0.1.0`**, published by the same
-workflow the same day, with provenance, after the candidate `0.1.0-rc.1`. The one version before
-those, `0.1.0-dev.0`, was published by hand. That publish was forced: npm configures trusted
+**`pip install smart-data-engine-sdk` installs `0.2.0`, and `npm install @smart-data-engines/sde`
+installs `0.2.0`**, both published by the release workflow on 10 October 2026, with attestations on
+PyPI and provenance on npm. They add our orderbook engine as the third engine and change what a
+caller depends on, which is why the number is not a patch ([`CHANGELOG.md`](../CHANGELOG.md)).
+Before them came `0.1.0`, the first release, on both registries on 27 September, and `0.1.1`, a
+Python patch of 28 September that fixes recovery of an interrupted PostgreSQL index build. The name
+was claimed on PyPI on 12 September with a development release, and the release candidates
+`0.1.0rc1` and `0.1.0-rc.1` came through the same workflow earlier on 27 September. The one npm
+version before those, `0.1.0-dev.0`, was published by hand. That publish was forced: npm configures trusted
 publishing only on a package that already exists, so the first publish cannot come from CI
 ([`publishing.md`](publishing.md) §5.3).
 

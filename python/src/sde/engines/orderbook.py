@@ -45,11 +45,12 @@ rows (its query language refuses a time filter on an aggregate), so ``Session.co
 ``Session.summarize`` are refused here by name rather than computed from a full scan.
 
 One more property that is a cost rather than a refusal. A write is invisible to a query until
-``flush()``, and ``flush()`` in local mode tears the engine down and reopens it - **3.4 ms
-measured** on an i3-7100U with one row. So reads flush lazily, only when there is something
-unflushed, and the cost lands on the first read after a write rather than on every write. The
-alternative - not flushing and returning nothing for a row that was just written - is a silent wrong
-answer, which is never the cheaper option.
+``flush()``, and a flush after a write waits for the device: in local mode the engine syncs its
+segments before the checkpoint that claims them (the engine's #245) - **2.48-2.74 ms median
+measured** on an i3-7100U with one row, at the pinned engine. So reads flush lazily, only when there
+is something unflushed, and the cost lands on the first read after a write rather than on every
+write. The alternative - not flushing and returning nothing for a row that was just written - is a
+silent wrong answer, which is never the cheaper option.
 """
 
 from __future__ import annotations
@@ -366,6 +367,10 @@ class OrderbookEngine:
     )
     """Why ``Session.count`` is refused for a group on this engine (``sde.query.count_engine``)."""
 
+    search_refusal = (
+        "this engine searches nothing over its history: its text is a symbol, an exchange and a "
+        "side, and a read of its history needs the symbol and the exchange already"
+    )
     summary_refusal = (
         "this engine summarizes nothing over its history: its aggregates read the live book, not "
         "the stored rows. Refused rather than computed from a full scan."
@@ -805,6 +810,117 @@ class OrderbookEngine:
             raise EngineError(f"insert into {table} failed: {exc}") from exc
         self._unflushed += len(checked)
 
+    def supports_replace_side(self) -> bool:
+        """Whether this engine replaces a side of a book (``MREPLACE``, the engine's #233): a TCP
+        server says so in its capabilities, and a server without it would answer the command as
+        unknown. Local mode is the library this adapter loaded, which says nothing until it is
+        called, so it is taken at its word here and refuses then if it predates the command."""
+        if self._data_dir is not None:
+            return True
+        try:
+            return "replace_side" in set(self._ob.server_capabilities())
+        except Exception as exc:
+            raise EngineError(f"could not read the orderbook server's capabilities: {exc}") from exc
+
+    def check_book(self, symbol: str, exchange: str) -> None:
+        """Refuse the names of a book that a write to it would refuse, for a caller that holds them
+        across many writes - a book stream - and should hear it before the first one."""
+        _name(symbol, "symbol")
+        _name(exchange, "exchange")
+
+    def _book_levels(
+        self, levels: Sequence[tuple[int, int, int]], where: str
+    ) -> tuple[tuple[int, int, int], ...]:
+        """Levels of a book update by price: the checks of ``_levels`` but none on how many there
+        are - a replacement may empty its side - beyond the engine's 1000."""
+        if len(levels) > MAX_LEVEL + 1:
+            raise EngineError(
+                f"{where}has {len(levels)} levels and this engine stores at most {MAX_LEVEL + 1} "
+                f"per side"
+            )
+        return tuple(
+            (
+                _integer(price, f"{where}price", MIN_PRICE, MAX_PRICE),
+                _integer(quantity, f"{where}quantity", 0, MAX_QUANTITY),
+                _integer(count, f"{where}order_count", 0, MAX_ORDER_COUNT),
+            )
+            for price, quantity, count in levels
+        )
+
+    def _book_write(
+        self,
+        table: str,
+        *,
+        symbol: str,
+        exchange: str,
+        side: str,
+        timestamp_ns: int,
+        levels: Sequence[tuple[int, int, int]],
+        replace: bool,
+    ) -> None:
+        self._table(table)
+        if side not in SIDES:
+            raise EngineError(f"side must be one of {list(SIDES)}, not {side!r}")
+        symbol = _name(symbol, "symbol")
+        exchange = _name(exchange, "exchange")
+        stamp = _integer(timestamp_ns, "timestamp_ns", 0, MAX_TIMESTAMP_NS)
+        checked = self._book_levels(levels, "")
+        if not checked and not replace:
+            return   # a change of nothing is not an update
+        call = self._ob.replace_side if replace else self._ob.insert
+        try:
+            call(
+                symbol,
+                exchange,
+                side,
+                [price for price, _, _ in checked],
+                [quantity for _, quantity, _ in checked],
+                [count for _, _, count in checked],
+                timestamp_ns=stamp,
+            )
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            if self._data_dir is None:
+                raise EngineError(
+                    f"the engine did not confirm the update of {table}: {exc}. If the connection "
+                    f"dropped after it was sent, it may still have been applied: the stream sends "
+                    f"this side whole next."
+                ) from exc
+            raise EngineError(f"update of {table} failed: {exc}") from exc
+        # At least one: a replacement of no levels writes the removals the engine computes.
+        self._unflushed += max(len(checked), 1)
+
+    def apply_levels(
+        self,
+        table: str,
+        *,
+        symbol: str,
+        exchange: str,
+        side: str,
+        timestamp_ns: int,
+        levels: Sequence[tuple[int, int, int]],
+    ) -> None:
+        """One update by price: each level sets its price's quantity, a quantity of 0 removes the
+        price, and a price it does not name stays (the engine's #233). The levels go in the order
+        given, which for a :class:`sde.BookStream` is removals first."""
+        self._book_write(table, symbol=symbol, exchange=exchange, side=side,
+                         timestamp_ns=timestamp_ns, levels=levels, replace=False)
+
+    def replace_levels(
+        self,
+        table: str,
+        *,
+        symbol: str,
+        exchange: str,
+        side: str,
+        timestamp_ns: int,
+        levels: Sequence[tuple[int, int, int]],
+    ) -> None:
+        """The whole side (``MREPLACE``): the engine removes every price the side holds and these
+        levels do not name. No levels empties the side."""
+        self._book_write(table, symbol=symbol, exchange=exchange, side=side,
+                         timestamp_ns=timestamp_ns, levels=levels, replace=True)
+
     def _updates(self, rows: Sequence[Mapping[str, Any]]) -> list[_Update]:
         """Group rows into the engine's updates, refusing every malformed batch before sending.
 
@@ -1100,6 +1216,55 @@ class OrderbookEngine:
                 f"it by time, give a limit, or page through it with Session.scan"
             )
         return [self._row(symbol, exchange, row) for row in rows]
+
+    def book_at(
+        self,
+        table: str,
+        *,
+        symbol: str,
+        exchange: str,
+        at_ns: int,
+        depth: int | None = None,
+    ) -> dict[str, list[tuple[int, int, int]]]:
+        """The book as of ``at_ns``, as the engine composes it: by price (its #233), from every
+        update with a time up to ``at_ns``, applied in time order. Each side best first, as
+        (price, quantity, order count), at most ``depth`` levels a side and never more than the
+        1000 the engine keeps.
+
+        What an incremental book stream is read back by: the engine stores the changes and
+        answers the book. A book nothing has been written to is empty over TCP and refused in
+        local mode, as every read here is (``_query`` says why).
+
+        Refused by a server that composes a book by position, as every server before #233 did:
+        such a server would answer a book written by price - a book stream's - wrongly, and
+        nothing in the answer would say so. ``replace_side`` came with reads by price, so it is
+        the capability asked for.
+        """
+        self._table(table)
+        symbol = _name(symbol, "symbol")
+        exchange = _name(exchange, "exchange")
+        at = _integer(at_ns, "at_ns", 0, MAX_TIMESTAMP_NS)
+        bound = ""
+        if depth is not None:
+            bound = f" AND level < {_integer(depth, 'depth', 1, MAX_LEVEL + 1)}"
+        if not self.supports_replace_side():
+            raise EngineError(
+                "this orderbook server composes a book by position, not by price (it predates "
+                "the capability replace_side, which came with reads by price), and would read a "
+                "book written by price wrongly. Upgrade the server; nothing was read."
+            )
+        self.flush()
+        query = (
+            f"SELECT * FROM {_quote_literal(symbol)}.{_quote_literal(exchange)} "
+            f"WHERE AT {at}{bound}"
+        )
+        rows = [self._row(symbol, exchange, row) for row in self._query(query)]
+        book: dict[str, list[tuple[int, int, int]]] = {side: [] for side in SIDES}
+        for row in sorted(rows, key=lambda r: (r["side"], r["level"])):
+            if row["side"] not in book:
+                raise EngineError(f"the engine answered a level of side {row['side']!r}")
+            book[row["side"]].append((row["price"], row["quantity"], row["order_count"]))
+        return book
 
     def _window(
         self, scan: _Scan, low: int, high: int

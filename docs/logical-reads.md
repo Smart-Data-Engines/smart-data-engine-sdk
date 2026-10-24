@@ -111,6 +111,48 @@ to six decimal places and may be chosen from 0 through 38. Python's global Decim
 not change the result. Mean is Decimal in Python and decimal text in TypeScript. Floating
 summaries, arbitrary GROUP BY and time bucketing are outside this API's current scope.
 
+## Search
+
+`search` returns the rows whose chosen text fields hold every token of a query, a page at a time in
+key order. It is a filter, not a ranking, and the same rows come back from every engine and both
+languages, because the library decides what matches: [format contract §7l](format-contract.md#7l-search).
+
+```python
+page = session.search("Note", "red apple", fields=["title", "body"], limit=20)
+for row in page.rows:
+    consume(row)
+while page.next_after is not None:
+    page = session.search("Note", "red apple", fields=["title", "body"], after=page.next_after)
+```
+
+```typescript
+let page = await session.search('Note', 'red apple', { fields: ['title', 'body'], limit: 20 })
+while (page.nextAfter !== null) {
+  page = await session.search('Note', 'red apple', { fields: ['title', 'body'], after: page.nextAfter })
+}
+```
+
+- A token is a run of letters and digits in the text normalised to NFC. Tokens match without
+  case, one code point for one: `Łódź` finds `ŁÓDŹ`, the Kelvin sign finds `k`, and `strasse` does
+  not find `Straße`.
+- `fields` are `string` fields of the entity, all of them when omitted.
+- A search always reads the group's source, even where the map routes scans to a copy, because
+  only the source is known to hold every row.
+- PostgreSQL and ClickHouse have no text index here: the library reads rows in key order and checks
+  each one. No engine's `lower()`, collation or analyzer decides an answer, because PostgreSQL's
+  `lower()` under the `C` collation changes ASCII only, and a row an engine wrongly leaves out is a
+  wrong answer nobody would see.
+- One call checks at most `max_examined` / `maxExamined` rows: 100,000 by default, 1,000,000 at
+  most. A page cut short by that bound has fewer rows than the limit and still a position, so a
+  short page is not the last one. `next_after` is `None` / `nextAfter` is `null` only when nothing
+  is left to check.
+- `SearchRefused`, a `QueryRefused`, is raised before any engine is asked: a query with no letter
+  or digit, a field that is not text, a bad limit.
+
+Telemetry records the `search` shape with the rows each call examined and the fields it looked
+in, never the query. The window's `examined` beside `rows` is what a search cost on the engine
+that holds the group, and it is the measurement a placement for search is decided on.
+
 ## Placement, lifecycle and errors
 
 fresh=True / fresh: true reads the source. A read inside a write transaction also uses the

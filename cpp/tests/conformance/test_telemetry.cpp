@@ -53,11 +53,20 @@ std::optional<sde::Window> recorded(const sde::Model& model, const sde::Json& op
       }
       filters = &filter;
     }
+    sde::Search search;
+    const sde::Search* searches = nullptr;
+    if (const sde::Json* fields = operation.find("searched"); fields != nullptr) {
+      for (const sde::Json& name : fields->as_array()) search.fields.push_back(name.as_string());
+      if (const sde::Json* examined = operation.find("examined"); examined != nullptr) {
+        search.examined = static_cast<std::uint64_t>(examined->to_int64().value());
+      }
+      searches = &search;
+    }
     const sde::Json* rows = operation.find("rows");
     const sde::Json* failed = operation.find("failed");
     recorder.record(*shape, operation.find("ns")->to_int64().value(),
                     rows != nullptr ? static_cast<std::uint64_t>(rows->to_int64().value()) : 0,
-                    failed != nullptr && failed->as_bool(), filters);
+                    failed != nullptr && failed->as_bool(), filters, searches);
   }
   if (has_file(directory / "fan_out.json")) {
     const sde::Json fan_out = read_json(directory / "fan_out.json");
