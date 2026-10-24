@@ -625,9 +625,9 @@ the next one:
   name;
 - **the statement is the request's body.** The reference's driver sends it there, and only an
   INSERT that carries rows names its statement - which holds no value - in the URL. A URL is what a
-  proxy between the application and the server logs: the TypeScript library sends every statement
-  in one, a get's key and a read's filters with it, and so did this one until a test read the
-  request line;
+  proxy between the application and the server logs: the TypeScript library sent every statement
+  in one, a get's key and a read's filters with it, until #117, and so did this one until a test
+  read the request line;
 - **a drain's intent is written synchronously whatever the login's defaults.** A login can make
   inserts asynchronous and unacknowledged by default; the intent row has to be in the table before
   the DETACH it describes, or an interrupted drain has no record to resume by. The insert carries
@@ -648,10 +648,11 @@ the next one:
   as `ORDER BY (id)` reads back `(id)` in `system.tables`, and a partition key or a skipping index's
   expression written in parentheses likewise, where 26.4 and every earlier release - 24.8, 25.3,
   25.8, 25.12, 26.3 measured - read `id`; a list of two or more reads `a, b` on all of them. The
-  reference's catalogue parser refuses the parentheses, so on 26.5 every table it created reads as
-  another design: a session reports a physical mismatch for each, and provisioning, staging and a
-  copy under a new generation refuse - its own slice fails there, and so did 30 live tests of this
-  library on 26.9 before its parser took one pair of parentheses around a whole list. The same
+  reference's catalogue parser refused the parentheses, so on 26.5 every table it created read as
+  another design: a session reported a physical mismatch for each, and provisioning, staging and a
+  copy under a new generation refused - its own slice failed there, and so did 30 live tests of this
+  library on 26.9 before its parser took one pair of parentheses around a whole list. The reference
+  and TypeScript take the same reading since 0.2.0 (#116). The same
   release changed the words of a refused read (`identifier 'missing'. In scope` for `'missing' in
   scope`), so a test that compares a server's words asks the server for them. CI tested 24.8 alone;
   it now runs this library's live tests against a current release too.

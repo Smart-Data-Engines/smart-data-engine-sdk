@@ -58,8 +58,8 @@ them, so the one-column sort key every library renders as `ORDER BY (id)` reads 
 create there read as differing from its design: a session reported a physical mismatch, and
 provisioning, staging and a copy under a new generation refused. The C++ catalogue reader takes one
 pair of parentheses around a whole list, and its live suite passes against 26.5 and runs in CI
-against a current release beside the LTS. The Python and TypeScript libraries, released, read it as
-before; the finding is in [`docs/implementing.md`](docs/implementing.md#the-clickhouse-adapter-against-the-reference-on-one-server).
+against a current release beside the LTS. The Python and TypeScript libraries take the same
+reading since 0.2.0 (#116); the finding is in [`docs/implementing.md`](docs/implementing.md#the-clickhouse-adapter-against-the-reference-on-one-server).
 
 **New: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
 `sde::ClickHouseEngine`, over ClickHouse's HTTP interface through libcurl, in a target of its own,
