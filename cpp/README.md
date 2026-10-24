@@ -16,6 +16,8 @@ they are.
 | Routing (§8) | yes |
 | Name hashing (§2a) | yes |
 | Telemetry (Tier 1): the recorder, windows and the window document of §6a | yes |
+| Values, the DDL of §7a, read plans and exact summaries (Tier 2, the part without engines) | yes |
+| Sessions and migration participation (Tier 2) | not yet |
 | Engines - PostgreSQL, ClickHouse, the orderbook engine (Tier 2) | not yet |
 
 Until Tier 2, this library reads, checks and measures; it does not connect to anything. It makes no
@@ -108,6 +110,21 @@ keeps working for as long as its keys are configured.
   and reads it: a write racing a roll lands in the next window, never half in one. Recording never
   throws; what it cannot record it drops and counts (`rejected()`). The window document is
   `Window::as_record(model)`, the same §6a document the other two libraries write, number for number.
+- **A value has one host type per neutral type** (`sde/value.hpp`): `std::int64_t` for both integer
+  types, `double` for both floats, `std::string` for text, and `sde::Decimal`, `sde::Bytes`,
+  `sde::Uuid`, `sde::Date`, `sde::Timestamp` (no zone) and `sde::TimestampTz` (an instant) for the
+  rest, all in one `sde::Value`. A decimal is exact, compared by value and written at the scale it
+  was given (`1.10` stays `1.10`); it holds up to 1,000 digits, more than any engine here stores.
+  Timestamps are microseconds between years 1 and 9999.
+- **DDL is a value** (`sde/schema.hpp`): `sde::schema_statements(layout, keys, dialect)` returns the
+  statements that create a layout, byte for byte the reference's, and running nothing is the answer
+  for a fixed-schema engine (`sde::schema_is_fixed`).
+- **A read is planned before any engine is called** (`sde/query.hpp`): `sde::plan_read` checks the
+  fields and normalises every value to its column's type, refusing with `sde::QueryRefused` - a
+  `sde::ModelPlanningError` - as the reference does, message for message. A page limit is an
+  `sde::PageLimit`, which no `bool` converts to, so `limit = true` does not compile where the
+  reference refuses it at run time (`query/012`). `sde::numeric_summary` decodes an engine's summary
+  exactly, however wide the total, and rounds the mean half to even.
 - **Nothing is logged unless you pass a sink** (`LoadOptions::log`). Events are named from the
   reference's closed vocabulary (`sde.map.loaded`, `sde.map.rejected`) and carry structure, never a
   row's values.
@@ -129,4 +146,9 @@ it. Both were compared with the reference directly, and agreed everywhere:
 - `snake_case` on 100,025 names against Python's and the TypeScript library's;
 - base64 on 449,593 strings, every one up to six characters over a hostile alphabet among them;
 - the whole message of every model- and map-stage refusal in `errors/`, all 76: identical to the
-  reference's, apart from one function name spelled the C++ way.
+  reference's, apart from one function name spelled the C++ way;
+- the read planner's value rules and the exact summary on 240,000 random inputs against the
+  reference's `sde.query` - decimal text up to and past libmpdec's exponent limits, ISO timestamps
+  with every part in and out of range, dates, UUIDs, and summaries with totals of up to 40 digits:
+  identical, message for message, once the reference took the rules of `query/024`-`028`. Before
+  that, every difference was one of those two rules, and they are the reason the vectors exist.
