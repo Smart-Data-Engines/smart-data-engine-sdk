@@ -78,6 +78,28 @@ restarting the scan; a key ahead can appear on a later page. A changed filter or
 question with an explicit position. Use appropriate engine isolation when a snapshot is required;
 a default multi-statement transaction alone does not promise it.
 
+## Values written as text
+
+A filter, a bound or a position may give a decimal or a timestamp as text. The text is read by one
+rule in every library, pinned by `query/024`-`028`, and not by whatever the language's runtime
+accepts:
+
+- **A decimal** is an optional sign, ASCII digits with an optional fraction, and an optional
+  exponent, at most 76 digits. It may be surrounded by Unicode's `White_Space` and nothing else:
+  U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F
+  and U+3000.
+- **A timestamp** is `YYYY-MM-DD`, `T` or a space, `HH:MM:SS`, up to six fractional digits, and
+  optionally `Z` or an offset `+HH:MM` or `+HH:MM:SS`. Every part keeps ISO 8601's range: hours
+  00-23 - there is no 24:00 - and minutes and seconds 00-59, in the offset too. The instant must
+  fall between years 0001 and 9999 in UTC.
+
+Each rule replaced a disagreement that had shipped. Python stripped with `str.strip()`, which also
+removes U+001C-U+001F. TypeScript stripped with `trim()`, which removes U+FEFF and keeps U+0085.
+CPython reads an offset by its total, so `+10:60` was eleven hours in Python and refused in
+TypeScript. CPython 3.14 reads `24:00:00` as the next midnight, where 3.11 to 3.13 refused it, so
+the reference answered differently by interpreter. The C++ library found all of them, by comparing
+its answers with the reference's on random inputs.
+
 ## Exact counts and numeric summaries
 
 ```python
