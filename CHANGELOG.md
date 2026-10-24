@@ -8,6 +8,12 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a PostgreSQL DSN that only mentioned `connect_timeout` lost the connect bound** (Python,
+[`docs/failure-semantics.md`](docs/failure-semantics.md)). The 10-second default was applied only
+when the text `connect_timeout` was absent from the DSN, so `?application_name=connect_timeout_probe`
+left a host that accepts and stays silent holding the call: still waiting after 20 seconds. The
+adapter now reads the DSN's keys as libpq does, and a `connect_timeout` key still wins.
+
 **Changed: an operation a newer map overtook says where and which versions.** A staging, a cutover
 or an index build that finds a newer map on one of its engines refused with "a newer map was
 adopted" and nothing else, so an operator had to read this library to find which engine held which
