@@ -699,8 +699,8 @@ needs:
   `[Errno 104]`; CPython appends `(_ssl.c:1000)`, which names its own source.
 
 Each difference from the reference or from TypeScript is a finding for the contract, to become a
-rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepts an
-invisible format character the reference refuses), a key of another type in a point read
+rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepted an
+invisible format character the reference refuses, until #123), a key of another type in a point read
 (TypeScript answers "no row" where the reference reads it with `int()`), and the four above.
 
 ### Verification-request protocol check
