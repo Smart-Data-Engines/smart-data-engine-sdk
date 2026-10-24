@@ -1,13 +1,16 @@
 #include "sde/session.hpp"
 
 #include <algorithm>
+#include <ranges>
 #include <chrono>
 #include <iterator>
 #include <string>
 
+#include "bulk.hpp"
 #include "generation.hpp"
-#include "session_use.hpp"
 #include "python_compat.hpp"
+#include "session_use.hpp"
+#include "storage_internal.hpp"
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
 #include "sde/migration.hpp"
@@ -17,10 +20,9 @@ namespace sde {
 
 namespace {
 
+using detail::batch_columns;
+using detail::names_of;
 using detail::python_repr;
-
-constexpr std::size_t kMaxBatchRows = 1000;
-constexpr std::size_t kMaxBatchValues = 60'000;
 
 std::int64_t steady_ns() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -30,12 +32,6 @@ std::int64_t steady_ns() {
 
 std::map<std::string, std::string> as_map(const NeutralColumns& columns) {
   return std::map<std::string, std::string>(columns.begin(), columns.end());
-}
-
-std::vector<std::string> names_of(const Row& row) {
-  std::vector<std::string> names;
-  for (const auto& [name, unused] : row) names.push_back(name);
-  return names;
 }
 
 /// The reference names an exception by its class in a divergence line, never by its message: the
@@ -50,31 +46,6 @@ std::string error_class(const std::exception& error) {
   if (dynamic_cast<const MigrationRefused*>(&error) != nullptr) return "MigrationRefused";
   if (dynamic_cast<const SdeError*>(&error) != nullptr) return "SdeError";
   return "Exception";
-}
-
-/// The batch's field names, checked whole before any engine is called. Values are never in these
-/// messages.
-std::vector<std::string> batch_columns(const std::vector<Row>& rows, std::size_t extra_columns) {
-  if (rows.size() > kMaxBatchRows) {
-    throw BulkWriteRefused("a batch may contain at most " + std::to_string(kMaxBatchRows) + " rows");
-  }
-  std::vector<std::string> columns;
-  for (std::size_t i = 0; i < rows.size(); ++i) {
-    if (rows[i].empty()) {
-      throw BulkWriteRefused("each batch row must be a nonempty mapping with string fields");
-    }
-    std::vector<std::string> here = names_of(rows[i]);
-    if (i == 0) {
-      columns = std::move(here);
-      if (rows.size() * (columns.size() + extra_columns) > kMaxBatchValues) {
-        throw BulkWriteRefused("a batch may contain at most " + std::to_string(kMaxBatchValues) +
-                               " values, including generation");
-      }
-    } else if (here != columns) {
-      throw BulkWriteRefused("all batch rows must have the same fields");
-    }
-  }
-  return columns;
 }
 
 /// The first required field a row gives null, in code point order.
@@ -100,13 +71,10 @@ Filter predicates(const ReadPlan& plan) {
 }
 
 /// `refused` when the catalogue denied the login - PostgreSQL's SQLSTATE 42501, ClickHouse's access
-/// error 497, which a login without the `system.parts` grant receives - and `failed` otherwise.
+/// error 497, which a login without the `system.parts` grant receives - and `failed` otherwise. The
+/// adapter read the server's code and says so by the error's type; its text decides nothing.
 std::string storage_refusal(const std::exception& error) {
-  const std::string_view text = error.what();
-  return text.find("42501") != std::string_view::npos ||
-                 text.find("Code: 497") != std::string_view::npos
-             ? "refused"
-             : "failed";
+  return dynamic_cast<const detail::CatalogueRefused*>(&error) != nullptr ? "refused" : "failed";
 }
 
 }  // namespace
@@ -187,6 +155,34 @@ Session::Session(const Model& model, const PlacementMap& placement,
                       "and guessing at a connection is not something a library should do.");
   }
 
+  // A point read's shape and where it goes are fixed by the model and the map, so with nothing
+  // translating names they are found here once rather than by lookups on every call: requirement
+  // 3.5 gives this library one percent of an operation, and building those lookups' keys was most
+  // of a point read (measured). An entity whose read cannot be decided here has none, and the
+  // general path decides it - and refuses it - as before.
+  if (names_ == nullptr) {
+    for (const Entity& entity : model.entities()) {
+      PointRead read{entity.key, nullptr, {}, {}};
+      std::sort(read.key.begin(), read.key.end());
+      const auto found = shapes_.find({entity.name, "point_read", read.key});
+      if (found == shapes_.end()) continue;
+      read.shape = found->second;
+      try {
+        const auto place = [&](bool source) {
+          // Named, as in `target`: GCC cannot tell that `resolve` returns into the map.
+          const RouteContext context{false, source};
+          const Materialization& at = resolve(placement, *read.shape, context);
+          return PointRead::Place{engines_.at(at.engine), &at.layout.table_for(entity.name)};
+        };
+        read.routed = place(false);
+        read.source = place(true);
+      } catch (const std::exception&) {
+        continue;
+      }
+      point_reads_.emplace(entity.name, std::move(read));
+    }
+  }
+
   // A copy that silently holds different values from its source is refused before the first write
   // rather than found by `verify` after one. Here rather than in the map loader, because a map names
   // engines and carries no dialect: this is the first door holding the adapters.
@@ -210,16 +206,7 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // On the path every start takes - a rolled-back map file is read at process start - and costing
   // nothing for an unsigned map.
   physical_ = detail::validate_generations(model, placement, engines_, project_id_);
-  if (!physical_.empty()) {
-    std::set<std::string> tables;
-    for (const PhysicalFinding& finding : physical_) tables.insert(finding.table);
-    Json fields = Json::object();
-    fields.set("findings", static_cast<std::int64_t>(physical_.size()));
-    Json named = Json::array();
-    for (const std::string& table : tables) named.as_array().push_back(table);
-    fields.set("tables", std::move(named));
-    detail::emit(log_, "sde.schema.physical_mismatch", fields);
-  }
+  report_physical();
   forward_only_ = enforce_forward_only(placement, engines_, log_);
 }
 
@@ -343,6 +330,7 @@ void Session::ensure_schema() {
   const Use use(*this);
   if (placement_.contract() >= 4) {
     physical_ = detail::validate_generations(model_, placement_, engines_, project_id_);
+    report_physical();
     return;
   }
   std::vector<PhysicalFinding> findings;
@@ -357,9 +345,22 @@ void Session::ensure_schema() {
     }
   }
   physical_ = std::move(findings);
+  report_physical();
   Json fields = Json::object();
   fields.set("groups", static_cast<std::int64_t>(groups_.size()));
   detail::emit(log_, "sde.schema.applied", fields);
+}
+
+void Session::report_physical() const {
+  if (physical_.empty()) return;
+  std::set<std::string> tables;
+  for (const PhysicalFinding& finding : physical_) tables.insert(finding.table);
+  Json fields = Json::object();
+  fields.set("findings", static_cast<std::int64_t>(physical_.size()));
+  Json named = Json::array();
+  for (const std::string& table : tables) named.as_array().push_back(table);
+  fields.set("tables", std::move(named));
+  detail::emit(log_, "sde.schema.physical_mismatch", fields);
 }
 
 // --- data ---------------------------------------------------------------------------------------
@@ -504,6 +505,15 @@ void Session::replay_one(const Deferred& write) {
 
 std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fresh) {
   const Use use(*this);
+  // The model's key, exactly, of an entity of a model whose names nothing translates: the steps
+  // below, without copying the key or building a lookup key. Anything else - a hashed model, another
+  // key, an entity the model does not declare - takes the general path, which is the one refusing.
+  if (const auto known = point_reads_.find(entity);
+      known != point_reads_.end() && std::ranges::equal(key | std::views::keys, known->second.key)) {
+    const PointRead::Place& place =
+        fresh || in_write_transaction_ ? known->second.source : known->second.routed;
+    return read_one(*known->second.shape, entity, *place.engine, *place.table, key);
+  }
   const std::string target_entity = target_of(entity);
   const Row given = fields_in(entity, key);
   const Entity& spec = model_.entity(target_entity);
@@ -523,11 +533,15 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
   }
   const OperationShape& read = shape(target_entity, "point_read", expected);
   const auto [engine, materialization] = target(read, fresh);
-  const std::string& table = materialization->layout.table_for(target_entity);
+  return read_one(read, entity, *engine, materialization->layout.table_for(target_entity), given);
+}
+
+std::optional<Row> Session::read_one(const OperationShape& read, std::string_view entity,
+                                     Engine& engine, const std::string& table, const Row& given) {
   const std::int64_t started = now();
   std::optional<Row> row;
   try {
-    row = engine->get(table, given);
+    row = engine.get(table, given);
   } catch (...) {
     observe(read, started, 0, true);
     throw;
