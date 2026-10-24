@@ -1,6 +1,7 @@
 #include "sde/placement.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <set>
 #include <utility>
@@ -8,6 +9,7 @@
 #include "crypto.hpp"
 #include "encoding.hpp"
 #include "physical_internal.hpp"
+#include "placement_internal.hpp"
 #include "python_compat.hpp"
 #include "sde/canonical.hpp"
 #include "sde/errors.hpp"
@@ -167,12 +169,23 @@ std::vector<std::pair<std::string, std::string>> key_set(const PublicKeys& publi
   return pairs;
 }
 
-/// Verifies the signature, and reports which of the caller's keys did it: its name, or nothing for
-/// a bare key. Every key is tried; `key_id` only orders the attempts, because the signature block is
-/// outside what is signed and anybody can edit it.
+/// Verifies a document's signature over its canonical payload without the signature block.
 std::optional<std::string> verify_signature(const Json& document, const PublicKeys& public_keys,
                                             int contract) {
-  const Json& signature = *document.find("signature");
+  // The payload's own rules - from contract 4 a safe integer, and a canonical form for a signed
+  // map - are canonical_payload's, shared with the fingerprint.
+  return detail::verify_payload(*document.find("signature"), public_keys,
+                                [&] { return canonical_payload(document, contract, true); });
+}
+
+}  // namespace
+
+/// Verifies a signature block over a payload, and reports which of the caller's keys did it: its
+/// name, or nothing for a bare key. Every key is tried; `key_id` only orders the attempts, because
+/// the signature block is outside what is signed and anybody can edit it.
+std::optional<std::string> detail::verify_payload(
+    const Json& signature, const PublicKeys& public_keys,
+    const std::function<std::string()>& payload_of) {
   const Json* alg = signature.is_object() ? signature.find("alg") : nullptr;
   if (alg == nullptr || !alg->is_string() || alg->as_string() != "ed25519") {
     throw MapError("only ed25519 signatures are understood");
@@ -198,8 +211,9 @@ std::optional<std::string> verify_signature(const Json& document, const PublicKe
   for (const auto& pair : keys) {
     if (!claimed || pair.first != *claimed) ordered.push_back(pair);
   }
-
-  const std::string payload = canonical_payload(document, contract, true);
+  // After the signature block and the keys, as the reference orders it: a payload with no canonical
+  // form is refused only once the keys it would have been checked against are known to be keys.
+  const std::string payload = payload_of();
   for (const auto& [name, key] : ordered) {
     if (detail::ed25519_verify(key, payload, *decoded)) {
       return name.empty() ? std::nullopt : std::optional<std::string>(name);
@@ -216,6 +230,8 @@ std::optional<std::string> verify_signature(const Json& document, const PublicKe
                  "written. If a rotation is in progress, the key named above is the one to add - "
                  "and while both are configured, maps signed with either are accepted.");
 }
+
+namespace {
 
 // ── Layouts and materialisations ────────────────────────────────────────────────────────────────
 

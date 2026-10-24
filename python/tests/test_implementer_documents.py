@@ -302,6 +302,15 @@ def test_the_cpp_row_agrees_with_the_library() -> None:
     _, language, tier_cell, hashing_cell, ir_cell, map_cell, engines = _row("sde")
     assert tier_cell == tier.group(1)
     assert hashing_cell == ("yes" if hashing.group(1) == "true" else "no")
+    # The engines cell is the adapters the library says it has (format contract section 9): the
+    # constant the conformance guard reads, so the cell and the families it requires are one claim.
+    adapters = re.search(
+        r"inline constexpr std::array<std::string_view, (\d+)> ADAPTERS\{([^}]*)\};", version
+    )
+    assert adapters, "the C++ library no longer declares ADAPTERS"
+    declared = re.findall(r'"([a-z]+)"', adapters.group(2))
+    assert len(declared) == int(adapters.group(1)), adapters.group(0)
+    assert engines == (", ".join(f"`{name}`" for name in sorted(declared)) or "none"), engines
     assert ir_cell == ir.group(1) == str(sde.CONTRACT)
     en_dash = "\N{EN DASH}"
     assert map_cell == f"{floor.group(1)}{en_dash}{ceiling.group(1)}", map_cell

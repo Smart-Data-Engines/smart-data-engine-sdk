@@ -75,6 +75,8 @@ add_library(sde
   src/migration.cpp
   src/generation.cpp
   src/session.cpp
+  src/verification.cpp
+  src/packets.cpp
 )
 add_library(sde::sde ALIAS sde)
 target_compile_features(sde PUBLIC cxx_std_20)

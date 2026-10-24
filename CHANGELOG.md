@@ -8,6 +8,24 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**New: migration participation and signed packets in the C++ library, Tier 2**
+([`cpp/README.md`](cpp/README.md)). `sde::backfill` copies a group's rows to the copies its map fans
+writes out to, chunk first and marker after, and resumes; `sde::verify` compares them with the
+source and confirms every missing row with a point read. `sde::VerificationRequest` binds a
+comparison to its request, project, map and group, and `sde::verify_frozen` compares under named
+write barriers. `sde::load_cutover_plan`, `sde::load_staging_plan` and `sde::load_index_plan` decode
+and authorise the signed packets of §7g, §7h and §7j without executing anything.
+- Every `migration/` vector passes, so the library claims Tier 2. It has no engine adapter yet; the
+  engines cell of [`docs/implementations.md`](docs/implementations.md) says `none` until one
+  round-trips.
+- The three packet loaders were compared with the reference's on 102,384 signed packets, made
+  by changing every accepted packet vector at each of its paths and in random pairs and signing them
+  again. Outside three named classes, recorded in [`docs/implementing.md`](docs/implementing.md),
+  the outcome, fingerprint, record and message were the same in every case.
+- A staging refusal names a staging. The reference's helpers it shares with the cutover packet say
+  "cutover" ("cutover stage_id must be ..."), and no vector pins those messages; this library takes
+  TypeScript's wording, and the reference's is a finding.
+
 **New: the session in the C++ library** ([`cpp/README.md`](cpp/README.md)). `sde::Session` opens
 against `sde::Engine`s with the reference's checks. It writes and batches, fans writes out to copies
 after the commit, reads by key and by plan, and keeps a transaction to one group. It stamps and
