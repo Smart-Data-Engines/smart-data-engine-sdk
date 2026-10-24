@@ -18,6 +18,214 @@ each case (`query/024`-`028`):
   it used to fold into the total (`+10:60` was eleven hours), and `24:00`, which CPython 3.14 reads
   as the next midnight.
 
+**Tightened: a model and a map have the shapes the contract writes** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md) §4a, §7, §8a). Writing the C++ library found
+values the two libraries read two ways, or failed on with their runtime's own error. Each is refused
+now, alike in all three, with a vector (`errors/084`-`112` and `121`, `routing/004`):
+- in a declaration: `nullable` that is not a boolean; `residency` that is not a string; a relation
+  that is not three strings; atomic groups that overlap, repeat a member or have one; a
+  `cost_ceiling` that is not exactly `{amount, currency}` strings, from either front door;
+- in a map:
+  - a materialisation that is not an object, or whose `id` or `engine` is not a string;
+  - a lag budget that is not a non-negative integer;
+  - layout tables and columns that are not names and types;
+  - `derived` that is not a list, and `groups` that is empty;
+  - `routing` that is a non-empty non-object;
+  - an uppercase `project_id`;
+  - from contract 4, an integer past 2^53 - 1;
+  - a signed map with no canonical form, now a map error rather than the encoder's.
+- in routing: a write shape routed at a copy, which the control plane already refused to issue;
+- a copy in the source's engine reusing its tables is refused without a model too, and Python and
+  TypeScript refuse it at one point (§8a);
+- a signature value is base64 as Python 3.12 reads it. TypeScript decoded any value and refused
+  later, as a signature that does not verify.
+
+A hand-written map or declaration that relied on a coercion is refused with the rule it breaks.
+Every runner compares a vector's `match` literally, as §10 says; four write-stage cases had been
+written for regular expressions.
+
+**New: values, DDL and read plans in the C++ library, the first part of Tier 2**
+([`cpp/README.md`](cpp/README.md)). `sde::Value` holds one host type per neutral type, with an exact
+`sde::Decimal` and microsecond timestamps. `sde::schema_statements` renders a layout's DDL and
+`sde::compatibility_views` the views on a target. `sde::plan_read` checks a read and normalises its
+values; `sde::numeric_summary` computes an exact summary, with the mean rounded half to even.
+- It passes every `schema/` and `query/` vector; the library stays at Tier 1 until it takes part in
+  a migration.
+- Its answers were compared with the reference's own on 240,000 random inputs. The comparison
+  found text the two other libraries read in two ways: the whitespace around a decimal, an offset
+  part past 59, and 24:00. Each now has one rule, held by `query/024`-`028`, which this library
+  takes as well.
+- `sde::QueryRefused` is a `sde::ModelPlanningError`, as in the reference, and `sde::schema_is_fixed`
+  refuses a dialect it does not know rather than answering `false`.
+
+**Fixed: a PostgreSQL DSN that only mentioned `connect_timeout` lost the connect bound** (Python,
+[`docs/failure-semantics.md`](docs/failure-semantics.md)). The 10-second default was applied only
+when the text `connect_timeout` was absent from the DSN, so `?application_name=connect_timeout_probe`
+left a host that accepts and stays silent holding the call: still waiting after 20 seconds. The
+adapter now reads the DSN's keys as libpq does, and a `connect_timeout` key still wins.
+
+**Changed: an operation a newer map overtook says where and which versions.** A staging, a cutover
+or an index build that finds a newer map on one of its engines refused with "a newer map was
+adopted" and nothing else, so an operator had to read this library to find which engine held which
+map. The product loop of a move onto Elasticsearch met it on a test cluster carrying another
+stream of maps. The refusal now names the engine binding, the version it records and the version
+the operation was prepared from - the control plane's numbers, never the client's data - and on
+Elasticsearch adds that a cluster keeps one stream of maps whatever project wrote them (format
+contract 7m). After a durable decision the same refusal is the cause beneath the error that asks
+for a resume.
+
+**New: a group's size on Elasticsearch.** `Session.measure_storage()` / `measureStorage()` read
+nothing there, so a window of a group on Elasticsearch never knew its `total_bytes`, its
+`index_to_table_ratio` or its growth, and a decision to move it off had no evidence of what the copy
+would cost. The product loop of a move onto Elasticsearch found it. Both adapters now read each
+index's bytes on its primary shards from `_stats` - one request per engine, with
+`ignore_unavailable`, so a missing index is absent rather than a zero and an alias is never measured
+under its name. An index keeps no secondary index beside its store, so the ratio is a measured 0.
+- **It needs the index privilege `monitor`**, an optional grant in the key's role
+  ([`docs/runtime-roles.md`](docs/runtime-roles.md)). Without it the answer is a 403, and the size is
+  unknown with the reason `refused`, as on ClickHouse without its `system.parts` grant. The local
+  operator admits it.
+- The adapter's error carries the status beneath it (`HttpStatus`), which is how the session tells
+  `refused` from `failed`; never the engine's text.
+- A size from fewer primary shards than the index's `number_of_shards` is refused (second review).
+  An unassigned primary counts as neither a success nor a failure in `_shards`, so the sum came
+  back short of it with nothing to say so.
+
+**Fixed: a float32 reads as the float32 it is, from every engine and in both languages.**
+PostgreSQL's text for a `real` - and ClickHouse's JSON, which the TypeScript adapter reads - is the
+shortest decimal that rounds back to the stored value: `0.1` for the float32 nearest 0.1. Parsed,
+that is another double than the float32 itself, `0.10000000149011612`, which the Python ClickHouse
+adapter and both Elasticsearch adapters return. So one stored value read differently by engine, and
+a group with a float32 column never verified between two of them. The first copy from PostgreSQL to
+Elasticsearch found it.
+- Python's PostgreSQL adapter and TypeScript's PostgreSQL and ClickHouse adapters - reads by key
+  and TypeScript's ClickHouse scans alike - now return the float32 exactly. Stored values are
+  unchanged; a read that returned `0.1` returns `0.10000000149011612`.
+- Exactly, rather than the shortest decimal most of them gave, because every library can widen alike
+  and only the engines' own formatter prints alike: PostgreSQL and ClickHouse print 2^87 as
+  `1.5474251e+26`, where the first precision that round-trips gives `1.54742505e+26`.
+- The agreement tests write `0.1` to a float32 column, not `0.5`, which every engine read alike.
+
+**New: the local operator moves a group onto Elasticsearch and off it** - breaking for maps
+written since #134, which no release contained. A group there carries a write generation: the
+library keeps the write-fence protocol in the index's own final pipeline, with a write block and a
+refresh as the drain ([`docs/write-fences.md`](docs/write-fences.md)). Staging, the frozen
+comparison and the cutover then take it like a group on any other engine
+([`docs/local-cutover.md`](docs/local-cutover.md#elasticsearch-access-by-blocks)).
+- **Access moves by blocks, not grants.** An API key's privileges are fixed when it is made, so
+  nothing is revoked from one login. The side a decision retires is blocked for reads for good and
+  keeps the holds that block its writes, against the runtime, an unknown login and the
+  administrator's own search alike. The pause refuses writes and leaves the frozen data readable.
+- **Runtime keys are qualified through `_has_privileges`.** No `manage`, `all`, `write`,
+  `delete_index` or `delete` on their indexes, no cluster privilege that rewrites a fence,
+  `read_pipeline`, and the fresh `sde_m_*` names covered in advance, because the operator grants
+  nothing. A key holds `index`, not `write`: a delete runs no ingest pipeline, where an index or an
+  update runs the final one (measured on 9.5.5), so a key that may delete goes past the fence.
+  A role can also name an action and none of those privileges. So the operator asks by action, too,
+  and refuses the update of an index's settings, which lifts a block. It also refuses the cluster
+  actions that write or delete a pipeline, restore a snapshot, or write a role, a role mapping, a
+  user or a password. The operator's own login reads the cluster's identity (`monitor`).
+- **Both adapters copy and compare in key order** (`key_range`, `nth_key`, `count`, `copy_in`,
+  backfill markers in `sde_backfill_state`), so `backfill` and `verify` work between Elasticsearch
+  and the SQL engines in both languages. A copy is `create`: a document already there stays.
+- `sde_map_state` and `sde_backfill_state` are read before anything creates them, so a runtime key
+  needs no `create_index`, and one under another mapping is refused.
+- A staging's index carries its creation marker in `_meta.sde.stage`, which every reader accepts
+  (§7m). A relayout and an in-place index build on Elasticsearch are refused by name.
+- A contract-6 map that leaves the generation out for an Elasticsearch group is now refused, as for
+  every engine with fences. No released version wrote one, and such a map is issued again with
+  one.
+- Both libraries render the same fence pipeline, pinned by `conformance/fence-processors.json`, and
+  a fence one library provisions is read by the other in the live tests.
+- **Fixed after a second review, in both languages**
+  ([`docs/write-fences.md`](docs/write-fences.md)):
+  - Releasing the last hold lifts the block first, then rewrites the pipeline. In the other order
+    an interruption between the two requests left a block with no hold to say whose it was. No
+    retry lifted it, a resume refused, and the index of a published map stayed closed to its
+    writes. What is left now is the hold, still refusing every write a runtime key can make, which
+    a retry or a resume removes.
+  - A fence whose pipeline is not the index's `final_pipeline` enforces nothing, and read as in
+    force. It reads as an interrupted setup now, closed, and `resume_prepare` sets the pipeline
+    again. A pipeline-level `on_failure` would index every write the processor refuses, so a
+    pipeline carrying one is refused.
+  - Elasticsearch answers an `if_version` conflict with a 400 reading "version conflict", not a
+    409, so another executor's change to a fence came back as an engine error. Both are refused as
+    another executor's.
+
+**New: Elasticsearch in the TypeScript library** (`@smart-data-engines/sde/engines/elasticsearch`).
+The same engine in the same layout as the Python adapter, with the mapping and the documents held
+byte for byte by the shared vectors. Integers past 2^53 stay exact in both directions: responses are
+parsed with them as `bigint` and requests write a `bigint` as its digits. A live slice writes with
+one library and reads with the other, both ways. `searchEngine` lets an adapter refuse a search by
+name, as the orderbook engine now does in both languages.
+
+**New: `examples/book-stream/`**, Python and TypeScript. One exchange feed is sent to the orderbook
+engine whole and as its changes. The book the engine composes is read back at every tenth step and
+compared with the feed's own. Both halves send the same updates, and the `orderbook` CI job runs them.
+
+**The orderbook engine's pin moves to `31b4390`**, which has its #244 and #245. In local mode:
+- `flush()` keeps the engine open, where it closed it and opened it again.
+- A flush after a write syncs before its checkpoint: 2.48-2.74 ms median after one row, on an
+  i3-7100U.
+- A process that ends without a flush or a close loses none of its writes, because the engine
+  replays its WAL when it opens.
+
+**New: Elasticsearch in the Python library** ([`docs/format-contract.md` §7m](docs/format-contract.md#7m-elasticsearch-an-index-per-entity-a-document-per-row)).
+`sde.engines.elasticsearch.ElasticsearchEngine` holds a group in Elasticsearch 9: an index per
+entity with a strict mapping, a document per row under its key's digest, writes, reads by key,
+bounded scans, exact counts and `Session.search` from a text index of the library's own.
+- Every value comes back as written: microseconds in a `long` for both instants, a decimal of up
+  to eighteen digits times `10^scale`. `bytes`, `json` and wider decimals are refused at layout.
+- The tokens a search matches are computed by the library and kept beside each text field, so the
+  engine's analyzer decides nothing: `Session.search` reads only the rows that hold the tokens.
+- No transactions, no summaries and no write generations: a group placed here is not moved.
+- The transport is the standard library's, with TLS verified against `ca_cert`; plain HTTP is
+  accepted to a loopback address only. `make es-up` starts one with its own CA and prints the DSN.
+- `conformance/vectors/documents/` is the suite's thirteenth family: a row's `_id` and `_source`.
+  `schema/019` and `020` pin the mapping. The TypeScript library renders both byte for byte.
+- **Fixed after a second review, in both languages** (§7m):
+  - A decimal no longer depends on the caller's decimal context. At a precision of ten, Python
+    stored an eighteen-digit value rounded, and two keys shared one `_id`.
+  - A `float` field keeps the float32 the engine indexes, so a filter and a read agree. A value
+    past the largest float32 is refused before sending.
+  - A search, a page, a count and the watermark refuse an answer some shard did not contribute to.
+  - An index's whole mapping is compared, not only each field's type. A `normalizer` or a disabled
+    `_source` changed answers while every type matched.
+  - A token longer than one term and a lone surrogate are refused before sending, and a refused
+    write names the engine's error type, never a reason that can quote the value.
+  - A decimal bound with more digits than the column is answered as PostgreSQL answers it.
+  - TypeScript keeps the sign of `-0.0`, and prints no credentials through `inspect` or `JSON`.
+  - Both languages refuse the same DSNs. TypeScript had connected `:secret@` without the secret.
+  - `documents/009` to `013` pin the float32, the token, the negative key and the surrogate.
+
+**New: search, Python and TypeScript** ([`docs/logical-reads.md`](docs/logical-reads.md#search)).
+`Session.search` returns the rows whose chosen text fields hold every token of a query, a page in
+key order. The library applies one rule to every row - tokens of letters and digits after NFC,
+matched without case one code point for one - so the answer is the same on every engine.
+- On PostgreSQL and ClickHouse the library reads rows in key order and checks each one, at most
+  `max_examined` rows a call. An engine's own `lower()` or collation never decides an answer.
+- A search always reads the group's source. A map that routes a `search` shape is refused at load:
+  a library that predates the kind refuses it as an unknown shape, so this one refuses it too.
+- §6 enumerates one `search` shape for each entity with a `string` field, and the C++ library
+  enumerates it as well. The window reports `examined` and `searched_on` for it, never the text.
+- `conformance/vectors/search/` is the suite's twelfth family, with `routing/003`, `errors/083` and
+  `telemetry/017` beside it, and [`format-contract.md` §7l](docs/format-contract.md#7l-search)
+  states the rule. Neither the IR's number nor the map's moves: `model/002`-`004` gained their
+  `search` shapes in `shapes.json`, and every existing identifier is unchanged.
+- `QueryRefused` in TypeScript declares `name` as a `string`, so that `SearchRefused` can extend it.
+
+**New: book streams and books by price, Python and TypeScript** ([`docs/orderbook.md`](docs/orderbook.md#books-by-price)).
+`Session.book_stream` sends one book of the orderbook engine either whole, each side as `MREPLACE`,
+or as its changes, with a whole side at the first send, after a failed one and at every resync.
+`Session.book_at` reads the book the engine composes from them at an instant.
+- Both need an orderbook engine that reads updates by price and announces `replace_side` (its #233),
+  and refuse one that does not before sending or reading anything. The pinned engine is one.
+- `conformance/vectors/books/` is the suite's eleventh family, and
+  [`format-contract.md` §8c](docs/format-contract.md#8c-a-book-stream) states its rules. Neither the
+  IR's number nor the map's moves: no IR and no map contains what a stream sends.
+- `Session.save_many` writes updates by price on such an engine too: an update of a book's top
+  levels leaves in it the prices that dropped out of them, unless it removes them with a quantity of 0.
+
 **New: telemetry in the C++ library, Tier 1** ([`cpp/README.md`](cpp/README.md)). `sde::Recorder`
 measures operations by shape and rolls windows, and `Window::as_record` writes the §6a document; every
 `telemetry/` vector passes. The recorder takes no lock on an operation's path: a window is a block of
@@ -36,6 +244,63 @@ OpenSSL 3, utf8proc) and is on no package registry.
   library.
 - Four required checks join the ruleset, nineteen in all: `cpp (gcc-12)`, `cpp (clang-16)`,
   `cpp-sanitizers` and CodeQL's `analyze (c-cpp)`.
+
+## `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0
+
+Published on 10 October 2026, each tag on its first run of the release workflow, with attestations
+on PyPI and provenance on npm. On npm it is `latest`.
+
+Our own L2 orderbook engine becomes the third engine of both libraries, under placement map
+contract 6. On the way there, a design evaluation and a general test of the whole product on a test
+host found defects that are fixed here:
+- rows the model forbids reached the engines;
+- the library's reads used no index on a text column;
+- the local operator refused to work beside a ClickHouse administrator.
+
+Both libraries also work with ClickHouse 26.5 and later, where the released ones refused a table
+with a one-column key right after creating it.
+
+**Why 0.2.0 and not a patch.** Both libraries change things a caller depends on. The version number
+has to say so to version ranges: npm's `^0.1.0` and pip's `~=0.1.1` both stop below 0.2.0, so an
+application moves on when it decides to (§5.1 of [`docs/publishing.md`](docs/publishing.md)). What
+changes for a caller:
+- **A row the model does not allow is refused before any engine.** PostgreSQL used to store NULL in a
+  required field, and ClickHouse stored `0` or `""` for one left out. Such a write now raises.
+- **`sde.fixed_schema_mismatch` takes a required `nullable` argument** (Python).
+- **A contract-6 map is refused by 0.1.x**, and a group on the orderbook engine needs one.
+- **PostgreSQL tables are created with text columns `COLLATE "C"`.** A table created by 0.1.x keeps
+  its collation, and Python names it with the remedy.
+- **The operator counts a ClickHouse administrator only with the whole `ACCESS MANAGEMENT` group**
+  (Python). A partial revoke of anything in it leaves no administrator, on 24.8 too, where such a
+  user was admitted before.
+
+**Fixed: ClickHouse 26.5 and later** (both libraries; the operator's two are Python's). From 26.5
+the server reports three things in a new form, and each reader took the new form for something
+else. Measured on 24.8, 26.5 and 26.9, and the key on nine releases:
+- **A one-column key.** The libraries create it as `ORDER BY (id)`, and `system.tables.sorting_key`
+  reads it back as `(id)`, where 24.8 to 26.4 read `id`; a list of two or more reads `a, b` on all of
+  them. The catalogue reader refused the parentheses, so every table with a one-column key read as
+  another design. Provisioning refused even the table it had just created, and so did everything
+  that verifies a design: staging, a cutover, an index build. A running session reported it. Now
+  one pair of parentheses around the whole of a key, an index's expression or a partition key is
+  read as what is inside it, and only a list of names, or one function of one name, may be there.
+- **An index built in place** (`sde-operator index`). The server records the materialization as
+  `(MATERIALIZE INDEX <name>)` where 24.8 records `MATERIALIZE INDEX <name>`, and the operator looked
+  for the second. So on 26.5 a build never saw its materialization finish: it waited out the signed
+  budget and asked for recovery, and every resume started another materialization. Removing an
+  index left an unfinished materialization of it running. Both forms are matched now.
+- **An administrator beside the operator** (staging and cutover,
+  [`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).
+  A user with a direct global `ACCESS MANAGEMENT` is admitted there. From 26.5 the server lists that
+  grant member by member, because seven of its members are granted per user name, and the operator
+  looked for the single row of 24.8. So on a current server it found no administrator and refused
+  every staging and cutover beside one, naming the server's own `default` user. Now the whole group
+  counts, as `system.privileges` defines it, however it is listed. A partial revoke of anything in it
+  leaves no administrator, on 24.8 too, where such a user was admitted before.
+
+CI runs the live slices of both libraries against ClickHouse 26.9 as well as the 24.8 LTS, on the
+newest Python and the newest Node. The first was found by a checkpoint of the C++ library's engine
+adapters against a current server, and the other two by running this suite against one.
 
 **Fixed: the local operator beside the engine's administrator** (Python,
 [`docs/runtime-roles.md`](docs/runtime-roles.md#the-operators-login-and-the-principals-beside-it)).

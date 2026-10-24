@@ -442,8 +442,8 @@ is a rule, and where it is an accident of its runtime.
 at the session and write stages, which need engines; the runner passes them as outside the claim at
 those two stages only, and fails on any stage it does not know. Thirty-one source mutations
 followed. Four survived every vector and every unit test, and a fifth survived the unit tests because
-each of their cases was also refused by a later check; all five are fatal now. The vectors could not
-see these:
+each of their cases was also refused by a later check; all five are fatal now. No vector could see
+these until the change below:
 
 - entities of `key_order` and `partition_by` checked in document order, where §8a says name order;
 - the upper bounds of an index's `granularity` and `max_rows` (only the lower ones are pinned);
@@ -454,8 +454,8 @@ see these:
 - the shadowing refusal, which has no vector at all;
 - padding inside a signature value's quantum, which Python refuses and TypeScript decodes.
 
-**Where the two references coerce, or fail with their runtime's own error, this library refuses
-with the contract's.** Each of these is accepted, or crashes, somewhere in the other two:
+**Where the two references coerced, or failed with their runtime's own error, this library refused
+with the contract's.** Each of these was accepted, or crashed, somewhere in the other two:
 
 - a neutral `atomic` group that overlaps another, repeats a member or has one member;
 - `nullable` that is not a boolean;
@@ -471,16 +471,29 @@ with the contract's.** Each of these is accepted, or crashes, somewhere in the o
 - a signed map whose payload has no canonical form, which both references let out of the loader as
   their canonical encoder's error rather than a map error.
 
-Two smaller divergences between the references themselves came out of choosing which to follow:
-- a signature block that is not an object gets a different message in each;
-- a key set's names sort by code point in Python and by UTF-16 unit in TypeScript.
+Choosing which reference to follow turned up divergences between the two references themselves:
+- a signature block that is not an object got a different message in each;
+- TypeScript decoded any signature value and refused it later, as a signature that does not verify;
+- a key set's names sorted by code point in Python and by UTF-16 unit in TypeScript;
+- TypeScript derived an `{"auto": true}` layout inside the loop over groups, so a group the model
+  does not have was refused as "no model was supplied", and an auto layout before a defect in a
+  group written after it;
+- TypeScript checked `routing`'s shape after coverage, and Python before;
+- TypeScript accepted an empty `groups` object, and an array as `routing`.
 
-One finding is about the suite's own documentation. This page says a `match` is a substring
-compared literally, both reference runners compile it as a regular expression, and four `errors/`
-vectors write `Thing\.amount` - which only a regular expression reads as `Thing.amount`.
+One finding was about the suite's own documentation. This page says a `match` is a substring
+compared literally, both reference runners compiled it as a regular expression, and four `errors/`
+vectors wrote `Thing\.amount`, which only a regular expression reads as `Thing.amount`.
 
-Each of these becomes a vector and a rule in every library in its own change. Until then, this
-library is stricter on exactly these inputs, and says so in its README.
+**Each of these is a rule of the contract now, in all three libraries, with a vector**:
+- `errors/084`-`112`, `121` and `routing/004`, written by `conformance/tools/third_implementation_vectors.py`
+  only after the reference refuses each one with its `match`;
+- the rules are in §4a, §7 and §8a;
+- every runner compares `match` literally, and the four write-stage cases say `Thing.amount`.
+
+The one divergence not made a rule is the spelling of an integral number below contract 4, where
+the contract has no normalisation: `3.0` is a float to a JSON reader that keeps one and the integer
+3 to JavaScript, which has no other kind. A producer writes integers as integers.
 
 What the vectors do not exercise at all was compared with the reference directly, and agreed
 everywhere:
@@ -523,3 +536,33 @@ schema/migration vectors. It pins normalized filters, typed positions, bounds an
 summary results. Native tests must separately execute the generated SQL against each supported
 engine; a normalized plan alone does not prove ordering, null handling or arithmetic in that engine.
 The query family does not change the model/map bytes or migration checkpoint ordering.
+
+**13. Book streams (Tier 2, with the orderbook engine). Vectors: `books/`.**
+
+Cases of two kinds, and no connection anywhere. A `diff` case is a function of two sides. A `stream`
+case drives a stream with clocks you inject - the policy clock in seconds and, for a step without a
+time, the machine's - into a sink that records what it is handed; `fail_next` makes the sink refuse
+its next send, after which the stream must send that side whole. Compare the sends exactly, times
+included, and refusals by substring; a refused step must send nothing. The rules are §8c of the
+contract. Then run your stream against a live engine and read the book back: the vectors pin what
+you send, and only the engine's own composition shows that it is the book you meant.
+
+**14. Search (Tier 2). Vectors: `search/`.**
+
+The rule is a function of a text, so the vectors need no engine: implement tokens, folding and
+matching from §7l of the contract and compare tokens exactly, as code point sequences. Two cases
+carry most of the risk. `005` is the Kelvin sign, which your language lower-cases to `k` only if it
+uses the Unicode database rather than ASCII. `006` is `U+0130`, whose full lower case most languages
+return as two code points, so a fold that takes `lower()` whole fails it. Then put `search` on your
+session: candidates from your engine in key order, every row checked by your rule before it is
+returned, and the page rules of §7l. Run it against a live engine with rows only the rule can tell
+apart, a decomposed accent and the Kelvin sign among them.
+
+**15. Elasticsearch documents (Tier 2, with Elasticsearch). Vectors: `documents/`.**
+
+A function of a row and its index's columns, so again no engine: from §7m, compute each column's
+stored value, the token field and the `_id`. Compare the `_id` exactly and the source by value. A
+value marked `{"$int": "..."}` is an integer past 2^53: carry it as one, not as a float, or `001`
+fails on its timestamp, its int64 and its decimal. Then `schema/019` and `020` hold the mapping you
+render. The adapter itself is the next step: one index per entity, writes that wait for a refresh,
+and reads that send no text predicate the engine would interpret.

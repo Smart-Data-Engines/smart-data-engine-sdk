@@ -1,0 +1,11 @@
+{
+ "kind": "diff",
+ "name": "a quantity of 0 in a whole side is refused",
+ "side": "ask",
+ "before": [],
+ "after": [
+  [200, 0, 0]
+ ],
+ "error": "quantity of 0",
+ "why": "a whole side lists the prices it holds; a removal is a change"
+}

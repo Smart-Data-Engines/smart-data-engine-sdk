@@ -8,16 +8,19 @@ the orderbook slices; the orderbook's scan and write unit by ``test_orderbook_tc
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
 
 import sde
 from sde.engines.clickhouse import ClickHouseEngine
+from sde.engines.elasticsearch import ElasticsearchEngine
 from sde.engines.orderbook import OrderbookEngine
 from sde.engines.postgres import PostgresEngine
 from sde.errors import EngineError
 from sde.query import QueryRefused, count_engine, query_engine, summary_engine
+from sde.search import search_engine, text_index
 
 
 def adapters() -> dict[str, Any]:
@@ -26,6 +29,7 @@ def adapters() -> dict[str, Any]:
         "postgres": PostgresEngine("postgresql://unused@127.0.0.1:1/unused"),
         "clickhouse": ClickHouseEngine("clickhouse://unused@127.0.0.1:1/unused"),
         "orderbook": OrderbookEngine("/nonexistent/sde-facts"),
+        "elasticsearch": ElasticsearchEngine("elasticsearch+http://127.0.0.1:1"),
     }
 
 
@@ -105,14 +109,18 @@ def test_an_engine_without_transactions_refuses_one_at_opening() -> None:
     for dialect, adapter in adapters().items():
         if sde.engine_facts(dialect)["transactions"]:
             continue  # PostgreSQL opens one only on a connection: test_engine_facts_live.py
-        with pytest.raises(EngineError, match="no multi-statement transactions"):
+        with pytest.raises(EngineError, match=r"no multi-(statement|document) transactions"):
             adapter.transaction()
     assert [d for d in sde.DIALECTS if sde.engine_facts(d)["transactions"]] == ["postgres"]
+
+
+REFUSALS = {"count": "count_refusal", "summarize": "summary_refusal", "search": "search_refusal"}
 
 
 def test_reads_are_what_the_query_layer_accepts_from_each_adapter() -> None:
     checks = {"get": query_engine, "scan": query_engine, "count": count_engine}
     checks["summarize"] = summary_engine
+    checks["search"] = search_engine
     for dialect, adapter in adapters().items():
         reads = sde.engine_facts(dialect)["reads"]
         assert set(reads) == set(checks), dialect
@@ -120,5 +128,16 @@ def test_reads_are_what_the_query_layer_accepts_from_each_adapter() -> None:
             if reads[read]:
                 check(adapter)
             else:
-                with pytest.raises(QueryRefused, match="over its history"):
+                # Refused with the adapter's own reason, never the generic one: a model is told
+                # why an engine cannot answer, and so is the caller.
+                reason = getattr(adapter, REFUSALS[read])
+                assert isinstance(reason, str) and reason, (dialect, read)
+                with pytest.raises(QueryRefused, match=re.escape(reason)):
                     check(adapter)
+
+
+def test_a_text_index_is_the_adapters_own_search() -> None:
+    """``text_index`` is true exactly where the adapter finds a search's candidates itself."""
+    for dialect, adapter in adapters().items():
+        indexed = text_index(adapter) is not None
+        assert sde.engine_facts(dialect)["text_index"] is indexed, dialect

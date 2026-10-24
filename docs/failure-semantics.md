@@ -101,6 +101,12 @@ does - leave your value alone if you set one - and the result was the worst of b
 ignored by the driver and ours suppressed by yours, so a DSN asking for two seconds got **no bound
 at all**. It translates the parameter now, so your value wins and a bound always exists.
 
+**A `connect_timeout` is a key, not a word.** Until 7 October 2026 the Python adapter took the text
+`connect_timeout` anywhere in the DSN for your choice. An application name or an option that
+contained it removed the default, and a host that accepted and stayed silent held the connect for as
+long as anyone waited. It reads the DSN's keys as libpq does now. The C++ library's port found it:
+its adapter hands libpq the default before the DSN, so the DSN's own key wins there by construction.
+
 **An unhandled driver error can kill your process.** `pg.Client` is an `EventEmitter` and emits
 `error` when the server terminates a connection between queries - a restart, a failover, an
 administrator. Node's rule for an `error` event with no listener is to throw it, with no call of

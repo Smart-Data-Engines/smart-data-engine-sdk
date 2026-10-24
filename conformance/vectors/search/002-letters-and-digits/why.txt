@@ -1,0 +1,1 @@
+letters and digits run together; a decimal point separates

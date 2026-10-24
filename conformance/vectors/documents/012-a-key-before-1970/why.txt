@@ -1,0 +1,1 @@
+An integer is framed with its minus sign: an instant before 1970 is a negative number of microseconds. A float32 keeps the sign of a zero.

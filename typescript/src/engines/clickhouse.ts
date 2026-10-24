@@ -103,8 +103,8 @@ interface JsonResult {
  * the PostgreSQL adapter reads field OIDs: the server is the authority on what it stored, and a map
  * can be stale in a way a response cannot.
  *
- * Four conversions, and each one is the same decision the PostgreSQL adapter makes, arrived at from
- * the other side - which is what makes the two agree.
+ * Each conversion is the same decision the PostgreSQL adapter makes, arrived at from the other
+ * side - which is what makes the two agree.
  */
 function convert(value: unknown, type: string): unknown {
   if (value === null || value === undefined) return null
@@ -133,6 +133,11 @@ function convert(value: unknown, type: string): unknown {
     return String(value)
   }
   if (bare.startsWith('Bool')) return Boolean(value)
+  if (bare === 'Float32') {
+    // The float32 itself, as the PostgreSQL adapter reads a `real`: the JSON text is its shortest
+    // decimal, which parses to another double than the stored value.
+    return Math.fround(Number(value))
+  }
   return value
 }
 
@@ -642,7 +647,10 @@ export class ClickHouseEngine {
           const value = row[column.name]
           if (value !== null && ['float32', 'float64'].includes(column.type)) {
             const text = String(value).toLowerCase()
-            row[column.name] = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+            const number = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+            // `toString` gives a float32's shortest decimal, another double than the float32: the
+            // value a read by key returns, and every other engine's scan, is the float32 itself.
+            row[column.name] = column.type === 'float32' ? Math.fround(number) : number
           }
         }
         return rows.map(row => readRow(plan.columns, row))

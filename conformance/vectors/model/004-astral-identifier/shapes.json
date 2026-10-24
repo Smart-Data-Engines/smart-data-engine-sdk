@@ -35,6 +35,14 @@
   },
   {
     "group": "Astral",
+    "kind": "search",
+    "entity": "Astral",
+    "fields": [],
+    "target": null,
+    "id": "28dfa3a083ba7e10"
+  },
+  {
+    "group": "Astral",
     "kind": "write",
     "entity": "Astral",
     "fields": [],

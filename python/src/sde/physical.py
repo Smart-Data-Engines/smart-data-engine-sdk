@@ -466,7 +466,32 @@ def parse_identifier_list(text: str) -> tuple[str, ...]:
     A name is either bare or backtick-quoted with ``\\`` escaping ``\\`` and the backtick - the
     same rule this library writes (``_quote_backtick``). Anything else raises ``ValueError``: an
     expression the parser does not understand is not evidence that the table matches.
+
+    From ClickHouse 26.5 the catalogue keeps the parentheses of a single expression written in
+    them: ``ORDER BY (id)``, which is how a one-column key is rendered, reads back ``(id)``, where
+    26.4 and every release before it - 24.8, 25.3, 25.8, 26.3 among them - read ``id``; a list of
+    two or more reads ``a, b`` on all of them (measured). One pair around the whole of a list is the
+    same list, and only a list may be inside it: no name outside backticks holds a parenthesis, so a
+    pair that is not the outermost - ``(a) + (b)`` - leaves text that is not one.
     """
+    inner = _parenthesised(text)
+    if inner is None:
+        return _parse_names(text)
+    try:
+        return _parse_names(inner)
+    except ValueError:
+        raise ValueError(f"not a list of column names: {text!r}") from None
+
+
+def _parenthesised(text: str) -> str | None:
+    """The text inside one pair of parentheses around the whole of it, or ``None``."""
+    if len(text) < 3 or text[0] != "(" or text[-1] != ")":
+        return None
+    return text[1:-1]
+
+
+def _parse_names(text: str) -> tuple[str, ...]:
+    """The list itself, without parentheses around it (:func:`parse_identifier_list`)."""
     names: list[str] = []
     position, length = 0, len(text)
     while position < length:
@@ -504,13 +529,18 @@ def parse_identifier_list(text: str) -> tuple[str, ...]:
 
 
 def parse_partition_key(text: str) -> tuple[str, str] | None:
-    """``toYYYYMM(`at`)`` → ``("toYYYYMM", "at")``; an empty key → ``None``."""
+    """``toYYYYMM(`at`)`` → ``("toYYYYMM", "at")``, alone or in one pair of parentheses.
+
+    An empty key → ``None``.
+    """
     if text == "":
         return None
-    match = re.fullmatch(r"([A-Za-z][A-Za-z0-9]*)\((.*)\)", text)
+    # A key written in one pair of parentheses reads back in them from ClickHouse 26.5, as above.
+    inner = _parenthesised(text)
+    match = re.fullmatch(r"([A-Za-z][A-Za-z0-9]*)\((.*)\)", text if inner is None else inner)
     if match is None:
         raise ValueError(f"not a single-function partition key: {text!r}")
-    (field_name,) = parse_identifier_list(match.group(2))
+    (field_name,) = _parse_names(match.group(2))
     return match.group(1), field_name
 
 

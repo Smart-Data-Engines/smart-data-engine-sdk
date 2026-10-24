@@ -325,7 +325,7 @@ for it:
   silence. PyPI attestations come the same way. The one gap is named in `publishing.md` §5.4: the
   first npm publish has to happen by hand, because npm requires a package to exist before a trusted
   publisher can be configured for it, so `0.1.0-dev.0` carries no attestation and every version a
-  client would pin does: `0.1.0-rc.1` and `0.1.0` were published with provenance.
+  client would pin does: `0.1.0-rc.1`, `0.1.0` and `0.2.0` were published with provenance.
 - **Two GitHub Environments with a required reviewer** ✅, not a repository secret — and each one is
   locked to its own tag pattern, so nothing but a `python-v*` tag can ask to use the PyPI one. A merge
   cannot become a publish without a person.
@@ -488,9 +488,10 @@ distribution name is the one an attacker needs no access at all to exploit.
 ✅ Actions: read-only default token, cannot approve PRs
 ✅ Actions: fork PR approval required for all external contributors
 ✅ merge commits off — squash and rebase only, consistent with required_linear_history
-✅ smart-data-engine-sdk on PyPI, claimed 12 September 2026, 0.1.0 released 27 September 2026
+✅ smart-data-engine-sdk on PyPI, claimed 12 September 2026, 0.1.0 released 27 September 2026,
+   0.2.0 on 10 October 2026
 ✅ @smart-data-engines scope on npm, held by the organisation since 12 September 2026;
-   @smart-data-engines/sde 0.1.0 released 27 September 2026
+   @smart-data-engines/sde 0.1.0 released 27 September 2026, 0.2.0 on 10 October 2026
 ✅ organisation defaults for new repositories: scanning, push protection, Dependabot, dep graph
 ✅ registry accounts with 2FA: PyPI requires it, and npm asked for the second factor on 27 September
 ✅ release.yml: OIDC trusted publishing, attestations and provenance, an environment with a reviewer

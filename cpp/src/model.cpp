@@ -212,6 +212,11 @@ std::vector<OperationShape> enumerate_shapes(const std::vector<Entity>& entities
             OperationShape{group, "range_read", entity.name, {field.name}, std::nullopt, {}});
       }
     }
+    // One search per entity that has text, whichever fields a call chooses: the window reports the
+    // choice (`searched_on`), as `filtered_on` reports a filter.
+    const bool has_text = std::any_of(entity.fields.begin(), entity.fields.end(),
+                                      [](const Field& field) { return field.type == "string"; });
+    if (has_text) shapes.push_back(OperationShape{group, "search", entity.name, {}, std::nullopt, {}});
   }
   for (const Relation& relation : relations) {
     shapes.push_back(OperationShape{group_name(relation.from), "relation_walk", relation.from,
@@ -288,6 +293,8 @@ bool Group::contains(std::string_view entity) const noexcept {
 bool is_write_kind(std::string_view kind) noexcept {
   return kind == "write" || kind == "bulk_write";
 }
+
+bool is_source_only_kind(std::string_view kind) noexcept { return kind == "search"; }
 
 Json OperationShape::as_ir() const {
   Json shape = Json::object();
