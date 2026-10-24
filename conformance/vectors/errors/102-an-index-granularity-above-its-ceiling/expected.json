@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "needs an integer granularity from 1 to 1024",
+  "stage": "map",
+  "why": "Only the lower bound had a case, so moving the ceiling by one left every vector green."
+}

@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "match": "names two or more distinct entities",
+  "stage": "model",
+  "why": "An entity is atomic with itself already. The group said nothing a placement could act on and still changed the model_version."
+}
