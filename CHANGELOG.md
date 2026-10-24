@@ -8,6 +8,17 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript sent each ClickHouse statement in the URL, values included** (TypeScript,
+[`docs/engine-connections.md`](docs/engine-connections.md#clickhouse-the-same-connection-intent-in-python-and-typescript)).
+A point read's statement holds its key, and a scan's, a count's and a summary's the values they
+filter on. A URL is what a proxy or a load balancer between the application and ClickHouse logs, and
+the server caps its length (`http_max_uri_size`). The statement is now the request's body, as
+Python's driver sends it. An INSERT's rows stay the body, under a statement in the URL that names the
+table and the columns and holds no value. Nothing the server answers or stores changes.
+- Measured on ClickHouse 24.8 and 26.9 in the server's own log of request URIs: a get, a scan and
+  a count put their value in three URLs before, and in none now. Python's put it in none.
+- The port of the adapter to C++ found it.
+
 **Tightened: one rule for a read value written as text** (both libraries,
 [`docs/logical-reads.md`](docs/logical-reads.md#values-written-as-text)). A decimal or a timestamp
 given as text in a filter, a bound or a position is read alike in every library, with a vector for
