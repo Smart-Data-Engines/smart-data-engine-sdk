@@ -138,11 +138,12 @@ compared on 102,000 URIs.
   its outcome unknown and never sent again, measured against a proxy that drops the answer to an
   accepted insert. The statement is the body, never part of a URL.
 - Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
-  was. A value its column cannot hold is refused before anything is sent: the reference's driver
-  stores `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
-  - and `Decimal("12345678901.23")` as 12345678901.20, an enum name its type does not declare as 0,
-  and cuts a moment's fraction a column does not keep, each without a word: recorded in
-  [`docs/implementing.md`](docs/implementing.md), as rules for the contract.
+  was. A value its column cannot hold is refused before anything is sent. The reference's driver
+  stored `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
+  - and `Decimal("12345678901.23")` as 12345678901.20, without a word, until §8b point 4 refused a
+  value its type does not hold in every library. It still stores an enum name its type does not
+  declare as 0, and cuts a moment's fraction a column does not keep, in tables only a hand-written
+  map names: recorded in [`docs/implementing.md`](docs/implementing.md).
 - Its live tests are the reference's ClickHouse slice, each message captured from the reference
   against the same server; what the reference runs against both engines with one body runs here
   with one body for each adapter built - copies in every direction, write generations, the frozen
