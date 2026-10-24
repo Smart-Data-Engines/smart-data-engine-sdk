@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "needs an integer max_rows from 1 to 65536",
+  "stage": "map",
+  "why": "The ceiling of the other bounded index parameter, for the same reason."
+}

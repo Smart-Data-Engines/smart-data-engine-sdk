@@ -17,6 +17,7 @@ identifier in PostgreSQL is folded to lower case in a way that is lossy for some
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
@@ -68,6 +69,25 @@ _TEXT_COLLATION_REMEDY = (
 )
 
 
+def _float32_loader() -> type:
+    """A ``real`` read as the float32 it is, exactly, as ClickHouse and Elasticsearch return one.
+
+    PostgreSQL's text is the shortest decimal that rounds back to the stored float32 - ``0.1`` for
+    the float32 nearest 0.1 - and parsed as a double that is another number than the float32
+    itself, ``0.10000000149011612``. The two engines' copies of one value then compared unequal,
+    so a group with a float32 column never verified between them. Rounding the parsed double to
+    float32 gives the stored value back; the text round-trips, so nothing else changes.
+    """
+    from psycopg.adapt import Loader
+
+    class Float32Loader(Loader):
+        def load(self, data: Any) -> float:
+            single: float = struct.unpack("<f", struct.pack("<f", float(bytes(data))))[0]
+            return single
+
+    return Float32Loader
+
+
 class PostgresEngine:
     """A thin adapter over psycopg. Deliberately thin: it executes decisions, it makes none."""
 
@@ -102,7 +122,9 @@ class PostgresEngine:
         without a bound it happens inside the caller's request path with nothing to time out.
 
         The default is only applied when the caller has not chosen one. A ``connect_timeout`` in
-        the DSN is their decision about their own network and this must not override it.
+        the DSN is their decision about their own network and this must not override it. A choice
+        is the key, read as libpq reads the DSN: until 7 October 2026 the word anywhere in the text
+        counted, and an application name that contained it left the connect unbounded.
         """
         if self._conn is not None and self._unusable:
             raise EngineError(
@@ -110,10 +132,11 @@ class PostgresEngine:
             )
         if self._conn is None:
             options: dict[str, Any] = {}
-            if "connect_timeout" not in self._dsn:
-                options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
             try:
+                if "connect_timeout" not in self._psycopg.conninfo.conninfo_to_dict(self._dsn):
+                    options["connect_timeout"] = CONNECT_TIMEOUT_SECONDS
                 self._conn = self._psycopg.connect(self._dsn, autocommit=True, **options)
+                self._conn.adapters.register_loader("float4", _float32_loader())
                 self._unusable = False
             except Exception as exc:
                 raise EngineError(f"could not connect to PostgreSQL: {exc}") from exc

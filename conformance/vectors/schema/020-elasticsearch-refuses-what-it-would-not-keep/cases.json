@@ -1,0 +1,151 @@
+[
+  {
+    "materialization": "Reading@es",
+    "dialect": "elasticsearch",
+    "fixed": false,
+    "layout_columns": {
+      "Reading": {
+        "amount": "long/decimal(18,4)",
+        "at": "long/timestamptz",
+        "count": "integer",
+        "day": "date",
+        "level": "double",
+        "local": "long/timestamp",
+        "note": "keyword",
+        "ok": "boolean",
+        "ref": "keyword/uuid",
+        "station": "keyword",
+        "total": "long",
+        "home_code": "keyword"
+      },
+      "Station": {
+        "code": "keyword",
+        "name": "keyword"
+      }
+    },
+    "keys": {
+      "Reading": [
+        "station",
+        "level"
+      ],
+      "Station": [
+        "code"
+      ]
+    },
+    "error": "EngineError",
+    "match": "floating-point field",
+    "why": "A document's _id comes from its key's exact bytes, and a float has no text two languages agree on."
+  },
+  {
+    "materialization": "Reading@es",
+    "dialect": "elasticsearch",
+    "fixed": false,
+    "layout_columns": {
+      "Reading": {
+        "amount": "long/decimal(18,4)",
+        "at": "long/timestamptz",
+        "count": "integer",
+        "day": "date",
+        "level": "double",
+        "local": "long/timestamp",
+        "note": "text",
+        "ok": "boolean",
+        "ref": "keyword/uuid",
+        "station": "keyword",
+        "total": "long",
+        "home_code": "keyword"
+      },
+      "Station": {
+        "code": "keyword",
+        "name": "keyword"
+      }
+    },
+    "keys": {
+      "Reading": [
+        "station",
+        "at"
+      ],
+      "Station": [
+        "code"
+      ]
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library maps in Elasticsearch",
+    "why": "`text` is an Elasticsearch type, and not one a layout of this library names: a map that asked for it would get an analyzer nobody chose."
+  },
+  {
+    "materialization": "Reading@es",
+    "dialect": "elasticsearch",
+    "fixed": false,
+    "layout_columns": {
+      "Reading": {
+        "amount": "long/decimal(18,4)",
+        "at": "long/timestamptz",
+        "count": "integer",
+        "day": "date",
+        "level": "double",
+        "local": "long/timestamp",
+        "note": "keyword",
+        "ok": "boolean",
+        "ref": "keyword/uuid",
+        "station": "keyword",
+        "total": "long",
+        "home_code": "keyword"
+      },
+      "Station": {
+        "code": "keyword",
+        "name": "keyword",
+        "__sde_tokens": "keyword"
+      }
+    },
+    "keys": {
+      "Reading": [
+        "station",
+        "at"
+      ],
+      "Station": [
+        "code"
+      ]
+    },
+    "error": "EngineError",
+    "match": "starting with __sde_ are the library's own",
+    "why": "The token field's name is the library's; a column of that name would be overwritten by the tokens of every write."
+  },
+  {
+    "materialization": "Reading@es",
+    "dialect": "elasticsearch",
+    "fixed": false,
+    "layout_columns": {
+      "Reading": {
+        "amount": "long/decimal(19,4)",
+        "at": "long/timestamptz",
+        "count": "integer",
+        "day": "date",
+        "level": "double",
+        "local": "long/timestamp",
+        "note": "keyword",
+        "ok": "boolean",
+        "ref": "keyword/uuid",
+        "station": "keyword",
+        "total": "long",
+        "home_code": "keyword"
+      },
+      "Station": {
+        "code": "keyword",
+        "name": "keyword"
+      }
+    },
+    "keys": {
+      "Reading": [
+        "station",
+        "at"
+      ],
+      "Station": [
+        "code"
+      ]
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library maps in Elasticsearch",
+    "why": "A decimal is its value times 10^scale in a long, exact to eighteen digits and no further."
+  }
+]

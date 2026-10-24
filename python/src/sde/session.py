@@ -17,12 +17,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from threading import Lock
 from time import perf_counter_ns
 from types import MappingProxyType
 from typing import Any, Protocol
 
 from ._usage import SessionUsage, session_call, session_owner
+from .books import BookStream, Resync
 from .bulk import batch_columns, bulk_writer, snapshot_rows
 from .errors import (
     BulkWriteRefused,
@@ -48,6 +50,7 @@ from .model import LogicalModel
 from .physical import PhysicalFinding
 from .placement import Materialization, PlacementMap
 from .query import (
+    MAX_PAGE_ROWS,
     NumericSummary,
     QueryRefused,
     Range,
@@ -58,10 +61,22 @@ from .query import (
     numeric_summary,
     plan_read,
     query_engine,
+    query_value,
     summary_engine,
     summary_scale,
 )
 from .routing import Router
+from .search import (
+    DEFAULT_MAX_EXAMINED,
+    MAX_EXAMINED,
+    MAX_SEARCH_LIMIT,
+    SearchPage,
+    SearchRefused,
+    matches,
+    query_tokens,
+    search_engine,
+    text_index,
+)
 from .shapes import OperationShape, enumerate_shapes
 from .telemetry import Recorder, StorageMeasurement, StorageSize
 from .verification import check_project_id
@@ -97,14 +112,41 @@ class ManagedEngine(Engine, Protocol):
 def _storage_refusal(exc: BaseException) -> str:
     """``refused`` when the catalogue denied the login, ``failed`` for any other engine error.
 
-    Read from the driver's own error beneath the adapter's: PostgreSQL's SQLSTATE 42501,
-    ClickHouse's access error 497 - what a login without the ``system.parts`` grant receives
-    (measured on 24.8).
+    Read from the error beneath the adapter's: PostgreSQL's SQLSTATE 42501, ClickHouse's access
+    error 497 - what a login without the ``system.parts`` grant receives (measured on 24.8) - and
+    Elasticsearch's 403, what a key without the ``monitor`` privilege receives (measured on 9.5.5).
     """
     cause = exc.__cause__ if exc.__cause__ is not None else exc
     if getattr(cause, "sqlstate", None) == "42501" or "Code: 497" in str(cause):
         return "refused"
+    if getattr(cause, "status", None) == 403:
+        return "refused"
     return "failed"
+
+
+class _BookSink:
+    """A book stream's sink: each update one write of the entity, through the session that opened
+    the stream, so placement, ownership and telemetry are the session's own."""
+
+    def __init__(self, session: Session, target: str, shape: OperationShape, symbol: str,
+                 exchange: str) -> None:
+        self._session = session
+        self._target = target
+        self._shape = shape
+        self._symbol = symbol
+        self._exchange = exchange
+
+    def send_whole(self, side: str, levels: list[tuple[int, int, int]], timestamp_ns: int) -> None:
+        self._session._book_write(self._target, self._shape, symbol=self._symbol,
+                                  exchange=self._exchange, side=side, levels=levels,
+                                  timestamp_ns=timestamp_ns, whole=True)
+
+    def send_changes(
+        self, side: str, levels: list[tuple[int, int, int]], timestamp_ns: int
+    ) -> None:
+        self._session._book_write(self._target, self._shape, symbol=self._symbol,
+                                  exchange=self._exchange, side=side, levels=levels,
+                                  timestamp_ns=timestamp_ns, whole=False)
 
 
 class Session:
@@ -582,6 +624,85 @@ class Session:
         finally:
             self._observe(shape, started, rows=len(snapshot), failed=failed)
 
+    @session_call
+    def book_stream(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        mode: str = "incremental",
+        resync: Resync | None = None,
+    ) -> BookStream:
+        """A stream of one book of ``entity`` - one symbol on one exchange - to the orderbook
+        engine, sent whole or as its changes (:mod:`sde.books`).
+
+        The entity's group must be placed on the orderbook engine, which reads an update by price
+        and replaces a side whole (``MREPLACE``): refused otherwise, and refused for a server that
+        does not announce ``replace_side``, before anything is sent. Each update the stream sends
+        is one write of the entity, under this session's rules and timed like ``save_many``'s.
+        """
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, _ = self._target(shape, fresh=False)
+        supports = getattr(engine, "supports_replace_side", None)
+        if supports is None:
+            raise EngineError(
+                f"{entity} is placed on an engine that does not take a book by price: a book "
+                f"stream writes to the orderbook engine, which applies an update by price and "
+                f"replaces a side whole"
+            )
+        if not supports():
+            raise EngineError(
+                "this orderbook server does not replace a side of a book (capability "
+                "replace_side), which a book stream needs: in full mode for every update, in "
+                "incremental mode for each resync. Upgrade the server; nothing was sent."
+            )
+        check = getattr(engine, "check_book", None)
+        if check is not None:
+            check(symbol, exchange)
+        sink = _BookSink(self, target, shape, symbol, exchange)
+        return BookStream(sink, mode=mode, resync=resync)
+
+    @session_call
+    def _book_write(
+        self,
+        target: str,
+        shape: OperationShape,
+        *,
+        symbol: str,
+        exchange: str,
+        side: str,
+        levels: list[tuple[int, int, int]],
+        timestamp_ns: int,
+        whole: bool,
+    ) -> None:
+        """One update of a book stream: a whole side, or changes by price."""
+        engine, materialization = self._target(shape, fresh=False)
+        if self._placement.placement_of(shape.group).also_write:
+            # Unreachable while a map refuses copies of a group without generations, which every
+            # group on the orderbook engine is. Refused rather than skipped if that ever changes:
+            # a copy that misses the stream's updates is a copy that is silently wrong.
+            raise EngineError(
+                f"{target} has copies being written, and a book stream writes only the source"
+            )
+        name = "replace_levels" if whole else "apply_levels"
+        write = getattr(engine, name, None)
+        if write is None:
+            raise EngineError(f"{target} is placed on an engine that does not take a book by price")
+        table = materialization.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed = False
+        try:
+            write(table, symbol=symbol, exchange=exchange, side=side, timestamp_ns=timestamp_ns,
+                  levels=levels)
+            self._session_usage.check()
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=len(levels), failed=failed)
+
     # --- dual write ----------------------------------------------------------------------------
 
     def _fan_out(
@@ -804,6 +925,190 @@ class Session:
             self._observe(shape, started, rows=returned, failed=failed, plan=plan)
 
     @session_call
+    def book_at(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        at_ns: int,
+        depth: int | None = None,
+        fresh: bool = False,
+    ) -> dict[str, list[tuple[int, int, int]]]:
+        """The book of ``entity`` for one symbol on one exchange as of ``at_ns``, composed by the
+        orderbook engine from what was written - by price, in time order: ``{"bid": [...],
+        "ask": [...]}``, each side best first as (price, quantity, order count), at most ``depth``
+        levels a side.
+
+        The read side of :meth:`book_stream`: a stream that sends only changes stores only
+        changes, and this answers the book they make. Recorded as a range read of the entity's
+        time, which is what it is: a book is its history up to ``at_ns``.
+        """
+        if not isinstance(fresh, bool):
+            raise QueryRefused("fresh must be a bool")
+        target = self._entity(entity)
+
+        def field(name: str) -> str:
+            try:
+                return next(iter(self._fields_in(entity, {name: None})))
+            except ModelPlanningError as exc:
+                raise QueryRefused(
+                    f"{entity} is not a book: it has no field {name!r} ({exc})"
+                ) from exc
+
+        moment = field("timestamp_ns")
+        equal = sorted((field("symbol"), field("exchange")))
+        shape = self._shape(target, "range_read", (moment,))
+        engine, material = self._target(shape, fresh=fresh)
+        read = getattr(engine, "book_at", None)
+        if read is None:
+            raise QueryRefused(
+                f"{entity} is placed on an engine that does not compose a book: the orderbook "
+                f"engine does"
+            )
+        table = material.layout.table_for(target)
+        started = perf_counter_ns() if self._recorder else 0
+        failed, returned = False, 0
+        try:
+            book: dict[str, list[tuple[int, int, int]]] = read(
+                table, symbol=symbol, exchange=exchange, at_ns=at_ns, depth=depth
+            )
+            self._session_usage.check()
+            returned = sum(len(levels) for levels in book.values())
+            return book
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(shape, started, rows=returned, failed=failed,
+                          predicates={"equal": equal, "ranged": moment})
+
+    @session_call
+    def search(
+        self, entity: str, text: str, *, fields: Sequence[str] | None = None,
+        after: Mapping[str, Any] | None = None, limit: int = 100,
+        max_examined: int = DEFAULT_MAX_EXAMINED,
+    ) -> SearchPage:
+        """The rows of ``entity`` whose chosen text fields hold every token of ``text``.
+
+        At most ``limit`` of them, in key order, with the position to continue from - a page, as
+        :meth:`scan` reads one. ``fields`` are the entity's ``string`` fields to look in, all of
+        them when omitted. What a token is and when a row matches is the format contract's rule
+        (section 7l), applied by :mod:`sde.search` to every row before it is returned: the engine
+        supplies candidates and never decides, so the answer is the same in every engine.
+
+        A search always reads the group's source, the one materialisation known to hold every
+        row. An engine with a text index supplies only rows that hold the tokens; one without
+        supplies rows in key order and the library examines them, at most ``max_examined`` in one
+        call. A page cut short by that bound keeps the position of the last row examined, so
+        ``next_after`` is ``None`` only when nothing is left - a short page is not the last page.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise SearchRefused(f"limit must be an integer between 1 and {MAX_SEARCH_LIMIT}")
+        if not 1 <= limit <= MAX_SEARCH_LIMIT:
+            raise SearchRefused(f"limit must be an integer between 1 and {MAX_SEARCH_LIMIT}")
+        if isinstance(max_examined, bool) or not isinstance(max_examined, int):
+            raise SearchRefused(f"max_examined must be an integer between 1 and {MAX_EXAMINED}")
+        if not 1 <= max_examined <= MAX_EXAMINED:
+            raise SearchRefused(f"max_examined must be an integer between 1 and {MAX_EXAMINED}")
+        query = query_tokens(text)
+        target, plan = self._prepare_read(
+            entity, where=None, bounds=None, after=after, limit=MAX_PAGE_ROWS
+        )
+        chosen = self._search_fields(entity, target, fields)
+        shape = self._shape(target, "search")
+        engine, material = self._target(shape, fresh=False)
+        self._read_projection(material, target, plan, count=False)
+        table = material.layout.table_for(target)
+        search_engine(engine)
+        indexed = text_index(engine)
+        reader = None if indexed is not None else query_engine(engine)
+        started = perf_counter_ns() if self._recorder else 0
+        failed, examined = False, 0
+        found: list[dict[str, Any]] = []
+        try:
+            position: Mapping[str, Any] | None = None
+            while True:
+                # An index supplies rows that hold the tokens, so it is asked for what the page
+                # still needs; a scan supplies everything, so it reads as far as the bound allows.
+                wanted = max_examined - examined
+                if indexed is not None:
+                    wanted = min(wanted, limit - len(found))
+                plan = replace(plan, limit=min(MAX_PAGE_ROWS, wanted))
+                if indexed is not None:
+                    rows = indexed.search_rows(table, plan, query, chosen)
+                else:
+                    assert reader is not None
+                    rows = reader.select_rows(table, plan)
+                self._session_usage.check()
+                candidates = rows[:plan.limit]
+                more = len(rows) > plan.limit
+                stopped = None
+                for index, row in enumerate(candidates):
+                    examined += 1
+                    if matches(row, query, chosen):
+                        found.append(row)
+                    if len(found) == limit or examined == max_examined:
+                        stopped = index
+                        break
+                if stopped is not None:
+                    if more or stopped < len(candidates) - 1:
+                        position = candidates[stopped]
+                    break
+                if not more or not candidates:
+                    break
+                last = candidates[-1]
+                plan = replace(
+                    plan,
+                    after=tuple(query_value(column, last[column.name]) for column in plan.order),
+                )
+            next_after = None
+            if position is not None:
+                key = {column.name: position[column.name] for column in plan.order}
+                next_after = MappingProxyType(snapshot_rows([self._fields_out(entity, key)])[0])
+            return SearchPage(
+                tuple(self._fields_out(entity, row) for row in found), next_after, examined
+            )
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            self._observe(
+                shape, started, rows=0 if failed else len(found), failed=failed,
+                examined=examined, searched=chosen,
+            )
+
+    def _search_fields(
+        self, entity: str, target: str, fields: Sequence[str] | None
+    ) -> tuple[str, ...]:
+        """The model's names of the text fields a search looks in, sorted."""
+        declared = {f.name: f.type for f in self._model.entity(target).fields}
+        text = sorted(name for name, kind in declared.items() if kind == "string")
+        if not text:
+            raise SearchRefused(f"{entity} has no field of type string, so nothing to search")
+        if fields is None:
+            return tuple(text)
+        refusal = "fields must be a non-empty list of the entity's text field names"
+        if isinstance(fields, str) or not isinstance(fields, Sequence) or not fields:
+            raise SearchRefused(refusal)
+        chosen: set[str] = set()
+        for name in fields:
+            if not isinstance(name, str):
+                raise SearchRefused(refusal)
+            try:
+                chosen.update(self._fields_in(entity, {name: None}))
+            except ModelPlanningError as exc:
+                raise SearchRefused(str(exc)) from exc
+        unknown = sorted(chosen - set(declared))
+        if unknown:
+            raise SearchRefused(f"{entity} declares no field named {unknown}")
+        other = chosen - set(text)
+        if other:
+            named = sorted(self._fields_out(entity, dict.fromkeys(other)))
+            raise SearchRefused(f"a search looks in fields of type string only, not in {named}")
+        return tuple(sorted(chosen))
+
+    @session_call
     def count(
         self, entity: str, *, where: Mapping[str, Any] | None = None,
         bounds: Range | None = None, fresh: bool = False,
@@ -945,11 +1250,15 @@ class Session:
         rows: int,
         failed: bool,
         plan: ReadPlan | None = None,
+        predicates: Mapping[str, Any] | None = None,
+        examined: int = 0,
+        searched: Sequence[str] | None = None,
     ) -> None:
         """Hand one observation to the recorder, if there is one.
 
         The timing call is skipped entirely when telemetry is off, which is why `started` is
         passed in rather than measured here: with no recorder this method is one attribute check.
+        A read without a plan - a book's - names what it filtered on as ``predicates``.
         """
         recorder = self._recorder
         if recorder is None:
@@ -962,7 +1271,9 @@ class Session:
             nanoseconds=perf_counter_ns() - started,
             rows=rows,
             failed=failed,
-            **({} if plan is None else _predicates(plan)),
+            **(_predicates(plan) if plan is not None else dict(predicates or {})),
+            examined=examined,
+            searched=searched,
         )
 
     # --- transactions ----------------------------------------------------------------------

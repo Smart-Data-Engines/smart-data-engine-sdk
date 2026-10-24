@@ -32,7 +32,9 @@ from .placement import PhysicalLayout
 
 __all__ = [
     "CLICKHOUSE_TYPES",
+    "ELASTICSEARCH_TYPES",
     "FIXED_SCHEMA",
+    "INDEX_NAME_LIMIT",
     "ORDERBOOK_KEY",
     "ORDERBOOK_NULLABLE",
     "ORDERBOOK_SHAPE",
@@ -46,6 +48,7 @@ __all__ = [
     "fixed_schema_mismatch",
     "group_columns",
     "group_nullable",
+    "index_name_refusal",
     "snake_case",
     "stored_types",
 ]
@@ -122,6 +125,28 @@ CLICKHOUSE_TYPES: Final[Mapping[str, str]] = {
 }
 
 
+def index_name_refusal(name: str) -> str | None:
+    """Why ``name`` cannot be an Elasticsearch index name, or ``None`` when it can.
+
+    The engine's own rule, checked before it is asked: lowercase, no ``\\ / * ? " < > | , #``,
+    space or colon, not ``.`` or ``..``, not starting with ``-``, ``_`` or ``+``, at most
+    :data:`INDEX_NAME_LIMIT` bytes. Our own bookkeeping index starts ``sde_``; a client's entity
+    may be named anything else.
+    """
+    if not name or name in (".", ".."):
+        return "an index needs a name other than '.' and '..'"
+    if name != name.lower():
+        return "an index name is lowercase"
+    if name[0] in "-_+":
+        return "an index name cannot start with '-', '_' or '+'"
+    bad = sorted(set(name) & set('\\/*?"<>|,# :'))
+    if bad:
+        return f"an index name cannot contain {bad}"
+    if len(name.encode("utf-8")) > INDEX_NAME_LIMIT:
+        return f"an index name is at most {INDEX_NAME_LIMIT} bytes"
+    return None
+
+
 def snake_case(name: str) -> str:
     """``OrderLine`` -> ``order_line``, and NFC-normalised.
 
@@ -145,22 +170,56 @@ ORDERBOOK_TYPES: Final[Mapping[str, str]] = {
     "int64": "int64_t",
 }
 
+ELASTICSEARCH_TYPES: Final[Mapping[str, str]] = {
+    # A column type here is the field's Elasticsearch type, then - when that type alone would not
+    # say how to read the value back - the neutral type after a slash. The index mapping carries the
+    # same two halves (`type`, and `meta.sde_type`), so a layout and a mapping compare as strings,
+    # and a reader that finds `long` knows whether it holds an integer or a microsecond.
+    "bool": "boolean",
+    "int32": "integer",
+    "int64": "long",
+    "float32": "float",
+    "float64": "double",
+    # `keyword`: exact, sortable by code point - UTF-8 byte order, what the other engines order by
+    # - and the field a search's tokens sit beside (format contract 7l).
+    "string": "keyword",
+    "uuid": "keyword/uuid",
+    "date": "date",
+    # Microseconds since the epoch, in a `long`. Elasticsearch's own `date` keeps milliseconds and
+    # `date_nanos` covers 1970 to 2262 only, so either would change a value the other engines keep.
+    # A naive `timestamp` is counted as if it were UTC and read back naive.
+    "timestamp": "long/timestamp",
+    "timestamptz": "long/timestamptz",
+    # `bytes` and `json` are absent, and the absence is a refusal, as for ClickHouse: a binary
+    # value has no exact keyword form, and what an engine gives back for `json` - a parsed object or
+    # its text - is the neutral type's open question, not this adapter's to settle.
+}
+
 _DIALECT_TYPES: Final[Mapping[str, Mapping[str, str]]] = {
     "postgres": POSTGRES_TYPES,
     "clickhouse": CLICKHOUSE_TYPES,
     "orderbook": ORDERBOOK_TYPES,
+    "elasticsearch": ELASTICSEARCH_TYPES,
 }
 
 # The dialects this library knows, as one public list. It exists because the control plane kept its
 # own vocabulary - `postgresql` there, `postgres` here - and the two agreed only for as long as
 # nothing joined them. The first code that needed both spellings to match was the one rendering DDL
 # for an engine named in the registry, and it failed at runtime rather than at any earlier point.
-DIALECTS: Final[tuple[str, ...]] = ("clickhouse", "orderbook", "postgres")
+DIALECTS: Final[tuple[str, ...]] = ("clickhouse", "elasticsearch", "orderbook", "postgres")
 
 _DECIMAL: Final[Mapping[str, str]] = {
     "postgres": "numeric({digits},{scale})",
     "clickhouse": "Decimal({digits}, {scale})",
+    # The value times 10^scale, in a `long`: exact up to eighteen digits, where an int64 ends.
+    "elasticsearch": "long/decimal({digits},{scale})",
 }
+
+_DECIMAL_DIGITS: Final[Mapping[str, int]] = {"elasticsearch": 18}
+"""The most digits a dialect's decimal holds exactly, where that is fewer than the vocabulary's."""
+
+INDEX_NAME_LIMIT: Final = 255
+"""Bytes in an Elasticsearch index name, which is the table name a layout gives an entity."""
 
 
 # ── An engine whose schema is not ours to choose ─────────────────────────────────────────────────
@@ -334,6 +393,12 @@ def _column_type(neutral: str, dialect: str) -> str:
     if neutral.startswith("decimal("):
         digits, scale = neutral[len("decimal(") : -1].split(",")
         template = _DECIMAL.get(dialect)
+        limit = _DECIMAL_DIGITS.get(dialect)
+        if limit is not None and int(digits) > limit:
+            raise DeclarationError(
+                f"no {dialect} type for {neutral!r}: this engine keeps a decimal exactly as an "
+                f"integer of at most {limit} digits, and a wider one would come back rounded."
+            )
         if template is None:
             # A DeclarationError rather than a KeyError, because this is the same answer as any
             # other unmapped neutral type - the engine cannot give this column a type - and
@@ -509,6 +574,10 @@ def default_layout(
 
     for entity_name in group.members:
         tables[entity_name] = snake_case(entity_name)
+        if dialect == "elasticsearch":
+            refusal = index_name_refusal(tables[entity_name])
+            if refusal is not None:
+                raise DeclarationError(f"{entity_name} cannot be an Elasticsearch index: {refusal}")
         columns[entity_name] = {
             column: _column_type(neutral_type, dialect)
             for column, neutral_type in neutral[entity_name].items()
@@ -534,7 +603,10 @@ def default_layout(
         # refuses to make. What a MergeTree does have is its `ORDER BY`, which is the primary index
         # and is derived from the declared key by the adapter - so the useful index exists, it is
         # simply not expressed as a row in this list.
-        if dialect != "clickhouse":
+        #
+        # None for Elasticsearch either: every field it maps is indexed already, so the column a
+        # relation walk filters on has its inverted index without a decision of ours.
+        if dialect == "postgres":
             for relation in model.relations:
                 if relation.source != entity_name:
                     continue

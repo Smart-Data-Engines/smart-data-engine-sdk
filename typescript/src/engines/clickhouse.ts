@@ -103,8 +103,8 @@ interface JsonResult {
  * the PostgreSQL adapter reads field OIDs: the server is the authority on what it stored, and a map
  * can be stale in a way a response cannot.
  *
- * Four conversions, and each one is the same decision the PostgreSQL adapter makes, arrived at from
- * the other side - which is what makes the two agree.
+ * Each conversion is the same decision the PostgreSQL adapter makes, arrived at from the other
+ * side - which is what makes the two agree.
  */
 function convert(value: unknown, type: string): unknown {
   if (value === null || value === undefined) return null
@@ -133,6 +133,11 @@ function convert(value: unknown, type: string): unknown {
     return String(value)
   }
   if (bare.startsWith('Bool')) return Boolean(value)
+  if (bare === 'Float32') {
+    // The float32 itself, as the PostgreSQL adapter reads a `real`: the JSON text is its shortest
+    // decimal, which parses to another double than the stored value.
+    return Math.fround(Number(value))
+  }
   return value
 }
 
@@ -226,10 +231,13 @@ export class ClickHouseEngine {
         search.set('output_format_json_quote_decimals', '1')
         search.set('output_format_decimal_trailing_zeros', '1')
       }
-      if (options.body === undefined) search.set('query', query)
-      else search.set('query', query)
+      // A URL is what a proxy or a load balancer in between logs, and a statement holds the values
+      // a read filters on, so the statement is the body. An INSERT's rows are its body: its
+      // statement, which names the table and the columns and no value, goes in the URL, where the
+      // server reads the start of a statement. The reference's driver sends both the same way.
+      if (options.body !== undefined) search.set('query', query)
       const path = `/?${search.toString()}`
-      const payload = options.body ?? ''
+      const payload = options.body ?? query
       const requestFn = this.target.protocol === 'https:' ? httpsRequest : httpRequest
       const inactivity = options.timeoutMs ?? (this.target.receive_timeout_supplied
         ? Math.ceil(this.target.send_receive_timeout * 1000) : undefined)
@@ -642,7 +650,10 @@ export class ClickHouseEngine {
           const value = row[column.name]
           if (value !== null && ['float32', 'float64'].includes(column.type)) {
             const text = String(value).toLowerCase()
-            row[column.name] = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+            const number = text === 'inf' || text === '+inf' ? Infinity : text === '-inf' ? -Infinity : Number(text)
+            // `toString` gives a float32's shortest decimal, another double than the float32: the
+            // value a read by key returns, and every other engine's scan, is the float32 itself.
+            row[column.name] = column.type === 'float32' ? Math.fround(number) : number
           }
         }
         return rows.map(row => readRow(plan.columns, row))

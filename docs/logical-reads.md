@@ -78,6 +78,28 @@ restarting the scan; a key ahead can appear on a later page. A changed filter or
 question with an explicit position. Use appropriate engine isolation when a snapshot is required;
 a default multi-statement transaction alone does not promise it.
 
+## Values written as text
+
+A filter, a bound or a position may give a decimal or a timestamp as text. The text is read by one
+rule in every library, pinned by `query/024`-`028`, and not by whatever the language's runtime
+accepts:
+
+- **A decimal** is an optional sign, ASCII digits with an optional fraction, and an optional
+  exponent, at most 76 digits. It may be surrounded by Unicode's `White_Space` and nothing else:
+  U+0009-U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F
+  and U+3000.
+- **A timestamp** is `YYYY-MM-DD`, `T` or a space, `HH:MM:SS`, up to six fractional digits, and
+  optionally `Z` or an offset `+HH:MM` or `+HH:MM:SS`. Every part keeps ISO 8601's range: hours
+  00-23 - there is no 24:00 - and minutes and seconds 00-59, in the offset too. The instant must
+  fall between years 0001 and 9999 in UTC.
+
+Each rule replaced a disagreement that had shipped. Python stripped with `str.strip()`, which also
+removes U+001C-U+001F. TypeScript stripped with `trim()`, which removes U+FEFF and keeps U+0085.
+CPython reads an offset by its total, so `+10:60` was eleven hours in Python and refused in
+TypeScript. CPython 3.14 reads `24:00:00` as the next midnight, where 3.11 to 3.13 refused it, so
+the reference answered differently by interpreter. The C++ library found all of them, by comparing
+its answers with the reference's on random inputs.
+
 ## Exact counts and numeric summaries
 
 ```python
@@ -110,6 +132,48 @@ Mean is computed from the exact sum and non-null count, with half-even rounding.
 to six decimal places and may be chosen from 0 through 38. Python's global Decimal context does
 not change the result. Mean is Decimal in Python and decimal text in TypeScript. Floating
 summaries, arbitrary GROUP BY and time bucketing are outside this API's current scope.
+
+## Search
+
+`search` returns the rows whose chosen text fields hold every token of a query, a page at a time in
+key order. It is a filter, not a ranking, and the same rows come back from every engine and both
+languages, because the library decides what matches: [format contract §7l](format-contract.md#7l-search).
+
+```python
+page = session.search("Note", "red apple", fields=["title", "body"], limit=20)
+for row in page.rows:
+    consume(row)
+while page.next_after is not None:
+    page = session.search("Note", "red apple", fields=["title", "body"], after=page.next_after)
+```
+
+```typescript
+let page = await session.search('Note', 'red apple', { fields: ['title', 'body'], limit: 20 })
+while (page.nextAfter !== null) {
+  page = await session.search('Note', 'red apple', { fields: ['title', 'body'], after: page.nextAfter })
+}
+```
+
+- A token is a run of letters and digits in the text normalised to NFC. Tokens match without
+  case, one code point for one: `Łódź` finds `ŁÓDŹ`, the Kelvin sign finds `k`, and `strasse` does
+  not find `Straße`.
+- `fields` are `string` fields of the entity, all of them when omitted.
+- A search always reads the group's source, even where the map routes scans to a copy, because
+  only the source is known to hold every row.
+- PostgreSQL and ClickHouse have no text index here: the library reads rows in key order and checks
+  each one. No engine's `lower()`, collation or analyzer decides an answer, because PostgreSQL's
+  `lower()` under the `C` collation changes ASCII only, and a row an engine wrongly leaves out is a
+  wrong answer nobody would see.
+- One call checks at most `max_examined` / `maxExamined` rows: 100,000 by default, 1,000,000 at
+  most. A page cut short by that bound has fewer rows than the limit and still a position, so a
+  short page is not the last one. `next_after` is `None` / `nextAfter` is `null` only when nothing
+  is left to check.
+- `SearchRefused`, a `QueryRefused`, is raised before any engine is asked: a query with no letter
+  or digit, a field that is not text, a bad limit.
+
+Telemetry records the `search` shape with the rows each call examined and the fields it looked
+in, never the query. The window's `examined` beside `rows` is what a search cost on the engine
+that holds the group, and it is the measurement a placement for search is decided on.
 
 ## Placement, lifecycle and errors
 

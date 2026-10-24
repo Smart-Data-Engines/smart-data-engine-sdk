@@ -1,0 +1,39 @@
+{
+  "contract": 1,
+  "model_version": "8bc2357c471a62da",
+  "map_version": 1,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@es",
+        "engine": "es-1",
+        "layout": {
+          "tables": {
+            "Reading": "reading",
+            "Station": "station"
+          },
+          "columns": {
+            "Reading": {
+              "amount": "long/decimal(18,4)",
+              "at": "long/timestamptz",
+              "count": "integer",
+              "day": "date",
+              "level": "double",
+              "local": "long/timestamp",
+              "note": "keyword",
+              "ok": "boolean",
+              "ref": "keyword/uuid",
+              "station": "keyword",
+              "total": "long",
+              "home_code": "keyword"
+            },
+            "Station": {
+              "code": "keyword",
+              "name": "keyword"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "columns": {
+    "id": "long/timestamp",
+    "x": "float",
+    "label": "keyword"
+  },
+  "key": [
+    "id"
+  ],
+  "row": {
+    "id": "1969-07-20T20:17:40.000001",
+    "x": -0.0,
+    "label": "b"
+  }
+}

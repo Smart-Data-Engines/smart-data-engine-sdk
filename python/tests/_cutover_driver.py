@@ -7,10 +7,9 @@ import sys
 from typing import Any
 
 import sde
-from sde.engines.clickhouse import ClickHouseEngine
-from sde.engines.postgres import PostgresEngine
 from sde.local_cutover import LocalCutover
 from sde.testing.loader import model_from_neutral
+from sde_operator.__main__ import adapter
 
 request: dict[str, Any] = json.load(sys.stdin)
 model = model_from_neutral(request["model"])
@@ -21,8 +20,11 @@ plan = sde.load_cutover_plan(
 operators: dict[str, Any] = {}
 runtime: dict[str, Any] = {}
 try:
-    for name in ("postgres", "clickhouse"):
-        kind = PostgresEngine if name == "postgres" else ClickHouseEngine
+    # Each binding's dialect, by default its name: ``postgres`` and ``clickhouse``.
+    names = sorted(request["operators"])
+    dialects: dict[str, str] = request.get("dialects", {name: name for name in names})
+    for name in names:
+        kind = adapter(dialects[name])
         operators[name] = kind(request["operators"][name])
         operators[name].connect()
         runtime[name] = kind(request["runtime"][name])

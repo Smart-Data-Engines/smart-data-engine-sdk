@@ -27,6 +27,7 @@
 import { readFileSync } from 'node:fs'
 
 import { UsageGate } from '../_usage.js'
+import type { BookUpdate, ComposedBook } from '../books.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
 import { QueryRefused, type ReadPlan } from '../query.js'
@@ -304,6 +305,11 @@ export class OrderbookEngine {
     'and its query language refuses a time filter on an aggregate. Refused rather than computed from a ' +
     'full scan, which is what a count here would have to be.'
 
+  /** Why `Session.search` is refused for a group on this engine (`searchEngine` in `search.ts`). */
+  readonly searchRefusal =
+    'this engine searches nothing over its history: its text is a symbol, an exchange and a side, ' +
+    'and a read of its history needs the symbol and the exchange already'
+
   /** Why `Session.summarize` is refused for a group on this engine. */
   readonly summaryRefusal =
     'this engine summarizes nothing over its history: its aggregates read the live book, not the stored ' +
@@ -321,6 +327,7 @@ export class OrderbookEngine {
   private readonly usage = new UsageGate()
   private readonly wire: WireOptions
   private connection: WireConnection | null = null
+  private capabilities: ReadonlySet<string> = new Set()
   private unflushed = 0
 
   constructor(options: OrderbookOptions) {
@@ -463,6 +470,7 @@ export class OrderbookEngine {
         )
       }
       this.connection = connection
+      this.capabilities = capabilities
     })
   }
 
@@ -754,6 +762,127 @@ export class OrderbookEngine {
     const answer = parseAnswer(raw)
     if (answer.error !== null) throw new EngineError(`flush failed: ${answer.error}`)
     this.unflushed = 0
+  }
+
+  // --- books by price (the engine's #233) -----------------------------------------------------
+
+  /**
+   * Whether this server replaces a side of a book (`MREPLACE`): it says so in the capabilities read
+   * at `connect()`, and a server without it would answer the command as unknown.
+   */
+  supportsReplaceSide(): boolean {
+    this.open()
+    return this.capabilities.has('replace_side')
+  }
+
+  /**
+   * Refuse the names of a book that a write to it would refuse, for a caller that holds them across
+   * many writes - a book stream - and should hear it before the first one.
+   */
+  checkBook(symbol: string, exchange: string): void {
+    name(symbol, 'symbol')
+    name(exchange, 'exchange')
+  }
+
+  private bookLevels(levels: readonly (readonly [unknown, unknown, unknown])[]): (readonly [bigint, bigint, bigint])[] {
+    if (levels.length > MAX_LEVEL + 1) {
+      throw new EngineError(`this update has ${levels.length} levels and this engine stores at most ${MAX_LEVEL + 1} per side`)
+    }
+    return levels.map(([price, quantity, count]) => [
+      integer(price, 'price', MIN_PRICE, MAX_PRICE),
+      integer(quantity, 'quantity', 0n, MAX_QUANTITY),
+      integer(count, 'order_count', 0n, MAX_ORDER_COUNT),
+    ] as const)
+  }
+
+  private async bookWrite(table: string, update: BookUpdate, replace: boolean): Promise<void> {
+    this.table(table)
+    if (!(SIDES as readonly string[]).includes(update.side)) {
+      throw new EngineError(`side must be one of ${JSON.stringify(SIDES)}, not ${describe(update.side)}`)
+    }
+    const symbol = name(update.symbol, 'symbol')
+    const exchange = name(update.exchange, 'exchange')
+    const stamp = integer(update.timestampNs, 'timestampNs', 0n, MAX_TIMESTAMP_NS)
+    const levels = this.bookLevels(update.levels)
+    if (levels.length === 0 && !replace) return // a change of nothing is not an update
+    let command: string
+    if (replace) {
+      // Always the block, for one level and for none: MREPLACE has no one-line twin, and a
+      // replacement of no levels - which empties the side - is the header alone.
+      command = [`MREPLACE ${symbol} ${exchange} ${update.side} ${levels.length} ${stamp}`,
+        ...levels.map(([price, quantity, count]) => `${price} ${quantity} ${count}`)].join('\n')
+    } else {
+      command = this.command({ symbol, exchange, side: update.side, timestamp: stamp, levels, rows: [] })
+    }
+    const connection = this.open()
+    let raw: string
+    try {
+      raw = await connection.execute(command)
+    } catch (error) {
+      await this.lose()
+      throw new EngineError(
+        `the engine did not confirm the update of ${table}: ${message(error)}. If the connection dropped after it ` +
+          'was sent, it may still have been applied: the stream sends this side whole next.',
+      )
+    }
+    const answer = parseAnswer(raw)
+    if (answer.error !== null) throw new EngineError(`update of ${table} failed: ${answer.error}`)
+    this.unflushed += Math.max(levels.length, 1)
+  }
+
+  /**
+   * One update by price: each level sets its price's quantity, a quantity of 0 removes the price, and
+   * a price it does not name stays. The levels go in the order given, which for a `BookStream` is
+   * removals first.
+   */
+  async applyLevels(table: string, update: BookUpdate): Promise<void> {
+    return this.usage.operation(async () => this.bookWrite(table, update, false))
+  }
+
+  /** The whole side (`MREPLACE`): the engine removes every price the side holds and these levels do not name. */
+  async replaceLevels(table: string, update: BookUpdate): Promise<void> {
+    return this.usage.operation(async () => this.bookWrite(table, update, true))
+  }
+
+  /**
+   * The book as of `atNs`, as the engine composes it: by price, from every update with a time up to
+   * `atNs`, applied in time order. Each side best first, as [price, quantity, order count], at most
+   * `depth` levels a side and never more than the 1000 the engine keeps. A book nothing has been
+   * written to is empty.
+   *
+   * Refused by a server that composes a book by position, as every server before #233 did: it would
+   * answer a book written by price wrongly, and nothing in the answer would say so. `replace_side`
+   * came with reads by price, so it is the capability asked for.
+   */
+  async bookAt(
+    table: string,
+    request: { readonly symbol: string; readonly exchange: string; readonly atNs: bigint | number; readonly depth?: number },
+  ): Promise<ComposedBook> {
+    return this.usage.operation(async () => {
+      this.table(table)
+      const symbol = name(request.symbol, 'symbol')
+      const exchange = name(request.exchange, 'exchange')
+      const at = integer(request.atNs, 'atNs', 0n, MAX_TIMESTAMP_NS)
+      const bound = request.depth === undefined ? '' : ` AND level < ${integer(request.depth, 'depth', 1n, BigInt(MAX_LEVEL + 1))}`
+      if (!this.supportsReplaceSide()) {
+        throw new EngineError(
+          'this orderbook server composes a book by position, not by price (it predates the capability ' +
+            'replace_side, which came with reads by price), and would read a book written by price wrongly. ' +
+            'Upgrade the server; nothing was read.',
+        )
+      }
+      await this.flushNow()
+      const rows = (await this.query(`SELECT * FROM ${literal(symbol)}.${literal(exchange)} WHERE AT ${at}${bound}`))
+        .map((fields) => OrderbookEngine.row(symbol, exchange, fields))
+      rows.sort((left, right) => left['side'] === right['side']
+        ? (left['level'] as number) - (right['level'] as number)
+        : (left['side'] as string) < (right['side'] as string) ? -1 : 1)
+      const book: ComposedBook = { bid: [], ask: [] }
+      for (const row of rows) {
+        book[row['side'] as 'bid' | 'ask'].push([row['price'] as bigint, row['quantity'] as bigint, BigInt(row['order_count'] as number)])
+      }
+      return book
+    })
   }
 
   // --- reads ---------------------------------------------------------------------------------

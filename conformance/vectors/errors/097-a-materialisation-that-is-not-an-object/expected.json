@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "expected an object",
+  "stage": "map",
+  "why": "Python tested a string for the substring 'id' and raised a TypeError on a number. TypeScript already said this; now both do."
+}

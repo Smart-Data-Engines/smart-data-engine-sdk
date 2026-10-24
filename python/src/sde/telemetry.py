@@ -145,6 +145,15 @@ class ShapeStats:
     orders; an aggregate over a time range and one over the whole table are the same shape too.
     Only an operation that takes a ``where`` reports this, so writes and point reads leave it empty
     rather than claiming they filtered on nothing."""
+    examined: int = 0
+    """Rows a search examined: the candidates its engine supplied, each checked by the library.
+
+    Next to ``rows`` it is the one number that says what a search cost where it ran - an engine
+    with a text index supplies only rows that hold the tokens, and one without supplies rows in key
+    order until a page is full - so it is what a placement for search is decided on. Reported for
+    the ``search`` kind only."""
+    searched: dict[tuple[str, ...], int] = field(default_factory=dict)
+    """Search calls by the fields they looked in, sorted. Names only, never the text."""
 
     def record(
         self,
@@ -152,6 +161,8 @@ class ShapeStats:
         rows: int,
         failed: bool,
         predicates: tuple[tuple[str, ...], str] | None = None,
+        examined: int = 0,
+        searched: tuple[str, ...] | None = None,
     ) -> None:
         self.calls += 1
         self.rows += rows
@@ -160,6 +171,9 @@ class ShapeStats:
         self.latency.record(nanoseconds)
         if predicates is not None:
             self.filtered[predicates] = self.filtered.get(predicates, 0) + 1
+        self.examined += examined
+        if searched is not None:
+            self.searched[searched] = self.searched.get(searched, 0) + 1
 
 
 @dataclass
@@ -369,7 +383,8 @@ class StorageSize:
 STORAGE_UNAVAILABLE = ("failed", "missing_table", "refused", "unsupported")
 """Why a group's size stayed unknown: its engine's adapter has no catalogue to read (the orderbook
 engine), a table the map names does not exist, the catalogue refused the login (ClickHouse without
-the ``system.parts`` grant) or the read failed otherwise."""
+the ``system.parts`` grant, an Elasticsearch key without ``monitor``) or the read failed
+otherwise."""
 
 
 @dataclass(frozen=True)
@@ -615,10 +630,10 @@ class Window:
             }
             if shape.target is not None:
                 entry["target"] = shape.target
+            entry.update(calls=stats.calls, errors=stats.errors, rows=stats.rows)
+            if shape.kind == "search":
+                entry["examined"] = stats.examined
             entry.update(
-                calls=stats.calls,
-                errors=stats.errors,
-                rows=stats.rows,
                 latency_p50_ms=stats.latency.percentile_ms(0.5),
                 latency_p99_ms=stats.latency.percentile_ms(0.99),
             )
@@ -629,6 +644,13 @@ class Window:
                 entry["filtered_on"] = [
                     {"equal": list(equal), **({"range": ranged} if ranged else {}), "calls": calls}
                     for (equal, ranged), calls in sorted(stats.filtered.items())
+                ]
+            if stats.searched:
+                # Which fields the searches looked in: one entry per combination, in code point
+                # order. Never the text they looked for.
+                entry["searched_on"] = [
+                    {"fields": list(fields), "calls": calls}
+                    for fields, calls in sorted(stats.searched.items())
                 ]
             out.append(entry)
         return out
@@ -874,12 +896,15 @@ class Recorder:
         failed: bool = False,
         equal: Sequence[str] | None = None,
         ranged: str | None = None,
+        examined: int = 0,
+        searched: Sequence[str] | None = None,
     ) -> None:
         """Record one operation. Never raises, never blocks on the common path.
 
         For an operation that takes a ``where``, ``equal`` names the fields it compared by
         equality and ``ranged`` the field a range bounded; ``equal`` is ``None`` for an operation
-        that does not filter at all, and then nothing about filters is recorded.
+        that does not filter at all, and then nothing about filters is recorded. For a search,
+        ``examined`` counts the rows it checked and ``searched`` names the fields it looked in.
         """
         guard(
             "telemetry.record",
@@ -892,6 +917,8 @@ class Recorder:
                 rows,
                 failed,
                 None if equal is None else (tuple(sorted(set(equal))), ranged or ""),
+                examined,
+                None if searched is None else tuple(sorted(set(searched))),
             ),
         )
 
@@ -905,6 +932,8 @@ class Recorder:
         rows: int,
         failed: bool,
         predicates: tuple[tuple[str, ...], str] | None = None,
+        examined: int = 0,
+        searched: tuple[str, ...] | None = None,
     ) -> None:
         stats = self._current.get(shape_id)
         if stats is None:
@@ -916,7 +945,7 @@ class Recorder:
                         call_site=_call_site(),
                     )
                     self._current[shape_id] = stats
-        stats.record(nanoseconds, rows, failed, predicates)
+        stats.record(nanoseconds, rows, failed, predicates, examined, searched)
         if rows > 0 and not failed and kind in WRITE_KINDS:
             # The second of the window this write's rows landed in - one clock read per write and no
             # lock, the same trade as the counters above: a write racing a roll may be counted in

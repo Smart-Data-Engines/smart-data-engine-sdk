@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "the map places no groups",
+  "stage": "map",
+  "why": "TypeScript accepted an empty object and, without a model, loaded a map that placed nothing."
+}

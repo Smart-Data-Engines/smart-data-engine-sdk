@@ -28,6 +28,24 @@ def read(path: Path) -> dict[str, Any]:
     return value
 
 
+ADAPTERS = ("clickhouse", "elasticsearch", "postgres")
+"""The dialects a binding may name. Each adapter is imported only when a binding names it."""
+
+
+def adapter(dialect: str) -> Any:
+    if dialect == "postgres":
+        from sde.engines.postgres import PostgresEngine
+
+        return PostgresEngine
+    if dialect == "clickhouse":
+        from sde.engines.clickhouse import ClickHouseEngine
+
+        return ClickHouseEngine
+    from sde.engines.elasticsearch import ElasticsearchEngine
+
+    return ElasticsearchEngine
+
+
 def environment(name: Any) -> str:
     if not isinstance(name, str) or not name or not os.environ.get(name):
         raise MigrationRefused("a configured local connection environment variable is missing")
@@ -85,8 +103,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 0
         from sde.cutover import load_cutover_plan
-        from sde.engines.clickhouse import ClickHouseEngine
-        from sde.engines.postgres import PostgresEngine
 
         if not isinstance(config["engines"], dict) or not config["engines"]:
             raise MigrationRefused("operator configuration needs local engine bindings")
@@ -99,12 +115,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "runtime_dsn_envs",
             }:
                 raise MigrationRefused("invalid local engine binding configuration")
-            if record["dialect"] not in ("postgres", "clickhouse"):
-                raise MigrationRefused("the local operator supports PostgreSQL and ClickHouse")
+            if record["dialect"] not in ADAPTERS:
+                raise MigrationRefused(
+                    "the local operator supports PostgreSQL, ClickHouse and Elasticsearch"
+                )
             probes = record["runtime_dsn_envs"]
             if not isinstance(probes, list) or not probes:
                 raise MigrationRefused("engine binding needs dedicated runtime probes")
-            kind = PostgresEngine if record["dialect"] == "postgres" else ClickHouseEngine
+            kind = adapter(record["dialect"])
             operators[name] = kind(environment(record["operator_dsn_env"]))
             adapters.append(operators[name])
             operators[name].connect()

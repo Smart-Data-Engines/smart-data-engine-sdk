@@ -30,8 +30,17 @@ add_executable(sde_unit_tests
   unit/test_layout.cpp
   unit/test_placement.cpp
   unit/test_telemetry.cpp
+  unit/test_bignum.cpp
+  unit/test_value.cpp
+  unit/test_query.cpp
+  unit/test_schema.cpp
+  unit/test_write_fence.cpp
+  unit/test_session.cpp
+  unit/test_packets.cpp
+  unit/test_migration.cpp
+  unit/test_verification.cpp
 )
-target_link_libraries(sde_unit_tests PRIVATE sde_test_support GTest::gtest_main
+target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main
   OpenSSL::Crypto)
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)
 
@@ -45,6 +54,13 @@ add_executable(sde_conformance
   conformance/test_routing.cpp
   conformance/test_families.cpp
   conformance/test_telemetry.cpp
+  conformance/test_schema.cpp
+  conformance/test_query.cpp
+  conformance/test_migration.cpp
 )
-target_link_libraries(sde_conformance PRIVATE sde_test_support GTest::gtest_main)
-gtest_discover_tests(sde_conformance DISCOVERY_MODE PRE_TEST)
+target_link_libraries(sde_conformance PRIVATE sde_test_support sde::testing GTest::gtest_main)
+# One test, not one per discovered case: the cases are the directories under conformance/vectors,
+# and a discovered list is refreshed only when this binary changes - so a vector added without a
+# rebuild was not run by ctest at all, and nothing said so. Run whole, the binary reads the tree each
+# time, and test_families.cpp fails on a family it has never heard of.
+add_test(NAME conformance COMMAND sde_conformance --gtest_brief=1)

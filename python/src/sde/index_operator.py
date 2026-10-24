@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from functools import partial
 from time import monotonic_ns
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .errors import MigrationRefused
 from .generation import fenced_groups
@@ -22,8 +22,10 @@ from .index_build import IndexPlan, IndexReceipt, load_index_plan
 from .local_cutover import CutoverRecoveryRequired
 from .physical import METHODS_BY_DIALECT, index_method, refuse_findings
 from .placement import WATERMARK_TABLE
+from .watermark import newer_map
 
 if TYPE_CHECKING:
+    from .engines._operator import NativeOperator
     from .local_cutover import LocalCutover
 
 
@@ -36,6 +38,11 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
     if source.engine not in operator.engines:
         raise MigrationRefused("an index build is missing its configured local engine binding")
     native = operator.native[source.engine]
+    if native.dialect == "elasticsearch":
+        raise MigrationRefused(
+            "Elasticsearch builds no index in place: every field of a layout there is indexed "
+            "already, and a map gives it no index to add or remove"
+        )
     for index in plan.added:
         if index_method(index) not in METHODS_BY_DIALECT.get(native.dialect, ()):
             raise MigrationRefused(
@@ -47,7 +54,7 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
     keys = {entity: operator.model.entity(entity).key for entity in source.layout.tables}
     refuse_findings(engine.validate_schema(source.layout, keys=keys), MigrationRefused)
     tables: dict[str, dict[str, str]] = {}
-    builder = NativeIndexBuild(native)
+    builder = NativeIndexBuild(cast("NativeOperator", native))
     for entity, table in sorted(source.layout.tables.items()):
         identity = native.identity(table)
         observed = engine.write_fence(table, project_id=operator.project_id).state()
@@ -82,7 +89,8 @@ def _snapshot(operator: LocalCutover, plan: IndexPlan, state: dict[str, Any]) ->
     for name, driver in operator.native.items():
         value = operator.engines[name].map_watermark()
         if value is not None and value > plan.current.map_version:
-            raise MigrationRefused("a newer map was adopted before this index build")
+            raise newer_map("a newer map was adopted before this index build", name,
+                            operator.engines[name].dialect, value, plan.current.map_version)
         # The runtime logins as staging qualifies them, without its rule for every other
         # grantee: a build moves no authority, so nobody needs a barrier or an access transition.
         driver.qualify([WATERMARK_TABLE], sorted(allowed[name]), readers=False)
@@ -147,7 +155,7 @@ def _finish(
     from .engines._operator import TableIdentity
 
     execution = state["execution"]
-    builder = NativeIndexBuild(operator.native[execution["engine"]])
+    builder = NativeIndexBuild(cast("NativeOperator", operator.native[execution["engine"]]))
     if execution["decision"] == "abandoned":
         # Removing our own indexes publishes nothing, so it needs only the same database - each
         # drop checks its table's identity - and neither the logins nor a barrier-free table.
@@ -194,10 +202,11 @@ def _finish(
     if execution["decision"] == "built":
 
         def watermarks() -> None:
-            for engine in operator.engines.values():
+            for name, engine in operator.engines.items():
                 observed = engine.map_watermark()
                 if observed is not None and observed > plan.prepared.map_version:
-                    raise MigrationRefused("a newer map appeared while finishing the index build")
+                    raise newer_map("a newer map appeared while finishing the index build", name,
+                                    engine.dialect, observed, plan.prepared.map_version)
                 engine.record_map_version(
                     plan.prepared.map_version, model_version=operator.model.version
                 )

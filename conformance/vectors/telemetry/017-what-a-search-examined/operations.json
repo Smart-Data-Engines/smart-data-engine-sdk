@@ -1,0 +1,46 @@
+[
+  {
+    "shape": "b194eb66744de6f3",
+    "searched": [
+      "title",
+      "body"
+    ],
+    "examined": 100000,
+    "ns": 180000000,
+    "rows": 3
+  },
+  {
+    "shape": "b194eb66744de6f3",
+    "searched": [
+      "body",
+      "title"
+    ],
+    "examined": 2400,
+    "ns": 4000000,
+    "rows": 20
+  },
+  {
+    "shape": "b194eb66744de6f3",
+    "searched": [
+      "title"
+    ],
+    "examined": 800,
+    "ns": 1500000,
+    "rows": 0
+  },
+  {
+    "shape": "b194eb66744de6f3",
+    "searched": [
+      "title"
+    ],
+    "examined": 1000,
+    "ns": 2000000,
+    "rows": 0,
+    "failed": true
+  },
+  {
+    "shape": "5c20bb6398ce2bab",
+    "ns": 3000,
+    "rows": 1
+  }
+]

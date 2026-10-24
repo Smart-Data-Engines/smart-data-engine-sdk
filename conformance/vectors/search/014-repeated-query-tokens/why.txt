@@ -1,0 +1,1 @@
+a token repeated in the query is one token

@@ -1,0 +1,33 @@
+{
+  "contract": 1,
+  "model_version": "0d454cf8c7acb536",
+  "map_version": 1,
+  "groups": {
+    "Note": {
+      "source": {
+        "id": "Note@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Note": "note"
+          }
+        }
+      },
+      "derived": [
+        {
+          "id": "Note@ch",
+          "engine": "ch-1",
+          "layout": {
+            "tables": {
+              "Note": "note"
+            }
+          },
+          "lag_budget_ms": 30000
+        }
+      ]
+    }
+  },
+  "routing": {
+    "b194eb66744de6f3": "Note@pg"
+  }
+}

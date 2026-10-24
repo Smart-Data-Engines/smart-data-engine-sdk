@@ -1,0 +1,66 @@
+{
+ "kind": "stream",
+ "name": "after a send fails the side is sent whole",
+ "mode": "incremental",
+ "resync": {
+  "updates": 1000,
+  "seconds": 60
+ },
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "fail_next"
+  },
+  {
+   "at": 2,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [101, 2, 1],
+    [99, 3, 1]
+   ],
+   "ts": 20,
+   "error": "sink"
+  },
+  {
+   "at": 3,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [101, 2, 1],
+    [98, 4, 2]
+   ],
+   "ts": 30
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 30,
+   "levels": [
+    [101, 2, 1],
+    [98, 4, 2]
+   ]
+  }
+ ]
+}

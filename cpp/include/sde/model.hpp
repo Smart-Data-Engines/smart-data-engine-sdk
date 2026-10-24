@@ -76,10 +76,13 @@ struct Group {
 
 /// The kinds of section 6, and the subset that are writes - one definition, because two copies of
 /// it in one process is how an operation becomes a write for routing and a read for scoring.
-inline constexpr std::string_view SHAPE_KINDS[] = {"point_read", "range_read",    "aggregate",
-                                                   "full_scan",  "relation_walk", "write",
-                                                   "bulk_write"};
+inline constexpr std::string_view SHAPE_KINDS[] = {
+    "point_read", "range_read", "aggregate", "full_scan", "relation_walk", "write", "bulk_write",
+    "search"};
 [[nodiscard]] bool is_write_kind(std::string_view kind) noexcept;
+/// Reads that always go to the group's source and that a routing table may not name: `search`,
+/// whose answer is every row that matches, which only the source is known to hold (section 8).
+[[nodiscard]] bool is_source_only_kind(std::string_view kind) noexcept;
 
 /// One kind of operation, without any of its values (section 6). A shape never contains a value:
 /// it is assembled from the structure of an operation and never sees the arguments.
