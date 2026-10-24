@@ -88,7 +88,11 @@ the comparison under write barriers, and the signed cutover, staging and index b
 passes every `query/` and `migration/` vector and every `schema/` case of the dialects it renders,
 against an engine interface whose capabilities are data, and the library's own in-memory engine.
 The Elasticsearch cases of `schema/` (`019` and `020`) are the other two libraries', and its runner
-leaves them out by name. **The tier is the vectors, and the engines cell is separate:** it has no
+leaves them out by name. It offers no `Session.search`, no book streams and no Elasticsearch
+adapter, so `search/`, `books/` and `documents/` are not its claim: those three go with a
+capability as well as the tier (format contract §9), and its `SEARCH`, `BOOK_STREAMS` and
+`ADAPTERS` constants say so. **The tier is the vectors, and the
+engines cell is separate:** it has no
 adapter for a real engine yet, so the cell says `none`, it makes no network call, and an
 application cannot use it against an engine today. The adapters are planned in the order the other
 two have them - PostgreSQL, ClickHouse, then our orderbook engine - and each moves the cell when it

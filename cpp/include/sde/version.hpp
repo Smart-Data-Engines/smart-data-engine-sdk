@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string_view>
 
 namespace sde {
@@ -19,5 +20,18 @@ inline constexpr int TIER = 2;
 /// Whether this library offers name hashing (section 2a). A mode rather than a tier: a library that
 /// offers it must pass every `hashing/` vector, whatever its tier.
 inline constexpr bool HASHING = true;
+
+/// Whether this library offers `Session.search` (section 7l). Three Tier 2 families go with a
+/// capability as well as the tier (section 9), and `search/` goes with this one.
+inline constexpr bool SEARCH = false;
+
+/// Whether this library offers book streams (section 8c), which need the orderbook engine:
+/// `books/` goes with this capability (section 9).
+inline constexpr bool BOOK_STREAMS = false;
+
+/// The engines this library has an adapter for, by dialect: `documents/` goes with the
+/// Elasticsearch engine (section 9). None yet: the engines cell of docs/implementations.md says
+/// the same.
+inline constexpr std::array<std::string_view, 0> ADAPTERS{};
 
 }  // namespace sde

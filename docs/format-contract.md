@@ -1544,11 +1544,19 @@ languages or the word is worthless.
 |---|---|---|
 | 0 | model → IR → version; shape enumeration and ids; map parsing, signature, refusals; routing; error semantics | `model/`, `routing/`, `errors/` |
 | 1 | telemetry: measurement, window aggregation, local buffering | `telemetry/` |
-| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write); with the orderbook engine, book streams (§8c) | `schema/`, `migration/`, `query/`; `books/` |
+| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write); book streams (§8c), with the orderbook engine; with the Elasticsearch engine, its documents (§7m); with `Session.search`, its rule (§7l) | `schema/`, `migration/`, `query/`; `books/`, `documents/`, `search/` |
 | 3 | ergonomics: framework integrations, async variants, pooling | — |
 
 Tier 0 is not optional. An implementation that does not pass the Tier 0 vectors is not an SDE
 library, whoever wrote it.
+
+**Three Tier 2 families go with a capability as well as the tier.** `books/` is required of a Tier 2
+library that offers book streams, which need the orderbook engine; `documents/` of one with the
+Elasticsearch engine; and `search/` of one that offers `Session.search`. A library declares each
+capability, as it declares hashing below, and its vectors check the claim. Python and TypeScript
+have all three. The C++ library has none yet ([`implementations.md`](implementations.md)). An
+orderbook adapter without book streams still reads and writes a book, and a library that has one
+says so rather than claiming the streams.
 
 **Name hashing (§2a) is orthogonal to the tiers.** It is a mode, not a level: a Tier 0 library may
 omit it entirely and still be complete, and a Tier 3 library may not have it. What is not optional is
