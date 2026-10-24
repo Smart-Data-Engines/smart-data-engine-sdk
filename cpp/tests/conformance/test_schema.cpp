@@ -29,6 +29,20 @@ std::vector<std::string> strings(const sde::Json& array) {
   return out;
 }
 
+/// Dialects the other two libraries render and this one does not (docs/implementations.md). Their
+/// cases are another library's, left out by name. Every other case runs, an unknown dialect's
+/// included: this library refuses it, which is what `schema/005` expects of `mysql`, and what a new
+/// engine's vectors fail on here until that engine is rendered or named in this list.
+const std::set<std::string>& rendered_elsewhere() {
+  static const std::set<std::string> dialects = {"elasticsearch"};
+  return dialects;
+}
+
+bool renders(const std::string& dialect) {
+  return std::find(std::begin(sde::DIALECTS), std::end(sde::DIALECTS), dialect) !=
+         std::end(sde::DIALECTS);
+}
+
 /// The materialisation with this id, and its group. Searched across every group: a map's ids are
 /// unique in the whole document (`errors/013`), so a case naming the group too would carry a fact
 /// the map already carries.
@@ -58,6 +72,7 @@ TEST_P(SchemaVector, RendersEveryCase) {
     const std::string& id = expectation.find("materialization")->as_string();
     const std::string& dialect = expectation.find("dialect")->as_string();
     SCOPED_TRACE(id + " as " + dialect);
+    if (rendered_elsewhere().count(dialect) == 1) continue;
     const auto [group_name, found] = find_materialization(map, id);
     ASSERT_NE(found, nullptr);
 
@@ -141,6 +156,25 @@ TEST(SchemaFamily, CoversEveryDialectThisLibraryRenders) {
   }
   for (const std::string_view dialect : sde::DIALECTS) {
     EXPECT_EQ(covered.count(std::string(dialect)), 1U) << dialect << " has no schema/ vector";
+  }
+}
+
+TEST(SchemaFamily, LeavesOutOnlyTheDialectsOtherLibrariesRender) {
+  // Each dialect left out by name is rendered by another library - a case of it has statements - and
+  // not by this one. A dialect no library renders, `schema/005`'s `mysql`, has refusals only, and
+  // naming it here would stop checking that this library refuses it. A case left out is one this
+  // library does not claim, not one it passes.
+  std::set<std::string> rendered;
+  for (const std::string& name : cases("schema")) {
+    const sde::Json document = read_json(vectors_root() / "schema" / name / "cases.json");
+    for (const sde::Json& expectation : document.as_array()) {
+      if (expectation.find("statements")) rendered.insert(expectation.find("dialect")->as_string());
+    }
+  }
+  for (const std::string& dialect : rendered_elsewhere()) {
+    EXPECT_EQ(rendered.count(dialect), 1U)
+        << dialect << " is named as another library's dialect, and no schema/ case renders it";
+    EXPECT_FALSE(renders(dialect)) << dialect << " is rendered here, so its cases are this library's";
   }
 }
 
