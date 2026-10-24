@@ -682,11 +682,13 @@ needs:
   slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
 - **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
   its answer may still arrive, and the next command would read it as its own (the engine's #171).
-  The reference keeps the closed client and `connect()` does nothing until `close()`; this library
-  says the reason on every call in between and lets `connect()` open another;
-- **a write that cannot be sent is not a write that may have been stored.** The reference reads its
-  client inside the write's own failure, so it reports a write it never sent as one whose outcome is
-  unknown. This library refuses it first, as TypeScript does;
+  The reference kept the closed client and `connect()` did nothing until `close()`, until #122 made
+  it ping and replace a closed one; this library says the reason on every call in between and lets
+  `connect()` open another;
+- **a write that cannot be sent is not a write that may have been stored.** The reference read its
+  client inside the write's own failure, so it reported a write it never sent as one whose outcome
+  was unknown. This library refuses it first, as TypeScript does, and as the reference does since
+  #122;
 - **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
   address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
   CPython cannot wait for, refused only at connect. This library connects to either family and

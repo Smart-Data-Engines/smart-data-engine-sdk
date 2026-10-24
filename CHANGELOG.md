@@ -60,11 +60,10 @@ reference's and those of the engine's Python client the reference puts into its 
 - Its tests run against a fake engine and a TLS server in the process, and its slice against the
   pinned `ob_tcp_server`, plain and with credentials and TLS, with one book written here and read by
   the reference, and the other way round.
-- Two decisions differ from the reference, and a write with no connection is the first: refused
-  before anything is sent, where the reference reports a write it never sent as one that may have
-  been stored. The second: `connect()` opens a new connection after an exchange closed the old one.
-  Both, and the reference client's IPv4-only sockets and a timeout it accepts and cannot wait for,
-  are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
+- Two decisions differed from the reference until #122 brought it to both: a write with no
+  connection is refused before anything is sent, and `connect()` opens a new connection after an
+  exchange closed the old one. The reference client's IPv4-only sockets and a timeout it accepts and
+  cannot wait for are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
 - Fixed on the way, in the C++ library: Python's `float()` of text, which the DSN's timeout is,
   stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
   infinity or zero by the sign of its exponent rather than its size. Neither reached a release.
