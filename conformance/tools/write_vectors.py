@@ -233,7 +233,7 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(amount="1.239"),
-        r"Entry\.amount is decimal\(12,2\) and this row gives it more than 2 fractional digits",
+        "Entry.amount is decimal(12,2) and this row gives it more than 2 fractional digits",
         ACCEPTED_ENTRY,
         "PostgreSQL stored 1.24 and ClickHouse 1.23, from both libraries, and neither raised: one "
         "save, two values, and which one depended on where the group lived. Refused before either.",
@@ -243,7 +243,7 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(amount="12345678901.23"),
-        r"Entry\.amount is decimal\(12,2\) and this row gives it more than 10 integer digits",
+        "Entry.amount is decimal(12,2) and this row gives it more than 10 integer digits",
         ACCEPTED_ENTRY,
         "Thirteen digits into twelve. PostgreSQL refused it as an overflow, TypeScript's "
         "ClickHouse path refused it in ClickHouse's words, and the reference's ClickHouse driver "
@@ -254,7 +254,7 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(count=2147483648),
-        r"Entry\.count is int32 and this row gives it an integer outside int32",
+        "Entry.count is int32 and this row gives it an integer outside int32",
         ACCEPTED_ENTRY,
         "2^31 is one past int32. ClickHouse, sent it as JSON from TypeScript, stored "
         "-2147483648: the opposite sign, and a successful write.",
@@ -264,7 +264,7 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(count=True),
-        r"Entry\.count is int32 and this row gives it a value that is not an integer",
+        "Entry.count is int32 and this row gives it a value that is not an integer",
         ACCEPTED_ENTRY,
         "PostgreSQL refused a boolean in an integer column and ClickHouse stored 1, from both "
         "libraries. A boolean is not an integer here even where the host language says it is one.",
@@ -274,7 +274,7 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(day="2026-02-30"),
-        r"Entry\.day is date and this row gives it a value that is not a date",
+        "Entry.day is date and this row gives it a value that is not a date",
         ACCEPTED_ENTRY,
         "PostgreSQL refused 30 February and ClickHouse stored 2 March. A date is checked as a date "
         "filter is: YYYY-MM-DD text of a day that exists.",
@@ -284,8 +284,8 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(amount="NaN"),
-        r"Entry\.amount is decimal\(12,2\) and this row gives it "
-        r"a value that is not an exact decimal",
+        "Entry.amount is decimal(12,2) and this row gives it "
+        "a value that is not an exact decimal",
         ACCEPTED_ENTRY,
         "PostgreSQL stored NaN in a numeric(12,2) column and ClickHouse refused it; JavaScript's "
         "NaN reached ClickHouse as 0.00. A decimal is an exact, finite number, written as a "
@@ -303,7 +303,7 @@ TYPED_CASES: list[
                 {**ENTRY_FULL, "id": "e-4", "at": "2026-10-07T25:00:00Z"},
             ],
         },
-        r"row 1: Entry\.at is timestamptz and this row gives it a value that is not a timestamp",
+        "row 1: Entry.at is timestamptz and this row gives it a value that is not a timestamp",
         [{"engine": "pg-main", "call": "insert_many", "table": "entry", "rows": 1}],
         "ClickHouse stored a timestamp made from any text - 1900-01-01 from words, 1970 from a "
         "number. The whole batch is refused, the row that fits included, and the row is named by "
@@ -314,7 +314,7 @@ TYPED_CASES: list[
         "ModelPlanningError",
         {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
         entry(amount="1.239", count=True, day="2026-02-30"),
-        r"Entry\.amount is decimal\(12,2\) and this row gives it more than 2 fractional digits",
+        "Entry.amount is decimal(12,2) and this row gives it more than 2 fractional digits",
         ACCEPTED_ENTRY,
         "Three fields misfit. The first in code-point order is named, as every refusal of section "
         "8b names its first offending field, so two libraries give the same message.",

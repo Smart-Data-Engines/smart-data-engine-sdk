@@ -1,7 +1,7 @@
 {
   "error": "ModelPlanningError",
   "stage": "write",
-  "match": "Entry\\.amount is decimal\\(12,2\\) and this row gives it more than 10 integer digits",
+  "match": "Entry.amount is decimal(12,2) and this row gives it more than 10 integer digits",
   "write": {
     "accepted": {
       "operation": "save",

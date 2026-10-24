@@ -1,7 +1,7 @@
 {
   "error": "BulkWriteRefused",
   "stage": "write",
-  "match": "row 1: Entry\\.at is timestamptz and this row gives it a value that is not a timestamp",
+  "match": "row 1: Entry.at is timestamptz and this row gives it a value that is not a timestamp",
   "write": {
     "accepted": {
       "operation": "save_many",

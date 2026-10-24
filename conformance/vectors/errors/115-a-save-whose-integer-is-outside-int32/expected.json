@@ -1,7 +1,7 @@
 {
   "error": "ModelPlanningError",
   "stage": "write",
-  "match": "Entry\\.count is int32 and this row gives it an integer outside int32",
+  "match": "Entry.count is int32 and this row gives it an integer outside int32",
   "write": {
     "accepted": {
       "operation": "save",
