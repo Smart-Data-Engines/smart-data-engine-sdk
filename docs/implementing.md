@@ -767,3 +767,15 @@ value marked `{"$int": "..."}` is an integer past 2^53: carry it as one, not as 
 fails on its timestamp, its int64 and its decimal. Then `schema/019` and `020` hold the mapping you
 render. The adapter itself is the next step: one index per entity, writes that wait for a refresh,
 and reads that send no text predicate the engine would interpret.
+
+**16. The orderbook DSN (Tier 2, with the orderbook engine). Vectors: `dsn/`.**
+
+A function of one line of text, so no engine: read it by the ten rules of §7n, in their order,
+and compare what it says field by field, the timeout as a double. Write the rules yourself rather
+than handing the DSN to your language's URL parser: every parser we tried disagrees with the others
+on a DSN written by hand, which is why the grammar exists. Three cases carry most of the risk.
+`007` keeps the host `0x7f.1` as written, where a WHATWG parser makes it an address. `026` keeps a
+byte order mark that leads a secret, which some UTF-8 decoders drop by default. And `211`-`226` are
+timeouts your number parser would read, from `inf` to an underscore or a digit beyond ASCII: test
+the digits with your own pattern before any parser sees them. A refusal names the part that is
+wrong and never contains the secret; each case that has one says so.
