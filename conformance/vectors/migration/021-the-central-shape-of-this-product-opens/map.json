@@ -30,7 +30,7 @@
             },
             "columns": {
               "Reading": {
-                "at": "DateTime64(3)",
+                "at": "DateTime64(6, 'UTC')",
                 "celsius": "Int32",
                 "id": "Int64"
               }

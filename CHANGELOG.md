@@ -32,6 +32,18 @@ The constructors take the same rules field by field: the identity, a port from 1
 timeout's range (in milliseconds in TypeScript: 1 to 2147483647), and a CA file with verification
 off. Findings 29 and 32 of the C++ port.
 
+**Fixed: a temporal column keeps its field's zone** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §7a). A scan reads a value by its field's type,
+and a read by key by its column's. A hand-written layout that gave a `timestamptz` field a column
+without a zone, or a `timestamp` field one with a zone, therefore read one row as two types: aware in
+a scan and naive by key, or the other way round. Measured on ClickHouse 24.8, and PostgreSQL has the
+same two types. A session now refuses such a layout when it opens, with `MapError`, before any engine
+is called: by the dialect's spelling of the column type, which the contract writes out for
+ClickHouse, PostgreSQL and Elasticsearch. A spelling the rule does not read, or a dialect the library
+has no facts for, is left alone. `errors/125`-`130` pin it. `migration/021`'s ClickHouse copy says
+`DateTime64(6, 'UTC')` now, the spelling the library renders, where it said `DateTime64(3)` from
+before ClickHouse rendered six digits. Finding 27 of the C++ port.
+
 **Fixed: a staging packet's refusals name a staging** (Python, TypeScript). The reference's staging
 loader shared its helpers with the cutover packet's, and they named a cutover unless told otherwise:
 a staging packet was refused with "cutover stage_id must be ...", "cutover signature must be an

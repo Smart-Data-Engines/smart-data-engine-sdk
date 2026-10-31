@@ -1255,6 +1255,36 @@ all, or the engine imposes its own schema and has nowhere to put one. `schema/00
 name-did-not-move case and `schema/013` is the one where it did — and before `013` existed those two
 answers were the same input for ClickHouse, so a library refusing every ClickHouse view passed.
 
+### A temporal column keeps its field's zone
+
+**A session refuses a layout whose temporal column does not keep its field's zone.** A scan reads a
+value by its field's type, and a read by key by its column's. So a `timestamptz` field in a column
+without a zone, or a `timestamp` field in one with a zone, read one row as two types: aware in a scan
+and naive by key, or the other way round. Measured on ClickHouse 24.8 on 7 October 2026 (finding 27
+of the C++ port). No renderer spells a column so, but a hand-written layout can.
+
+The rule reads a zone out of the spelling and translates nothing. Spaces are spaces only and digits
+are ASCII `0`-`9`, because `\s` and `\d` match more in some languages than in others:
+
+| Dialect | Carries a zone | Carries none |
+|---|---|---|
+| `clickhouse` | `DateTime64(p, 'zone')`, `DateTime('zone')` | `DateTime64(p)`, `DateTime` |
+| `postgres` | `timestamptz`, `timestamptz(p)`, `timestamp(p) with time zone` | `timestamp`, `timestamp(p)`, `timestamp(p) without time zone` |
+| `elasticsearch` | `long/timestamptz` | `long/timestamp` |
+
+- **ClickHouse** is read exactly as written, inside one `Nullable(...)` too, with spaces allowed
+  around each argument.
+- **PostgreSQL** is read in any ASCII case. `(p)` may be absent, and the words are separated by one
+  or more spaces.
+- **Any other spelling, or another dialect, is not judged by this rule.** A copy on an engine the
+  library has no facts for keeps whatever its layout says, as `errors/038`'s does.
+
+The rule needs the engine's dialect, which a map does not carry, so it runs when a session opens,
+before any engine is called (§8a, the session stage). `errors/125`-`130` pin it in all three
+dialects, both directions, a nullable column, and two defects named by field order.
+`migration/021`'s ClickHouse copy said `DateTime64(3)` for a `timestamptz` field, from before
+ClickHouse rendered six digits. It says `DateTime64(6, 'UTC')` now, the spelling the library renders.
+
 ## 7b. Verification requests and bound reports
 
 A controller records a verification request in the history of the migration **before** a client
@@ -1450,9 +1480,12 @@ the payload is encoded (`errors/112`).
 adapters:
 
 1. every engine the map names has an adapter (`EngineError`);
-2. the fan-out precision rule: groups **in name order**, within a group the `also_write` copies in
+2. a temporal column keeps its field's zone (§7a): groups **in name order**, within a group the
+   materialisations in document order (the source, then the derived copies), within one the entities
+   **in name order** and their fields **in name order** (`MapError`);
+3. the fan-out precision rule: groups **in name order**, within a group the `also_write` copies in
    document order, within a copy the entities **in name order** (`MigrationRefused`);
-3. the forward-only check (§7, *Forward only*).
+4. the forward-only check (§7, *Forward only*).
 
 Two of those three orderings are not new rules and are written down here only so nobody has to
 re-derive them: groups are already sorted by name by §5, and a group's members with them, so the
@@ -1462,7 +1495,7 @@ removing it in each language and watching every vector stay green, because no in
 produce is unsorted. It is kept as a local statement of a rule whose source is one module away, and
 it is recorded here as unmutatable rather than left to look like coverage.
 
-What *is* a choice is **2 before 3**: a map that can never work must not create a bookkeeping table
+What *is* a choice is **3 before 4**: a map that can never work must not create a bookkeeping table
 or issue a query before it is rejected. `errors/038` pins that with an empty call list, and it is a
 signed map for that reason — against an unsigned one the forward-only check does nothing at all, so
 an unsigned case would stay green whichever way round the two were run.

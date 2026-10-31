@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "session",
+  "match": "group 'Reading': 'Reading@pg': Reading.at is timestamptz, so its postgres column must carry a zone",
+  "why": "PostgreSQL has the same two types and the same defect. Its type names are read in any ASCII case, as the server reads them."
+}
