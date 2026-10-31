@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript's orderbook reader judged an answer by its first sixteen bytes** (TypeScript).
+It waited for sixteen bytes before deciding whether they began an answer. A row a subscription
+pushed in front of an answer, longer than that and still arriving, was refused as an answer the
+client could not read. A few bytes that began no answer were waited on until the timeout. It now
+decides by what an answer can begin with: it waits while the bytes are on their way to one, a
+pushed row included, and refuses at once when they cannot be. Finding 35 of the C++ port.
+
 **Fixed: TypeScript's orderbook adapter accepted a symbol with a character that does not print**
 ([`docs/orderbook.md`](docs/orderbook.md)). It refused whitespace and controls, but not a zero-width
 space, a bidirectional mark, a byte-order mark or private use. Two books that printed alike were
