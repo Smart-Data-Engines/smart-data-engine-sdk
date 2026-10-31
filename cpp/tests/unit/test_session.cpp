@@ -21,6 +21,7 @@
 #include "sde/session.hpp"
 #include "sde/telemetry.hpp"
 #include "sde/testing/memory.hpp"
+#include "storage_internal.hpp"
 
 namespace {
 
@@ -441,10 +442,15 @@ TEST(Session, StorageIsMeasuredOrSaysWhyNot) {
   EXPECT_EQ(measured.unavailable.at("Station"), "missing_table");
 
   pg.sizes = [](const std::vector<std::string>&) -> std::map<std::string, std::pair<std::int64_t, std::int64_t>> {
-    throw sde::EngineError("permission denied for table parts (SQLSTATE 42501)");
+    throw sde::detail::CatalogueRefused("storage sizes could not be read: permission denied");
   };
   measured = session.measure_storage();
   EXPECT_EQ(measured.unavailable.at("Reading"), "refused");
+  // The adapter that read the server's code says so by the type; a message's words decide nothing.
+  pg.sizes = [](const std::vector<std::string>&) -> std::map<std::string, std::pair<std::int64_t, std::int64_t>> {
+    throw sde::EngineError("permission denied for table parts (SQLSTATE 42501, Code: 497)");
+  };
+  EXPECT_EQ(session.measure_storage().unavailable.at("Reading"), "failed");
   pg.sizes = [](const std::vector<std::string>&) -> std::map<std::string, std::pair<std::int64_t, std::int64_t>> {
     throw sde::EngineError("connection reset");
   };
@@ -478,6 +484,70 @@ TEST(Session, AMapNamingAnEngineNobodySuppliedIsRefused) {
   options.project_id = "not hex";
   EXPECT_EQ(refusal([&] { const sde::Session session(model, map, {{"pg", &pg}}, options); }),
             "verification project_id must be 32 lowercase hexadecimal digits");
+}
+
+/// Where a point read goes, through the session rather than `resolve`: to the copy the map routes it
+/// to, and to the source when it asks to be fresh or runs in a transaction that has written. The
+/// session decides those places once, when it opens, and a mutation run found no test reaching any
+/// of the three - each decision could be swapped and the suite stayed green.
+TEST(Session, APointReadGoesToItsRoutedCopyAndToTheSourceWhenFreshOrAfterAWrite) {
+  const sde::Model model = readings();
+  const sde::OperationShape* point = nullptr;
+  for (const sde::OperationShape& shape : model.shapes()) {
+    if (shape.entity == "Reading" && shape.kind == "point_read") point = &shape;
+  }
+  ASSERT_NE(point, nullptr);
+  const std::string text = R"({"contract": 3, "model_version": ")" + model.version() +
+                           R"(", "map_version": 1, "groups": {"Reading": {"source": {"id":
+      "Reading@pg", "engine": "pg", "layout": {"auto": true}}, "derived": [{"id": "Reading@copy",
+      "engine": "copy", "lag_budget_ms": 1000, "layout": {"tables": {"Reading": "reading"},
+      "columns": {"Reading": {"id": "bigint", "station": "text", "celsius": "integer",
+      "at": "timestamptz"}}}}], "also_write": ["Reading@copy"]}, "Station": {"source": {"id":
+      "Station@pg", "engine": "pg", "layout": {"auto": true}}}}, "routing": {")" +
+                           point->id + R"(": "Reading@copy"}})";
+  sde::LoadOptions options;
+  options.model = &model;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), options);
+  const auto journal = std::make_shared<sde::testing::Recorded>();
+  MemoryEngineOptions source_options;
+  source_options.name = "pg";
+  source_options.journal = journal;
+  MemoryEngineOptions copy_options;
+  copy_options.name = "copy";
+  copy_options.journal = journal;
+  MemoryEngine pg(source_options);
+  MemoryEngine copy(copy_options);
+  sde::Session session(model, map, {{"pg", &pg}, {"copy", &copy}});
+  session.save("Reading", reading(1));
+
+  // The engines whose `get` a read called.
+  const auto read_by = [&](const std::function<void()>& read) {
+    const std::size_t before = journal->calls().size();
+    read();
+    std::vector<std::string> engines;
+    for (std::size_t call = before; call < journal->calls().size(); ++call) {
+      const sde::Json& entry = journal->calls()[call];
+      if (entry.find("call")->as_string() == "get") {
+        engines.push_back(entry.find("engine")->as_string());
+      }
+    }
+    return engines;
+  };
+  const sde::Row first{{"id", std::int64_t{1}}};
+  EXPECT_EQ(read_by([&] { (void)session.get("Reading", first); }),
+            std::vector<std::string>{"copy"});
+  EXPECT_EQ(read_by([&] { (void)session.get("Reading", first, true); }),
+            std::vector<std::string>{"pg"});
+  EXPECT_EQ(read_by([&] {
+              session.transaction({"Reading"}, [&] {
+                session.save("Reading", reading(2));
+                (void)session.get("Reading", {{"id", std::int64_t{2}}});
+              });
+            }),
+            std::vector<std::string>{"pg"});
+  // And outside the transaction again, routed as before.
+  EXPECT_EQ(read_by([&] { (void)session.get("Reading", first); }),
+            std::vector<std::string>{"copy"});
 }
 
 }  // namespace

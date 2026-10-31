@@ -17,6 +17,53 @@ identifiers Python and C++ raised a `DeclarationError`. A query still refuses an
 a query. `errors/122`-`124` pin it, and a `write`-stage case may now have a `get` as its refused
 step. Finding 9 of the C++ port.
 
+**Fixed: a value its field's type does not hold is refused before any engine** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md#a-value-its-type-holds) §8b). A row's values
+went to the driver as the application gave them, and each engine answered for them in its own way.
+Measured through `Session.save` on PostgreSQL 15 and ClickHouse 24.8:
+- a decimal with more fractional digits than its column was rounded by PostgreSQL and truncated by
+  ClickHouse, from both libraries;
+- a decimal past its precision was stored by Python's ClickHouse driver with a digit changed;
+- from TypeScript, ClickHouse wrapped an integer outside int32 to the opposite sign and stored
+  `NaN` in a decimal column as 0.00;
+- ClickHouse stored 2026-02-30 as 2026-03-02, and a timestamp made from a number or from words;
+- ClickHouse stored the infinity or the zero a `float32` rounds a value to, where PostgreSQL
+  refused it.
+
+A value now takes a form a filter of its type takes, and its type must hold it. The refusal names
+the field, the type and what does not fit, never the value. The value reaches the engine in one
+form per type: a decimal at its column's scale, a timestamp as its UTC instant, a UUID in lower case.
+Shared vectors: `errors/113`-`120` and `migration/200`.
+- **Breaking** for code that relied on a driver's conversion:
+  - a Python `float`, or a TypeScript `number` with a fraction, for a decimal field: pass a
+    `Decimal` or decimal text;
+  - a boolean for an integer field, and text for a number;
+  - a `Date` (TypeScript) or a `datetime` (Python) for a `date` field: pass the day.
+- TypeScript writes `NaN` and the infinities to ClickHouse as those values. JSON has no token for
+  them, and ClickHouse had stored the `null` it got as NULL, or as 0 in a required column.
+- Maps, DDL and stored data do not change. A `json` field is not checked.
+
+**The C++ library refuses a value its field's type does not hold, as the other two do**
+([`docs/format-contract.md`](docs/format-contract.md) §8b, point 4). The check comes before any
+engine is called, and each admitted value goes on in the form a read plan gives it: a decimal at
+its column's scale, a timestamp as its UTC instant. The vectors `errors/113`-`120` and
+`migration/200` hold it in all three libraries. Its ClickHouse adapter had already refused a
+decimal past its column; now the session refuses it first, in the contract's words.
+
+**Fixed: TypeScript's orderbook reader judged an answer by its first sixteen bytes** (TypeScript).
+It waited for sixteen bytes before deciding whether they began an answer. A row a subscription
+pushed in front of an answer, longer than that and still arriving, was refused as an answer the
+client could not read. A few bytes that began no answer were waited on until the timeout. It now
+decides by what an answer can begin with: it waits while the bytes are on their way to one, a
+pushed row included, and refuses at once when they cannot be. Finding 35 of the C++ port.
+
+**Fixed: TypeScript's orderbook adapter accepted a symbol with a character that does not print**
+([`docs/orderbook.md`](docs/orderbook.md)). It refused whitespace and controls, but not a zero-width
+space, a bidirectional mark, a byte-order mark or private use. Two books that printed alike were
+then two addresses. It refuses what the reference's `str.isprintable()` refuses now, by Unicode
+category. Compared over every code point, the only difference left is Unicode's version: Node 18
+knows 15.1, Python 3.12 knows 15.0. Finding 33 of the C++ port.
+
 **Fixed: the orderbook adapter's connection, as the C++ port found it** (Python,
 [`docs/orderbook.md`](docs/orderbook.md)).
 - A write with no connection was reported as a write that may have been stored. The adapter read
@@ -69,11 +116,10 @@ reference's and those of the engine's Python client the reference puts into its 
 - Its tests run against a fake engine and a TLS server in the process, and its slice against the
   pinned `ob_tcp_server`, plain and with credentials and TLS, with one book written here and read by
   the reference, and the other way round.
-- Two decisions differ from the reference, and a write with no connection is the first: refused
-  before anything is sent, where the reference reports a write it never sent as one that may have
-  been stored. The second: `connect()` opens a new connection after an exchange closed the old one.
-  Both, and the reference client's IPv4-only sockets and a timeout it accepts and cannot wait for,
-  are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
+- Two decisions differed from the reference until #122 brought it to both: a write with no
+  connection is refused before anything is sent, and `connect()` opens a new connection after an
+  exchange closed the old one. The reference client's IPv4-only sockets and a timeout it accepts and
+  cannot wait for are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
 - Fixed on the way, in the C++ library: Python's `float()` of text, which the DSN's timeout is,
   stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
   infinity or zero by the sign of its exponent rather than its size. Neither reached a release.
@@ -101,11 +147,12 @@ compared on 102,000 URIs.
   its outcome unknown and never sent again, measured against a proxy that drops the answer to an
   accepted insert. The statement is the body, never part of a URL.
 - Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
-  was. A value its column cannot hold is refused before anything is sent: the reference's driver
-  stores `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
-  - and `Decimal("12345678901.23")` as 12345678901.20, an enum name its type does not declare as 0,
-  and cuts a moment's fraction a column does not keep, each without a word: recorded in
-  [`docs/implementing.md`](docs/implementing.md), as rules for the contract.
+  was. A value its column cannot hold is refused before anything is sent. The reference's driver
+  stored `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
+  - and `Decimal("12345678901.23")` as 12345678901.20, without a word, until §8b point 4 refused a
+  value its type does not hold in every library. It still stores an enum name its type does not
+  declare as 0, and cuts a moment's fraction a column does not keep, in tables only a hand-written
+  map names: recorded in [`docs/implementing.md`](docs/implementing.md).
 - Its live tests are the reference's ClickHouse slice, each message captured from the reference
   against the same server; what the reference runs against both engines with one body runs here
   with one body for each adapter built - copies in every direction, write generations, the frozen
@@ -139,9 +186,9 @@ source and confirms every missing row with a point read. `sde::VerificationReque
 comparison to its request, project, map and group, and `sde::verify_frozen` compares under named
 write barriers. `sde::load_cutover_plan`, `sde::load_staging_plan` and `sde::load_index_plan` decode
 and authorise the signed packets of §7g, §7h and §7j without executing anything.
-- Every `migration/` vector passes, so the library claims Tier 2. It has no engine adapter yet; the
-  engines cell of [`docs/implementations.md`](docs/implementations.md) says `none` until one
-  round-trips.
+- Every `migration/` vector passes, so the library claims Tier 2: the vectors. Which engines it
+  reaches is the engines cell of [`docs/implementations.md`](docs/implementations.md), separately,
+  and an engine enters it when its adapter round-trips.
 - The three packet loaders were compared with the reference's on 102,384 signed packets, made
   by changing every accepted packet vector at each of its paths and in random pairs and signing them
   again. Outside three named classes, recorded in [`docs/implementing.md`](docs/implementing.md),

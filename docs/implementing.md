@@ -246,6 +246,21 @@ Two rules and one warning, all of them learned here rather than reasoned out:
   is 0.13% of the floor. Reporting the **break-even** is worth more than the ratio: an operation
   would have to complete in under ~14 µs before this library cost one percent of it.
 
+**The C++ library measured itself and found more than routing.** It times the whole of a point read
+through its session against an engine that hands back a row it already holds, less that engine's own
+call timed the same way, so everything the session does is in the number and nothing over a socket
+is. Built optimised on the same i3-7100U, the first measurement was 0.64 µs at the median, 2.5% of
+its loopback floor of ~25 µs - C++ makes the cheapest round trip of the three - because every call
+copied the key, sorted it, built a lookup key of copied strings and found the group, the route, the
+engine and the table by name. Decided once per session instead, it is 0.11-0.12 µs without
+telemetry over four runs, 0.37-0.47% of the floor, with a break-even of 11-12 µs. Measuring latency
+costs two reads of the clock and the recorder's atomics: 0.24 µs, 0.6-0.95% of the floor and 0.09%
+of a PostgreSQL point read through the adapter, so with telemetry the gate is the real operation, and
+the floor's number is printed. Two rules come out of it for a compiled language. Gate only an
+optimised, unsanitised build: a debug build of the same code measured nine to fifteen times slower,
+which is the compiler. And measure the cheapest round trip *your* runtime makes: the floor is a
+property of the runtime, and Node's is four times C++'s.
+
 ## Versions, tiers, and the word "supported"
 
 Declare two things and mean them.
@@ -509,9 +524,9 @@ everywhere:
 #### Tier 2, and the packets no vector signs again
 
 On 7 October 2026 the C++ library passed every `schema/`, `query/` and `migration/` vector, and the
-`errors/` cases at the session and write stages, and claims Tier 2 with no engine adapter: the tier
-is the vectors of §9, and [`implementations.md`](implementations.md) keeps the engines in a column
-of their own. Its runner checks a refusal's exact class, where both reference runners accept a
+`errors/` cases at the session and write stages, and claimed Tier 2 before it had an engine adapter:
+the tier is the vectors of §9, and [`implementations.md`](implementations.md) keeps the engines in a
+column of their own. Its runner checks a refusal's exact class, where both reference runners accept a
 subclass.
 
 The signed packets of §7g, §7h and §7j carry their own refusal order, and a vector can pin only one
@@ -552,6 +567,143 @@ engine, behind the comparison of the whole materialisation, engine included. Bot
 reference. One rule changed on the way: the comparison under barriers asked an engine to check its
 tables with the keys, so a real adapter would also have read the physical design; it now checks the
 columns alone, as the reference does.
+
+#### The PostgreSQL adapter, against the reference on one server
+
+The first engine adapter, PostgreSQL over libpq, came the same day. Its live tests are the
+reference's PostgreSQL slice ported test by test, and wherever one compares a message the expected
+text was captured from the reference's adapter against the same server. The cases the reference does
+not test - fence DDL inside a transaction, a table with inheritance and a view, the reserved column
+made by hand in five other definitions, a group whose table is gone - ran against it the same way,
+and agreed in class and text. Two things for whoever writes the next adapter over libpq:
+
+- **the driver's defaults are part of the reference's behaviour.** psycopg gives the adapter a
+  connection timeout the DSN can override, UTF-8 whatever the DSN says, the server's message without
+  its severity, a class name for each SQLSTATE in `sde.write.failed`, and silence about a server's
+  notices. libpq prints every notice on stderr unless told otherwise, and every schema statement
+  after an application's first start raises one;
+- **the reference's own test of a barrier's wait cannot see the drain's lock.** The first freeze waits
+  for writers in its `ALTER TABLE`, so removing the `LOCK TABLE` leaves that test green. The lock is
+  what proves the table quiet on a retry, when the constraint exists, no DDL runs, and a delete - which
+  no `CHECK` refuses - still holds the table. The C++ suite tests that case, the reference's adapter
+  waits in it too, and the other two libraries test it as well since #121;
+- **the reference applied its connection bound only when the DSN did not contain the word, until
+  #119.** It tested `"connect_timeout" not in dsn`, so a DSN that merely mentioned it - in an
+  application name, a password - lost the bound: against a host that accepts and never answers,
+  measured, its connect was still waiting after 20 s, where the plain DSN gave up at 10. It reads the
+  DSN's keys as libpq does since #119. TypeScript matches the parameter, and this library hands libpq
+  its default before the DSN, so only a `connect_timeout` the DSN sets overrides it; a live test holds
+  the mentioned case at ten seconds.
+
+#### The ClickHouse adapter, against the reference on one server
+
+The second adapter, ClickHouse over its HTTP interface through libcurl, is ported the same way: the
+connection URI first, compared with the reference's parser on 102,000 generated URIs - outcome,
+message and every field equal, the timeouts to the bit - and then the adapter, whose every compared
+message was captured from the reference against the same server. Three things for whoever writes
+the next one:
+
+- **the driver's settings are part of the reference's behaviour.** clickhouse-connect runs every
+  exchange in a UTC session with ISO output, keeps a silent connection alive with progress headers
+  and never resends an exchange. An adapter on plain HTTP has to ask for each of these on every
+  request, or a server's time zone moves a moment and a lost reply becomes a second insert;
+- **text formats let the server change a value.** The reference's driver moves rows in ClickHouse's
+  binary Native format. Rows sent as JSON are clamped by the server to the range it prints -
+  measured on ClickHouse 24.8, a `Date32` of year 1 is stored as 1900-01-01 and a `DateTime64` of
+  year 9999 as 2299-12-31, without an error - so this library uses `RowBinaryWithNamesAndTypes` both
+  ways;
+- **a decimal with more digits than its column is changed silently, and differently per engine.**
+  Measured through the reference's adapters on 7 October: `Decimal("1.239")` saved into a
+  `decimal(12,2)` field is stored as 1.23 in ClickHouse, truncated by the driver, and as 1.24 in
+  PostgreSQL, rounded by the server - one save, two values - and `Decimal("12345678901.23")` is
+  stored in ClickHouse as 12345678901.20, where PostgreSQL refuses it with `numeric field
+  overflow`. This library's ClickHouse adapter refused both before sending anything. The fix that
+  makes the engines agree belonged to the contract, and is there now: admission (§8b, point 4)
+  refuses a value its field's type does not hold, a decimal's extra digits included, in every
+  library and before any engine. The same driver cuts a
+  moment's fraction a `DateTime` or `DateTime64(3)` does not keep, stores an enum name its type
+  does not declare as 0 - a row no later read can print - and on reading cuts nanoseconds; none of
+  these is in a layout this library renders, all of them are in a table a hand-written map can
+  name;
+- **the statement is the request's body.** The reference's driver sends it there, and only an
+  INSERT that carries rows names its statement - which holds no value - in the URL. A URL is what a
+  proxy between the application and the server logs: the TypeScript library sent every statement
+  in one, a get's key and a read's filters with it, until #117, and so did this one until a test
+  read the request line;
+- **a drain's intent is written synchronously whatever the login's defaults.** A login can make
+  inserts asynchronous and unacknowledged by default; the intent row has to be in the table before
+  the DETACH it describes, or an interrupted drain has no record to resume by. The insert carries
+  `async_insert=0` and `wait_for_async_insert=1` itself, and a test holds it with a login whose
+  defaults say the opposite;
+- **a catalogue's refusal is the server's code, read where the code is.** The reference tells a
+  login refused a size from an engine that failed by its driver's error - SQLSTATE 42501, code 497.
+  This library looked for "42501" in the adapter's message, which carries the server's words and
+  never the code, and reported every PostgreSQL refusal as a failure; its unit test passed because
+  the fake put the code in the text. The adapter now says it by an error's type;
+- **libcurl checks a certificate's host name after the handshake.** Python's `ssl` checks it
+  during, so a server sees a TLS alert from the reference and none from this library for another
+  host's certificate. libcurl 8.18 checks an expired chain and an unknown CA after it as well, where
+  8.5 checks them during. What all of them guarantee - no application byte reaches an unverified
+  peer - is the claim to test;
+- **the catalogue's text is a server release's.** From ClickHouse 26.5 the catalogue keeps the
+  parentheses of a single expression written in them: the one-column sort key every library renders
+  as `ORDER BY (id)` reads back `(id)` in `system.tables`, and a partition key or a skipping index's
+  expression written in parentheses likewise, where 26.4 and every earlier release - 24.8, 25.3,
+  25.8, 25.12, 26.3 measured - read `id`; a list of two or more reads `a, b` on all of them. The
+  reference's catalogue parser refused the parentheses, so on 26.5 every table it created read as
+  another design: a session reported a physical mismatch for each, and provisioning, staging and a
+  copy under a new generation refused - its own slice failed there, and so did 30 live tests of this
+  library on 26.9 before its parser took one pair of parentheses around a whole list. The reference
+  and TypeScript take the same reading since 0.2.0 (#116). The same
+  release changed the words of a refused read (`identifier 'missing'. In scope` for `'missing' in
+  scope`), so a test that compares a server's words asks the server for them. CI tested 24.8 alone;
+  it now runs this library's live tests against a current release too.
+
+#### The orderbook adapter, over the engine's own protocol
+
+The third adapter speaks our engine's text protocol itself, over TCP or TLS 1.3, as the TypeScript
+one does: the engine ships a Python client and no C++ one, and a library that linked the engine
+would put the engine's code into every client that places nothing there. The reference does not
+speak the protocol at all - it calls the engine's Python client - so for this adapter **the
+reference is two programs**: the adapter, whose decisions and words this one ports, and the client
+it calls, whose framing, timeouts and words the adapter puts into its own messages (`query failed:
+…: TCP recv timeout`). Both were read at the engine commit the CI job pins, and every expected text
+was captured from them: the DSN against the reference's parser on 280,000 generated DSNs, the
+answer and STATUS parsing against the client's own functions, the connection failures - TLS among
+them - against the reference connecting to the same servers. What whoever writes the next one
+needs:
+
+- **the DSN's numbers are Python's.** The timeout is `float()` of text and the client reads every
+  number of an answer with `int()`, so `1_0` is ten seconds, an Arabic-Indic three is three, `inf`
+  is accepted, and U+001C to U+001F - which `str.isspace()` calls whitespace - are not stripped,
+  because `float()` strips C's whitespace once Python's has become a space. A port that reads them
+  with its own parser agrees on every DSN a person writes and disagrees on the ones a generator
+  writes; this one disagreed twice before the differential found it, the second time on a
+  four-hundred-digit mantissa no corpus had;
+- **every wait is bounded by silence, not by the answer.** The client sets one socket timeout, so a
+  slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
+- **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
+  its answer may still arrive, and the next command would read it as its own (the engine's #171).
+  The reference kept the closed client and `connect()` did nothing until `close()`, until #122 made
+  it ping and replace a closed one; this library says the reason on every call in between and lets
+  `connect()` open another;
+- **a write that cannot be sent is not a write that may have been stored.** The reference read its
+  client inside the write's own failure, so it reported a write it never sent as one whose outcome
+  was unknown. This library refuses it first, as TypeScript does, and as the reference does since
+  #122;
+- **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
+  address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
+  CPython cannot wait for, refused only at connect. This library connects to either family and
+  reproduces the second, which is a rule for the DSN in every library;
+- **TLS refusals are CPython's words without CPython's line.** `[SSL: CERTIFICATE_VERIFY_FAILED]
+  certificate verify failed: Hostname mismatch, certificate is not valid for 'host'.`, an end of the
+  stream inside the handshake as `EOF occurred in violation of protocol`, a reset as the socket's
+  `[Errno 104]`; CPython appends `(_ssl.c:1000)`, which names its own source.
+
+Each difference from the reference or from TypeScript is a finding for the contract, to become a
+rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepted an
+invisible format character the reference refuses, until #123), a key of another type in a point read
+(TypeScript answers "no row" where the reference reads it with `int()`), and the four above.
 
 ### Verification-request protocol check
 
