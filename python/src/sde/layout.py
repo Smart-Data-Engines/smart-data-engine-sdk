@@ -422,7 +422,6 @@ def _column_type(neutral: str, dialect: str) -> str:
 
 # The spellings of a temporal column type each dialect is read for a zone in (format contract 7a).
 # Spaces only and ASCII digits: `\s` and `\d` match more in some languages than in others.
-_CH_NULLABLE: Final = re.compile(r"Nullable\( *(.*?) *\)")
 _CH_ZONED: Final = re.compile(r"DateTime64\( *[0-9]+ *, *'[^']*' *\)|DateTime\( *'[^']*' *\)")
 _CH_ZONELESS: Final = re.compile(r"DateTime64\( *[0-9]+ *\)|DateTime")
 _PG_ZONED: Final = re.compile(
@@ -430,6 +429,18 @@ _PG_ZONED: Final = re.compile(
 )
 _PG_ZONELESS: Final = re.compile(r"timestamp( *\( *[0-9]+ *\))?( +without +time +zone)?")
 _ASCII_LOWER: Final = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _nullable_inner(column_type: str) -> str:
+    """The type inside one ``Nullable(...)``, without the spaces around it, or the type itself.
+
+    Read without a regular expression: a lazy group beside optional spaces, ``Nullable\\( *(.*?)
+    *\\)``, backtracks through every split of a long run of spaces, which is quadratic in it -
+    CodeQL found it in the TypeScript twin (``js/polynomial-redos``). The same text either way.
+    """
+    if column_type.startswith("Nullable(") and column_type.endswith(")"):
+        return column_type[len("Nullable(") : -1].strip(" ")
+    return column_type
 
 
 def column_zone(column_type: str, *, dialect: str) -> bool | None:
@@ -443,8 +454,7 @@ def column_zone(column_type: str, *, dialect: str) -> bool | None:
     ``long/timestamptz`` and ``long/timestamp``.
     """
     if dialect == "clickhouse":
-        nullable = _CH_NULLABLE.fullmatch(column_type)
-        inner = nullable.group(1) if nullable else column_type
+        inner = _nullable_inner(column_type)
         if _CH_ZONED.fullmatch(inner):
             return True
         return False if _CH_ZONELESS.fullmatch(inner) else None

@@ -65,11 +65,26 @@ export function groupColumns(
 
 // The spellings of a temporal column type each dialect is read for a zone in (format contract 7a).
 // Spaces only and ASCII digits: `\s` and `\d` match more in some languages than in others.
-const CH_NULLABLE = /^Nullable\( *(.*?) *\)$/
 const CH_ZONED = /^(?:DateTime64\( *[0-9]+ *, *'[^']*' *\)|DateTime\( *'[^']*' *\))$/
 const CH_ZONELESS = /^(?:DateTime64\( *[0-9]+ *\)|DateTime)$/
 const PG_ZONED = /^(?:timestamptz( *\( *[0-9]+ *\))?|timestamp( *\( *[0-9]+ *\))? +with +time +zone)$/
 const PG_ZONELESS = /^timestamp( *\( *[0-9]+ *\))?( +without +time +zone)?$/
+
+/**
+ * The type inside one `Nullable(...)`, without the spaces around it, or the type itself.
+ *
+ * Read without a regular expression: a lazy group beside optional spaces, `/^Nullable\( *(.*?) *\)$/`,
+ * backtracks through every split of a long run of spaces, which is quadratic in it (CodeQL's
+ * `js/polynomial-redos`, on a layout's column type). The same text either way, as the reference's.
+ */
+function nullableInner(columnType: string): string {
+  if (!columnType.startsWith('Nullable(') || !columnType.endsWith(')')) return columnType
+  let start = 'Nullable('.length
+  let end = columnType.length - 1
+  while (start < end && columnType[start] === ' ') start++
+  while (end > start && columnType[end - 1] === ' ') end--
+  return columnType.slice(start, end)
+}
 
 function asciiLower(text: string): string {
   return text.replace(/[A-Z]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32))
@@ -91,7 +106,7 @@ function pythonQuoted(text: string): string {
  */
 export function columnZone(columnType: string, dialect: string): boolean | null {
   if (dialect === 'clickhouse') {
-    const inner = CH_NULLABLE.exec(columnType)?.[1] ?? columnType
+    const inner = nullableInner(columnType)
     if (CH_ZONED.test(inner)) return true
     return CH_ZONELESS.test(inner) ? false : null
   }
