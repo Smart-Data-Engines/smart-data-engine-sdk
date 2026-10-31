@@ -98,7 +98,9 @@ it('counts the technical generation in the limit', () => {
 })
 
 it('snapshots before the first await, preserving mutable dates, buffers and exact Timestamp', async () => {
-  const { session, source, copy, table } = await fixture()
+  // A json field: an object of dates and buffers is not text, and a string field refuses it before
+  // the snapshot this test is about (contract section 8b).
+  const { session, source, copy, table } = await fixture({ json: true })
   const instant = Timestamp.from('2026-09-14T00:00:00.123456Z')
   const date = new Date('2026-09-14T00:00:00.123Z'), buffer = Buffer.from('abc')
   const input = [{ id: 1, value: { date, buffer, instant } }]
