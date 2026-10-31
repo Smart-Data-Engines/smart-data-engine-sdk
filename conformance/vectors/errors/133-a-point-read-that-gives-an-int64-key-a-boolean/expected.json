@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Ledger.id is int64 and this key gives it a value that is not an integer",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Ledger",
+      "values": {
+        "code": "1.23",
+        "id": 7,
+        "note": "x"
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Ledger",
+      "key": {
+        "code": "1.23",
+        "id": true
+      }
+    }
+  },
+  "why": "PostgreSQL raised an engine error and ClickHouse answered no row, from both libraries."
+}

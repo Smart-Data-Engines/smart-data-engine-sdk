@@ -1,0 +1,25 @@
+{
+  "contract": 3,
+  "model_version": "d4229e11a64d523a",
+  "map_version": 1,
+  "groups": {
+    "Ledger": {
+      "source": {
+        "id": "Ledger@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Ledger": "ledger"
+          },
+          "columns": {
+            "Ledger": {
+              "code": "numeric(12,2)",
+              "id": "bigint",
+              "note": "text"
+            }
+          }
+        }
+      }
+    }
+  }
+}

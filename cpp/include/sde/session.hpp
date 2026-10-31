@@ -174,7 +174,12 @@ class Session {
   /// `ensure_schema`, as the reference reports it.
   void report_physical() const;
   [[nodiscard]] Row admit(std::string_view entity, const std::string& target, const Row& values) const;
-  [[nodiscard]] Row typed(std::string_view entity, const Admission& admission, Row values) const;
+  [[nodiscard]] Row typed(std::string_view entity, const Admission& admission, Row values,
+                          std::string_view noun = "row") const;
+  /// A point read's key held to a written row's rules (format contract 8b, a point read's key):
+  /// no value null, then every value one its field's type holds. `fields` is the key, sorted.
+  [[nodiscard]] Row checked_key(std::string_view entity, const std::string& target, const Row& key,
+                                const std::vector<std::string>& fields) const;
   [[nodiscard]] const OperationShape& shape(const std::string& entity, std::string_view kind,
                                             const std::vector<std::string>& fields = {}) const;
   [[nodiscard]] std::pair<Engine*, const Materialization*> target(const OperationShape& shape,

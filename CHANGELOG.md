@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: a point read's key is held to a written row's rules** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §8b, "A point read's key"). `Session.get`
+refuses a key value that is null, or one its field's type does not hold, with `ModelPlanningError`
+in a written row's words (`this key` for `this row`), before any engine is called, and gives the
+engine the key in the form a filter gets. A key went to the engine as the application gave it, and
+the engines answered for it differently: measured from both libraries, `1.234` for a
+`decimal(12,2)` key found no row on PostgreSQL and the row stored as `1.23` on ClickHouse, and a
+boolean for an `int64` key was an engine error on one and no row on the other. **Breaking** for a
+call that relied on an engine's conversion, such as text for an integer key, which both engines
+found. `errors/131`-`136` pin it. Finding 34 of the C++ port: the orderbook adapters read a time
+given as text differently, and through a session they now refuse it alike.
+
 **Fixed: an entity the model does not declare is refused in one way** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8d). `save`, `save_many` and `get` naming one
 raise `ModelPlanningError`: `this model has no entity '<name>'`, before any operation shape is looked

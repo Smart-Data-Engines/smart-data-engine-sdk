@@ -455,7 +455,7 @@ export class Session {
    * Fields in code-point order, the order a refusal names; the row is copied only when a value
    * changes form.
    */
-  private typed(entity: string, admission: Admission, values: Readonly<Row>): Readonly<Row> {
+  private typed(entity: string, admission: Admission, values: Readonly<Row>, noun = 'row'): Readonly<Row> {
     let admitted: Row | undefined
     for (const [name, kind, check] of admission.checks) {
       const value = values[name]
@@ -466,7 +466,7 @@ export class Session {
       } catch (error) {
         if (!(error instanceof Misfit)) throw error
         throw new ModelPlanningError(
-          `${entity}.${this.clientNames(entity, [name])[0]} is ${kind} and this row gives it ${error.message}`,
+          `${entity}.${this.clientNames(entity, [name])[0]} is ${kind} and this ${noun} gives it ${error.message}`,
         )
       }
       if (given !== value) {
@@ -475,6 +475,29 @@ export class Session {
       }
     }
     return admitted ?? values
+  }
+
+  /**
+   * A point read's key held to a written row's rules (format contract 8b, a point read's key): no
+   * value null, then every value one its field's type holds, each refusal naming the first offending
+   * field in code-point order. Returns the key as engines receive it.
+   *
+   * A key went to the engine as given until 31 October 2026, and each engine answered for it: `1.234`
+   * for a `decimal(12,2)` found no row on PostgreSQL and the row stored as `1.23` on ClickHouse, and a
+   * boolean for an `int64` was an engine error on one and no row on the other. Shared vectors:
+   * `errors/131`-`136`.
+   */
+  private key(entity: string, target: string, key: Readonly<Row>, fields: readonly string[]): Readonly<Row> {
+    for (const name of fields) {
+      const value = key[name]
+      if (value === null || value === undefined) {
+        throw new ModelPlanningError(
+          `${entity}.${this.clientNames(entity, [name])[0]} is required and this key gives it ` +
+            (value === undefined ? 'undefined' : 'null'),
+        )
+      }
+    }
+    return this.typed(entity, this.admission.get(target)!, key, 'key')
   }
 
   /**
@@ -873,6 +896,7 @@ export class Session {
             `which is a different shape and may well be routed somewhere else.`,
         )
       }
+      const checked = this.key(entity, target, given, expected)
       const shape = this.shapeFor(target, 'point_read', expected)
       const [engine, materialization] = this.target(shape, options.fresh === true)
       const table = tableFor(materialization.layout, target)
@@ -880,7 +904,7 @@ export class Session {
       let failed = false
       let row: Row | null = null
       try {
-        row = await engine.get(table, given)
+        row = await engine.get(table, checked)
         return this.fieldsOut(entity, logicalRow(this.placement, row))
       } catch (error) {
         failed = true
