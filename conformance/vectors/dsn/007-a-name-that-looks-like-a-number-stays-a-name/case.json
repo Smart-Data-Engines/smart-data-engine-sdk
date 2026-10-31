@@ -1,0 +1,15 @@
+{
+ "name": "a name that looks like a number stays a name",
+ "dsn": "orderbook://0x7f.1:9090",
+ "says": {
+  "host": "0x7f.1",
+  "port": 9090,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 10.0
+ },
+ "why": "WHATWG's parser made this 127.0.0.1, and a TLS check then compared the certificate with an address the DSN never gave"
+}

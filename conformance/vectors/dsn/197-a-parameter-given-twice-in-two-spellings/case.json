@@ -1,0 +1,8 @@
+{
+ "name": "a parameter given twice in two spellings",
+ "dsn": "orderbook://ob1:9090?tls=on&%74ls=on",
+ "refused": {
+  "match": "the orderbook DSN gives 'tls' twice"
+ },
+ "why": "names are compared decoded"
+}

@@ -1544,19 +1544,20 @@ languages or the word is worthless.
 |---|---|---|
 | 0 | model → IR → version; shape enumeration and ids; map parsing, signature, refusals; routing; error semantics | `model/`, `routing/`, `errors/` |
 | 1 | telemetry: measurement, window aggregation, local buffering | `telemetry/` |
-| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write); book streams (§8c), with the orderbook engine; with the Elasticsearch engine, its documents (§7m); with `Session.search`, its rule (§7l) | `schema/`, `migration/`, `query/`; `books/`, `documents/`, `search/` |
+| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write); with the orderbook engine, its DSN (§7n), and book streams (§8c) where offered; with the Elasticsearch engine, its documents (§7m); with `Session.search`, its rule (§7l) | `schema/`, `migration/`, `query/`; `dsn/`, `books/`, `documents/`, `search/` |
 | 3 | ergonomics: framework integrations, async variants, pooling | — |
 
 Tier 0 is not optional. An implementation that does not pass the Tier 0 vectors is not an SDE
 library, whoever wrote it.
 
-**Three Tier 2 families go with a capability as well as the tier.** `books/` is required of a Tier 2
-library that offers book streams, which need the orderbook engine; `documents/` of one with the
-Elasticsearch engine; and `search/` of one that offers `Session.search`. A library declares each
-capability, as it declares hashing below, and its vectors check the claim. Python and TypeScript
-have all three. The C++ library has none yet ([`implementations.md`](implementations.md)). An
-orderbook adapter without book streams still reads and writes a book, and a library that has one
-says so rather than claiming the streams.
+**Four Tier 2 families go with a capability as well as the tier.** `dsn/` is required of a Tier 2
+library with the orderbook engine; `books/` of one that offers book streams, which need that engine
+too; `documents/` of one with the Elasticsearch engine; and `search/` of one that offers
+`Session.search`. A library declares each capability, as it declares hashing below, and its vectors
+check the claim. Python and TypeScript have all four. The C++ library has the orderbook engine, so
+`dsn/`, and none of the other three yet ([`implementations.md`](implementations.md)). An orderbook
+adapter without book streams still reads and writes a book, and a library that has one says so
+rather than claiming the streams.
 
 **Name hashing (§2a) is orthogonal to the tiers.** It is a mode, not a level: a Tier 0 library may
 omit it entirely and still be complete, and a Tier 3 library may not have it. What is not optional is
@@ -1567,7 +1568,7 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are thirteen kinds:
+There are fourteen kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -1584,6 +1585,7 @@ There are thirteen kinds:
 | `books/` | a side's difference, and what a book stream sends on a clock - whole sides and changes, with their times - or refuses |
 | `search/` | the tokens of a text, and whether a row matches a query in its chosen fields - or the refusal of a query with no token |
 | `documents/` | a row as an Elasticsearch document - its `_id` and `_source` - or the refusal of a value the index would not keep exactly |
+| `dsn/` | an orderbook DSN, and what it says - host, port, credentials, TLS and timeout - or its refusal, which never contains the secret |
 
 This table said "five" and listed five for as long as there were nine, with the other four argued
 in the prose below it. Nothing counted them, which is the failure mode of a number about our own
@@ -2093,3 +2095,75 @@ store, so a window's `index_to_table_ratio` is a measured 0. The read takes the 
 **Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
 `020` and `documents/` are new, and no existing vector changed. The second review's `documents/009`
 to `013` changed no earlier case either.
+
+## 7n. The orderbook engine's DSN
+
+A deployment keeps its connections in environment variables, and the orderbook engine's is one line:
+
+```text
+orderbook://[identity:secret@]host:port[/][?name=value[&name=value...]]
+```
+
+Every library reads it by the grammar below and by no URL parser, rule by rule in this order, and
+refuses it with `EngineError` at the first rule it breaks (`dsn/`). Until 31 October 2026 each
+library read it with its language's URL parser, and those disagree exactly where a DSN is written
+by hand. WHATWG's turns the host `0x7f.1` into `127.0.0.1`, which a TLS check then compares with the
+certificate in place of the name the DSN gave. Python's `float()` reads `timeout=1_0` as ten seconds
+and `timeout=inf` as forever, which no socket can wait (findings 29 and 32 of the C++ port). A
+refusal names the part that is wrong and never repeats the DSN, which carries the secret: it may
+quote a parameter's name as written, never a value.
+
+1. **Printable ASCII.** Every character is one of `!` to `~`, U+0021 to U+007E. A space, a control
+   character and a character beyond ASCII are written percent-encoded, as in any URL, and a
+   trailing newline read from a file is refused rather than trimmed.
+2. **The scheme.** The DSN starts with `orderbook://`, in any ASCII case.
+3. **No fragment.** No `#` anywhere: one in a secret is written `%23`.
+4. **The parts.** The authority runs from after `//` to the first `/` or `?`, the path from that
+   `/` to the first `?`, and the query from the first `?` to the end.
+5. **The credentials.** When the authority holds an `@`, what comes before its last `@` is
+   `identity:secret`, split at the first `:`, and both halves are non-empty. Each is
+   percent-decoded: `%` and two hexadecimal digits, in either case, is a byte, a `%` without them is
+   refused, and the bytes have to be UTF-8. The identity is 1 to 64 characters of
+   `[A-Za-z0-9_.:-]`, the identities the server's `--auth-secret-file` takes; a `:` in it is written
+   `%3A`. The secret may be any text. It answers the server's challenge and is never sent.
+6. **The host.** Either an IPv6 address in brackets, by RFC 3986's `IPv6address`: groups of one to
+   four hexadecimal digits, at most one `::`, an IPv4 address of decimal octets without leading
+   zeros allowed in the last 32 bits, and no zone. Or a name of `A`-`Z`, `a`-`z`, `0`-`9`, `.`, `-`
+   and `_`. Either is kept in lower case and otherwise as written, without IPv4 normalisation, IDNA
+   or compression. A library connects to the name the DSN gives, and a TLS check compares the
+   certificate with that name.
+7. **The port.** A `:` after the host, then decimal digits with a value from 1 to 65535. Leading
+   zeros are allowed.
+8. **The path.** Nothing, or `/` alone. Local mode takes a data directory, never a DSN.
+9. **The parameters, left to right.** The query is split at `&` and an empty piece is skipped. A
+   piece is `name=value`, split at its first `=`; a piece without one has an empty value. Name and
+   value are decoded as in rule 5, after `+` is read as a space, as a form is. For each piece in
+   turn:
+   - a name that does not decode is refused, quoted as written;
+   - a name other than `tls`, `ca`, `verify` and `timeout` is refused, quoted as written;
+   - a name given twice is refused;
+   - a value that does not decode is refused;
+   - `tls` and `verify` are `on` or `off`, exactly;
+   - `ca` names a file: it is not empty and holds no U+0000;
+   - `timeout` is a number of seconds in decimal digits, with or without a fraction after one `.`,
+     whose nearest double is from 0.001 to 2147483.647 inclusive: the range in which every library's
+     socket waits as long as it is asked, and no less. `inf`, `1e3`, `.5`, `5.`, `1_0`, a sign and a
+     digit beyond ASCII are refused.
+10. **Settings that would do nothing**, refused in this order: `ca` without `tls=on`, `verify=off`
+    without `tls=on`, and `ca` with `verify=off`, a trust anchor nothing consults.
+
+What the DSN leaves out is the default: no credentials, `tls=off`, `verify=on`, no CA file, and 10
+seconds.
+
+A library that also takes a connection field by field holds the fields to the same rules: an
+identity of the server's characters, a timeout in the same range, and the same three settings that
+would do nothing. Whether a library reads the CA file when the engine is constructed or when it
+connects is its own choice. Either way, a file it cannot read is refused before anything is sent.
+
+**The vectors** (`dsn/`). Each `case.json` gives a DSN and either what it says - `host`, `port`,
+`identity`, `secret`, `tls`, `ca`, `verify` and `timeout`, with `null` for what it does not say - or
+`refused`: a literal substring of the refusal and, where the DSN has a secret, that secret, which the
+refusal must not contain. A timeout is compared as the double it is.
+
+**Which number moves: neither.** No IR and no map carries a DSN. `dsn/` is new, and no other vector
+changed.

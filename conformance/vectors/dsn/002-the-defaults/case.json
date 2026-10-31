@@ -1,0 +1,15 @@
+{
+ "name": "the defaults",
+ "dsn": "orderbook://127.0.0.1:9090",
+ "says": {
+  "host": "127.0.0.1",
+  "port": 9090,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 10.0
+ },
+ "why": "no credentials, no TLS, verification on, no CA file and 10 seconds"
+}

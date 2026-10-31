@@ -103,6 +103,12 @@ add_executable(sde_conformance
   conformance/test_migration.cpp
 )
 target_link_libraries(sde_conformance PRIVATE sde_test_support sde::testing GTest::gtest_main)
+# `dsn/` goes with the orderbook adapter (format contract section 9), whose DSN it reads.
+if(TARGET sde_orderbook)
+  target_sources(sde_conformance PRIVATE conformance/test_dsn.cpp)
+  target_link_libraries(sde_conformance PRIVATE sde_orderbook)
+  target_compile_definitions(sde_conformance PRIVATE SDE_CONFORMANCE_DSN=1)
+endif()
 # One test, not one per discovered case: the cases are the directories under conformance/vectors,
 # and a discovered list is refreshed only when this binary changes - so a vector added without a
 # rebuild was not run by ctest at all, and nothing said so. Run whole, the binary reads the tree each

@@ -1,0 +1,8 @@
+{
+ "name": "an unclosed bracket",
+ "dsn": "orderbook://[::1:9090",
+ "refused": {
+  "match": "an orderbook DSN's host is a name of letters, digits, '.', '-' and '_', or an IPv6 address in brackets"
+ },
+ "why": "an address without its closing bracket"
+}

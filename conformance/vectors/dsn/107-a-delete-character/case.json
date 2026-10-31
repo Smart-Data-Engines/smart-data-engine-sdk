@@ -1,0 +1,8 @@
+{
+ "name": "a delete character",
+ "dsn": "orderbook://ob1:9090?timeout=1\u007f",
+ "refused": {
+  "match": "an orderbook DSN is printable ASCII: a space, a control character or a character beyond ASCII is written percent-encoded"
+ },
+ "why": "U+007F is a control character too"
+}

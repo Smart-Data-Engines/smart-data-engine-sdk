@@ -1,0 +1,8 @@
+{
+ "name": "the kelvin sign in a host",
+ "dsn": "orderbook://\u212a:9090",
+ "refused": {
+  "match": "an orderbook DSN is printable ASCII: a space, a control character or a character beyond ASCII is written percent-encoded"
+ },
+ "why": "Python's parser lower-cased U+212A to the letter k and connected there"
+}

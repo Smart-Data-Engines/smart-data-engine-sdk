@@ -1,0 +1,8 @@
+{
+ "name": "an empty ca",
+ "dsn": "orderbook://ob1:9090?tls=on&ca=",
+ "refused": {
+  "match": "the orderbook DSN parameter 'ca' names a file: it is not empty and holds no NUL"
+ },
+ "why": "Python accepted it and failed at connect"
+}

@@ -1448,6 +1448,45 @@ describe('search vectors', () => {
   }
 })
 
+// --- dsn vectors (contract 7n) ----------------------------------------------------------------
+//
+// The orderbook engine's DSN, read by one grammar rather than by WHATWG's URL parser, which turned
+// `0x7f.1` into `127.0.0.1` and disagreed with the reference wherever a DSN is written by hand. A
+// refusal is compared by substring, and a refusal of a DSN with a secret must not contain it.
+
+describe('dsn vectors', () => {
+  const dsnCases = cases('dsn')
+
+  it('has the dsn family, with DSNs accepted and refused', () => {
+    expect(dsnCases.length).toBeGreaterThanOrEqual(100)
+    const kinds = new Set(dsnCases.map(name => ('says' in readJson<Record<string, unknown>>(join(VECTORS, 'dsn', name, 'case.json')) ? 'says' : 'refused')))
+    expect([...kinds].sort()).toEqual(['refused', 'says'])
+  })
+
+  for (const name of dsnCases) {
+    it(name, async () => {
+      const { parseOrderbookDsn } = await import('../src/engines/_orderbook-dsn.js')
+      const spec = readJson<Record<string, any>>(join(VECTORS, 'dsn', name, 'case.json'))
+      if ('refused' in spec) {
+        let message: string | undefined
+        try {
+          parseOrderbookDsn(spec.dsn)
+        } catch (error) {
+          expect(error, spec.why).toBeInstanceOf(EngineError)
+          message = (error as Error).message
+        }
+        expect(message, spec.why).toContain(spec.refused.match)
+        if ('absent' in spec.refused) expect(message, spec.why).not.toContain(spec.refused.absent)
+        return
+      }
+      const parsed = parseOrderbookDsn(spec.dsn) as unknown as Record<string, unknown>
+      const says = Object.fromEntries(Object.keys(spec.says).map(key => [key, parsed[key]]))
+      // A timeout is compared as the double it is: toEqual on numbers is Object.is.
+      expect(says, spec.why).toEqual(spec.says)
+    })
+  }
+})
+
 // --- documents vectors (contract 7m) ----------------------------------------------------------
 //
 // A row as an Elasticsearch document. Two libraries writing one row to one index have to agree on

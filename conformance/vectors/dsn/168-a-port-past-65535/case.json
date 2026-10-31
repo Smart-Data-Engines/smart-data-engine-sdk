@@ -1,0 +1,8 @@
+{
+ "name": "a port past 65535",
+ "dsn": "orderbook://ob1:65536",
+ "refused": {
+  "match": "an orderbook DSN's port is a number from 1 to 65535"
+ },
+ "why": "a port is sixteen bits"
+}

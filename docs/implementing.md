@@ -667,18 +667,21 @@ speak the protocol at all - it calls the engine's Python client - so for this ad
 reference is two programs**: the adapter, whose decisions and words this one ports, and the client
 it calls, whose framing, timeouts and words the adapter puts into its own messages (`query failed:
 …: TCP recv timeout`). Both were read at the engine commit the CI job pins, and every expected text
-was captured from them: the DSN against the reference's parser on 280,000 generated DSNs, the
-answer and STATUS parsing against the client's own functions, the connection failures - TLS among
-them - against the reference connecting to the same servers. What whoever writes the next one
-needs:
+was captured from them: the answer and STATUS parsing against the client's own functions, the
+connection failures - TLS among them - against the reference connecting to the same servers. The DSN
+was too, on 280,000 generated DSNs against the reference's parser, until the contract gave it a
+grammar of its own (below). What whoever writes the next one needs:
 
-- **the DSN's numbers are Python's.** The timeout is `float()` of text and the client reads every
-  number of an answer with `int()`, so `1_0` is ten seconds, an Arabic-Indic three is three, `inf`
-  is accepted, and U+001C to U+001F - which `str.isspace()` calls whitespace - are not stripped,
-  because `float()` strips C's whitespace once Python's has become a space. A port that reads them
-  with its own parser agrees on every DSN a person writes and disagrees on the ones a generator
-  writes; this one disagreed twice before the differential found it, the second time on a
-  four-hundred-digit mantissa no corpus had;
+- **the DSN is the contract's grammar, not a URL parser's** (§7n, `dsn/`). Until 31 October 2026
+  it was Python's: the timeout was `float()` of text, so `1_0` was ten seconds, an Arabic-Indic
+  three was three and `inf` was accepted. TypeScript read it with WHATWG's URL parser and
+  `Number()`, which disagreed on all three and turned the host `0x7f.1` into `127.0.0.1`. A port
+  that emulated the reference agreed on every DSN a person writes and disagreed on the ones a
+  generator writes; this one did twice before a differential found it, the second time on a
+  four-hundred-digit mantissa no corpus had. Read the grammar rule by rule in the contract's
+  order, by byte, with ASCII's character classes and never a locale's;
+- **the numbers of an answer are Python's.** The client reads every one with `int()`, which this
+  library reproduces, checked against CPython;
 - **every wait is bounded by silence, not by the answer.** The client sets one socket timeout, so a
   slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
 - **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
@@ -691,9 +694,9 @@ needs:
   was unknown. This library refuses it first, as TypeScript does, and as the reference does since
   #122;
 - **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
-  address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
-  CPython cannot wait for, refused only at connect. This library connects to either family and
-  reproduces the second, which is a rule for the DSN in every library;
+  address cannot connect through it. This library connects to either family. A timeout that CPython
+  cannot wait for was the second limit, refused only at connect; the DSN refuses it now in every
+  library (§7n);
 - **TLS refusals are CPython's words without CPython's line.** `[SSL: CERTIFICATE_VERIFY_FAILED]
   certificate verify failed: Hostname mismatch, certificate is not valid for 'host'.`, an end of the
   stream inside the handshake as `EOF occurred in violation of protocol`, a reset as the socket's

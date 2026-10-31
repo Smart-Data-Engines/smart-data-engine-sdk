@@ -1,0 +1,9 @@
+{
+ "name": "a raw secret beyond ascii",
+ "dsn": "orderbook://app:\u017c\u00f3\u0142w@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN is printable ASCII: a space, a control character or a character beyond ASCII is written percent-encoded",
+  "absent": "\u017c\u00f3\u0142w"
+ },
+ "why": "a character beyond ASCII is written percent-encoded, as in any URL"
+}

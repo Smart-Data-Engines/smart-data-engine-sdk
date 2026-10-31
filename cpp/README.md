@@ -163,8 +163,8 @@ sde::Session session(model, map, {{"ch", &engine}}, options);
 Against our orderbook engine, link `sde::orderbook`. Its schema is fixed in the engine, so a group
 placed there either is that shape (`sde::ORDERBOOK_SHAPE`) or cannot be placed there, and nothing is
 provisioned. Its connection is `orderbook://[identity:secret@]host:port[?tls=on&ca=PATH&timeout=S]`,
-read as the reference reads it; the secret answers the server's challenge and never goes on the
-wire:
+read by the format contract's grammar (§7n), as every library reads it; the secret answers the
+server's challenge and never goes on the wire:
 
 ```cpp
 sde::OrderbookEngine engine("orderbook://desk:secret@ob.internal:59091?tls=on&ca=%2Fetc%2Fsde%2Fca.pem");
@@ -321,9 +321,10 @@ it. Both were compared with the reference directly, and agreed everywhere:
   that, every difference was one of those two rules, and they are the reason the vectors exist;
 - the ClickHouse connection URI on 102,000 generated URIs against the reference's parser: the same
   outcome, the same message and every field equal, the timeouts to the bit;
-- the orderbook DSN on 280,000 generated DSNs against the reference's parser, the same way, its
-  timeout read as Python's `float()` reads text - underscores, any Unicode digit, an infinity - and
-  every number of an engine's answer read as `int()` reads it, checked against CPython;
+- the orderbook DSN on 280,000 generated DSNs against the reference's parser, the same way, until
+  31 October 2026, when the contract gave the DSN a grammar of its own (§7n) and the `dsn/`
+  vectors took over; and every number of an engine's answer read as `int()` reads it, checked
+  against CPython;
 - the three packet loaders on 102,384 signed packets, made by changing every accepted packet
   vector at each of its paths and in random pairs, and signing them again so that each change reaches
   the rule it is about: the same outcome, fingerprint, record and message in every case except three

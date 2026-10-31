@@ -1,0 +1,9 @@
+{
+ "name": "a space in an identity",
+ "dsn": "orderbook://two%20words:s3cret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's identity is 1 to 64 characters of [A-Za-z0-9_.:-], as the server's --auth-secret-file takes them",
+  "absent": "s3cret"
+ },
+ "why": "an identity is sent on the wire, and a space would end it"
+}
