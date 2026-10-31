@@ -8,6 +8,109 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: `sde.schema.extra_columns` named the library's own generation column** (Python). The event
+is for a column added outside SDE. From contract 4 a table carries `__sde_write_epoch`, which
+provisioning adds for a map with write generations, and every schema check named it. An alert on the
+event fired on every start of every such deployment, about a column that is ours. A column a client
+adds is still named.
+
+**Measured: what the C++ library costs per operation** ([`docs/implementing.md`](docs/implementing.md#measuring-your-overhead)).
+Requirement 3.5 gives the library one percent of an operation. Measured in C++ for the first time,
+a point read through the session cost 0.64 µs at the median built optimised, 2.5% of the cheapest
+round trip C++ makes: every call copied and sorted its key and found its shape, group, route,
+engine and table by name. The session now decides each entity's point read once, when it opens:
+0.11-0.12 µs without telemetry, 0.37-0.47% of that floor (break-even 11-12 µs), and 0.24 µs with a
+recorder, 0.09% of a PostgreSQL point read. CI judges both on an optimised build. It never reached
+a release.
+
+**New: the trading example in C++** ([`cpp/examples/trading/trading.cpp`](cpp/examples/trading/trading.cpp)).
+[`examples/trading`](examples/trading/README.md) - book depth on the orderbook engine, orders and
+fills on PostgreSQL, market trades on ClickHouse, through one signed map - as a C++ program with the
+Python program's commands, arguments and traffic. In the `orderbook` CI job, under both sanitizers,
+it provisions the three engines; the reference reads back every row of its run, every field, and
+it reads back every row of the reference's; and its telemetry window of the traffic is the
+reference's, call for call, but for timings and sizes.
+
+**New: the orderbook adapter in the C++ library** ([`cpp/README.md`](cpp/README.md),
+[`docs/orderbook.md`](docs/orderbook.md#from-c)). `sde::OrderbookEngine`, over our engine's own
+text protocol on TCP or TLS 1.3, which the library speaks itself, as TypeScript does, in a target of
+its own, `sde::orderbook`, over OpenSSL; the engine's library is never linked. It is the reference's
+adapter, decision for decision: the fixed shape and key, a single write at level 0, batches as the
+engine's updates pipelined 64 at a time, the sequence number left to the server, pages of one book
+in key order from windows of time, two rows with one key refused, count and summary refused by
+name. Its DSN is read as the reference reads it, compared on 280,000 DSNs, and its words are the
+reference's and those of the engine's Python client the reference puts into its own.
+- The protocol: the greeting, the AUTH challenge answered with HMAC-SHA256 - the secret never goes
+  on the wire - PUSH lines skipped, commands pipelined, and an exchange that does not finish closes
+  the connection with its reason for every later call. Every wait is bounded by the DSN's timeout of
+  silence. TLS 1.3 at least, the DSN's CA the one trust anchor, the certificate bound to the host by
+  name with SNI or by address without it.
+- Its tests run against a fake engine and a TLS server in the process, and its slice against the
+  pinned `ob_tcp_server`, plain and with credentials and TLS, with one book written here and read by
+  the reference, and the other way round.
+- Two decisions differ from the reference, and a write with no connection is the first: refused
+  before anything is sent, where the reference reports a write it never sent as one that may have
+  been stored. The second: `connect()` opens a new connection after an exchange closed the old one.
+  Both, and the reference client's IPv4-only sockets and a timeout it accepts and cannot wait for,
+  are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
+- Fixed on the way, in the C++ library: Python's `float()` of text, which the DSN's timeout is,
+  stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
+  infinity or zero by the sign of its exponent rather than its size. Neither reached a release.
+
+**Fixed in the C++ library, and found in all three: a ClickHouse 26.5 or later catalogue read as
+another design.** From 26.5 ClickHouse keeps the parentheses of a single expression written in
+them, so the one-column sort key every library renders as `ORDER BY (id)` reads back `(id)` where
+26.4 and earlier read `id` - measured on nine releases from 24.8 to 26.9. Every table the libraries
+create there read as differing from its design: a session reported a physical mismatch, and
+provisioning, staging and a copy under a new generation refused. The C++ catalogue reader takes one
+pair of parentheses around a whole list, and its live suite passes against 26.5 and runs in CI
+against a current release beside the LTS. The Python and TypeScript libraries take the same
+reading since 0.2.0 (#116); the finding is in [`docs/implementing.md`](docs/implementing.md#the-clickhouse-adapter-against-the-reference-on-one-server).
+
+**New: the ClickHouse adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
+`sde::ClickHouseEngine`, over ClickHouse's HTTP interface through libcurl, in a target of its own,
+`sde::clickhouse`, so an application that places nothing in ClickHouse carries no libcurl. It is the
+reference's adapter, method for method: schema with the catalogue's check and the physical design's
+findings, writes and batches, logical reads, counts and exact summaries, the forward-only
+bookkeeping, the migration operations, write barriers - a constraint and a drain bound to the
+table's UUID - storage sizes, and TLS against the CA the URI names, read once and pinned. Its
+connection URI is parsed as the reference parses it, rule for rule and message for message,
+compared on 102,000 URIs.
+- An exchange is one POST on a connection of its own, never reused: a failed one is reported with
+  its outcome unknown and never sent again, measured against a proxy that drops the answer to an
+  accepted insert. The statement is the body, never part of a URL.
+- Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
+  was. A value its column cannot hold is refused before anything is sent: the reference's driver
+  stores `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
+  - and `Decimal("12345678901.23")` as 12345678901.20, an enum name its type does not declare as 0,
+  and cuts a moment's fraction a column does not keep, each without a word: recorded in
+  [`docs/implementing.md`](docs/implementing.md), as rules for the contract.
+- Its live tests are the reference's ClickHouse slice, each message captured from the reference
+  against the same server; what the reference runs against both engines with one body runs here
+  with one body for each adapter built - copies in every direction, write generations, the frozen
+  comparison, the bookkeeping, and the two engines agreeing on one value. CI runs them against a
+  ClickHouse server at both compiler floors and under the sanitizers.
+- Fixed on the way, in the C++ library: a PostgreSQL size the catalogue refused was reported as
+  `failed` rather than `refused`, because the session looked for the SQLSTATE in a message that
+  never carries it.
+
+**New: the PostgreSQL adapter in the C++ library** ([`cpp/README.md`](cpp/README.md)).
+`sde::PostgresEngine`, over libpq, in a target of its own, `sde::postgres`: the core still links no
+network library, and an application that places nothing in PostgreSQL carries no libpq. It is the
+reference's adapter, method for method - schema with the catalogue's check of columns and types and
+the physical findings, writes and batches, logical reads, counts and exact summaries, transactions
+with savepoints, the forward-only bookkeeping, the migration operations, native write fences and
+storage sizes - and TLS is the DSN's, verified by libpq. With it, `sde::prepare_schema`: what a
+person provisioning a map runs before the application opens it, since from contract 4 a session
+creates nothing.
+- Its live tests are the reference's PostgreSQL slice, ported, and every message they compare was
+  captured from the reference against the same server. They run against a real server in CI, and
+  fail rather than skip there without one.
+- Fixed in the C++ library on the way: `sde::PhysicalFinding::to_string` was declared and defined
+  nowhere, so calling it failed to link; `Session::ensure_schema` did not emit
+  `sde.schema.physical_mismatch`, which the reference emits there; and `sde::LOG_EVENTS` named two
+  events nothing emits and lacked three the adapter does - a test now holds it to the code.
+
 **New: migration participation and signed packets in the C++ library, Tier 2**
 ([`cpp/README.md`](cpp/README.md)). `sde::backfill` copies a group's rows to the copies its map fans
 writes out to, chunk first and marker after, and resumes; `sde::verify` compares them with the
