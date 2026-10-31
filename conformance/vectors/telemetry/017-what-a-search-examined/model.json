@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "Note",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "body",
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "title",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}

@@ -262,6 +262,8 @@ def _recorded(model: sde.LogicalModel, operations: list[dict[str, Any]], case: P
             failed=bool(operation.get("failed", False)),
             equal=operation.get("equal"),
             ranged=operation.get("range"),
+            examined=int(operation.get("examined", 0)),
+            searched=operation.get("searched"),
         )
     fan_out = case / "fan_out.json"
     if fan_out.is_file():
@@ -700,7 +702,7 @@ def test_signature_vector(case: Path) -> None:
         keys = {name: b64decode(value) for name, value in encoded.items()}
 
     if "error" in expected:
-        with pytest.raises(_ERRORS[expected["error"]], match=expected["match"]):
+        with pytest.raises(_ERRORS[expected["error"]], match=re.escape(expected["match"])):
             sde.load_map(document, model=model, public_key=keys, require_signature=True)
         return
 
@@ -782,7 +784,7 @@ def _refuse_at_session(case: Path, exc_type: type[Exception], expected: Mapping[
     model = model_from_neutral(_read_json(case / "model.json"))
     placement = _load_map_from_vector(case, expected.get("load", {}))
     engines = engines_from(_read_json(case / "engines.json"))
-    with pytest.raises(exc_type, match=expected["match"]):
+    with pytest.raises(exc_type, match=re.escape(expected["match"])):
         sde.Session(model, placement, engines)
     # **A map that can never work must not have cost anything first.** A library that gathered the
     # watermarks and refused afterwards would produce this same refusal with the price already
@@ -816,7 +818,7 @@ def _refuse_at_write(case: Path, exc_type: type[Exception], expected: Mapping[st
     session = sde.Session(model, placement, engines)
     write = expected["write"]
     _write(session, write["accepted"])
-    with pytest.raises(exc_type, match=expected["match"]) as raised:
+    with pytest.raises(exc_type, match=re.escape(expected["match"])) as raised:
         _write(session, write["refused"])
     # The class exactly: `BulkWriteRefused` is a `ModelPlanningError`, and a vector naming the
     # parent must not be satisfied by the child, or the reverse.
@@ -850,7 +852,7 @@ def test_error_vector(case: Path) -> None:
         _refuse_at_write(case, exc_type, expected)
         return
 
-    with pytest.raises(exc_type, match=expected["match"]):
+    with pytest.raises(exc_type, match=re.escape(expected["match"])):
         if stage == "model":
             model_from_neutral(_read_json(case / "model.json"))
         else:
@@ -899,7 +901,7 @@ def test_canonical_vector(case: Path) -> None:
     if expected_error.exists():
         want = _read_json(expected_error)
         assert want["error"] == "CanonicalError"
-        with pytest.raises(CanonicalError, match=want["match"]):
+        with pytest.raises(CanonicalError, match=re.escape(want["match"])):
             canonical_bytes(value)
         return
 
@@ -1154,3 +1156,95 @@ def _drive_staging_vector(case: Path, model: sde.LogicalModel) -> None:
         json.loads(plan.prepared_payload()), model=model, public_key=keys, require_signature=True
     )
     assert decoded.fingerprint == wanted["map_fingerprints"]["prepared"]
+
+
+# --- search vectors ---------------------------------------------------------------------------
+#
+# Contract 7l: what a token is and when a row matches. Every library computes these itself; the
+# engines only ever supply candidates, so this rule is the whole of what a search answers.
+
+
+@pytest.mark.parametrize("case", _cases("search"), ids=_ident)
+def test_search_vector(case: Path) -> None:
+    from sde.search import SearchRefused, matches, query_tokens, tokens
+
+    spec = _read_json(case / "case.json")
+    want = _read_json(case / "expected.json")
+    if spec["kind"] == "tokens":
+        assert tokens(spec["text"]) == want["tokens"], (case / "why.txt").read_text()
+        return
+    if "refused" in want:
+        with pytest.raises(SearchRefused):
+            query_tokens(spec["query"])
+        return
+    query = query_tokens(spec["query"])
+    assert list(query) == want["query_tokens"], (case / "why.txt").read_text()
+    assert matches(spec["row"], query, spec["fields"]) is want["match"], (
+        case / "why.txt"
+    ).read_text()
+
+
+def test_there_are_search_vectors() -> None:
+    assert len(_cases("search")) >= 14, "the search family is missing or was cut short"
+
+
+# --- documents vectors ------------------------------------------------------------------------
+#
+# Contract 7m: a row as an Elasticsearch document. Two libraries writing one row to one index have
+# to agree on its _id, or a second save is a second document, and on its _source, or a reader in
+# one language gets back another value than a writer in the other wrote.
+
+
+def _document_value(kind: str, value: Any) -> Any:
+    """A case's value decoded by its column's type, as an application would hand it over."""
+    from datetime import date, datetime
+    from decimal import Decimal
+    from uuid import UUID
+
+    if isinstance(value, dict) and set(value) == {"$int"}:
+        return int(value["$int"])
+    if value is None:
+        return None
+    if kind in ("long/timestamp", "long/timestamptz"):
+        return datetime.fromisoformat(value)
+    if kind == "date":
+        return date.fromisoformat(value)
+    if kind == "keyword/uuid":
+        return UUID(value)
+    if kind.startswith("long/decimal("):
+        return Decimal(value)
+    return value
+
+
+def _stored_json(value: Any) -> Any:
+    if isinstance(value, dict) and set(value) == {"$int"}:
+        return int(value["$int"])
+    if isinstance(value, dict):
+        return {name: _stored_json(item) for name, item in value.items()}
+    if isinstance(value, list):
+        return [_stored_json(item) for item in value]
+    return value
+
+
+@pytest.mark.parametrize("case", _cases("documents"), ids=_ident)
+def test_document_vector(case: Path) -> None:
+    from sde.engines.elasticsearch import document
+
+    spec = _read_json(case / "case.json")
+    want = _read_json(case / "expected.json")
+    why = (case / "why.txt").read_text()
+    row = {
+        column: _document_value(spec["columns"][column], value)
+        for column, value in spec["row"].items()
+    }
+    if "error" in want:
+        with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
+            document(spec["columns"], spec["key"], row)
+        return
+    identity, source = document(spec["columns"], spec["key"], row)
+    assert identity == want["id"], why
+    assert source == _stored_json(want["source"]), why
+
+
+def test_there_are_document_vectors() -> None:
+    assert len(_cases("documents")) >= 8, "the documents family is missing or was cut short"

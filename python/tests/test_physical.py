@@ -53,6 +53,23 @@ def test_catalogue_names_are_parsed_not_predicted(text: str, names: tuple[str, .
 
 
 @pytest.mark.parametrize(
+    ("text", "names"),
+    [
+        # ClickHouse 26.5 and later keep the parentheses `ORDER BY (id)` was written with; 26.4 and
+        # every release before it - 24.8, 25.3, 25.8, 26.3 measured - read `id`.
+        ("(id)", ("id",)),
+        ("(`a b`)", ("a b",)),
+        ("(`a)`)", ("a)",)),
+        ("(a, b)", ("a", "b")),
+    ],
+)
+def test_a_single_expression_in_parentheses_is_the_same_key_from_clickhouse_26_5_on(
+    text: str, names: tuple[str, ...]
+) -> None:
+    assert parse_identifier_list(text) == names
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "`unterminated",
@@ -62,6 +79,14 @@ def test_catalogue_names_are_parsed_not_predicted(text: str, names: tuple[str, .
         "a, , b",
         "toYYYYMM(at)",  # an expression is not a list of names
         "1abc",
+        # one pair, around the whole, and a list inside it - nothing else
+        "()",
+        "((id))",
+        "(a) + (b)",
+        "(id",
+        "id)",
+        "(a,b)",
+        "(toYYYYMM(at))",
     ],
 )
 def test_text_the_parser_does_not_understand_is_an_error(text: str) -> None:
@@ -73,7 +98,17 @@ def test_partition_keys_are_one_function_of_one_name() -> None:
     assert parse_partition_key("") is None
     assert parse_partition_key("toYYYYMM(at)") == ("toYYYYMM", "at")
     assert parse_partition_key("toDate(`posted day`)") == ("toDate", "posted day")
-    for text in ("at", "toYYYYMM(toDate(at))", "toYYYYMM(at, 'UTC')", "toYYYYMM(a, b)"):
+    assert parse_partition_key("(toYYYYMM(at))") == ("toYYYYMM", "at")
+    for text in (
+        "at",
+        "(at)",
+        "toYYYYMM(toDate(at))",
+        "toYYYYMM(at, 'UTC')",
+        "toYYYYMM(a, b)",
+        "((toYYYYMM(at)))",
+        "(a)(b)",
+        "toYYYYMM((at))",
+    ):
         with pytest.raises(ValueError):
             parse_partition_key(text)
 

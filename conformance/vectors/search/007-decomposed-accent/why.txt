@@ -1,0 +1,1 @@
+NFC first: a decomposed e-acute is the same token as a composed one

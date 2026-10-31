@@ -9,7 +9,7 @@ export const MAX_PAGE_ROWS = 1000
 export const MAX_ORDER_FIELDS = 32
 
 export class QueryRefused extends ModelPlanningError {
-  override readonly name = 'QueryRefused'
+  override readonly name: string = 'QueryRefused'
 }
 
 export interface Range {
@@ -82,13 +82,22 @@ function text(value: string): string {
 }
 
 /**
+ * Unicode's `White_Space` property: what may surround a decimal written as text. Not `trim()`, which
+ * keeps U+0085 and removes U+FEFF; the reference's `str.strip()` differed the other way. Measured on
+ * 6 October 2026: `'\ufeff1.5'` was accepted here and refused by Python, `'\x1c1.5'` the reverse.
+ * One property, written out, is the rule in all three libraries.
+ */
+const WHITE_SPACE = '[\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]'
+const SURROUNDING_WHITE_SPACE = new RegExp(`^${WHITE_SPACE}+|${WHITE_SPACE}+$`, 'g')
+
+/**
  * Decimal text's sign, integer digits, fraction digits and exponent, or null when it is not one.
  *
  * The grammar of a decimal value in a filter and in a row alike (format contract section 8b), so
  * that a row and a read agree about what a decimal is.
  */
 export function decimalParts(value: string): RegExpExecArray | null {
-  const source = value.trim().replace(/^([+-]?)\./, (_match, sign: string) => sign + '0.')
+  const source = value.replace(SURROUNDING_WHITE_SPACE, '').replace(/^([+-]?)\./, (_match, sign: string) => sign + '0.')
   return /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source)
 }
 

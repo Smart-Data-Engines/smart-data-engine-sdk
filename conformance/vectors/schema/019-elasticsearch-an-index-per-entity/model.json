@@ -1,0 +1,82 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "amount",
+          "type": "decimal(18,4)"
+        },
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "count",
+          "type": "int32"
+        },
+        {
+          "name": "day",
+          "type": "date"
+        },
+        {
+          "name": "level",
+          "type": "float64"
+        },
+        {
+          "name": "local",
+          "type": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "note",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "ok",
+          "type": "bool"
+        },
+        {
+          "name": "ref",
+          "type": "uuid"
+        },
+        {
+          "name": "station",
+          "type": "string"
+        },
+        {
+          "name": "total",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "station",
+        "at"
+      ]
+    },
+    {
+      "name": "Station",
+      "fields": [
+        {
+          "name": "code",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "code"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "home",
+      "from": "Reading",
+      "to": "Station"
+    }
+  ]
+}

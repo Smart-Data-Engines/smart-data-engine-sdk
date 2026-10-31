@@ -1,0 +1,1 @@
+Five fractional digits in a decimal(18,4): refused, not rounded.

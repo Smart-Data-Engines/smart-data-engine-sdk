@@ -1,0 +1,10 @@
+{
+  "error": "MapError",
+  "match": "the signature is not valid base64",
+  "stage": "map",
+  "why": "Base64 as Python 3.12's b64decode(validate=True) reads it. TypeScript decoded anything and refused later, as a signature that does not verify: the right answer for the wrong reason.",
+  "load": {
+    "public_key": "eoAUc+0ZkRiFyx/zMmZYeTErCq1VJtKyyDoGxeyMKGw=",
+    "require_signature": true
+  }
+}

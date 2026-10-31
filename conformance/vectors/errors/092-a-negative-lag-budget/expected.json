@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "lag_budget_ms must be a non-negative integer",
+  "stage": "map",
+  "why": "A copy cannot be allowed to be ahead of its source. Both libraries accepted it."
+}

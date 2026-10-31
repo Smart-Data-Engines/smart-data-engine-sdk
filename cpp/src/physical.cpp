@@ -3,6 +3,7 @@
 
 #include "physical_internal.hpp"
 #include "python_compat.hpp"
+#include "sde/engine.hpp"
 #include "sde/errors.hpp"
 #include "sde/physical.hpp"
 
@@ -29,6 +30,10 @@ std::vector<std::string> sorted_keys(const detail::Tables& tables) {
 
 }  // namespace
 
+std::string PhysicalFinding::to_string() const {
+  return table + ": " + aspect + " is " + found + " and the map declares " + declared;
+}
+
 const std::string& PhysicalLayout::table_for(std::string_view entity) const {
   const auto found = tables.find(std::string(entity));
   if (found == tables.end()) {
@@ -50,20 +55,81 @@ std::vector<std::string> effective_key(std::string_view where, std::string_view 
                                        const std::map<std::string, std::vector<std::string>>& key_order) {
   const auto found = key_order.find(std::string(entity));
   if (found == key_order.end()) return key;
-  std::vector<std::string> ordered = found->second;
+  if (auto refusal = detail::key_order_refusal(where, entity, key, found->second)) {
+    throw MapError(*refusal);
+  }
+  return found->second;
+}
+
+std::vector<DeclaredTable> declared_tables(
+    const PhysicalLayout& layout, const std::map<std::string, std::vector<std::string>>& keys) {
+  std::vector<std::pair<std::string, std::string>> tables(layout.tables.begin(),
+                                                          layout.tables.end());
+  std::stable_sort(tables.begin(), tables.end(),
+                   [](const auto& a, const auto& b) { return a.second < b.second; });
+  std::vector<const Index*> indexes;
+  for (const Index& index : layout.indexes) indexes.push_back(&index);
+  std::stable_sort(indexes.begin(), indexes.end(),
+                   [](const Index* a, const Index* b) { return a->name < b->name; });
+  std::vector<DeclaredTable> out;
+  for (const auto& [entity, table] : tables) {
+    const std::string where = "table " + detail::python_repr(table);
+    const auto keyed = keys.find(entity);
+    const std::vector<std::string> key =
+        keyed != keys.end() ? keyed->second : std::vector<std::string>{};
+    DeclaredTable declared{table, effective_key(where, entity, key, layout.key_order), {}, {}};
+    if (const auto partition = layout.partition_by.find(entity);
+        partition != layout.partition_by.end()) {
+      if (auto refusal = detail::partition_key_refusal(where, entity, key, partition->second)) {
+        throw MapError(*refusal);
+      }
+      declared.partition = std::make_pair(
+          std::string(detail::partition_function(partition->second.granularity)),
+          partition->second.field);
+    }
+    for (const Index* index : indexes) {
+      if (index->entity != entity) continue;
+      const std::string type_full = index->method == "set"
+                                        ? "set(" + std::to_string(index->max_rows.value_or(0)) + ")"
+                                        : index->method;
+      declared.indexes.push_back(
+          DeclaredIndex{index->name, index->method, index->columns, index->granularity, type_full});
+    }
+    out.push_back(std::move(declared));
+  }
+  return out;
+}
+
+namespace detail {
+
+std::optional<std::string> key_order_refusal(std::string_view where, std::string_view entity,
+                                             const std::vector<std::string>& key,
+                                             const std::vector<std::string>& ordered) {
   std::vector<std::string> a = ordered;
   std::vector<std::string> b = key;
   std::sort(a.begin(), a.end());
   std::sort(b.begin(), b.end());
-  if (a != b) {
-    throw MapError(std::string(where) + ": key_order[" + detail::python_repr(entity) + "] is " +
-                   detail::python_repr(ordered) + " and the key is " + detail::python_repr(key) +
-                   ". A key order must be a permutation of the key.");
-  }
-  return ordered;
+  if (a == b) return std::nullopt;
+  return std::string(where) + ": key_order[" + python_repr(entity) + "] is " +
+         python_repr(ordered) + " and the key is " + python_repr(key) +
+         ". A key order must be a permutation of the key.";
 }
 
-namespace detail {
+std::optional<std::string> partition_key_refusal(std::string_view where, std::string_view entity,
+                                                 const std::vector<std::string>& key,
+                                                 const Partition& partition) {
+  if (std::find(key.begin(), key.end(), partition.field) != key.end()) return std::nullopt;
+  return std::string(where) + ": partition_by[" + python_repr(entity) + "] partitions on " +
+         python_repr(std::string_view(partition.field)) + ", outside the key " + python_repr(key) +
+         "; duplicates of one key would survive merges in two partitions.";
+}
+
+std::string_view partition_function(std::string_view granularity) noexcept {
+  if (granularity == "day") return "toDate";
+  if (granularity == "month") return "toYYYYMM";
+  if (granularity == "year") return "toYear";
+  return {};
+}
 
 std::map<std::string, std::vector<std::string>> parse_key_order(const Json& raw,
                                                                  const std::string& where,
@@ -304,6 +370,109 @@ void check_against_model(const std::string& where, const std::string& entity,
                      "; a time partition needs one of " + list_repr(TEMPORAL_TYPES) + ".");
     }
   }
+}
+
+namespace {
+
+/// `a, \`b c\`, d` and nothing else: the list itself, without any parentheses around it.
+std::optional<std::vector<std::string>> parse_names(std::string_view text) {
+  std::vector<std::string> names;
+  std::size_t position = 0;
+  const auto bare_start = [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+  };
+  const auto bare = [&](char c) { return bare_start(c) || (c >= '0' && c <= '9'); };
+  while (position < text.size()) {
+    if (text[position] == '`') {
+      ++position;
+      std::string name;
+      while (true) {
+        if (position >= text.size()) return std::nullopt;  // unterminated
+        const char c = text[position];
+        if (c == '\\') {
+          if (position + 1 >= text.size()) return std::nullopt;  // dangling escape
+          name += text[position + 1];
+          position += 2;
+          continue;
+        }
+        if (c == '`') {
+          ++position;
+          break;
+        }
+        name += c;
+        ++position;
+      }
+      names.push_back(std::move(name));
+    } else {
+      if (!bare_start(text[position])) return std::nullopt;
+      const std::size_t start = position;
+      while (position < text.size() && bare(text[position])) ++position;
+      names.emplace_back(text.substr(start, position - start));
+    }
+    if (position < text.size()) {
+      // A separator is only ever between two names.
+      if (text.substr(position, 2) != ", " || position + 2 >= text.size()) return std::nullopt;
+      position += 2;
+    }
+  }
+  return names;
+}
+
+/// The text inside one pair of parentheses around the whole of it, or nothing.
+std::optional<std::string_view> parenthesised(std::string_view text) {
+  if (text.size() < 3 || text.front() != '(' || text.back() != ')') return std::nullopt;
+  return text.substr(1, text.size() - 2);
+}
+
+}  // namespace
+
+std::optional<std::vector<std::string>> parse_identifier_list(std::string_view text) {
+  // From ClickHouse 26.5 the catalogue keeps the parentheses of a single expression written in
+  // them: `ORDER BY (id)`, which is how a one-column key is rendered here, reads back `(id)`, where
+  // 26.4 and every release before it - 24.8, 25.3, 25.8, 26.3 among them - read `id`; a list of two
+  // or more reads `a, b` on all of them (measured). One pair around the whole of a list is the same
+  // list, and only a list may be inside it: no name outside backticks holds a parenthesis, so a pair
+  // that is not the outermost - `(a) + (b)` - leaves text that is not one.
+  return parse_names(parenthesised(text).value_or(text));
+}
+
+namespace {
+
+/// `toYYYYMM(\`at\`)` and nothing else: one function of one name, without parentheses around it.
+std::optional<PartitionKey> parse_function_key(std::string_view text) {
+  // ([A-Za-z][A-Za-z0-9]*)\((.*)\), whole: `.` stops at a newline.
+  std::size_t at = 0;
+  const auto letter = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+  if (text.empty() || !letter(text[0])) return std::nullopt;
+  while (at < text.size() && (letter(text[at]) || (text[at] >= '0' && text[at] <= '9'))) ++at;
+  if (at >= text.size() || text[at] != '(' || text.back() != ')' || text.size() < at + 2) {
+    return std::nullopt;
+  }
+  const std::string_view inner = text.substr(at + 1, text.size() - at - 2);
+  if (inner.find('\n') != std::string_view::npos) return std::nullopt;
+  const auto names = parse_names(inner);
+  if (!names || names->size() != 1) return std::nullopt;
+  return PartitionKey{std::string(text.substr(0, at)), names->front()};
+}
+
+}  // namespace
+
+std::optional<std::optional<PartitionKey>> parse_partition_key(std::string_view text) {
+  if (text.empty()) return std::optional<PartitionKey>{};
+  // A key written in one pair of parentheses reads back in them from ClickHouse 26.5, as above.
+  const auto key = parse_function_key(parenthesised(text).value_or(text));
+  if (!key) return std::nullopt;
+  return std::optional<PartitionKey>(*key);
+}
+
+std::string python_tuple_repr(const std::vector<std::string>& items) {
+  std::string out = "(";
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += python_repr(std::string_view(items[i]));
+  }
+  if (items.size() == 1) out += ",";
+  return out + ")";
 }
 
 }  // namespace detail

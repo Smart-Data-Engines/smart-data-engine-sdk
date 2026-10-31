@@ -13,10 +13,22 @@ from ..placement import PhysicalLayout
 from ..schema import postgres_index_target, schema_statements
 from ._operator import NativeOperator, TableIdentity
 
+CREATION_MARKER = re.compile(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}")
+"""What a staging writes on the table it creates: its project, its stage and the table's name."""
+
 
 def creation_marker(project_id: str, stage_id: str, table: str) -> str:
     suffix = hashlib.sha256(table.encode("utf-8")).hexdigest()[:16]
     return f"sde.stage1.{project_id}.{stage_id}.{suffix}"
+
+
+def native_staging(native: Any) -> Any:
+    """A staging's own tables through ``native``: SQL tables, or Elasticsearch indexes."""
+    if native.dialect == "elasticsearch":
+        from ._elasticsearch_operator import ElasticsearchStaging
+
+        return ElasticsearchStaging(native)
+    return NativeStaging(native)
 
 
 class NativeStaging:
@@ -68,7 +80,7 @@ class NativeStaging:
     def create_table(
         self, *, entity: str, layout: PhysicalLayout, keys: Mapping[str, Sequence[str]], marker: str
     ) -> TableIdentity:
-        if re.fullmatch(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}", marker) is None:
+        if CREATION_MARKER.fullmatch(marker) is None:
             raise MigrationRefused("staging creation marker is not valid protocol metadata")
         table = layout.tables[entity]
         present = self.marker(table)

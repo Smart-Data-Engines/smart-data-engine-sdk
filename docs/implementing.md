@@ -216,6 +216,8 @@ it is about the format.
 | The JSON parser loses a number's lexical form, again | Rust: `serde_json` decodes to `i64`/`u64`/`f64` unless the `arbitrary_precision` feature is on, and it is off by default | Same hazard as Go's `json.Number` and Java's `BigDecimal`, and the same vector finds it: `canonical/005`. Worth knowing that the fix is a feature flag rather than a different call |
 | Map iteration order is randomised, again | Rust: `HashMap` seeds its hasher per process | §8a's ordering rules bind here exactly as they do in Go. `BTreeMap` sidesteps it and is the right default for anything that reaches a document |
 | A skipped suite still runs its body | Node: `describe.skipIf` evaluates its callback, because it has to register the tests it then skips | An engine constructed at that level parses a DSN that is not there and takes the file down at collection, with a refusal that reads like a real one. Build the connection in the hook |
+| A runtime's `strip()` is not a rule | Python's `str.strip()` removes U+001C-U+001F; JavaScript's `trim()` removes U+FEFF and keeps U+0085 | The two libraries accepted different decimal text, with no test failing in either: each agreed with its own runtime. Strip the set `logical-reads.md` names - Unicode's `White_Space` - and nothing your standard library adds. `query/026`-`028` |
+| The reference's interpreter can change its answer | CPython 3.14's `datetime.fromisoformat` reads `24:00:00` as the next midnight; 3.11-3.13 refuse it. Every version reads an offset by its total, so `+10:60` is eleven hours | A library that delegates validation to a parser inherits that parser's version history. Check the ranges yourself before parsing. `query/024`, `025` |
 
 ## Measuring your overhead
 
@@ -243,6 +245,21 @@ Two rules and one warning, all of them learned here rather than reasoned out:
   a ClickHouse query over HTTP from the same process is ~3.4 ms, and the library adds ~140 ns, which
   is 0.13% of the floor. Reporting the **break-even** is worth more than the ratio: an operation
   would have to complete in under ~14 µs before this library cost one percent of it.
+
+**The C++ library measured itself and found more than routing.** It times the whole of a point read
+through its session against an engine that hands back a row it already holds, less that engine's own
+call timed the same way, so everything the session does is in the number and nothing over a socket
+is. Built optimised on the same i3-7100U, the first measurement was 0.64 µs at the median, 2.5% of
+its loopback floor of ~25 µs - C++ makes the cheapest round trip of the three - because every call
+copied the key, sorted it, built a lookup key of copied strings and found the group, the route, the
+engine and the table by name. Decided once per session instead, it is 0.11-0.12 µs without
+telemetry over four runs, 0.37-0.47% of the floor, with a break-even of 11-12 µs. Measuring latency
+costs two reads of the clock and the recorder's atomics: 0.24 µs, 0.6-0.95% of the floor and 0.09%
+of a PostgreSQL point read through the adapter, so with telemetry the gate is the real operation, and
+the floor's number is printed. Two rules come out of it for a compiled language. Gate only an
+optimised, unsanitised build: a debug build of the same code measured nine to fifteen times slower,
+which is the compiler. And measure the cheapest round trip *your* runtime makes: the floor is a
+property of the runtime, and Node's is four times C++'s.
 
 ## Versions, tiers, and the word "supported"
 
@@ -440,8 +457,8 @@ is a rule, and where it is an accident of its runtime.
 at the session and write stages, which need engines; the runner passes them as outside the claim at
 those two stages only, and fails on any stage it does not know. Thirty-one source mutations
 followed. Four survived every vector and every unit test, and a fifth survived the unit tests because
-each of their cases was also refused by a later check; all five are fatal now. The vectors could not
-see these:
+each of their cases was also refused by a later check; all five are fatal now. No vector could see
+these until the change below:
 
 - entities of `key_order` and `partition_by` checked in document order, where §8a says name order;
 - the upper bounds of an index's `granularity` and `max_rows` (only the lower ones are pinned);
@@ -452,8 +469,8 @@ see these:
 - the shadowing refusal, which has no vector at all;
 - padding inside a signature value's quantum, which Python refuses and TypeScript decodes.
 
-**Where the two references coerce, or fail with their runtime's own error, this library refuses
-with the contract's.** Each of these is accepted, or crashes, somewhere in the other two:
+**Where the two references coerced, or failed with their runtime's own error, this library refused
+with the contract's.** Each of these was accepted, or crashed, somewhere in the other two:
 
 - a neutral `atomic` group that overlaps another, repeats a member or has one member;
 - `nullable` that is not a boolean;
@@ -469,16 +486,29 @@ with the contract's.** Each of these is accepted, or crashes, somewhere in the o
 - a signed map whose payload has no canonical form, which both references let out of the loader as
   their canonical encoder's error rather than a map error.
 
-Two smaller divergences between the references themselves came out of choosing which to follow:
-- a signature block that is not an object gets a different message in each;
-- a key set's names sort by code point in Python and by UTF-16 unit in TypeScript.
+Choosing which reference to follow turned up divergences between the two references themselves:
+- a signature block that is not an object got a different message in each;
+- TypeScript decoded any signature value and refused it later, as a signature that does not verify;
+- a key set's names sorted by code point in Python and by UTF-16 unit in TypeScript;
+- TypeScript derived an `{"auto": true}` layout inside the loop over groups, so a group the model
+  does not have was refused as "no model was supplied", and an auto layout before a defect in a
+  group written after it;
+- TypeScript checked `routing`'s shape after coverage, and Python before;
+- TypeScript accepted an empty `groups` object, and an array as `routing`.
 
-One finding is about the suite's own documentation. This page says a `match` is a substring
-compared literally, both reference runners compile it as a regular expression, and four `errors/`
-vectors write `Thing\.amount` - which only a regular expression reads as `Thing.amount`.
+One finding was about the suite's own documentation. This page says a `match` is a substring
+compared literally, both reference runners compiled it as a regular expression, and four `errors/`
+vectors wrote `Thing\.amount`, which only a regular expression reads as `Thing.amount`.
 
-Each of these becomes a vector and a rule in every library in its own change. Until then, this
-library is stricter on exactly these inputs, and says so in its README.
+**Each of these is a rule of the contract now, in all three libraries, with a vector**:
+- `errors/084`-`112`, `121` and `routing/004`, written by `conformance/tools/third_implementation_vectors.py`
+  only after the reference refuses each one with its `match`;
+- the rules are in §4a, §7 and §8a;
+- every runner compares `match` literally, and the four write-stage cases say `Thing.amount`.
+
+The one divergence not made a rule is the spelling of an integral number below contract 4, where
+the contract has no normalisation: `3.0` is a float to a JSON reader that keeps one and the integer
+3 to JavaScript, which has no other kind. A producer writes integers as integers.
 
 What the vectors do not exercise at all was compared with the reference directly, and agreed
 everywhere:
@@ -490,6 +520,190 @@ everywhere:
 - a value written into a message, against Python's `repr`, on 100,000 generated strings and numbers;
 - the whole message of every refusal at the model and map stages, all 76 of them, against the
   reference's own: identical, apart from one function name spelled the C++ way.
+
+#### Tier 2, and the packets no vector signs again
+
+On 7 October 2026 the C++ library passed every `schema/`, `query/` and `migration/` vector, and the
+`errors/` cases at the session and write stages, and claimed Tier 2 before it had an engine adapter:
+the tier is the vectors of §9, and [`implementations.md`](implementations.md) keeps the engines in a
+column of their own. Its runner checks a refusal's exact class, where both reference runners accept a
+subclass.
+
+The signed packets of §7g, §7h and §7j carry their own refusal order, and a vector can pin only one
+defect at a time. So the three loaders were compared with the reference's on 102,384 packets: every
+accepted packet vector, changed at each of its paths - a member removed, another type or a
+neighbouring value put in its place, a member added - and in random pairs, so that two defects meet
+and the order between them is compared too. A change inside a candidate map signs that map and then
+the packet again with a key made for the run, so it reaches the rule it is about instead of stopping
+at a signature. Outcome, fingerprint, record, epochs, payload and the whole message agreed in every
+case outside three classes:
+
+- **this library's map loader is stricter**, as the previous section lists. The reference accepted
+  342 staging packets whose prepared copy declares a column type that is not a type name (`null`,
+  `true`, `{}`), an engine that is not a string or a lag budget that is not a non-negative integer,
+  and an operator would have been handed each of them;
+- **the reference failed with its runtime's own error**: its cutover loader let 1,704 `TypeError`s,
+  `ValueError`s and `AttributeError`s from a malformed layout out as themselves, its staging and
+  index loaders 819 `AttributeError`s, and in 3,567 more cases those two put the runtime's text into
+  the refusal (`'int' object is not iterable`);
+- **an integer past 64 bits**, which §1 requires a language with 64-bit integers to refuse rather
+  than truncate, where the reference went on to the packet's next rule, or accepted it (21 times).
+
+One divergence between the two references came out of it. The reference's staging refusals that
+come from helpers it shares with the cutover packet name a cutover - `cutover stage_id must be 32
+lowercase hexadecimal digits` for a staging - and TypeScript's name a staging. The staging vectors
+pin the class only, apart from two, so neither runner saw it. This library names the packet it
+refuses, as TypeScript does.
+
+Mutation testing followed: 121 source mutations of backfill, verification, its requests, the
+comparison under barriers and the three packets, each a rule removed or loosened, and three controls
+that must survive. The first run left 37 alive, and every one was a rule nothing reached. Most
+staging vectors pin their class only, and several rules refuse an input that a later rule refuses
+as well, with a message of its own, so removing either one left the class right. Each now has a unit test -
+ported from the reference's own tests where it has one - and kills its mutation, except two that
+no input reaches: a cutover's check that its one copy is written to, behind the verification
+request, which already refuses a map without that fan-out; and its check of the terminal map's
+engine, behind the comparison of the whole materialisation, engine included. Both stay, as in the
+reference. One rule changed on the way: the comparison under barriers asked an engine to check its
+tables with the keys, so a real adapter would also have read the physical design; it now checks the
+columns alone, as the reference does.
+
+#### The PostgreSQL adapter, against the reference on one server
+
+The first engine adapter, PostgreSQL over libpq, came the same day. Its live tests are the
+reference's PostgreSQL slice ported test by test, and wherever one compares a message the expected
+text was captured from the reference's adapter against the same server. The cases the reference does
+not test - fence DDL inside a transaction, a table with inheritance and a view, the reserved column
+made by hand in five other definitions, a group whose table is gone - ran against it the same way,
+and agreed in class and text. Two things for whoever writes the next adapter over libpq:
+
+- **the driver's defaults are part of the reference's behaviour.** psycopg gives the adapter a
+  connection timeout the DSN can override, UTF-8 whatever the DSN says, the server's message without
+  its severity, a class name for each SQLSTATE in `sde.write.failed`, and silence about a server's
+  notices. libpq prints every notice on stderr unless told otherwise, and every schema statement
+  after an application's first start raises one;
+- **the reference's own test of a barrier's wait cannot see the drain's lock.** The first freeze waits
+  for writers in its `ALTER TABLE`, so removing the `LOCK TABLE` leaves that test green. The lock is
+  what proves the table quiet on a retry, when the constraint exists, no DDL runs, and a delete - which
+  no `CHECK` refuses - still holds the table. The C++ suite tests that case, the reference's adapter
+  waits in it too, and the other two libraries test it as well since #121;
+- **the reference applied its connection bound only when the DSN did not contain the word, until
+  #119.** It tested `"connect_timeout" not in dsn`, so a DSN that merely mentioned it - in an
+  application name, a password - lost the bound: against a host that accepts and never answers,
+  measured, its connect was still waiting after 20 s, where the plain DSN gave up at 10. It reads the
+  DSN's keys as libpq does since #119. TypeScript matches the parameter, and this library hands libpq
+  its default before the DSN, so only a `connect_timeout` the DSN sets overrides it; a live test holds
+  the mentioned case at ten seconds.
+
+#### The ClickHouse adapter, against the reference on one server
+
+The second adapter, ClickHouse over its HTTP interface through libcurl, is ported the same way: the
+connection URI first, compared with the reference's parser on 102,000 generated URIs - outcome,
+message and every field equal, the timeouts to the bit - and then the adapter, whose every compared
+message was captured from the reference against the same server. Three things for whoever writes
+the next one:
+
+- **the driver's settings are part of the reference's behaviour.** clickhouse-connect runs every
+  exchange in a UTC session with ISO output, keeps a silent connection alive with progress headers
+  and never resends an exchange. An adapter on plain HTTP has to ask for each of these on every
+  request, or a server's time zone moves a moment and a lost reply becomes a second insert;
+- **text formats let the server change a value.** The reference's driver moves rows in ClickHouse's
+  binary Native format. Rows sent as JSON are clamped by the server to the range it prints -
+  measured on ClickHouse 24.8, a `Date32` of year 1 is stored as 1900-01-01 and a `DateTime64` of
+  year 9999 as 2299-12-31, without an error - so this library uses `RowBinaryWithNamesAndTypes` both
+  ways;
+- **a decimal with more digits than its column is changed silently, and differently per engine.**
+  Measured through the reference's adapters on 7 October: `Decimal("1.239")` saved into a
+  `decimal(12,2)` field is stored as 1.23 in ClickHouse, truncated by the driver, and as 1.24 in
+  PostgreSQL, rounded by the server - one save, two values - and `Decimal("12345678901.23")` is
+  stored in ClickHouse as 12345678901.20, where PostgreSQL refuses it with `numeric field
+  overflow`. This library's ClickHouse adapter refused both before sending anything. The fix that
+  makes the engines agree belonged to the contract, and is there now: admission (§8b, point 4)
+  refuses a value its field's type does not hold, a decimal's extra digits included, in every
+  library and before any engine. The same driver cuts a
+  moment's fraction a `DateTime` or `DateTime64(3)` does not keep, stores an enum name its type
+  does not declare as 0 - a row no later read can print - and on reading cuts nanoseconds; none of
+  these is in a layout this library renders, all of them are in a table a hand-written map can
+  name;
+- **the statement is the request's body.** The reference's driver sends it there, and only an
+  INSERT that carries rows names its statement - which holds no value - in the URL. A URL is what a
+  proxy between the application and the server logs: the TypeScript library sent every statement
+  in one, a get's key and a read's filters with it, until #117, and so did this one until a test
+  read the request line;
+- **a drain's intent is written synchronously whatever the login's defaults.** A login can make
+  inserts asynchronous and unacknowledged by default; the intent row has to be in the table before
+  the DETACH it describes, or an interrupted drain has no record to resume by. The insert carries
+  `async_insert=0` and `wait_for_async_insert=1` itself, and a test holds it with a login whose
+  defaults say the opposite;
+- **a catalogue's refusal is the server's code, read where the code is.** The reference tells a
+  login refused a size from an engine that failed by its driver's error - SQLSTATE 42501, code 497.
+  This library looked for "42501" in the adapter's message, which carries the server's words and
+  never the code, and reported every PostgreSQL refusal as a failure; its unit test passed because
+  the fake put the code in the text. The adapter now says it by an error's type;
+- **libcurl checks a certificate's host name after the handshake.** Python's `ssl` checks it
+  during, so a server sees a TLS alert from the reference and none from this library for another
+  host's certificate. libcurl 8.18 checks an expired chain and an unknown CA after it as well, where
+  8.5 checks them during. What all of them guarantee - no application byte reaches an unverified
+  peer - is the claim to test;
+- **the catalogue's text is a server release's.** From ClickHouse 26.5 the catalogue keeps the
+  parentheses of a single expression written in them: the one-column sort key every library renders
+  as `ORDER BY (id)` reads back `(id)` in `system.tables`, and a partition key or a skipping index's
+  expression written in parentheses likewise, where 26.4 and every earlier release - 24.8, 25.3,
+  25.8, 25.12, 26.3 measured - read `id`; a list of two or more reads `a, b` on all of them. The
+  reference's catalogue parser refused the parentheses, so on 26.5 every table it created read as
+  another design: a session reported a physical mismatch for each, and provisioning, staging and a
+  copy under a new generation refused - its own slice failed there, and so did 30 live tests of this
+  library on 26.9 before its parser took one pair of parentheses around a whole list. The reference
+  and TypeScript take the same reading since 0.2.0 (#116). The same
+  release changed the words of a refused read (`identifier 'missing'. In scope` for `'missing' in
+  scope`), so a test that compares a server's words asks the server for them. CI tested 24.8 alone;
+  it now runs this library's live tests against a current release too.
+
+#### The orderbook adapter, over the engine's own protocol
+
+The third adapter speaks our engine's text protocol itself, over TCP or TLS 1.3, as the TypeScript
+one does: the engine ships a Python client and no C++ one, and a library that linked the engine
+would put the engine's code into every client that places nothing there. The reference does not
+speak the protocol at all - it calls the engine's Python client - so for this adapter **the
+reference is two programs**: the adapter, whose decisions and words this one ports, and the client
+it calls, whose framing, timeouts and words the adapter puts into its own messages (`query failed:
+…: TCP recv timeout`). Both were read at the engine commit the CI job pins, and every expected text
+was captured from them: the DSN against the reference's parser on 280,000 generated DSNs, the
+answer and STATUS parsing against the client's own functions, the connection failures - TLS among
+them - against the reference connecting to the same servers. What whoever writes the next one
+needs:
+
+- **the DSN's numbers are Python's.** The timeout is `float()` of text and the client reads every
+  number of an answer with `int()`, so `1_0` is ten seconds, an Arabic-Indic three is three, `inf`
+  is accepted, and U+001C to U+001F - which `str.isspace()` calls whitespace - are not stripped,
+  because `float()` strips C's whitespace once Python's has become a space. A port that reads them
+  with its own parser agrees on every DSN a person writes and disagrees on the ones a generator
+  writes; this one disagreed twice before the differential found it, the second time on a
+  four-hundred-digit mantissa no corpus had;
+- **every wait is bounded by silence, not by the answer.** The client sets one socket timeout, so a
+  slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
+- **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
+  its answer may still arrive, and the next command would read it as its own (the engine's #171).
+  The reference kept the closed client and `connect()` did nothing until `close()`, until #122 made
+  it ping and replace a closed one; this library says the reason on every call in between and lets
+  `connect()` open another;
+- **a write that cannot be sent is not a write that may have been stored.** The reference read its
+  client inside the write's own failure, so it reported a write it never sent as one whose outcome
+  was unknown. This library refuses it first, as TypeScript does, and as the reference does since
+  #122;
+- **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
+  address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
+  CPython cannot wait for, refused only at connect. This library connects to either family and
+  reproduces the second, which is a rule for the DSN in every library;
+- **TLS refusals are CPython's words without CPython's line.** `[SSL: CERTIFICATE_VERIFY_FAILED]
+  certificate verify failed: Hostname mismatch, certificate is not valid for 'host'.`, an end of the
+  stream inside the handshake as `EOF occurred in violation of protocol`, a reset as the socket's
+  `[Errno 104]`; CPython appends `(_ssl.c:1000)`, which names its own source.
+
+Each difference from the reference or from TypeScript is a finding for the contract, to become a
+rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepted an
+invisible format character the reference refuses, until #123), a key of another type in a point read
+(TypeScript answers "no row" where the reference reads it with `int()`), and the four above.
 
 ### Verification-request protocol check
 
@@ -521,3 +735,33 @@ schema/migration vectors. It pins normalized filters, typed positions, bounds an
 summary results. Native tests must separately execute the generated SQL against each supported
 engine; a normalized plan alone does not prove ordering, null handling or arithmetic in that engine.
 The query family does not change the model/map bytes or migration checkpoint ordering.
+
+**13. Book streams (Tier 2, with the orderbook engine). Vectors: `books/`.**
+
+Cases of two kinds, and no connection anywhere. A `diff` case is a function of two sides. A `stream`
+case drives a stream with clocks you inject - the policy clock in seconds and, for a step without a
+time, the machine's - into a sink that records what it is handed; `fail_next` makes the sink refuse
+its next send, after which the stream must send that side whole. Compare the sends exactly, times
+included, and refusals by substring; a refused step must send nothing. The rules are §8c of the
+contract. Then run your stream against a live engine and read the book back: the vectors pin what
+you send, and only the engine's own composition shows that it is the book you meant.
+
+**14. Search (Tier 2). Vectors: `search/`.**
+
+The rule is a function of a text, so the vectors need no engine: implement tokens, folding and
+matching from §7l of the contract and compare tokens exactly, as code point sequences. Two cases
+carry most of the risk. `005` is the Kelvin sign, which your language lower-cases to `k` only if it
+uses the Unicode database rather than ASCII. `006` is `U+0130`, whose full lower case most languages
+return as two code points, so a fold that takes `lower()` whole fails it. Then put `search` on your
+session: candidates from your engine in key order, every row checked by your rule before it is
+returned, and the page rules of §7l. Run it against a live engine with rows only the rule can tell
+apart, a decomposed accent and the Kelvin sign among them.
+
+**15. Elasticsearch documents (Tier 2, with Elasticsearch). Vectors: `documents/`.**
+
+A function of a row and its index's columns, so again no engine: from §7m, compute each column's
+stored value, the token field and the `_id`. Compare the `_id` exactly and the source by value. A
+value marked `{"$int": "..."}` is an integer past 2^53: carry it as one, not as a float, or `001`
+fails on its timestamp, its int64 and its decimal. Then `schema/019` and `020` hold the mapping you
+render. The adapter itself is the next step: one index per entity, writes that wait for a refresh,
+and reads that send no text predicate the engine would interpret.

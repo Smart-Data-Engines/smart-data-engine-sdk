@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "match": "exactly those two keys, with the amount as a string",
+  "stage": "model",
+  "why": "Money is a decimal and the canonical encoding has no floating point, so the amount is a string. A number was refused much later, by the encoder, about a path the client never wrote - or not at all, by the loader that checked nothing."
+}

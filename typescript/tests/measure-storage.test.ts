@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { EngineError, loadMap, Recorder, ResourceBusy, Session, windowRecord } from '../src/index.js'
+import { HttpStatus } from '../src/engines/elasticsearch.js'
 import { MemoryEngine } from '../src/testing/memory.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
@@ -89,6 +90,9 @@ describe('Session.measureStorage', () => {
     [Object.assign(new Error('denied'), { code: '42501' }), 'refused'],
     [new Error('Code: 497. DB::Exception: Not enough privileges'), 'refused'],
     [new Error('connection reset by peer'), 'failed'],
+    // Elasticsearch: a key without the monitor privilege, and any other refused answer.
+    [new HttpStatus(403), 'refused'],
+    [new HttpStatus(500), 'failed'],
   ])('turns a refused or failed read into an unknown size (%s)', async (cause, reason) => {
     const error = new EngineError('storage sizes could not be read', { cause })
     const session = await twoGroups(new Catalogued({}, error), new Catalogued({ labels: [9, 0] }, undefined, 'other'))

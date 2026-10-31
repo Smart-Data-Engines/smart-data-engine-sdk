@@ -10,11 +10,16 @@
 ///   (section 7d: `2.0` is `2` before signing and fingerprinting). Which spellings are integral is
 ///   decided by the double Python's `float()` makes of them, so it is decided the same way here.
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "python_url.hpp"
 #include "sde/json.hpp"
+#include "sde/value.hpp"
 
 namespace sde::detail {
 
@@ -35,6 +40,18 @@ namespace sde::detail {
 /// `repr()` of a list of strings.
 [[nodiscard]] std::string python_repr(const std::vector<std::string>& texts);
 
+/// `str.isspace()` for one code point, which is also what `\s` matches in a pattern over text: the
+/// 29 Python reads as whitespace (Unicode's `White_Space` plus the separators U+001C to U+001F).
+/// For reading what the reference reads with Python's own rules - an engine's constraint text - and
+/// not a rule of the contract, which names Unicode's property instead (`strip_white_space`).
+[[nodiscard]] bool python_space(char32_t code_point) noexcept;
+
+/// The byte length of a Python whitespace code point at `pos`, or 0 when there is none.
+[[nodiscard]] std::size_t python_space_at(std::string_view text, std::size_t pos) noexcept;
+
+/// `text.strip()`. Stops at an ill-formed byte, which is not whitespace.
+[[nodiscard]] std::string_view python_strip(std::string_view text) noexcept;
+
 /// `type(value).__name__`: `NoneType`, `bool`, `int`, `float`, `str`, `list`, `dict`.
 [[nodiscard]] std::string python_type_name(const Json& value);
 
@@ -52,6 +69,36 @@ namespace sde::detail {
 /// The exact decimal digits of a finite integral double, however large: `int(1e20)` is
 /// `100000000000000000000`.
 [[nodiscard]] std::string integral_double_digits(double value);
+
+/// `str.isprintable()` for one code point: not in Other (Cc, Cf, Cs, Co, Cn) or Separator (Zl, Zp,
+/// Zs), the ASCII space excepted.
+[[nodiscard]] bool python_printable(char32_t code_point) noexcept;
+
+/// `repr()` of a byte string: `b'...'`, single quotes unless it holds a single quote and no double
+/// one, `\t`, `\n`, `\r`, `\\` and the quote escaped, and every byte outside space to `~` as `\x..`.
+[[nodiscard]] std::string python_bytes_repr(std::string_view bytes);
+
+// The Python object a value is in the reference, written and read the way Python writes and reads
+// it. A `json` field's document is the object `json.loads` makes of it: a string there is a `str`,
+// an integer an `int`, a fraction a `float`, an array a `list` and an object a `dict`.
+
+/// `repr(value)`: `None`, `True`, `5`, `2.5`, `Decimal('1.50')`, `'text'`, `b'\x00'`,
+/// `UUID('...')`, `datetime.date(2026, 10, 7)`, `datetime.datetime(2026, 10, 7, 12, 0)` - with
+/// `tzinfo=datetime.timezone.utc` for an instant - or a document's object.
+[[nodiscard]] std::string python_value_repr(const Value& value);
+/// `type(value).__name__`: `NoneType`, `bool`, `int`, `float`, `Decimal`, `str`, `bytes`, `UUID`,
+/// `date`, `datetime`, or a document's object's.
+[[nodiscard]] std::string python_value_type_name(const Value& value);
+/// `str(value)`: a string itself, a decimal as `Decimal.__str__` writes it (`1E-7`), a moment as
+/// `isoformat(sep=' ')`, anything else as its `repr`.
+[[nodiscard]] std::string python_value_str(const Value& value);
+/// `int(value)`: a bool its 0 or 1, a float or a decimal truncated toward zero, text read as
+/// `int()` reads it, a UUID its 128-bit number. Refuses (`EngineError`) with the message of the
+/// `TypeError`, `ValueError` or `OverflowError` Python raises: `int() argument must be a string, a
+/// bytes-like object or a real number, not 'date'`, `invalid literal for int() with base 10: 'x'`.
+[[nodiscard]] python_url::PythonInt python_value_int(const Value& value);
+/// The integer, when it fits in an `int64`.
+[[nodiscard]] std::optional<std::int64_t> to_int64(const python_url::PythonInt& value) noexcept;
 
 /// Map contract 4's `json_numbers`: every number whose value is integral becomes an integer
 /// lexeme - `2.0`, `2e0` and `20e-1` all become `2` - and every other number is left as written,

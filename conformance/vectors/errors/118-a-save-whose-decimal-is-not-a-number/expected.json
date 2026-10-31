@@ -1,7 +1,7 @@
 {
   "error": "ModelPlanningError",
   "stage": "write",
-  "match": "Entry\\.amount is decimal\\(12,2\\) and this row gives it a value that is not an exact decimal",
+  "match": "Entry.amount is decimal(12,2) and this row gives it a value that is not an exact decimal",
   "write": {
     "accepted": {
       "operation": "save",

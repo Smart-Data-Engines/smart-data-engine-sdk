@@ -12,14 +12,15 @@ from .groups import colocation_groups
 from .local_cutover import CutoverRecoveryRequired
 from .physical import refuse_findings
 from .placement import WATERMARK_TABLE
-from .staging import StagingPlan, StagingReceipt, load_staging_plan
+from .staging import STAGING_RELAYOUT_PROTOCOL, StagingPlan, StagingReceipt, load_staging_plan
+from .watermark import newer_map
 
 if TYPE_CHECKING:
     from .local_cutover import LocalCutover
 
 
 def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) -> dict[str, Any]:
-    from .engines._staging import NativeStaging, creation_marker
+    from .engines._staging import creation_marker, native_staging
 
     plan.check_current(operator.active_map())
     # Engines whose groups carry no write generation (contract 6) need no binding here.
@@ -32,8 +33,16 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
         raise MigrationRefused("staging is missing a configured local engine binding")
     group = next(value for value in colocation_groups(operator.model) if value.name == plan.group)
     target = plan.prepared.groups[plan.group].derived[0]
+    if (
+        plan.as_record()["protocol"] == STAGING_RELAYOUT_PROTOCOL
+        and operator.native[target.engine].dialect == "elasticsearch"
+    ):
+        raise MigrationRefused(
+            "Elasticsearch has no physical design to relayout: a layout there names its fields "
+            "and nothing else, so a relayout (staging protocol 2) has no object"
+        )
     keys = {entity: operator.model.entity(entity).key for entity in group.members}
-    NativeStaging(operator.native[target.engine]).preflight(target.layout, keys)
+    native_staging(operator.native[target.engine]).preflight(target.layout, keys)
     sources = []
     allowed: dict[str, set[str]] = {name: {WATERMARK_TABLE} for name in operator.engines}
     for placed in fenced_groups(plan.current).values():
@@ -60,7 +69,8 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
     for name, native in operator.native.items():
         value = operator.engines[name].map_watermark()
         if value is not None and value > plan.current.map_version:
-            raise MigrationRefused("a newer map was adopted before local staging")
+            raise newer_map("a newer map was adopted before local staging", name,
+                            operator.engines[name].dialect, value, plan.current.map_version)
         native.qualify([WATERMARK_TABLE], sorted(allowed[name]))
         bindings[name] = {
             "endpoint": list(native.endpoint()),
@@ -122,7 +132,7 @@ def _finish(
     operator: LocalCutover, state: dict[str, Any], plan: StagingPlan, *, recovered: bool
 ) -> StagingReceipt:
     from .engines._operator import TableIdentity
-    from .engines._staging import NativeStaging
+    from .engines._staging import native_staging
 
     execution = state["execution"]
     if execution["decision"] == "abandoned":
@@ -142,7 +152,7 @@ def _finish(
         if native.principal_ids != binding["principals"]:
             raise MigrationRefused("a runtime login identity changed during staging")
     _recheck_sources(operator, execution)
-    creator = NativeStaging(operator.native[target.engine])
+    creator = native_staging(operator.native[target.engine])
     for row in execution["tables"]:
 
         def create(row: dict[str, Any] = row) -> None:
@@ -204,10 +214,11 @@ def _finish(
     operator._after_step("stage_decision")
 
     def watermarks() -> None:
-        for engine in operator.engines.values():
+        for name, engine in operator.engines.items():
             observed = engine.map_watermark()
             if observed is not None and observed > plan.prepared.map_version:
-                raise MigrationRefused("a newer map appeared while finishing staging")
+                raise newer_map("a newer map appeared while finishing staging", name,
+                                engine.dialect, observed, plan.prepared.map_version)
             engine.record_map_version(
                 plan.prepared.map_version, model_version=operator.model.version
             )
@@ -258,7 +269,7 @@ def _abandon(
     nothing. Anything under a staging name that is not this staging's is left where it is.
     """
     from .engines._operator import TableIdentity
-    from .engines._staging import NativeStaging
+    from .engines._staging import native_staging
 
     execution = state["execution"]
     target = plan.prepared.groups[plan.group].derived[0]
@@ -266,7 +277,7 @@ def _abandon(
     native = operator.native[target.engine]
     if list(native.endpoint()) != binding["endpoint"]:
         raise MigrationRefused("a staging binding names another native database")
-    creator = NativeStaging(native)
+    creator = native_staging(native)
     for row in execution["tables"]:
 
         def drop(row: dict[str, Any] = row) -> None:

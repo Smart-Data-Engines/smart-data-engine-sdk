@@ -7,7 +7,8 @@
 PY := python/.venv/bin
 
 .PHONY: help check python-check python-test python-lint python-types ts-check ts-test ts-types \
-        cpp-build cpp-check conformance tls-check clean pg-up pg-down ch-up ch-down engines-up engines-down
+        cpp-build cpp-check conformance tls-check clean pg-up pg-down ch-up ch-down engines-up engines-down \
+        es-up es-down
 
 help:
 	@echo "check         everything CI runs"
@@ -17,6 +18,7 @@ help:
 	@echo "conformance   run the shared vectors in every language that has them"
 	@echo "tls-check     isolated TLS engines; set TLS_SCRATCH and optional TLS_DOCKER_FLAGS=--sudo"
 	@echo "engines-up    start both engines the integration slices need"
+	@echo "es-up         start Elasticsearch for the search slice, and print its DSN"
 	@echo "engines-down  stop them"
 	@echo "pg-up/ch-up   start one of them"
 
@@ -33,10 +35,10 @@ python-check: python-lint python-types python-test
 # it is the last place that should be unchecked. `--config` is explicit so that a pyproject.toml
 # appearing at the repository root could not quietly change the rules for files outside `python/`.
 python-lint:
-	cd python && .venv/bin/ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/value_vectors.py
+	cd python && .venv/bin/ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/value_vectors.py
 
 python-types:
-	cd python && .venv/bin/mypy src tests/qualification ../tools ../examples/trading/trading.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/value_vectors.py
+	cd python && .venv/bin/mypy src tests/qualification ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/value_vectors.py
 
 python-test:
 	cd python && .venv/bin/python -m pytest
@@ -137,6 +139,34 @@ ch-up:
 
 ch-down:
 	-docker rm -f sde_test_ch
+
+# Elasticsearch, for the search slice and the adapter's live tests. Its TLS is on, as it is by
+# default since 8.0, and the DSN this prints carries the CA the container generated, copied out -
+# so the tests verify the server rather than trusting it.
+ES_PORT := 59200
+ES_CA := $(CURDIR)/.sde_es_ca.crt
+
+es-up:
+	@docker start sde_test_es 2>/dev/null || docker run -d --name sde_test_es \
+		-e discovery.type=single-node -e ELASTIC_PASSWORD=sde -e ES_JAVA_OPTS="-Xms1g -Xmx1g" \
+		-e cluster.routing.allocation.disk.threshold_enabled=false \
+		-p 127.0.0.1:$(ES_PORT):9200 elasticsearch:9.5.5
+	@n=0; until docker cp sde_test_es:/usr/share/elasticsearch/config/certs/http_ca.crt $(ES_CA) 2>/dev/null \
+		&& curl -fsS --cacert $(ES_CA) -u elastic:sde -o /dev/null https://127.0.0.1:$(ES_PORT)/; do \
+		n=$$((n+1)); \
+		if [ $$n -ge $$(( $(READY_TIMEOUT) * 3 )) ]; then \
+			echo "sde_test_es was not ready after $$(( $(READY_TIMEOUT) * 3 ))s"; \
+			docker logs --tail 20 sde_test_es; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done
+	@chmod 644 $(ES_CA)
+	@echo "export SDE_ELASTICSEARCH_DSN='elasticsearch+https://elastic:sde@127.0.0.1:$(ES_PORT)/?ca_cert=$$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' $(ES_CA))'"
+
+es-down:
+	-docker rm -f sde_test_es
+	-rm -f $(ES_CA)
 
 clean:
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

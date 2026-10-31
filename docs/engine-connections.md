@@ -4,9 +4,9 @@ Connection URIs and CA files stay in the customer's application/operator environ
 not placement-map fields and must not be uploaded to the control plane. A signed map authenticates
 placement instructions; it does not authenticate the database server. Configure both boundaries.
 
-## ClickHouse: the same connection intent in Python and TypeScript
+## ClickHouse: the same connection intent in Python, TypeScript and C++
 
-Both SDKs parse this explicit URI profile before opening a connection:
+The SDKs parse this explicit URI profile before opening a connection:
 
 ```text
 https://USER:PASSWORD@db.example.com:8443/DATABASE?ca_cert=%2Fetc%2Fsde%2Froot-ca.pem
@@ -56,16 +56,84 @@ actual application environment. Neither SDK changes process-wide trust configura
 TypeScript adapter explicitly retains verification even if `NODE_TLS_REJECT_UNAUTHORIZED=0` is
 set elsewhere in the process.
 
-The initial ClickHouse handshake has a 15-second receive-inactivity default. Python retains this
-transport inactivity bound for later operations. TypeScript retains its existing unbounded query
-receive default; specifying `send_receive_timeout` bounds later request inactivity too. This
-explicit difference is about the native transports, not a guarantee on analytical query duration.
+The initial ClickHouse handshake has a 15-second receive-inactivity default. Python and C++ retain
+this transport inactivity bound for later operations; C++ also bounds the handshake as a whole by
+it, so a server that answers the handshake a byte at a time cannot hold it open. TypeScript retains
+its existing unbounded query receive default; specifying `send_receive_timeout` bounds later
+request inactivity too. This explicit difference is about the native transports, not a guarantee on
+analytical query duration.
 The connect timeout covers establishment of a new connection. Progress can extend a receive
 inactivity timer. Configure query execution limits at the server when the workload needs them.
 
 No request follows an HTTP redirect or automatically replays a transport-ambiguous operation,
 including the first version/settings request. After a lost response, inspect the uncertain outcome;
 reconnecting does not mean that replaying the write is safe. See [failure semantics](failure-semantics.md).
+
+A statement travels as the body of its request, never in its URL. A URL is what a proxy or a load
+balancer in between logs, and a read's statement holds the values it filters on: a point read's
+holds its key. The URL carries the database and the request's settings. An INSERT whose rows are
+the body may carry its statement there too, which names the table and the columns and holds no
+value. No row value travels in a URL.
+
+## Elasticsearch
+
+Both adapters - `sde.engines.elasticsearch.ElasticsearchEngine` and the TypeScript
+`ElasticsearchEngine` from `@smart-data-engines/sde/engines/elasticsearch` - parse this profile
+before a socket opens:
+
+```text
+elasticsearch+https://USER:PASSWORD@search.example.com:9200/?ca_cert=%2Fetc%2Fsde%2Fsearch-ca.pem
+elasticsearch+https://search.example.com:9200/?api_key=BASE64_ID_COLON_KEY
+elasticsearch+http://USER:PASSWORD@127.0.0.1:9200/
+```
+
+| Scheme | Default port | Transport |
+|---|---:|---|
+| `elasticsearch+https` | 9200 | TLS 1.2 or later, certificate chain and host/IP verified |
+| `elasticsearch+http` | 9200 | Plain HTTP, **to a loopback address only** |
+
+Elasticsearch has served TLS by default since 8.0, so plain HTTP is refused for any other host: it
+would carry the credentials in the clear. Credentials are a user and password in the URL, sent as
+Basic authentication, or an `api_key` option - the encoded key Elasticsearch returns - sent as
+`ApiKey`, never both. The user and password are percent-encoded UTF-8, and a user part (`@` in the
+authority) has a nonempty user: `:secret@` is refused rather than connected without the secret. An
+`api_key` is base64 with its padding. Both adapters read every profile the same way, and neither
+prints the credentials: Python's `repr` and TypeScript's `inspect`, `JSON.stringify` and `String`
+leave them out, of the engine and of the parsed profile.
+
+| Query option | Accepted meaning |
+|---|---|
+| `api_key` | The encoded API key; refused beside a user. |
+| `ca_cert` | Absolute path to a readable PEM CA file, on TLS. Nonempty regular file, at most 1 MiB. |
+| `verify` | Omit or literal `true`, on TLS. Disabling verification is refused. |
+| `connect_timeout` | Seconds from 0.001 through 2147483.647, digits with an optional fraction (no exponent); default 10. |
+| `send_receive_timeout` | The same range; default 30. Socket inactivity, not a total deadline. |
+
+Unknown, repeated and malformed options, a path, a fragment, whitespace and an IPv6 zone are
+refused. A supplied CA replaces the default trust roots for that connection. Each adapter uses
+its platform's own HTTP client on one keep-alive connection, and follows no redirect. Neither
+replays anything:
+- Python replaces a connection the server closed while idle before it writes a request.
+- TypeScript closes a pooled connection after 20 seconds idle, before a server or a balancer
+  closes it under a request.
+- A response lost after a request was sent is reported as an outcome nobody knows, and is not
+  replayed: a replayed write could put an older document over a newer one.
+
+TypeScript reads responses with every integer past 2^53 as a `bigint` and writes a `bigint` as its
+digits. `JSON.parse` would turn a microsecond after the year 2255, or an int64, into another number.
+
+The login needs `index`, `read` and `view_index_metadata` on the indexes of its layout, and the
+same on `sde_map_state` for the map's rollback protection; the adapter reads that index before
+anything creates it, so no `create_index`. A group carries a write generation (§7m), so a session
+reads its fence when it opens, which takes the cluster privilege `read_pipeline` as well.
+Measuring the group's size (`Session.measure_storage()`) reads `_stats`, which takes `monitor` on
+the indexes; without it the size is unknown, `refused` ([runtime roles](runtime-roles.md)).
+Provisioning the fence, and every barrier a migration takes, needs a separate login: `manage` on the
+layout's indexes and the cluster privilege `manage_pipeline`. A runtime key without them cannot lift
+a fence it writes under, which the live tests check. The local operator also reads the cluster's
+identity (`monitor`), and creates, copies into and deletes staged copies, so a login of its own has
+`all` on the layout's indexes, `sde_m_*`, `sde_map_state` and `sde_backfill_state`
+([local cutover](local-cutover.md#elasticsearch-access-by-blocks)).
 
 ## PostgreSQL
 

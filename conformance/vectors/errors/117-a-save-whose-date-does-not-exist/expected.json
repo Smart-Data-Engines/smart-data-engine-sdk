@@ -1,7 +1,7 @@
 {
   "error": "ModelPlanningError",
   "stage": "write",
-  "match": "Entry\\.day is date and this row gives it a value that is not a date",
+  "match": "Entry.day is date and this row gives it a value that is not a date",
   "write": {
     "accepted": {
       "operation": "save",

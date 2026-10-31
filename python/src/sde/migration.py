@@ -120,6 +120,8 @@ DIALECT_PRECISION: Mapping[tuple[str, str], int] = {
     ("timestamptz", "postgres"): 6,
     ("timestamp", "clickhouse"): 6,
     ("timestamptz", "clickhouse"): 6,
+    ("timestamp", "elasticsearch"): 6,
+    ("timestamptz", "elasticsearch"): 6,
 }
 """Sub-second digits each dialect keeps, for the neutral types where dialects differ.
 

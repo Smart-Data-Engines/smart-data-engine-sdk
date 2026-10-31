@@ -1,0 +1,1 @@
+A document is addressed by its key, so a key field cannot be null.

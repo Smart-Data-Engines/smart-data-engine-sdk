@@ -15,7 +15,7 @@ import pytest
 from test_runtime_privileges_live import runtime_roles
 
 import sde
-from sde.local_cutover import LocalCutover
+from sde.local_cutover import CutoverRecoveryRequired, LocalCutover
 from sde.placement import WATERMARK_TABLE
 
 PROJECT = "1" * 32
@@ -975,8 +975,8 @@ def test_enrollment_persists_the_verified_input_snapshot(tmp_path: Path, monkeyp
         document = plan.as_record()["before"]
         original = placement._verify_signature
 
-        def change_caller(raw: Any, keys: Any) -> Any:
-            result = original(raw, keys)
+        def change_caller(raw: Any, keys: Any, **options: Any) -> Any:
+            result = original(raw, keys, **options)
             document["map_version"] = 99
             return result
 
@@ -993,3 +993,41 @@ def test_enrollment_persists_the_verified_input_snapshot(tmp_path: Path, monkeyp
             local.enroll(document)
         assert document["map_version"] == 99
         assert local.active_map().fingerprint == plan.before.fingerprint
+
+
+@pytest.mark.parametrize("when", ["before", "while"])
+def test_a_newer_map_that_overtakes_a_cutover_is_named_with_both_versions(
+    when: str, tmp_path: Path
+) -> None:
+    with fixture("postgres", tmp_path) as (
+        executor, plan, _old, roles, _source, target, model, _key,
+    ):
+        newer = max(plan.success.map_version, plan.abort.map_version) + 5
+
+        def adopt() -> None:
+            roles[target].operator.record_map_version(newer, model_version=model.version)
+
+        if when == "before":
+            adopt()
+            event, in_force = "was adopted before this local cutover", plan.before.map_version
+        else:
+            executor._after_step = lambda step: adopt() if step == "watermarks:intent" else None
+            event, in_force = "appeared while completing cutover", plan.success.map_version
+        expected = (
+            f"a newer map {event}: {target} records map version {newer}, and the map this "
+            f"operation was prepared from is version {in_force}."
+        )
+        if when == "before":
+            with pytest.raises(sde.MigrationRefused) as refused:
+                executor.execute(plan)
+            assert str(refused.value) == expected
+        else:
+            # After its durable decision the operation is resumed, not refused: the reason it
+            # stopped is beneath the error that says so.
+            with pytest.raises(CutoverRecoveryRequired) as stopped:
+                executor.execute(plan)
+            reasons, error = [], stopped.value.__cause__
+            while error is not None:
+                reasons.append(str(error))
+                error = error.__cause__
+            assert expected in reasons
