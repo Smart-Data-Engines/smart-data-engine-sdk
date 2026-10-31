@@ -518,11 +518,18 @@ void drive_operations(const std::filesystem::path& directory, const sde::Model& 
 
   // Rows compared as multisets: a fan-out written at the wrong moment loses exactly the rows a
   // migration exists not to lose, and nothing raises.
+  // Each held value as the vectors write it: what reaches an engine is the form a filter gets.
   sde::Json got = sde::Json::object();
   for (const auto& [name, engine] : engines) {
     sde::Json tables = sde::Json::object();
     for (const auto& [table, rows] : engine->tables) {
-      tables.set(table, sorted_rows(table_json(rows)));
+      sde::Json written = sde::Json::array();
+      for (const sde::Row& row : rows) {
+        sde::Json item = sde::Json::object();
+        for (const auto& [column, value] : row) item.set(column, sde::testing::vector_form(value));
+        written.as_array().push_back(std::move(item));
+      }
+      tables.set(table, sorted_rows(std::move(written)));
     }
     got.set(name, std::move(tables));
   }

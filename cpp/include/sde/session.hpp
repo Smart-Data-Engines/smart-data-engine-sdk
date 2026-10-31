@@ -150,6 +150,8 @@ class Session {
   struct Admission {
     std::set<std::string> declared;
     std::vector<std::string> required;  ///< code point order: the order a refusal names
+    /// Each typed field, its neutral type and its check, in code point order (section 8b point 4).
+    std::vector<std::tuple<std::string, std::string, std::function<Value(const Value&)>>> checks;
   };
   struct Deferred {
     std::string engine;
@@ -171,7 +173,8 @@ class Session {
   /// `sde.schema.physical_mismatch`, when the tables differ from the design: on opening and on
   /// `ensure_schema`, as the reference reports it.
   void report_physical() const;
-  void admit(std::string_view entity, const std::string& target, const Row& values) const;
+  [[nodiscard]] Row admit(std::string_view entity, const std::string& target, const Row& values) const;
+  [[nodiscard]] Row typed(std::string_view entity, const Admission& admission, Row values) const;
   [[nodiscard]] const OperationShape& shape(const std::string& entity, std::string_view kind,
                                             const std::vector<std::string>& fields = {}) const;
   [[nodiscard]] std::pair<Engine*, const Materialization*> target(const OperationShape& shape,

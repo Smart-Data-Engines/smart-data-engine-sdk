@@ -40,6 +40,7 @@ add_executable(sde_unit_tests
   unit/test_schema.cpp
   unit/test_write_fence.cpp
   unit/test_session.cpp
+  unit/test_admission.cpp
   unit/test_packets.cpp
   unit/test_migration.cpp
   unit/test_verification.cpp

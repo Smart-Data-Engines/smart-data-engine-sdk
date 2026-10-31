@@ -279,7 +279,9 @@ row of the reference's, and its telemetry window of the traffic is the reference
   Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
   was, and a value its column cannot hold - an integer out of range, a decimal or a moment with more
   digits than the column keeps, an enum name its type does not declare - is refused before
-  anything is sent, where the reference's driver changes it silently
+  anything is sent. The reference's driver still cuts a moment's extra digits and stores an
+  undeclared enum name as 0, silently, and changed a decimal's extra digits until §8b point 4 made
+  them every library's refusal
   ([`docs/implementing.md`](../docs/implementing.md#the-third-implementation-c)). Every read of a
   table reads `FINAL`. A write barrier is a constraint and a drain - the table detached and attached
   again, in an Atomic database, after a durable intent naming its UUID - so an interrupted drain is

@@ -38,6 +38,9 @@ Both SDKs export `MAX_BATCH_ROWS = 1000` and `MAX_BATCH_VALUES = 60000`. A batch
   TypeScript, null or `undefined`). The whole batch is refused before anything is sent, naming the
   row and the field: `row 1: Note.body is required and this row gives it null` (format contract
   §8b, `errors/082`).
+- Every value is one its field's type holds, in a form a filter of that type takes: `row 1:
+  Entry.count is int32 and this row gives it an integer outside int32` (§8b point 4,
+  `errors/113`-`120`). A row is checked whole before the next, in order.
 
 The value limit is below PostgreSQL's [65535 query-parameter limit](https://www.postgresql.org/docs/15/limits.html).
 A local PostgreSQL 15 probe accepted 60000 and 65535 parameters and refused 65536. These are
@@ -50,14 +53,18 @@ group, then returns without I/O, capability requirements or telemetry. Engine fa
 `EngineError`. The single-row `save` checks the same declaration since 2 October 2026: a field the
 entity does not declare, a required field left out and a required field given null are each refused
 with `ModelPlanningError` before any engine is called. Before that, PostgreSQL stored NULL in a
-required field and ClickHouse stored `0` or `""` for one left out (§8b).
+required field and ClickHouse stored `0` or `""` for one left out (§8b). Since 7 October 2026 both
+refuse a value its field's type does not hold as well. Before that, a decimal was rounded by
+PostgreSQL and truncated by ClickHouse, and ClickHouse wrapped an int32 from TypeScript to the
+opposite sign.
 
 The SDK snapshots the batch and mutable values before its first I/O. Changing the caller's
 array, mappings, nested JSON, mutable dates or byte buffers afterward does not change a deferred
 copy. Timestamp/Decimal/UUID and other supported scalar values retain their precision. Custom
-objects, cyclic containers and undefined JavaScript values are refused. Values still undergo the
-native driver's type adaptation and column checks; the field preflight is not a universal type
-coercion layer. Python PostgreSQL binds dict/list documents as JSONB for this API without changing
+objects, cyclic containers and undefined JavaScript values are refused. Each value reaches the
+adapter in one form per type - a decimal at its column's scale, a timestamp as its UTC instant
+(§8b point 4) - and the driver adapts that form to its wire format. A `json` value is not checked
+against anything. Python PostgreSQL binds dict/list documents as JSONB for this API without changing
 any global driver adapters. ClickHouse's existing exclusion of neutral JSON and binary fields
 remains in force.
 

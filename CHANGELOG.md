@@ -32,6 +32,39 @@ The constructors take the same rules field by field: the identity, a port from 1
 timeout's range (in milliseconds in TypeScript: 1 to 2147483647), and a CA file with verification
 off. Findings 29 and 32 of the C++ port.
 
+**Fixed: a value its field's type does not hold is refused before any engine** (both libraries,
+[`docs/format-contract.md`](docs/format-contract.md#a-value-its-type-holds) §8b). A row's values
+went to the driver as the application gave them, and each engine answered for them in its own way.
+Measured through `Session.save` on PostgreSQL 15 and ClickHouse 24.8:
+- a decimal with more fractional digits than its column was rounded by PostgreSQL and truncated by
+  ClickHouse, from both libraries;
+- a decimal past its precision was stored by Python's ClickHouse driver with a digit changed;
+- from TypeScript, ClickHouse wrapped an integer outside int32 to the opposite sign and stored
+  `NaN` in a decimal column as 0.00;
+- ClickHouse stored 2026-02-30 as 2026-03-02, and a timestamp made from a number or from words;
+- ClickHouse stored the infinity or the zero a `float32` rounds a value to, where PostgreSQL
+  refused it.
+
+A value now takes a form a filter of its type takes, and its type must hold it. The refusal names
+the field, the type and what does not fit, never the value. The value reaches the engine in one
+form per type: a decimal at its column's scale, a timestamp as its UTC instant, a UUID in lower case.
+Shared vectors: `errors/113`-`120` and `migration/200`.
+- **Breaking** for code that relied on a driver's conversion:
+  - a Python `float`, or a TypeScript `number` with a fraction, for a decimal field: pass a
+    `Decimal` or decimal text;
+  - a boolean for an integer field, and text for a number;
+  - a `Date` (TypeScript) or a `datetime` (Python) for a `date` field: pass the day.
+- TypeScript writes `NaN` and the infinities to ClickHouse as those values. JSON has no token for
+  them, and ClickHouse had stored the `null` it got as NULL, or as 0 in a required column.
+- Maps, DDL and stored data do not change. A `json` field is not checked.
+
+**The C++ library refuses a value its field's type does not hold, as the other two do**
+([`docs/format-contract.md`](docs/format-contract.md) §8b, point 4). The check comes before any
+engine is called, and each admitted value goes on in the form a read plan gives it: a decimal at
+its column's scale, a timestamp as its UTC instant. The vectors `errors/113`-`120` and
+`migration/200` hold it in all three libraries. Its ClickHouse adapter had already refused a
+decimal past its column; now the session refuses it first, in the contract's words.
+
 **Fixed: TypeScript's orderbook reader judged an answer by its first sixteen bytes** (TypeScript).
 It waited for sixteen bytes before deciding whether they began an answer. A row a subscription
 pushed in front of an answer, longer than that and still arriving, was refused as an answer the
@@ -129,11 +162,12 @@ compared on 102,000 URIs.
   its outcome unknown and never sent again, measured against a proxy that drops the answer to an
   accepted insert. The statement is the body, never part of a URL.
 - Rows travel in `RowBinaryWithNamesAndTypes` both ways, so a date of year 1 or 9999 is the date it
-  was. A value its column cannot hold is refused before anything is sent: the reference's driver
-  stores `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
-  - and `Decimal("12345678901.23")` as 12345678901.20, an enum name its type does not declare as 0,
-  and cuts a moment's fraction a column does not keep, each without a word: recorded in
-  [`docs/implementing.md`](docs/implementing.md), as rules for the contract.
+  was. A value its column cannot hold is refused before anything is sent. The reference's driver
+  stored `Decimal("1.239")` in a `Decimal(12, 2)` as 1.23 - PostgreSQL rounds the same save to 1.24
+  - and `Decimal("12345678901.23")` as 12345678901.20, without a word, until §8b point 4 refused a
+  value its type does not hold in every library. It still stores an enum name its type does not
+  declare as 0, and cuts a moment's fraction a column does not keep, in tables only a hand-written
+  map names: recorded in [`docs/implementing.md`](docs/implementing.md).
 - Its live tests are the reference's ClickHouse slice, each message captured from the reference
   against the same server; what the reference runs against both engines with one body runs here
   with one body for each adapter built - copies in every direction, write generations, the frozen
