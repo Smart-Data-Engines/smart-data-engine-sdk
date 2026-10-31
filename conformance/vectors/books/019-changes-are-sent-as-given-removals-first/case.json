@@ -1,0 +1,65 @@
+{
+ "kind": "stream",
+ "name": "changes are sent as given, removals first",
+ "mode": "incremental",
+ "resync": {
+  "updates": 1000,
+  "seconds": 60
+ },
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1],
+    [97, 1, 1],
+    [96, 1, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "apply",
+   "side": "bid",
+   "levels": [
+    [99, 0, 0],
+    [101, 5, 1],
+    [98, 0, 7]
+   ],
+   "ts": 20
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1],
+    [97, 1, 1],
+    [96, 1, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "bid",
+   "ts": 20,
+   "levels": [
+    [99, 0, 0],
+    [98, 0, 0],
+    [101, 5, 1]
+   ]
+  }
+ ],
+ "book": {
+  "bid": [
+   [101, 5, 1],
+   [100, 5, 1],
+   [97, 1, 1],
+   [96, 1, 1]
+  ]
+ }
+}

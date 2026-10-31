@@ -47,6 +47,12 @@ struct FilterNode {
   FilterNode* next = nullptr;
 };
 
+struct SearchNode {
+  std::vector<std::string> key;
+  std::atomic<std::uint64_t> calls{0};
+  SearchNode* next = nullptr;
+};
+
 struct FanNode {
   std::string group;
   std::string materialization;
@@ -108,6 +114,8 @@ struct Recorder::Block {
     std::atomic<std::uint64_t> errors{0};
     AtomicHistogram latency;
     std::atomic<FilterNode*> filters{nullptr};
+    std::atomic<std::uint64_t> examined{0};
+    std::atomic<SearchNode*> searched{nullptr};
   };
 
   Block(std::size_t shapes, std::size_t groups)
@@ -141,6 +149,8 @@ struct Recorder::Block {
       slot.errors.store(0, std::memory_order_relaxed);
       slot.latency.reset();
       free_list(slot.filters);
+      slot.examined.store(0, std::memory_order_relaxed);
+      free_list(slot.searched);
     }
     for (std::size_t i = 0; i < group_count; ++i) free_list(seconds[i]);
     free_list(fanned);
@@ -203,7 +213,7 @@ Recorder::Block* Recorder::enter() noexcept {
 }
 
 void Recorder::record(const OperationShape& shape, std::int64_t nanoseconds, std::uint64_t rows,
-                      bool failed, const Filter* filter) noexcept {
+                      bool failed, const Filter* filter, const Search* search) noexcept {
   try {
     const auto found = shape_index_.find(shape.id);
     if (found == shape_index_.end()) {
@@ -215,6 +225,11 @@ void Recorder::record(const OperationShape& shape, std::int64_t nanoseconds, std
     if (filter != nullptr) {
       std::set<std::string> equal(filter->equal.begin(), filter->equal.end());
       predicates = Predicates{{equal.begin(), equal.end()}, filter->range.value_or("")};
+    }
+    std::optional<std::vector<std::string>> searched;
+    if (search != nullptr) {
+      const std::set<std::string> fields(search->fields.begin(), search->fields.end());
+      searched = std::vector<std::string>(fields.begin(), fields.end());
     }
     // A write's second is read before entering the block: the clock is the caller's code.
     const bool counts_rows = rows > 0 && !failed && info.write;
@@ -233,6 +248,17 @@ void Recorder::record(const OperationShape& shape, std::int64_t nanoseconds, std
           [&] {
             auto fresh = std::make_unique<FilterNode>();
             fresh->key = *predicates;
+            return fresh;
+          });
+      node->calls.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (searched) {
+      slot.examined.fetch_add(search->examined, std::memory_order_relaxed);
+      SearchNode* node = find_or_insert(
+          slot.searched, [&](const SearchNode& candidate) { return candidate.key == *searched; },
+          [&] {
+            auto fresh = std::make_unique<SearchNode>();
+            fresh->key = *searched;
             return fresh;
           });
       node->calls.fetch_add(1, std::memory_order_relaxed);
@@ -341,6 +367,11 @@ std::optional<Window> Recorder::roll() {
     for (FilterNode* node = slot.filters.load(std::memory_order_acquire); node != nullptr;
          node = node->next) {
       stats.filtered[node->key] += node->calls.load(std::memory_order_relaxed);
+    }
+    stats.examined = slot.examined.load(std::memory_order_relaxed);
+    for (SearchNode* node = slot.searched.load(std::memory_order_acquire); node != nullptr;
+         node = node->next) {
+      stats.searched[node->key] += node->calls.load(std::memory_order_relaxed);
     }
     window.shapes.push_back(std::move(stats));
   }

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "always goes to the group's source",
+  "stage": "map",
+  "why": "A search always goes to the group's source, so a routing entry for one says nothing a library would follow - and a library that predates the kind refuses the entry as a shape it does not enumerate. Refusing it here too, even naming the source, keeps one stored map meaning the same thing to both (section 8)."
+}

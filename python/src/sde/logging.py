@@ -45,7 +45,8 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # extra_columns fires when a table the map describes has columns the map does not
         # name. Allowed rather than refused - a client may have added one outside SDE and
         # writes are unaffected - but logged, because the alternative to refusing is saying
-        # nothing, and a schema that has quietly diverged is worth one line.
+        # nothing, and a schema that has quietly diverged is worth one line. The library's own
+        # generation column is never one of them.
         "sde.schema.extra_columns",
         # text_collation names a PostgreSQL primary key or declared index on a text column whose
         # collation is not the reads' "C": a table from before 2 October 2026, which no scan,
@@ -67,9 +68,9 @@ EVENTS: Final[frozenset[str]] = frozenset(
         # watching it needs to see it move. The marker itself is a row count and never a key value:
         # a log line is the last place a client's own data should turn up.
         "sde.migration.backfill_progress",
-        # The orderbook engine only. A write there is invisible to a query until flush(), and
-        # flush() in local mode tears the engine down and reopens it - 3.4 ms measured. Reads flush
-        # lazily, so this line is where the cost shows up and how many rows it bought.
+        # The orderbook engine only. A write there is invisible to a query until flush(), and a
+        # flush after a write waits for the device - 2.48-2.74 ms median measured in local mode.
+        # Reads flush lazily, so this line is where the cost shows up and how many rows it bought.
         "sde.orderbook.flushed",
         # A ClickHouse server whose analyzer does not answer EXPLAIN QUERY TREE, so the table
         # names behind a plan come from EXPLAIN ESTIMATE instead. Not a failure - the plan is

@@ -1,0 +1,1 @@
+lower case is not an ASCII rule: the Polish capitals fold as A does

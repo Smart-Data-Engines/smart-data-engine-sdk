@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "match": "is a jurisdiction's name or null",
+  "stage": "model",
+  "why": "Residency is a hard placement constraint. A number reached the IR as a number, and a constraint nobody can name is one no placement can be checked against."
+}

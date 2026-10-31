@@ -24,6 +24,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import os
+import struct
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -54,7 +55,7 @@ VALUES: dict[str, Any] = {
     "bool": True,
     "int32": -2_147_483_648,
     "int64": 9_007_199_254_740_993,
-    "float32": 0.5,
+    "float32": 0.1,
     "float64": 0.1,
     "string": "Zamówienie óść — ok",
     "uuid": uuid.uuid4(),
@@ -199,3 +200,24 @@ def test_a_naive_datetime_means_the_same_instant_in_both(
         assert read is not None
         assert read["timestamptz"] == expected, f"{name} moved a naive datetime"
         assert read["timestamp"] == noon, f"{name} moved a value in a column with no timezone"
+
+
+def test_a_float32_reads_as_the_float32_it_is_in_both(
+    engines: tuple[PostgresEngine, ClickHouseEngine],
+) -> None:
+    """Against the stored value, not only each other.
+
+    PostgreSQL's text for a `real` is its shortest decimal, ``0.1``, which parses to another
+    double than the float32 ClickHouse returns. With ``0.5`` here - a value both read alike - the
+    test above could not see it, and a group with a float32 column never verified between them.
+    """
+    pg, ch = engines
+    key = uuid.uuid4()
+    row = {"id": key, **{name: VALUES[name] for name in _covered()}}
+    pg.insert(TABLE, row)
+    ch.insert(TABLE, row)
+    single = struct.unpack("<f", struct.pack("<f", 0.1))[0]
+    for engine, name in ((pg, "PostgreSQL"), (ch, "ClickHouse")):
+        read = engine.get(TABLE, {"id": key})
+        assert read is not None
+        assert read["float32"] == single, f"{name} reads {read['float32']!r}, not the float32"

@@ -1,0 +1,1 @@
+the Kelvin sign is a letter whose simple lower case is k, which an engine lower-casing ASCII only would miss

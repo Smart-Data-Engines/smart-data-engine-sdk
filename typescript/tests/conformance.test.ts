@@ -244,7 +244,7 @@ describe('error vectors', () => {
 
       if (expected.stage === 'model') {
         expect(() => modelFromNeutral(readJson(join(dir, 'model.json')))).toThrow(
-          new RegExp(expected.match),
+          expected.match,
         )
         return
       }
@@ -278,7 +278,7 @@ describe('error vectors', () => {
           (error: unknown) => error,
         )
         expect(refused, `${name}: the row was accepted`).toBeInstanceOf(Error)
-        expect((refused as Error).message).toMatch(new RegExp(expected.match))
+        expect((refused as Error).message).toMatch(expected.match)
         // The class exactly: BulkWriteRefused is a ModelPlanningError, and a vector naming the
         // parent must not be satisfied by the child, or the reverse.
         expect((refused as Error).constructor, `${name}: raised ${(refused as Error).name}`).toBe(ctor)
@@ -292,7 +292,7 @@ describe('error vectors', () => {
       }
 
       if (expected.stage !== 'session') {
-        expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match))
+        expect(() => loadMap(raw, options)).toThrow(expected.match)
         return
       }
 
@@ -303,7 +303,7 @@ describe('error vectors', () => {
       // for the same reason the model is.
       const map = loadMap(raw, options)
       const engines = enginesFrom(readJson(join(dir, 'engines.json')))
-      await expect(Session.open(model, map, engines)).rejects.toThrow(new RegExp(expected.match))
+      await expect(Session.open(model, map, engines)).rejects.toThrow(expected.match)
       // **A map that can never work must not have cost anything first.** A library that gathered
       // the watermarks and refused afterwards would give this same answer with the price already
       // paid - which is not hypothetical: it is how the no-account promise broke in
@@ -377,7 +377,7 @@ describe('signature vectors', () => {
       const options = { model, publicKey, requireSignature: true }
       if (expected.error !== undefined) {
         expect(ERRORS[expected.error], `unknown error class ${expected.error}`).toBeDefined()
-        expect(() => loadMap(raw, options)).toThrow(new RegExp(expected.match as string))
+        expect(() => loadMap(raw, options)).toThrow(expected.match as string)
         return
       }
 
@@ -454,7 +454,7 @@ describe('canonical vectors', () => {
           }
         }
         expect(() => canonicalBytes(value)).toThrow(CanonicalError)
-        expect(() => canonicalBytes(value)).toThrow(new RegExp(expectedError.match))
+        expect(() => canonicalBytes(value)).toThrow(expectedError.match)
         return
       }
 
@@ -688,6 +688,9 @@ interface Operation {
   readonly shape: string
   readonly equal?: readonly string[]
   readonly range?: string
+  /** For a search: the rows it checked and the fields it looked in. */
+  readonly examined?: number
+  readonly searched?: readonly string[]
   readonly ns: number
   readonly rows?: number
   readonly failed?: boolean
@@ -750,6 +753,9 @@ function recorded(model: LogicalModel, operations: readonly Operation[], dir: st
       rows: operation.rows ?? 0,
       failed: operation.failed === true,
       ...(operation.equal === undefined ? {} : { equal: operation.equal, ranged: operation.range ?? null }),
+      ...(operation.searched === undefined
+        ? {}
+        : { examined: operation.examined ?? 0, searched: operation.searched }),
     })
   }
   const fanOutFile = join(dir, 'fan_out.json')
@@ -1407,3 +1413,83 @@ function driveStagingVector(dir: string, model: LogicalModel): void {
   const decoded = loadMap(JSON.parse(Buffer.from(plan.preparedPayload()).toString('utf8')), { model, publicKey, requireSignature: true })
   expect(decoded.fingerprint).toBe(wanted.map_fingerprints.prepared)
 }
+
+// --- search vectors (contract 7l) -------------------------------------------------------------
+//
+// What a token is and when a row matches. The engines only ever supply candidates, so this rule is
+// the whole of what a search answers, and it has to be the Python reference's to the code point.
+
+describe('search vectors', () => {
+  const searchCases = cases('search')
+
+  it('has the search family', () => {
+    expect(searchCases.length).toBeGreaterThanOrEqual(14)
+  })
+
+  for (const name of searchCases) {
+    it(name, async () => {
+      const { SearchRefused, matches, queryTokens, tokens } = await import('../src/search.js')
+      const dir = join(VECTORS, 'search', name)
+      const spec = readJson<Record<string, any>>(join(dir, 'case.json'))
+      const want = readJson<Record<string, any>>(join(dir, 'expected.json'))
+      const why = readFileSync(join(dir, 'why.txt'), 'utf8')
+      if (spec.kind === 'tokens') {
+        expect(tokens(spec.text), why).toEqual(want.tokens)
+        return
+      }
+      if ('refused' in want) {
+        expect(() => queryTokens(spec.query)).toThrow(SearchRefused)
+        return
+      }
+      const query = queryTokens(spec.query)
+      expect(query, why).toEqual(want.query_tokens)
+      expect(matches(spec.row, query, spec.fields), why).toBe(want.match)
+    })
+  }
+})
+
+// --- documents vectors (contract 7m) ----------------------------------------------------------
+//
+// A row as an Elasticsearch document. Two libraries writing one row to one index have to agree on
+// its _id, or a second save is a second document, and on its _source, value for value.
+
+describe('documents vectors', () => {
+  const documentCases = cases('documents')
+
+  it('has the documents family', () => {
+    expect(documentCases.length).toBeGreaterThanOrEqual(8)
+  })
+
+  const exact = (value: unknown): unknown =>
+    value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === 1 && '$int' in value
+      ? BigInt((value as { $int: string }).$int)
+      : value
+
+  for (const name of documentCases) {
+    it(name, async () => {
+      const { document } = await import('../src/elasticsearch-document.js')
+      const dir = join(VECTORS, 'documents', name)
+      const spec = readJson<{ columns: Record<string, string>; key: string[]; row: Record<string, unknown> }>(
+        join(dir, 'case.json'),
+      )
+      const want = readJson<Record<string, any>>(join(dir, 'expected.json'))
+      const why = readFileSync(join(dir, 'why.txt'), 'utf8')
+      const row = Object.fromEntries(Object.entries(spec.row).map(([column, value]) => [column, exact(value)]))
+      if ('error' in want) {
+        expect(() => document(spec.columns, spec.key, row), why).toThrow(want['match'] as string)
+        return
+      }
+      const { id, source } = document(spec.columns, spec.key, row)
+      expect(id, why).toBe(want['id'])
+      const expected: Record<string, unknown> = {}
+      for (const [column, value] of Object.entries(want['source'] as Record<string, unknown>)) {
+        const kind = spec.columns[column]
+        const decoded = exact(value)
+        expected[column] = kind !== undefined && (kind === 'long' || kind.startsWith('long/')) &&
+          decoded !== null ? BigInt(decoded as number | bigint) : decoded
+      }
+      expect(source, why).toEqual(expected)
+    })
+  }
+})

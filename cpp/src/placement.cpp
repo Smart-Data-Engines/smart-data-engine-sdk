@@ -1,6 +1,7 @@
 #include "sde/placement.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <set>
 #include <utility>
@@ -8,6 +9,7 @@
 #include "crypto.hpp"
 #include "encoding.hpp"
 #include "physical_internal.hpp"
+#include "placement_internal.hpp"
 #include "python_compat.hpp"
 #include "sde/canonical.hpp"
 #include "sde/errors.hpp"
@@ -78,6 +80,51 @@ Json without_signature(const Json& document) {
   return payload;
 }
 
+constexpr std::int64_t kSafeInteger = 9007199254740991;  // 2^53 - 1
+
+bool unsafe_integer(const Json& value) {
+  switch (value.kind()) {
+    case Json::Kind::number: {
+      if (!value.as_number().integer) return false;
+      const auto exact = value.to_int64();
+      return !exact || *exact > kSafeInteger || *exact < -kSafeInteger;
+    }
+    case Json::Kind::array:
+      return std::any_of(value.as_array().begin(), value.as_array().end(), unsafe_integer);
+    case Json::Kind::object:
+      return std::any_of(value.as_object().begin(), value.as_object().end(),
+                         [](const Json::Member& member) { return unsafe_integer(member.second); });
+    default:
+      return false;
+  }
+}
+
+/// The bytes a signature covers and a fingerprint hashes: the map without its signature. From map
+/// contract 4 the numbers are safe integers (section 7d) - JavaScript reads anything past 2^53 - 1 as
+/// a nearby double, so one document would be signed over one number and read as another. A payload
+/// with no canonical form is a map error: from contract 4 the contract's sentence, and below it, for
+/// a signed map, the reason no signature over it can verify. An unsigned legacy map keeps working
+/// without a fingerprint, so its CanonicalError is passed on for the caller to note.
+std::string canonical_payload(const Json& document, int contract, bool is_signed) {
+  const Json payload = without_signature(document);
+  try {
+    if (contract >= GENERATIONS_SINCE && unsafe_integer(payload)) {
+      throw CanonicalError("an integer outside the safe range of 2^53 - 1");
+    }
+    return canonical_bytes(payload);
+  } catch (const CanonicalError& error) {
+    if (contract >= GENERATIONS_SINCE) {
+      throw MapError("contract 4 requires a canonically encodable placement map");
+    }
+    if (is_signed) {
+      throw MapError(std::string("this map is signed and its payload has no canonical form, so no "
+                                 "signature over it can verify: ") +
+                     error.what());
+    }
+    throw;
+  }
+}
+
 bool lowercase_hex32(std::string_view text) {
   if (text.size() != 32) return false;
   return std::all_of(text.begin(), text.end(),
@@ -122,12 +169,23 @@ std::vector<std::pair<std::string, std::string>> key_set(const PublicKeys& publi
   return pairs;
 }
 
-/// Verifies the signature, and reports which of the caller's keys did it: its name, or nothing for
-/// a bare key. Every key is tried; `key_id` only orders the attempts, because the signature block is
-/// outside what is signed and anybody can edit it.
+/// Verifies a document's signature over its canonical payload without the signature block.
 std::optional<std::string> verify_signature(const Json& document, const PublicKeys& public_keys,
                                             int contract) {
-  const Json& signature = *document.find("signature");
+  // The payload's own rules - from contract 4 a safe integer, and a canonical form for a signed
+  // map - are canonical_payload's, shared with the fingerprint.
+  return detail::verify_payload(*document.find("signature"), public_keys,
+                                [&] { return canonical_payload(document, contract, true); });
+}
+
+}  // namespace
+
+/// Verifies a signature block over a payload, and reports which of the caller's keys did it: its
+/// name, or nothing for a bare key. Every key is tried; `key_id` only orders the attempts, because
+/// the signature block is outside what is signed and anybody can edit it.
+std::optional<std::string> detail::verify_payload(
+    const Json& signature, const PublicKeys& public_keys,
+    const std::function<std::string()>& payload_of) {
   const Json* alg = signature.is_object() ? signature.find("alg") : nullptr;
   if (alg == nullptr || !alg->is_string() || alg->as_string() != "ed25519") {
     throw MapError("only ed25519 signatures are understood");
@@ -153,19 +211,9 @@ std::optional<std::string> verify_signature(const Json& document, const PublicKe
   for (const auto& pair : keys) {
     if (!claimed || pair.first != *claimed) ordered.push_back(pair);
   }
-
-  std::string payload;
-  try {
-    payload = canonical_bytes(without_signature(document));
-  } catch (const CanonicalError& error) {
-    // A signature is over canonical bytes, so a payload that has none cannot carry a valid one.
-    if (contract >= GENERATIONS_SINCE) {
-      throw MapError("contract 4 requires a canonically encodable placement map");
-    }
-    throw MapError(std::string("this map is signed and its payload has no canonical form, so no "
-                               "signature over it can verify: ") +
-                   error.what());
-  }
+  // After the signature block and the keys, as the reference orders it: a payload with no canonical
+  // form is refused only once the keys it would have been checked against are known to be keys.
+  const std::string payload = payload_of();
   for (const auto& [name, key] : ordered) {
     if (detail::ed25519_verify(key, payload, *decoded)) {
       return name.empty() ? std::nullopt : std::optional<std::string>(name);
@@ -183,16 +231,26 @@ std::optional<std::string> verify_signature(const Json& document, const PublicKe
                  "and while both are configured, maps signed with either are accepted.");
 }
 
+namespace {
+
 // ── Layouts and materialisations ────────────────────────────────────────────────────────────────
+
+/// The members of an object in name order, which is the order section 8a checks them in whatever
+/// order the document wrote them.
+std::map<std::string, const Json*> by_name(const Json& object) {
+  std::map<std::string, const Json*> out;
+  for (const auto& [key, value] : object.as_object()) out.emplace(key, &value);
+  return out;
+}
 
 detail::Tables read_tables(const Json& tables, const std::string& where) {
   detail::Tables out;
-  for (const auto& [entity, table] : tables.as_object()) {
-    if (!table.is_string() || table.as_string().empty()) {
+  for (const auto& [entity, table] : by_name(tables)) {
+    if (!table->is_string() || table->as_string().empty()) {
       throw MapError(where + ": tables[" + python_repr(entity) + "] must be a table name, not " +
-                     python_repr(table));
+                     python_repr(*table));
     }
-    out.emplace(entity, table.as_string());
+    out.emplace(entity, table->as_string());
   }
   return out;
 }
@@ -204,18 +262,18 @@ detail::Columns read_columns(const Json* columns, const std::string& where) {
     throw MapError(where + ": columns maps an entity to an object of column name -> type, not " +
                    python_repr(*columns));
   }
-  for (const auto& [entity, types] : columns->as_object()) {
-    if (!types.is_object()) {
+  for (const auto& [entity, types] : by_name(*columns)) {
+    if (!types->is_object()) {
       throw MapError(where + ": columns[" + python_repr(entity) +
-                     "] must be an object of column name -> type, not " + python_repr(types));
+                     "] must be an object of column name -> type, not " + python_repr(*types));
     }
     auto& entity_columns = out[entity];
-    for (const auto& [column, type] : types.as_object()) {
-      if (!type.is_string() || type.as_string().empty()) {
+    for (const auto& [column, type] : by_name(*types)) {
+      if (!type->is_string() || type->as_string().empty()) {
         throw MapError(where + ": columns[" + python_repr(entity) + "][" + python_repr(column) +
-                       "] must be a type name, not " + python_repr(type));
+                       "] must be a type name, not " + python_repr(*type));
       }
-      entity_columns.emplace(column, type.as_string());
+      entity_columns.emplace(column, type->as_string());
     }
   }
   return out;
@@ -562,6 +620,13 @@ std::map<std::string, std::string> check_routing(const Json& routing,
                      "the two sides enumerated shapes differently - which is the divergence that "
                      "puts one library's write in a table another library never looks at.");
     }
+    if (is_source_only_kind(shape->kind)) {
+      throw MapError("the routing table has an entry for shape " + python_repr(shape_id) + ", a " +
+                     shape->kind + " on " + shape->entity + ". A " + shape->kind +
+                     " always goes to the group's source, and a library that predates the kind "
+                     "refuses this entry as a shape it does not know - so this one refuses it too, "
+                     "and one stored map means the same thing to both.");
+    }
     const auto group = declared.find(shape->group);
     if (group == declared.end() || group->second.count(target) == 0) {
       throw MapError("the routing table sends shape " + python_repr(shape_id) +
@@ -570,6 +635,13 @@ std::map<std::string, std::string> check_routing(const Json& routing,
                      ", which that group does not declare. Materialisation ids are unique only "
                      "within a group, so this would read " +
                      shape->entity + " out of a copy that does not hold it.");
+    }
+    if (is_write_kind(shape->kind) && target != groups.at(shape->group).source.id) {
+      // The control plane refuses to issue this; a hand-written map met nothing until now.
+      throw MapError("the routing table sends shape " + python_repr(shape_id) + ", a " +
+                     shape->kind + ", to " + python_repr(target) +
+                     ", which is not the source. Writes go to the source whatever this table says, "
+                     "so an entry like this one is a planner that believes something untrue.");
     }
   }
   return out;
@@ -796,6 +868,9 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
               "derive it from. Pass the model in LoadOptions to load_map().");
         }
       }
+      // Explicit layouts have their tables without a model, so a copy that is the source under
+      // another name is as visible here (one reference checked it only with a model).
+      for (const auto& [name, group] : read) refuse_shadowing(group.placement);
     }
     for (auto& [name, group] : read) map.groups_.emplace(name, std::move(group.placement));
 
@@ -820,11 +895,8 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
     }
 
     try {
-      map.fingerprint_ = sha256_hex(canonical_bytes(without_signature(raw)));
+      map.fingerprint_ = sha256_hex(canonical_payload(raw, contract, false));
     } catch (const CanonicalError&) {
-      if (contract >= GENERATIONS_SINCE) {
-        throw MapError("contract 4 requires a canonically encodable placement map");
-      }
       // A legacy unsigned map may carry annotations with no canonical form; it keeps working, and
       // the protocols that need a fingerprint refuse it instead.
       map.fingerprint_.reset();
@@ -837,7 +909,7 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
       fields.set("signed", map.signed_);
       fields.set("forward_only", map.signed_);
       fields.set("key", map.verified_with_ ? Json(*map.verified_with_) : Json(nullptr));
-      options.log("sde.map.loaded", fields);
+      detail::emit(options.log, "sde.map.loaded", fields);
     }
     return map;
   } catch (const MapError& error) {
@@ -845,7 +917,7 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
       Json fields = Json::object();
       fields.set("error", "MapError");
       fields.set("reason", truncated(error.what()));
-      options.log("sde.map.rejected", fields);
+      detail::emit(options.log, "sde.map.rejected", fields);
     }
     throw;
   }
@@ -863,7 +935,7 @@ PlacementMap load_map(std::string_view json_text, const LoadOptions& options) {
       Json fields = Json::object();
       fields.set("error", "MapError");
       fields.set("reason", truncated(refusal.what()));
-      options.log("sde.map.rejected", fields);
+      detail::emit(options.log, "sde.map.rejected", fields);
     }
     throw refusal;
   }

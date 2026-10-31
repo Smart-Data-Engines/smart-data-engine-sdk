@@ -1,7 +1,7 @@
 {
   "error": "ModelPlanningError",
   "stage": "write",
-  "match": "Thing\\.amount is required and this row leaves it out",
+  "match": "Thing.amount is required and this row leaves it out",
   "write": {
     "accepted": {
       "operation": "save",

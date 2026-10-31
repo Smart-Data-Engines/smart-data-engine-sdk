@@ -15,6 +15,7 @@ import pytest
 from test_runtime_privileges_live import runtime_roles
 
 import sde
+from sde.local_cutover import CutoverRecoveryRequired
 
 PROJECT = "1" * 32
 
@@ -752,3 +753,44 @@ def test_staging_cli_publishes_a_usable_map_and_repeats_the_same_receipt(
         stored = operator.store.path.read_text() + json.dumps(receipts)
         for role in roles.values():
             assert role.runtime._dsn not in stored
+
+
+@pytest.mark.parametrize("when", ["before", "while"])
+def test_a_newer_map_that_overtakes_a_staging_is_named_with_both_versions(
+    when: str, tmp_path: Path
+) -> None:
+    """A map version is the control plane's number, never data: the refusal says which engine holds
+    the newer map and which version this staging was prepared from, rather than leaving an operator
+    to read the library to find out."""
+    with initial("postgres", tmp_path) as (operator, stage, _old, roles, model, _, _, _, _, target):
+        newer = stage.prepared.map_version + 5
+
+        def adopt() -> None:
+            roles[target].operator.record_map_version(newer, model_version=model.version)
+
+        if when == "before":
+            adopt()
+            event, in_force = "was adopted before local staging", stage.current.map_version
+        else:
+            operator._after_step = (
+                lambda step: adopt() if step == "stage_watermarks:intent" else None
+            )
+            event, in_force = "appeared while finishing staging", stage.prepared.map_version
+        expected = (
+            f"a newer map {event}: {target} records map version {newer}, and the map this "
+            f"operation was prepared from is version {in_force}."
+        )
+        if when == "before":
+            with pytest.raises(sde.MigrationRefused) as refused:
+                operator.stage(stage)
+            assert str(refused.value) == expected
+        else:
+            # After its durable decision the operation is resumed, not refused: the reason it
+            # stopped is beneath the error that says so.
+            with pytest.raises(CutoverRecoveryRequired) as stopped:
+                operator.stage(stage)
+            reasons, error = [], stopped.value.__cause__
+            while error is not None:
+                reasons.append(str(error))
+                error = error.__cause__
+            assert expected in reasons

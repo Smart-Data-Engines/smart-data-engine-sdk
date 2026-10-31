@@ -13,6 +13,7 @@ behaviours against the engine itself:
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 import types
@@ -77,6 +78,12 @@ _QUERY = re.compile(
     r" LIMIT (?P<limit>\d+)$"
 )
 
+# The book as of an instant (`Session.book_at`), which the engine composes by price.
+_BOOK_AT = re.compile(
+    r"SELECT \* FROM '(?P<symbol>[^']+)'\.'(?P<exchange>[^']+)' WHERE AT (?P<at>\d+)"
+    r"(?: AND level < (?P<depth>\d+))?"
+)
+
 
 class _NotFound(Exception):
     status = -1
@@ -90,9 +97,12 @@ class _Server:
     queries: list[str] = field(default_factory=list)
     batches: list[list[_BookUpdate]] = field(default_factory=list)
     inserts: list[dict[str, Any]] = field(default_factory=list)
+    replacements: list[dict[str, Any]] = field(default_factory=list)
+    book_answer: list[_Row] = field(default_factory=list)
     refuse: set[int] = field(default_factory=set)
     fail_batch: int | None = None
     fail_close: bool = False
+    fail_query: bool = False
     capabilities: set[str] = field(
         default_factory=lambda: {"insert_event_time", "strict_args", "backup"}
     )
@@ -114,7 +124,15 @@ class _Server:
 class _Client:
     def __init__(self, server: _Server, **kwargs: Any) -> None:
         self.server = server
+        self.abandoned: str | None = None
         server.constructed.append(kwargs)
+
+    def ping(self) -> str:
+        # The engine's client after an exchange that did not finish (its #171): closed, and every
+        # call says why.
+        if self.abandoned is not None:
+            raise OSError(f"the connection was closed because {self.abandoned}")
+        return "PONG"
 
     def server_capabilities(self) -> set[str]:
         return set(self.server.capabilities)
@@ -122,9 +140,19 @@ class _Client:
     def insert(self, symbol: str, exchange: str, side: str, prices: list[int], qtys: list[int],
                counts: list[int], timestamp_ns: int | None = None, seq: int | None = None) -> int:
         self.server.inserts.append({"symbol": symbol, "side": side, "prices": list(prices),
+                                    "qtys": list(qtys), "counts": list(counts),
                                     "timestamp_ns": timestamp_ns, "seq": seq})
         assert timestamp_ns is not None
         return self.server.store(symbol, exchange, side, prices, qtys, counts, timestamp_ns, seq)
+
+    def replace_side(self, symbol: str, exchange: str, side: str, prices: list[int],
+                     qtys: list[int], counts: list[int], timestamp_ns: int | None = None) -> int:
+        # The engine's client takes no sequence number here: MREPLACE carries none.
+        self.server.replacements.append({"symbol": symbol, "side": side, "prices": list(prices),
+                                         "qtys": list(qtys), "counts": list(counts),
+                                         "timestamp_ns": timestamp_ns})
+        assert timestamp_ns is not None
+        return self.server.store(symbol, exchange, side, prices, qtys, counts, timestamp_ns, None)
 
     def insert_batch(self, updates: list[_BookUpdate]) -> list[_Outcome]:
         self.server.batches.append(list(updates))
@@ -147,7 +175,15 @@ class _Client:
         return None
 
     def query(self, sql: str) -> list[_Row]:
+        if self.abandoned is not None:
+            raise OSError(f"the connection was closed because {self.abandoned}")
         self.server.queries.append(sql)
+        if self.server.fail_query:
+            self.server.fail_query = False
+            self.abandoned = "an exchange (query) did not finish: timed out"
+            raise OSError("timed out")
+        if _BOOK_AT.fullmatch(sql):
+            return list(self.server.book_answer)
         match = _QUERY.fullmatch(sql)
         assert match, f"the adapter sent a query the engine's grammar would not take: {sql}"
         book = [r for r in self.server.rows
@@ -211,6 +247,10 @@ def _row(**overrides: Any) -> dict[str, Any]:
     }
     values.update(overrides)
     return values
+
+
+def _key() -> dict[str, Any]:
+    return {name: _row()[name] for name in sde.ORDERBOOK_KEY}
 
 
 def _model() -> sde.LogicalModel:
@@ -431,6 +471,62 @@ def test_an_unconfirmed_tcp_write_says_it_may_have_been_stored(
     monkeypatch.setattr(_Client, "insert", boom)
     with pytest.raises(EngineError, match="may still have been stored"):
         tcp.insert(TABLE, _row())
+
+
+def test_a_write_with_no_connection_is_refused_before_anything_is_sent(
+    server: _Server, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Never connected, nothing was sent: not an unconfirmed write, and not a failed one.
+
+    The adapter read its connection inside the write's own `try`, so `insert` answered that the
+    engine did not confirm the write and that it may have been stored, and logged
+    `sde.write.failed`; `insert_many` failed with an AttributeError on the client's module. Finding
+    30 of the C++ port; TypeScript and C++ refuse here, before anything.
+    """
+    caplog.set_level(logging.INFO, logger="sde")
+    for adapter in (OrderbookEngine(host="127.0.0.1", port=9090), OrderbookEngine("/tmp/fake")):
+        with pytest.raises(EngineError) as refused:
+            adapter.insert(TABLE, _row())
+        assert str(refused.value) == "not connected; call connect() first"
+        with pytest.raises(EngineError) as refused:
+            adapter.insert_many(TABLE, [_row()])
+        assert str(refused.value) == "not connected; call connect() first"
+    assert server.inserts == [] and server.batches == []
+    assert [r for r in caplog.records if getattr(r, "sde_event", None) == "sde.write.failed"] == []
+
+
+def test_a_batch_after_a_lost_connection_is_refused_rather_than_unknown(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    server.fail_batch = 1
+    with pytest.raises(EngineError, match="outcome of this batch is unknown"):
+        tcp.insert_many(TABLE, [_row()])
+    with pytest.raises(EngineError) as refused:
+        tcp.insert_many(TABLE, [_row(timestamp_ns=2_000)])
+    assert str(refused.value) == "not connected; call connect() first"
+    assert len(server.batches) == 1
+
+
+def test_connect_replaces_a_connection_the_client_closed_after_an_exchange(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    """The engine's client closes a connection whose exchange did not finish, and says why on every
+    later call (its #171). `connect()` returned at once because a client was set, so the adapter
+    stayed on the closed one until `close()`; it asks the client now and replaces a closed one.
+    Finding 31 of the C++ port.
+    """
+    tcp.insert(TABLE, _row())
+    server.fail_query = True
+    with pytest.raises(EngineError):
+        tcp.get(TABLE, _key())
+    with pytest.raises(EngineError, match="was closed because"):
+        tcp.get(TABLE, _key())
+    tcp.connect()
+    assert len(server.constructed) == 2
+    assert tcp.get(TABLE, _key()) is not None
+    # A connection that is open is kept: one client, however often connect() is called.
+    tcp.connect()
+    assert len(server.constructed) == 2
 
 
 # ── Batches are the engine's updates ────────────────────────────────────────────────────────────
@@ -798,3 +894,179 @@ def test_the_facts_name_the_write_unit(tcp: OrderbookEngine, server: _Server) ->
     with pytest.raises(EngineError):
         tcp.insert_many(TABLE, [_row(level=0), _row(level=2)])
     assert server.batches == [] and server.inserts == []
+
+
+# ── Book streams: whole sides and changes by price (sde/books.py, the engine's #233) ───────────
+
+
+def _session_on(adapter: OrderbookEngine, recorder: sde.Recorder | None = None) -> sde.Session:
+    model = _model()
+    group = sde.colocation_groups(model)[0]
+    layout = sde.default_layout(model, group, dialect="orderbook")
+    raw = {
+        "tables": dict(layout.tables),
+        "columns": {k: dict(v) for k, v in layout.columns.items()},
+    }
+    placement = sde.load_map(
+        {
+            "contract": 3,
+            "model_version": model.version,
+            "map_version": 1,
+            "groups": {"DepthLevel": {"source": {"id": "source", "engine": "ob", "layout": raw}}},
+        },
+        model=model,
+    )
+    adapter.ensure_schema(layout, keys={"DepthLevel": sde.ORDERBOOK_KEY})
+    return sde.Session(model, placement, {"ob": adapter}, recorder=recorder)
+
+
+def test_a_book_stream_needs_a_server_that_replaces_a_side(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    session = _session_on(tcp)
+    with pytest.raises(EngineError, match="replace_side"):
+        session.book_stream("DepthLevel", symbol="BTCUSDT", exchange="binance")
+    assert server.inserts == [] and server.replacements == []
+
+
+def test_a_whole_side_goes_as_a_replacement_and_changes_as_an_update(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    server.capabilities.add("replace_side")
+    recorder = sde.Recorder(_model().version)
+    session = _session_on(tcp, recorder)
+    stream = session.book_stream("DepthLevel", symbol="BTCUSDT", exchange="binance")
+    stream.update("bid", [(100, 5, 1), (99, 3, 1)], timestamp_ns=10)
+    stream.update("bid", [(101, 2, 1), (99, 3, 1)], timestamp_ns=20)
+    assert server.replacements == [
+        {"symbol": "BTCUSDT", "side": "bid", "prices": [100, 99], "qtys": [5, 3],
+         "counts": [1, 1], "timestamp_ns": 10}
+    ]
+    assert [(i["prices"], i["qtys"], i["counts"], i["timestamp_ns"], i["seq"])
+            for i in server.inserts] == [([100, 101], [0, 2], [0, 1], 20, None)]
+    window = recorder.roll()
+    assert window is not None
+    group = window.as_record(session._model)["groups"]["DepthLevel"]
+    assert {shape["kind"] for shape in group["shapes"]} == {"bulk_write"}
+
+
+def test_a_full_stream_replaces_every_side(tcp: OrderbookEngine, server: _Server) -> None:
+    server.capabilities.add("replace_side")
+    stream = _session_on(tcp).book_stream(
+        "DepthLevel", symbol="BTCUSDT", exchange="binance", mode="full"
+    )
+    stream.update("ask", [(200, 1, 1)], timestamp_ns=10)
+    stream.update("ask", [(200, 1, 1)], timestamp_ns=20)
+    stream.update("ask", [], timestamp_ns=30)
+    assert [(r["prices"], r["timestamp_ns"]) for r in server.replacements] == [
+        ([200], 10), ([200], 20), ([], 30)
+    ]
+    assert server.inserts == []
+
+
+def test_a_book_stream_refuses_a_name_before_its_first_update(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    server.capabilities.add("replace_side")
+    session = _session_on(tcp)
+    with pytest.raises(EngineError, match="cannot be used as a symbol"):
+        session.book_stream("DepthLevel", symbol="BTC USD", exchange="binance")
+    with pytest.raises(EngineError, match="exchange"):
+        session.book_stream("DepthLevel", symbol="BTCUSDT", exchange="")
+    assert server.inserts == [] and server.replacements == []
+
+
+def test_after_an_update_the_engine_did_not_confirm_the_side_goes_whole(
+    tcp: OrderbookEngine, server: _Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server.capabilities.add("replace_side")
+    stream = _session_on(tcp).book_stream("DepthLevel", symbol="BTCUSDT", exchange="binance")
+    stream.update("ask", [(200, 1, 1), (201, 1, 1)], timestamp_ns=10)
+
+    def reset(*_: Any, **__: Any) -> int:
+        raise OSError("connection reset by peer")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_Client, "insert", reset)
+        with pytest.raises(EngineError, match="sends this side whole next"):
+            stream.update("ask", [(200, 1, 1), (202, 1, 1)], timestamp_ns=20)
+    stream.update("ask", [(200, 1, 1), (203, 1, 1)], timestamp_ns=30)
+    assert [r["prices"] for r in server.replacements] == [[200, 201], [200, 203]]
+    assert server.inserts == []
+
+
+def test_a_book_update_the_engine_cannot_hold_is_refused_before_sending(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    book = {"symbol": "BTCUSDT", "exchange": "binance"}
+    with pytest.raises(EngineError, match="at most 1000"):
+        tcp.apply_levels(TABLE, **book, side="bid", timestamp_ns=1,
+                         levels=[(p, 1, 1) for p in range(1001)])
+    with pytest.raises(EngineError, match="timestamp_ns"):
+        tcp.replace_levels(TABLE, **book, side="bid", timestamp_ns=-1, levels=[])
+    with pytest.raises(EngineError, match="side"):
+        tcp.apply_levels(TABLE, **book, side="buy", timestamp_ns=1, levels=[(1, 1, 1)])
+    with pytest.raises(EngineError, match="quantity"):
+        tcp.apply_levels(TABLE, **book, side="bid", timestamp_ns=1, levels=[(1, -1, 1)])
+    assert server.inserts == [] and server.replacements == []
+
+
+def test_no_changes_are_no_update_and_no_levels_empty_a_side(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    book = {"symbol": "BTCUSDT", "exchange": "binance"}
+    tcp.apply_levels(TABLE, **book, side="bid", timestamp_ns=1, levels=[])
+    tcp.replace_levels(TABLE, **book, side="ask", timestamp_ns=1, levels=[])
+    assert server.inserts == []
+    assert [(r["side"], r["prices"]) for r in server.replacements] == [("ask", [])]
+
+
+def test_whether_a_side_can_be_replaced_is_the_servers_answer_or_the_librarys(
+    tcp: OrderbookEngine, local: OrderbookEngine, server: _Server
+) -> None:
+    assert not tcp.supports_replace_side()
+    server.capabilities.add("replace_side")
+    assert tcp.supports_replace_side()
+    # Local mode asks nothing: the loaded library refuses the call itself if it predates it.
+    assert local.supports_replace_side()
+
+
+def test_a_stream_keeps_the_depth_the_adapter_checks() -> None:
+    from sde.books import ENGINE_DEPTH
+
+    assert ENGINE_DEPTH == orderbook.MAX_LEVEL + 1
+
+
+def test_a_book_is_read_as_the_engine_composes_it_each_side_best_first(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    server.capabilities.add("replace_side")
+    # In the order a server might send them: the sides interleaved, the levels out of order.
+    server.book_answer = [
+        _Row("BTCUSDT", "binance", 7, "ask", 1, 202, 4, 1, 3),
+        _Row("BTCUSDT", "binance", 9, "bid", 0, 101, 2, 1, 5),
+        _Row("BTCUSDT", "binance", 5, "ask", 0, 200, 1, 2, 1),
+        _Row("BTCUSDT", "binance", 9, "bid", 1, 99, 3, 1, 5),
+    ]
+    recorder = sde.Recorder(_model().version)
+    session = _session_on(tcp, recorder)
+    book = session.book_at("DepthLevel", symbol="BTCUSDT", exchange="binance", at_ns=20, depth=5)
+    assert book == {"bid": [(101, 2, 1), (99, 3, 1)], "ask": [(200, 1, 2), (202, 4, 1)]}
+    assert server.queries == ["SELECT * FROM 'BTCUSDT'.'binance' WHERE AT 20 AND level < 5"]
+    window = recorder.roll()
+    assert window is not None
+    record = window.as_record(session._model)["groups"]["DepthLevel"]
+    assert {shape["kind"] for shape in record["shapes"]} == {"range_read"}
+
+
+def test_a_book_is_not_read_from_a_server_that_composes_it_by_position(
+    tcp: OrderbookEngine, server: _Server
+) -> None:
+    with pytest.raises(EngineError, match="by position"):
+        tcp.book_at(TABLE, symbol="BTCUSDT", exchange="binance", at_ns=20)
+    server.capabilities.add("replace_side")
+    with pytest.raises(EngineError, match="depth"):
+        tcp.book_at(TABLE, symbol="BTCUSDT", exchange="binance", at_ns=20, depth=1001)
+    with pytest.raises(EngineError, match="at_ns"):
+        tcp.book_at(TABLE, symbol="BTCUSDT", exchange="binance", at_ns=-1)
+    assert server.queries == []

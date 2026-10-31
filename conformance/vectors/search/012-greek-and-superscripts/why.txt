@@ -1,0 +1,1 @@
+Greek folds like Latin; a superscript digit is a number and stays in its token
