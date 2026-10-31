@@ -1,0 +1,3 @@
+{
+  "why": "What reaches the engine, rather than what the application wrote. A decimal is passed at its column's scale - 1.230, 1E+3, -0.00 and .5 with spaces around it are 1.23, 1000.00, 0.00 and 0.50 - and an integer given to a decimal field stays that integer. A timestamp with an offset is its instant in UTC, and in a timezone-free field its UTC wall time: PostgreSQL used to drop the offset there and ClickHouse to refuse it, so the same text meant two things. A UUID is lower case and a date is its text. The rows are written by hand, not computed by a library."
+}

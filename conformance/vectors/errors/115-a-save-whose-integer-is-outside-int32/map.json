@@ -1,0 +1,27 @@
+{
+  "contract": 3,
+  "model_version": "1d78c15aa7623338",
+  "map_version": 1,
+  "groups": {
+    "Entry": {
+      "source": {
+        "id": "Entry@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Entry": "entry"
+          },
+          "columns": {
+            "Entry": {
+              "amount": "numeric(12,2)",
+              "at": "timestamptz",
+              "count": "integer",
+              "day": "date",
+              "id": "text"
+            }
+          }
+        }
+      }
+    }
+  }
+}

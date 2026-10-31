@@ -22,6 +22,19 @@ import { EngineError } from '../errors.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import type { PhysicalLayout } from '../placement.js'
 import type { Row } from '../session.js'
+import { Timestamp } from '../timestamp.js'
+
+/**
+ * A value an engine holds, as the vectors write it.
+ *
+ * A row reaches an engine with each value in the form a filter of its type gets (format contract
+ * section 8b), and an instant's is not JSON. The vectors write it as the `query/` vectors write the
+ * same value, `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC, and a timezone-free timestamp as its UTC wall
+ * time in the same form. A decimal, a UUID and a date reach an engine as text already.
+ */
+export function vectorForm(value: unknown): unknown {
+  return value instanceof Timestamp ? value.toISOString() : value
+}
 
 export interface RecordedCall {
   readonly engine: string
