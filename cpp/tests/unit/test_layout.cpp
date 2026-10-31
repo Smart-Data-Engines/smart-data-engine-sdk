@@ -8,6 +8,7 @@
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
 #include "sde/model.hpp"
+#include "sde/schema.hpp"
 #include "sde/unicode.hpp"
 
 namespace {
@@ -168,6 +169,9 @@ TEST(Orderbook, TheFixedShapeIsTheEnginesOwn) {
   EXPECT_EQ(layout.columns.at("Book").at("price"), "int64_t");
   EXPECT_TRUE(sde::schema_is_fixed("orderbook"));
   EXPECT_FALSE(sde::schema_is_fixed("postgres"));
+  EXPECT_FALSE(sde::schema_is_fixed("clickhouse"));
+  // A dialect nobody has heard of is refused, never answered `false` (`schema/005`).
+  EXPECT_THROW((void)sde::schema_is_fixed("mysql"), sde::EngineError);
   // Not the business of any other dialect.
   EXPECT_FALSE(sde::fixed_schema_mismatch(sde::group_columns(model, group), "postgres", {}));
 }

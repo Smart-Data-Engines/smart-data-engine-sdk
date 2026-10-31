@@ -30,8 +30,8 @@ Status = Literal["absent", "unfinished", "ready", "foreign"]
 
 _NAME = re.compile(r"sde_i_[0-9a-f]{32}_[0-9]{6}")
 """The only names an in-place build creates. Plain identifiers, so ClickHouse records a mutation
-over one as ``MATERIALIZE INDEX <name>`` with the name unquoted - measured, and relied on to find a
-materialization again instead of starting a second one."""
+over one with the name unquoted - measured, and relied on to find a materialization again instead
+of starting a second one (:meth:`NativeIndexBuild._ch_mutations`)."""
 
 POLL_SECONDS = 0.2
 
@@ -287,12 +287,17 @@ class NativeIndexBuild:
 
     def _ch_mutations(self, table: TableIdentity, name: str) -> list[tuple[str, bool, str]]:
         # KILL MUTATION removes the mutation from this table - measured - so what is listed here
-        # is either done or still to be done.
+        # is either done or still to be done. The command is recorded as the server formats it:
+        # `MATERIALIZE INDEX <name>` on 24.8, `(MATERIALIZE INDEX <name>)` on 26.5 (measured).
+        # Matching only the first, a build on 26.5 never saw its materialization: it waited out
+        # its budget, and every resume started another one.
+        command = f"MATERIALIZE INDEX {name}"
         rows = self.native.rows(
             "SELECT mutation_id, is_done, latest_fail_reason FROM system.mutations "
             "WHERE database = currentDatabase() AND table = {table:String} "
-            "AND command = {command:String} AND NOT is_killed ORDER BY create_time",
-            {"table": table.name, "command": f"MATERIALIZE INDEX {name}"},
+            "AND command IN ({command:String}, {parenthesised:String}) AND NOT is_killed "
+            "ORDER BY create_time",
+            {"table": table.name, "command": command, "parenthesised": f"({command})"},
         )
         return [(str(mutation_id), bool(done), str(failure)) for mutation_id, done, failure in rows]
 

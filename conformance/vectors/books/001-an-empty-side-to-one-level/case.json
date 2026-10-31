@@ -1,0 +1,13 @@
+{
+ "kind": "diff",
+ "name": "an empty side to one level",
+ "side": "bid",
+ "before": [],
+ "after": [
+  [100, 5, 1]
+ ],
+ "diff": [
+  [100, 5, 1]
+ ],
+ "why": "the first update of a side is every level of it"
+}

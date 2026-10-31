@@ -1,0 +1,70 @@
+{
+ "kind": "stream",
+ "name": "an explicit resync sends both sides whole, as of each side's last update",
+ "mode": "incremental",
+ "resync": {
+  "updates": 1000,
+  "seconds": 60
+ },
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "update",
+   "side": "ask",
+   "levels": [
+    [200, 1, 1]
+   ],
+   "ts": 20
+  },
+  {
+   "at": 2,
+   "op": "resync"
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "ask",
+   "ts": 20,
+   "levels": [
+    [200, 1, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "ask",
+   "ts": 20,
+   "levels": [
+    [200, 1, 1]
+   ]
+  }
+ ]
+}

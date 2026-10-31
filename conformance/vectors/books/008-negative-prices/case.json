@@ -1,0 +1,17 @@
+{
+ "kind": "diff",
+ "name": "negative prices",
+ "side": "bid",
+ "before": [
+  [-5, 1, 1]
+ ],
+ "after": [
+  [-3, 1, 1],
+  [-5, 2, 1]
+ ],
+ "diff": [
+  [-3, 1, 1],
+  [-5, 2, 1]
+ ],
+ "why": "a price is a signed integer in the smallest sub-unit, and orders as one"
+}

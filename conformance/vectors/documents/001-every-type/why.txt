@@ -1,0 +1,1 @@
+Every type as the index keeps it: microseconds since the epoch for both instants - a naive one counted as if it were UTC - a date as its text, a uuid in lowercase, a decimal times 10^4, an int64 past 2^53 exactly. Text keeps its tokens beside it, distinct and sorted.

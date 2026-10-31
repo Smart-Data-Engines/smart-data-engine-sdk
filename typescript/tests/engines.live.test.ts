@@ -70,7 +70,9 @@ function sample(id: string): Row {
     small: -2_147_483_648,
     big: 9_007_199_254_740_993n, // 2^53 + 1: the first integer a `number` cannot hold exactly
     approx: 0.1,
-    narrow: 0.5,
+    // Not 0.5, which every engine reads alike: the float32 nearest 0.1 is another double than 0.1,
+    // and PostgreSQL's and ClickHouse's text for it (`0.1`) parsed back to 0.1 itself.
+    narrow: 0.1,
     money: '12.34',
     flag: true,
     at: Timestamp.from('2026-08-27T12:00:00.123456Z'),
@@ -135,6 +137,8 @@ describe.skipIf(!PG_DSN)('the PostgreSQL adapter', () => {
     expect(back?.['label']).toBe('zażółć gęślą jaźń')
     expect(back?.['flag']).toBe(true)
     expect(back?.['small']).toBe(-2_147_483_648)
+    // a float32 is the float32 it is, as ClickHouse and Elasticsearch read it.
+    expect(back?.['narrow']).toBe(Math.fround(0.1))
   })
 
   it('refuses a table that already exists with a different shape', async () => {
@@ -324,6 +328,13 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect(engine.version).toMatch(/^\d+\./)
   })
 
+  it('reads its own one-column key back as the declared design', async () => {
+    // ClickHouse 26.5 and later keep the parentheses `ORDER BY (id)` was written with, so the
+    // catalogue says `(id)`, which read as another sort key (measured).
+    expect(await engine.ensureSchema(layout!, { keys: KEYS })).toEqual([])
+    expect(await engine.validateSchema(layout!, { keys: KEYS })).toEqual([])
+  })
+
   it('round-trips every type the layout declares', async () => {
     const id = randomUUID()
     await engine.insert('sample', sample(id))
@@ -335,6 +346,24 @@ describe.skipIf(!CH_DSN)('the ClickHouse adapter', () => {
     expect((back?.['at'] as Timestamp).toISOString()).toBe('2026-08-27T12:00:00.123456Z')
     expect(back?.['label']).toBe('zażółć gęślą jaźń')
     expect(back?.['flag']).toBe(true)
+    expect(back?.['narrow']).toBe(Math.fround(0.1))
+  })
+
+  it('scans a float32 as the float32 a read by key returns', async () => {
+    // A scan projects floats with `toString`, which keeps NaN and the infinities through JSON and
+    // gives a float32's shortest decimal: parsed alone, another double than the float32.
+    const id = randomUUID()
+    await engine.insert('sample', sample(id))
+    const column = (name: string, type: string) => ({ name, type })
+    const plan = {
+      columns: [column('id', 'uuid'), column('narrow', 'float32'), column('approx', 'float64')],
+      filters: [{ column: column('id', 'uuid'), operation: 'eq' as const, value: id }],
+      order: [column('id', 'uuid')], descending: false, after: null, limit: 10,
+    }
+    const [row] = await engine.selectRows('sample', plan)
+    expect(row?.['narrow']).toBe(Math.fround(0.1))
+    expect(row?.['approx']).toBe(0.1)
+    expect(row?.['narrow']).toBe((await engine.get('sample', { id }))?.['narrow'])
   })
 
   it('refuses to pretend it has a transaction', async () => {

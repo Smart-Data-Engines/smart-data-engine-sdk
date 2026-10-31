@@ -19,9 +19,11 @@ merge to main; use the reviewed distribution artifact when qualifying a deployme
   of the directory, or restore an older directory over a live project.
 - A dedicated Python process, running in its main thread, with no existing `SIGALRM` timer.
   Application processes own their separate connections and consume the active map.
-- Connected stock PostgreSQL and ClickHouse adapters, with separate operator and runtime-probe
-  connections. PostgreSQL operators use autocommit; probes use the real runtime login and schema.
-  ClickHouse repair and metadata writes are synchronous even if the caller enabled async inserts.
+- Connected stock PostgreSQL, ClickHouse and Elasticsearch adapters, with separate operator and
+  runtime-probe connections. PostgreSQL operators use autocommit; probes use the real runtime login
+  and schema. ClickHouse repair and metadata writes are synchronous even if the caller enabled async
+  inserts. Elasticsearch moves access by blocks rather than grants
+  ([below](#elasticsearch-access-by-blocks)).
 - Ordinary persistent PostgreSQL tables without inheritance, user triggers, rules or row-level
   security; local MergeTree or ReplacingMergeTree tables in an Atomic ClickHouse database, without
   dependent views or row policies. Replication, Distributed tables and external writers are outside
@@ -41,9 +43,70 @@ unaffected group. Recovery checks those identities again, including native login
 will not attach or truncate a replacement table. Retired source names on success and abandoned target names on abort remain in local history and
 cannot be used for another materialization.
 
+## Elasticsearch: access by blocks
+
+An Elasticsearch API key's privileges are fixed when the key is made, and a change to its owner's
+role does not reach it, so the operator cannot revoke one login's access as it does with SQL grants.
+It uses the index block instead, which refuses every principal at once: the runtime keys, a login
+the operator does not know, and the operator itself. Only a principal that may change the index's
+settings can lift one. Such a principal is an administrator, and this protocol does not revoke
+administrative powers, as on the SQL engines.
+
+| Step | PostgreSQL, ClickHouse | Elasticsearch |
+|---|---|---|
+| The pause (`deny_target`, `deny_source`) | runtime grants revoked | nothing revoked: the holds refuse writes, and the frozen data stays readable |
+| After the decision (`confirm_source_denied` on success, `confirm_target_denied` on abort) | revoked, and every runtime login seen refused | a read block for good; the retired side keeps its holds, so its write block stays too |
+| Opening the side in force (`enable_runtime`, a staging's grants) | granted, and every runtime login seen allowed | no read block, and every runtime key seen to read the index and hold `index`, `read` and `view_index_metadata` on it |
+
+Reads during the pause are safe. The source is frozen, and its rows are the ones the repair copies
+and the comparison checks. The copy is read only through the map of a success, which is published
+after the decision and after the source's read block. So a reader of the old map cannot see a
+source older than the copy. A retired index refuses even the administrator's search until an
+administrator lifts the block (`test_elasticsearch_operator_live.py`).
+
+What the operator checks:
+- **Its own login** reads the cluster's identity, `GET /`, which needs the cluster privilege
+  `monitor`. With `manage_pipeline` for the fences and `all` on the layout's indexes, `sde_m_*`,
+  `sde_map_state` and `sde_backfill_state`, that is what a login of its own needs; the cluster's
+  administrator has it.
+- **Each runtime key**, through `_has_privileges` asked as that key. It needs `index`, `read` and
+  `view_index_metadata` on each index it uses and on the fresh names of a staging, and the cluster
+  privilege `read_pipeline`. It may not hold `manage`, `all`, `write`, `delete_index` or `delete`
+  on any of them, nor the cluster privileges `all`, `manage`, `manage_pipeline`,
+  `manage_ingest_pipelines` or `manage_security`: each could lift a block, rewrite a fence, grant
+  itself more or - `delete`, and `write`, which includes it - remove documents past the fence. A
+  delete runs no ingest pipeline, where an index or an update runs the final one (measured on 9.5.5),
+  and the library never deletes a document.
+- **The same, by action.** A role can name an action and none of the privileges above, and then
+  each privilege that implies the action reads false. So the operator also asks for the action
+  `indices:admin/settings/update` on each index, which lifts a block or unsets a fence's pipeline.
+  It also asks for the cluster actions that write or delete a pipeline
+  (`cluster:admin/ingest/pipeline/put`, `.../delete`) and that restore a snapshot
+  (`cluster:admin/snapshot/restore`). And it asks for those that write a role, a role mapping, a
+  user or a password (`cluster:admin/xpack/security/role/put`, `role_mapping/put`, `user/put`,
+  `user/change_password`). A key holding any of them is refused by the action's name. Measured on
+  9.5.5: a key whose role named the settings and pipeline actions and no refused privilege lifted
+  a write block, unset `final_pipeline` and wrote a pipeline.
+- **The fresh names.** A key that does not cover a staging's fresh name,
+  `sde_m_<stage>_<position>`, is refused before anything is created. Give it a pattern such as
+  `sde_m_*`, because nothing here grants a privilege.
+- **No list of other principals.** A block refuses every principal whatever it holds, so the SQL
+  engines' refusal of an undeclared grantee has nothing to do here.
+- **Each index** by its `index.uuid`, on the cluster of the operator's `cluster_uuid`. A runtime key
+  cannot read the cluster's identity, so it is placed on the same cluster by the uuid of
+  `sde_map_state` it reads. An alias or a pattern under a layout's name is refused. So is an index
+  with a default ingest pipeline, which changes documents before the fence sees them, as a trigger
+  would; one with a lifecycle policy; and one with a block this protocol never sets.
+
+The repair empties the copy with `_delete_by_query`, which takes time in the number of documents,
+where SQL's `TRUNCATE` does not. It then copies with `create` actions visible on return. A relayout
+(protocol 2) and an [in-place index build](in-place-index.md) are refused on Elasticsearch by name:
+a layout there names its fields and nothing else, and every field is indexed already.
+
 ## Local configuration and command handoff
 
-Install a reviewed wheel with the `signed`, `postgres` and `clickhouse` extras in an operator venv.
+Install a reviewed wheel with the `signed`, `postgres` and `clickhouse` extras in an operator venv;
+the Elasticsearch adapter needs no extra.
 For a source checkout, the equivalent development installation from the repository root is:
 
 ```sh
@@ -75,6 +138,11 @@ The neutral model must describe the model used to issue the maps. For example:
       "dialect": "clickhouse",
       "operator_dsn_env": "CLIENT_CH_OPERATOR_DSN",
       "runtime_dsn_envs": ["CLIENT_CH_APP_DSN"]
+    },
+    "search": {
+      "dialect": "elasticsearch",
+      "operator_dsn_env": "CLIENT_ES_OPERATOR_DSN",
+      "runtime_dsn_envs": ["CLIENT_ES_APP_DSN"]
     }
   }
 }

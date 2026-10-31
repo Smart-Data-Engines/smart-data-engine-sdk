@@ -33,6 +33,8 @@ class FakeServer {
   readonly rows: StoredRow[] = []
   readonly commands: string[] = []
   capabilities = 'insert_event_time,strict_args,backup'
+  /** What `WHERE AT` answers, as the engine would compose it: the test sets it. */
+  bookAnswer: StoredRow[] = []
   auth: { identity: string; secret: string } | null = null
   /** Destroy the connection on receiving this command, counted from 1 over writes only. */
   dropOnWrite: number | null = null
@@ -81,7 +83,7 @@ class FakeServer {
         const line = buffer.slice(0, newline)
         let consumed = newline + 1
         let body: string[] = []
-        if (line.startsWith('MINSERT ')) {
+        if (line.startsWith('MINSERT ') || line.startsWith('MREPLACE ')) {
           const count = Number(line.split(' ')[4])
           const lines = buffer.slice(consumed).split('\n')
           if (lines.length <= count) return
@@ -114,7 +116,7 @@ class FakeServer {
           socket.write('ERR auth_required\n')
           continue
         }
-        if (line.startsWith('INSERT ') || line.startsWith('MINSERT ')) {
+        if (line.startsWith('INSERT ') || line.startsWith('MINSERT ') || line.startsWith('MREPLACE ')) {
           this.writes += 1
           if (this.dropOnWrite !== null && this.writes === this.dropOnWrite) {
             socket.destroy()
@@ -126,6 +128,10 @@ class FakeServer {
           }
           const parts = line.split(' ')
           const side = parts[3] === 'ask' ? 1 : 0
+          if (parts[0] === 'MREPLACE' && !this.capabilities.split(',').includes('replace_side')) {
+            socket.write(`ERR unknown command: ${parts[0]}\n`)
+            continue
+          }
           if (parts[0] === 'INSERT') {
             this.store(parts[1]!, parts[2]!, side, BigInt(parts[7]!), [[BigInt(parts[4]!), BigInt(parts[5]!), BigInt(parts[6]!)]])
           } else {
@@ -143,6 +149,15 @@ class FakeServer {
         }
         if (line === 'STATUS') {
           socket.write(`OK\nsessions\tqueries\tinserts\n1\t0\t0\ncapabilities: ${this.capabilities}\nrole: standalone\n\n`)
+          continue
+        }
+        const at = /^SELECT \* FROM '([^']+)'\.'([^']+)' WHERE AT (\d+)(?: AND level < (\d+))?$/.exec(line)
+        if (at !== null) {
+          socket.write(
+            'OK\ntimestamp_ns\tprice\tquantity\torder_count\tside\tlevel\tsequence_number\n' +
+              this.bookAnswer.map((row) => `${row.timestamp}\t${row.price}\t${row.quantity}\t${row.count}\t${row.side}\t${row.level}\t${row.sequence}\n`).join('') +
+              '\n',
+          )
           continue
         }
         const select = /^SELECT \* FROM '([^']+)'\.'([^']+)'(?: WHERE timestamp BETWEEN (\d+) AND (\d+)(?: AND price BETWEEN (-?\d+) AND (-?\d+))?)? LIMIT (\d+)$/.exec(line)
@@ -500,6 +515,131 @@ describe('a session over the orderbook', () => {
     const window = recorder.roll()!
     expect(window.shapes.map((shape) => [shape.kind, shape.errors]).sort()).toEqual([['bulk_write', 0], ['full_scan', 0]])
     await session.close()
+    await engine.close()
+  })
+})
+
+describe('book streams: whole sides and changes by price (books.ts, the engine\'s #233)', () => {
+  const BOOK_OF = { symbol: 'BTCUSDT', exchange: 'binance' }
+
+  async function opened(recorder?: Recorder): Promise<[Session, OrderbookEngine]> {
+    const logical = model()
+    const placement = loadMap({
+      contract: 3,
+      model_version: logical.version,
+      map_version: 1,
+      groups: {
+        DepthLevel: {
+          source: {
+            id: 'source', engine: 'ob',
+            layout: {
+              tables: { DepthLevel: ORDERBOOK_TABLE },
+              columns: { DepthLevel: Object.fromEntries(Object.entries(ORDERBOOK_SHAPE).map(([name, type]) => [name, type])) },
+            },
+          },
+        },
+      },
+    }, { model: logical })
+    const engine = await connected()
+    const session = await Session.open(logical, placement, { ob: engine }, recorder === undefined ? {} : { recorder })
+    return [session, engine]
+  }
+
+  it('needs a server that replaces a side', async () => {
+    const [session, engine] = await opened()
+    await expect(session.bookStream('DepthLevel', BOOK_OF)).rejects.toThrow('replace_side')
+    expect(server.commands).toEqual(['STATUS'])
+    await session.close()
+    await engine.close()
+  })
+
+  it('sends a whole side as a replacement and changes as an update', async () => {
+    server.capabilities += ',replace_side'
+    const recorder = new Recorder(model().version)
+    const [session, engine] = await opened(recorder)
+    const stream = await session.bookStream('DepthLevel', BOOK_OF)
+    await stream.update('bid', [[100, 5, 1], [99, 3, 1]], { timestampNs: 10n })
+    await stream.update('bid', [[101, 2, 1], [99, 3, 1]], { timestampNs: 20n })
+    await stream.apply('bid', [[98, 4, 1]], { timestampNs: 30n })
+    await stream.apply('bid', [], { timestampNs: 40n })
+    await stream.update('ask', [[200, 1, 1]], { timestampNs: 50n })
+    await stream.update('ask', [], { timestampNs: 60n })
+    expect(server.commands.slice(1)).toEqual([
+      'MREPLACE BTCUSDT binance bid 2 10\n100 5 1\n99 3 1',
+      'MINSERT BTCUSDT binance bid 2 20\n100 0 0\n101 2 1',
+      'INSERT BTCUSDT binance bid 98 4 1 30',
+      'MREPLACE BTCUSDT binance ask 1 50\n200 1 1',
+      // A side emptied is smaller whole than as its removals: the header alone.
+      'MREPLACE BTCUSDT binance ask 0 60',
+    ])
+    const window = recorder.roll()!
+    expect(window.shapes.map((shape) => shape.kind)).toEqual(['bulk_write'])
+    await session.close()
+    await engine.close()
+  })
+
+  it('refuses the names of a book before its first update', async () => {
+    server.capabilities += ',replace_side'
+    const [session, engine] = await opened()
+    await expect(session.bookStream('DepthLevel', { symbol: 'BTC USD', exchange: 'binance' })).rejects.toThrow('cannot be used as a symbol')
+    await expect(session.bookStream('DepthLevel', { symbol: 'BTCUSDT', exchange: '' })).rejects.toThrow('exchange')
+    expect(server.commands).toEqual(['STATUS'])
+    await session.close()
+    await engine.close()
+  })
+
+  it('sends the side whole after an update the engine did not confirm', async () => {
+    server.capabilities += ',replace_side'
+    const [session, engine] = await opened()
+    const stream = await session.bookStream('DepthLevel', BOOK_OF)
+    await stream.update('ask', [[200, 1, 1], [201, 1, 1]], { timestampNs: 10n })
+    server.dropOnWrite = 2
+    await expect(stream.update('ask', [[200, 1, 1], [202, 1, 1]], { timestampNs: 20n })).rejects.toThrow('sends this side whole next')
+    await engine.connect()
+    await stream.update('ask', [[200, 1, 1], [203, 1, 1]], { timestampNs: 30n })
+    expect(server.commands.filter((command) => !command.startsWith('STATUS')).at(-1)).toBe('MREPLACE BTCUSDT binance ask 2 30\n200 1 1\n203 1 1')
+    await session.close()
+    await engine.close()
+  })
+
+  it('refuses an update the engine cannot hold before sending it', async () => {
+    server.capabilities += ',replace_side'
+    const engine = await connected()
+    const update = { ...BOOK_OF, side: 'bid', timestampNs: 1n }
+    await expect(engine.applyLevels(ORDERBOOK_TABLE, { ...update, levels: Array.from({ length: 1001 }, (_, price) => [price, 1, 1] as const) }))
+      .rejects.toThrow('at most 1000')
+    await expect(engine.replaceLevels(ORDERBOOK_TABLE, { ...update, timestampNs: -1n, levels: [] })).rejects.toThrow('timestampNs')
+    await expect(engine.applyLevels(ORDERBOOK_TABLE, { ...update, side: 'buy', levels: [[1, 1, 1]] })).rejects.toThrow('side')
+    await expect(engine.applyLevels(ORDERBOOK_TABLE, { ...update, levels: [[1, -1, 1]] })).rejects.toThrow('quantity')
+    expect(server.commands).toEqual(['STATUS'])
+    await engine.close()
+  })
+
+  it('reads a book as the engine composes it, each side best first', async () => {
+    server.capabilities += ',replace_side'
+    server.bookAnswer = [
+      { symbol: 'BTCUSDT', exchange: 'binance', timestamp: 7n, side: 1, level: 1, price: 202n, quantity: 4n, count: 1n, sequence: 3n },
+      { symbol: 'BTCUSDT', exchange: 'binance', timestamp: 9n, side: 0, level: 0, price: 101n, quantity: 2n, count: 1n, sequence: 5n },
+      { symbol: 'BTCUSDT', exchange: 'binance', timestamp: 5n, side: 1, level: 0, price: 200n, quantity: 1n, count: 2n, sequence: 1n },
+      { symbol: 'BTCUSDT', exchange: 'binance', timestamp: 9n, side: 0, level: 1, price: 99n, quantity: 3n, count: 1n, sequence: 5n },
+    ]
+    const recorder = new Recorder(model().version)
+    const [session, engine] = await opened(recorder)
+    const book = await session.bookAt('DepthLevel', { ...BOOK_OF, atNs: 20n, depth: 5 })
+    expect(book).toEqual({ bid: [[101n, 2n, 1n], [99n, 3n, 1n]], ask: [[200n, 1n, 2n], [202n, 4n, 1n]] })
+    expect(server.commands.slice(1)).toEqual(["SELECT * FROM 'BTCUSDT'.'binance' WHERE AT 20 AND level < 5"])
+    expect(recorder.roll()!.shapes.map((shape) => shape.kind)).toEqual(['range_read'])
+    await session.close()
+    await engine.close()
+  })
+
+  it('does not read a book from a server that composes it by position', async () => {
+    const engine = await connected()
+    await expect(engine.bookAt(ORDERBOOK_TABLE, { ...BOOK_OF, atNs: 20n })).rejects.toThrow('by position')
+    // Refused before the capability is asked about.
+    await expect(engine.bookAt(ORDERBOOK_TABLE, { ...BOOK_OF, atNs: 20n, depth: 1001 })).rejects.toThrow('depth')
+    await expect(engine.bookAt(ORDERBOOK_TABLE, { ...BOOK_OF, atNs: -1n })).rejects.toThrow('atNs')
+    expect(server.commands).toEqual(['STATUS'])
     await engine.close()
   })
 })

@@ -1,0 +1,1 @@
+One byte past Lucene's limit on a term: refused before it is sent.

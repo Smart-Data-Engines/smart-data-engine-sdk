@@ -302,6 +302,15 @@ def test_the_cpp_row_agrees_with_the_library() -> None:
     _, language, tier_cell, hashing_cell, ir_cell, map_cell, engines = _row("sde")
     assert tier_cell == tier.group(1)
     assert hashing_cell == ("yes" if hashing.group(1) == "true" else "no")
+    # The engines cell is the adapters the library says it has (format contract section 9): the
+    # constant the conformance guard reads, so the cell and the families it requires are one claim.
+    adapters = re.search(
+        r"inline constexpr std::array<std::string_view, (\d+)> ADAPTERS\{([^}]*)\};", version
+    )
+    assert adapters, "the C++ library no longer declares ADAPTERS"
+    declared = re.findall(r'"([a-z]+)"', adapters.group(2))
+    assert len(declared) == int(adapters.group(1)), adapters.group(0)
+    assert engines == (", ".join(f"`{name}`" for name in sorted(declared)) or "none"), engines
     assert ir_cell == ir.group(1) == str(sde.CONTRACT)
     en_dash = "\N{EN DASH}"
     assert map_cell == f"{floor.group(1)}{en_dash}{ceiling.group(1)}", map_cell
@@ -323,6 +332,22 @@ def test_the_cpp_row_agrees_with_the_library() -> None:
     adapters = sorted(p.stem for p in engines_dir.glob("*.cpp")) if engines_dir.is_dir() else []
     cell = [] if engines == "none" else sorted(n.strip().strip("`") for n in engines.split(","))
     assert cell == adapters, (cell, adapters)
+
+
+def test_the_cpp_log_vocabulary_is_the_references() -> None:
+    """Every event name the C++ library emits is one this library emits too.
+
+    A closed vocabulary exists so that an alert built on a name works for every language. A name
+    that exists only in one library is one nobody's alert matches, and the C++ list is read out of
+    its header rather than restated here.
+    """
+    header = (ROOT / "cpp" / "include" / "sde" / "log.hpp").read_text()
+    block = re.search(r"LOG_EVENTS\[\] = \{(.*?)\};", header, re.S)
+    assert block, "the C++ library no longer declares LOG_EVENTS"
+    names = re.findall(r'"(sde\.[a-z_.]+)"', block.group(1))
+    assert names, "LOG_EVENTS is empty"
+    assert sorted(set(names) - set(sde.logging.EVENTS)) == []
+    assert len(names) == len(set(names)), "an event is listed twice"
 
 
 def test_the_typescript_core_reaches_no_driver() -> None:

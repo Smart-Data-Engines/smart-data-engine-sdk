@@ -1,0 +1,7 @@
+{
+  "match": true,
+  "query_tokens": [
+    "apple",
+    "fresh"
+  ]
+}

@@ -1,4 +1,4 @@
-"""Routing: a lookup and three conditions, and deliberately nothing more.
+"""Routing: a lookup and four conditions, and deliberately nothing more.
 
 The library does not decide where an operation goes. The planner decided, ahead of time, for every
 shape the model admits, and put the answers in the placement map. This module reads them.
@@ -9,12 +9,14 @@ which live on our side, once. If the library decided anything, that judgement wo
 reimplemented in Python, TypeScript, Java and Rust, and kept identical in all four forever. So it
 looks things up.
 
-The three conditions that are *not* lookups exist because they are correctness, not judgement:
+The four conditions that are *not* lookups exist because they are correctness, not judgement:
 
 1. Writes go to the source materialisation. There is exactly one, and derived copies are derived.
 2. An operation inside a transaction that has already written goes to the source, because a derived
    copy is behind by design and would not show the write the caller just made.
 3. An operation asking for no staleness goes to the source, for the same reason.
+4. A search goes to the source. Its answer is every row that matches, and only the source is known
+   to hold every row (:data:`sde.shapes.SOURCE_ONLY_KINDS`).
 
 Anything else follows the routing table, and if the table has nothing to say the answer is the
 source. That fallback is safe by construction, since the source is always correct and merely
@@ -28,7 +30,7 @@ from dataclasses import dataclass
 
 from .logging import log
 from .placement import Materialization, PlacementMap
-from .shapes import WRITE_KINDS, OperationShape
+from .shapes import SOURCE_ONLY_KINDS, WRITE_KINDS, OperationShape
 
 __all__ = ["Router", "resolve"]
 
@@ -48,7 +50,7 @@ class Router:
     ) -> Materialization:
         group = self.placement.placement_of(shape.group)
 
-        if shape.kind in WRITE_KINDS:
+        if shape.kind in WRITE_KINDS or shape.kind in SOURCE_ONLY_KINDS:
             return group.source
         if in_write_transaction or fresh:
             return group.source

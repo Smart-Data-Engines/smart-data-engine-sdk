@@ -104,7 +104,11 @@ applying a layout the library reads the design back from the engine's own catalo
 
 ClickHouse formats those expressions, so they are **parsed**, not compared with a string this
 library predicts: 24.8 leaves `select` and `order` bare and quotes `null` and `ząb`, and a formatting
-rule that changed between releases would turn a correct table into a refusal.
+rule that changed between releases would turn a correct table into a refusal. One has: from 26.5 a
+single expression keeps the parentheses it was written in, so the one-column key this library
+creates as `ORDER BY (id)` reads back `(id)`, where 24.8 to 26.4 read `id` (a list of two or more
+reads `a, b` on all of them, measured on nine releases). One pair of parentheses around the whole of
+a key, an index's expression or a partition key is read as what is inside it.
 
 What happens with a difference depends on who asked:
 

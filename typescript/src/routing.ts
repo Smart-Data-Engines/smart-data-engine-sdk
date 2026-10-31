@@ -1,5 +1,5 @@
 /**
- * Routing: a lookup and three conditions, and deliberately nothing more.
+ * Routing: a lookup and four conditions, and deliberately nothing more.
  *
  * The library does not decide where an operation goes. The planner decided, ahead of time, for every
  * shape the model admits, and put the answers in the placement map. This reads them.
@@ -9,18 +9,20 @@
  * plane, once. If the library decided anything, that judgement would have to be reimplemented in
  * every language and kept identical forever.
  *
- * The three conditions that are not lookups are correctness, not judgement:
+ * The four conditions that are not lookups are correctness, not judgement:
  *
  * 1. Writes go to the source materialisation.
  * 2. An operation inside a transaction that has already written goes to the source, because a derived
  *    copy is behind by design and cannot show the write the caller just made.
  * 3. An operation asking for no staleness goes to the source, for the same reason.
+ * 4. A search goes to the source: its answer is every row that matches, and only the source is
+ *    known to hold every row (`SOURCE_ONLY_KINDS`).
  */
 
 import type { Materialization, PlacementMap } from './placement.js'
 import { materializationById, placementOf } from './placement.js'
 import type { OperationShape } from './shapes.js'
-import { shapeId, WRITE_KINDS } from './shapes.js'
+import { shapeId, SOURCE_ONLY_KINDS, WRITE_KINDS } from './shapes.js'
 
 export interface ResolveOptions {
   readonly inWriteTransaction?: boolean
@@ -34,7 +36,7 @@ export function resolve(
 ): Materialization {
   const placement = placementOf(map, shape.group)
 
-  if (WRITE_KINDS.has(shape.kind)) return placement.source
+  if (WRITE_KINDS.has(shape.kind) || SOURCE_ONLY_KINDS.has(shape.kind)) return placement.source
   if (options.inWriteTransaction === true || options.fresh === true) return placement.source
 
   const target = map.routing[shapeId(shape)]
