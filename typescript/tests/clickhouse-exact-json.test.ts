@@ -10,9 +10,14 @@ async function endpoint(meta: Array<{name: string, type: string}>, data: string)
   const requests: URL[] = []
   const server = createServer((request, response) => {
     const url = new URL(request.url!, 'http://fixture.invalid'); requests.push(url)
-    response.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' })
-    response.end(url.searchParams.get('query')?.startsWith('SELECT version()')
-      ? '{"data":[{"version":"26.8.2.7"}]}' : JSON.stringify({meta}).slice(0,-1)+',"data":['+data+']}')
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      // The statement is the body (clickhouse-statement-body.test.ts).
+      response.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' })
+      response.end(Buffer.concat(chunks).toString('utf8').startsWith('SELECT version()')
+        ? '{"data":[{"version":"26.8.2.7"}]}' : JSON.stringify({meta}).slice(0,-1)+',"data":['+data+']}')
+    })
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   closers.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) })

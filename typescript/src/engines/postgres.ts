@@ -87,7 +87,7 @@ const OID = {
 /**
  * One value, converted from what `pg` hands back into what this library promises.
  *
- * Four of these are decisions rather than plumbing, and each is a place where two engines would
+ * Five of these are decisions rather than plumbing, and each is a place where two engines would
  * otherwise disagree about the same column.
  *
  * **`int8` becomes a `bigint`.** `pg` returns it as a string, and a `number` would silently lose
@@ -105,12 +105,21 @@ const OID = {
  *
  * **Both timestamp types become `Timestamp`.** Client-local parsers retain their text before pg
  * can discard microseconds. Converting a Date after the driver parsed it is already too late.
+ *
+ * **`float4` becomes the float32 it is.** Its text is the shortest decimal that rounds back to the
+ * stored value, and that decimal parsed is another double than the value, so the same column read
+ * from ClickHouse or Elasticsearch would compare unequal.
  */
 function convert(value: unknown, oid: number): unknown {
   if (value === null || value === undefined) return null
   switch (oid) {
     case OID.int8:
       return typeof value === 'bigint' ? value : BigInt(String(value))
+    case OID.float4:
+      // The float32 it is, exactly, as ClickHouse and Elasticsearch return one. PostgreSQL's text
+      // is the shortest decimal that rounds back to it - `0.1` - and parsed as a double that is
+      // another number than the float32 itself, so two engines' copies of a value compared unequal.
+      return Math.fround(Number(value))
     case OID.numeric:
       return String(value)
     case OID.date:

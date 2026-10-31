@@ -1,0 +1,1 @@
+only text is searched: a null or a number in a chosen field holds no token

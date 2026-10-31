@@ -39,8 +39,8 @@ are in [format-contract.md §7k](format-contract.md); in short:
 - no staging, cutover or in-place index build acts on it, and each carries it unchanged;
 - the local operator needs no binding for its engine and refuses one.
 
-So a map can put a group on the orderbook engine next to groups on PostgreSQL and ClickHouse, and the
-others still move. The group on the orderbook stays where it was placed: moving it would need write
+So a map can put a group on the orderbook engine next to groups on PostgreSQL, ClickHouse and
+Elasticsearch, and the others still move. The group on the orderbook stays where it was placed: moving it would need write
 fences the engine does not have.
 
 The loader owns and freezes the parsed placement. Copied map objects do not inherit loaded
@@ -72,8 +72,8 @@ For contract 4, `Session.ensure_schema()` / `ensureSchema()` verifies existing s
 without issuing DDL. Both adapters expose `validate_schema()` / `validateSchema()` for that read-only
 check. Runtime credentials can therefore omit provisioning powers; complete role qualification and
 cutover revocation are separate from this Session check. An adapter without native generation and
-read-only schema support is refused for a group that carries a generation. PostgreSQL and ClickHouse
-implement them. The orderbook adapter has read-only schema validation and no generations, so its
+read-only schema support is refused for a group that carries a generation. PostgreSQL, ClickHouse
+and Elasticsearch implement them. The orderbook adapter has read-only schema validation and no generations, so its
 group carries none (contract 6, above).
 
 `get` removes the SDK's technical epoch column before returning a logical row, including when

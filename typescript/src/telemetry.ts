@@ -124,6 +124,13 @@ export class ShapeStats {
    * that takes a `where` reports this, so writes and point reads leave it empty.
    */
   readonly filtered = new Map<string, { predicates: ReadPredicates; calls: number }>()
+  /**
+   * Rows a search examined: the candidates its engine supplied, each checked by the library. Next
+   * to `rows` it is what a search cost where it ran. Reported for the `search` kind only.
+   */
+  examined = 0
+  /** Search calls by the fields they looked in, sorted. Names only, never the text. */
+  readonly searched = new Map<string, { fields: readonly string[]; calls: number }>()
 
   constructor(
     readonly shapeId: string,
@@ -132,7 +139,14 @@ export class ShapeStats {
     readonly kind: ShapeKind,
   ) {}
 
-  record(nanoseconds: number, rows: number, failed: boolean, predicates?: ReadPredicates): void {
+  record(
+    nanoseconds: number,
+    rows: number,
+    failed: boolean,
+    predicates?: ReadPredicates,
+    examined = 0,
+    searched?: readonly string[],
+  ): void {
     this.calls += 1
     this.rows += rows
     if (failed) this.errors += 1
@@ -143,7 +157,23 @@ export class ShapeStats {
       if (seen === undefined) this.filtered.set(key, { predicates, calls: 1 })
       else seen.calls += 1
     }
+    this.examined += examined
+    if (searched !== undefined) {
+      const key = JSON.stringify(searched)
+      const seen = this.searched.get(key)
+      if (seen === undefined) this.searched.set(key, { fields: searched, calls: 1 })
+      else seen.calls += 1
+    }
   }
+}
+
+/** Code point order of two field lists, element by element; a prefix comes first. */
+function compareFieldLists(a: readonly string[], b: readonly string[]): number {
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    const order = compareCodePoints(a[index] as string, b[index] as string)
+    if (order !== 0) return order
+  }
+  return a.length - b.length
 }
 
 /** Code point order of two predicate combinations: equality fields element by element, then range. */
@@ -411,7 +441,7 @@ export interface StorageSize {
 /**
  * Why a group's size stayed unknown: its engine's adapter has no catalogue to read, a table the map
  * names does not exist, the catalogue refused the login (ClickHouse without the `system.parts`
- * grant) or the read failed otherwise.
+ * grant, an Elasticsearch key without `monitor`) or the read failed otherwise.
  */
 export const STORAGE_UNAVAILABLE = ['failed', 'missing_table', 'refused', 'unsupported'] as const
 export type StorageUnavailable = (typeof STORAGE_UNAVAILABLE)[number]
@@ -538,6 +568,7 @@ export function windowShapes(
     entry['calls'] = stats.calls
     entry['errors'] = stats.errors
     entry['rows'] = stats.rows
+    if (shape.kind === 'search') entry['examined'] = stats.examined
     entry['latency_p50_ms'] = stats.latency.percentileMs(0.5)
     entry['latency_p99_ms'] = stats.latency.percentileMs(0.99)
     if (stats.filtered.size > 0) {
@@ -551,6 +582,13 @@ export function windowShapes(
           ...(predicates.ranged === '' ? {} : { range: predicates.ranged }),
           calls,
         }))
+    }
+    if (stats.searched.size > 0) {
+      // Which fields the searches looked in: one entry per combination, in code point order.
+      // Never the text they looked for.
+      entry['searched_on'] = [...stats.searched.values()]
+        .sort((a, b) => compareFieldLists(a.fields, b.fields))
+        .map(({ fields, calls }) => ({ fields: [...fields], calls }))
     }
     return entry
   })
@@ -909,6 +947,10 @@ export interface RecordOptions {
   readonly equal?: readonly string[]
   /** The field a range bounded, for a filtered read. */
   readonly ranged?: string | null
+  /** For a search: the rows it checked. */
+  readonly examined?: number
+  /** For a search: the fields it looked in. */
+  readonly searched?: readonly string[]
 }
 
 export interface FanOutOptions {
@@ -965,7 +1007,18 @@ export class Recorder {
               ranged: options.ranged ?? '',
             }
       const rows = options.rows ?? 0
-      stats.record(options.nanoseconds, rows, options.failed === true, predicates)
+      const searched =
+        options.searched === undefined
+          ? undefined
+          : [...new Set(options.searched)].sort(compareCodePoints)
+      stats.record(
+        options.nanoseconds,
+        rows,
+        options.failed === true,
+        predicates,
+        options.examined ?? 0,
+        searched,
+      )
       if (rows > 0 && options.failed !== true && WRITE_KINDS.has(options.kind)) {
         // The second of the window this write's rows landed in: one clock read per write.
         const second = wholeSeconds(Math.max(0, this.clock() - this.startedNs))

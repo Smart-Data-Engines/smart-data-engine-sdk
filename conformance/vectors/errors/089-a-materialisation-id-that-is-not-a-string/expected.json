@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a materialisation id is a string",
+  "stage": "map",
+  "why": "str(True) is \"True\" in Python and String(true) is \"true\" in JavaScript, so one map named two different copies, and routing that named either reached a copy in one library and nothing in the other."
+}

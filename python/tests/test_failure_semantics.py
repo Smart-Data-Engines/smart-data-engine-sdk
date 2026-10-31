@@ -212,6 +212,35 @@ def test_an_engine_that_accepts_and_stays_silent_is_bounded(silent_port: int) ->
     assert PG_CONNECT - 1 <= elapsed <= PG_CONNECT + 5, f"gave up after {elapsed:.1f}s"
 
 
+@pytest.mark.parametrize(
+    "mention",
+    [
+        "?application_name=connect_timeout_probe",
+        "?options=-c%20statement_timeout%3Dconnect_timeout",
+    ],
+)
+def test_a_dsn_that_only_mentions_the_timeout_keeps_the_bound(
+    silent_port: int, mention: str
+) -> None:
+    """The caller's choice is a `connect_timeout` key, not the word anywhere in the DSN.
+
+    Found by the C++ port on 7 October 2026: the default was applied only when the text
+    `connect_timeout` was absent, so an application name or an option that merely contained it
+    removed the bound, and the call was still waiting after 20 seconds.
+    """
+    if PG_DSN is None:
+        pytest.skip("set SDE_POSTGRES_DSN")
+    hung = _with_port(PG_DSN, silent_port) + mention
+    started = time.monotonic()
+    refused = pytest.raises(EngineError, match="could not connect to PostgreSQL")
+    with _within(PG_CONNECT + 5), refused as raised:
+        PostgresEngine(hung).connect()
+    elapsed = time.monotonic() - started
+    # The adapter wraps whatever interrupted the connect, this test's own alarm included.
+    assert "still waiting" not in str(raised.value), "nothing but the test's alarm ended the wait"
+    assert PG_CONNECT - 1 <= elapsed <= PG_CONNECT + 5, f"gave up after {elapsed:.1f}s"
+
+
 def test_a_timeout_the_caller_chose_wins_over_ours(silent_port: int) -> None:
     """The bound is a default, not a rule. A `connect_timeout` in the DSN is the caller's decision
     about their own network, and a library that overrode it would be the wrong kind of helpful."""

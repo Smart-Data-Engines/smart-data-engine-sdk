@@ -83,6 +83,13 @@ struct Filter {
   std::optional<std::string> range;
 };
 
+/// What one search looked in and how many rows it checked - the candidates its engine supplied.
+/// Names and a count, never the text it looked for.
+struct Search {
+  std::vector<std::string> fields;
+  std::uint64_t examined = 0;
+};
+
 /// What was observed for one operation shape in one window.
 struct ShapeStats {
   std::string shape_id;
@@ -94,6 +101,10 @@ struct ShapeStats {
   std::uint64_t errors = 0;
   Histogram latency;
   std::map<Predicates, std::uint64_t> filtered;
+  /// Rows the searches of this shape checked; reported for the `search` kind only.
+  std::uint64_t examined = 0;
+  /// Search calls by the fields they looked in, sorted and distinct.
+  std::map<std::vector<std::string>, std::uint64_t> searched;
 };
 
 /// What the fan-out to one derived copy did. Not a shape: a fan-out is the library keeping a copy
@@ -226,9 +237,10 @@ class Recorder {
 
   /// Records one operation of a shape of this recorder's model. A shape of any other model is
   /// dropped and counted (`rejected`). `filter` is for an operation that takes a `where`: absent
-  /// for one that does not, and then nothing about filters is recorded.
+  /// for one that does not, and then nothing about filters is recorded. `search` is for a search.
   void record(const OperationShape& shape, std::int64_t nanoseconds, std::uint64_t rows = 0,
-              bool failed = false, const Filter* filter = nullptr) noexcept;
+              bool failed = false, const Filter* filter = nullptr,
+              const Search* search = nullptr) noexcept;
   /// Records one write to one derived copy.
   void record_fan_out(std::string_view group, std::string_view materialization,
                       std::int64_t nanoseconds, bool failed = false) noexcept;

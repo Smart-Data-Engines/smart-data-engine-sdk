@@ -1,0 +1,10 @@
+{
+  "fields": [
+    "t"
+  ],
+  "kind": "match",
+  "query": "\u00e9clair",
+  "row": {
+    "t": "e\u0301clair"
+  }
+}

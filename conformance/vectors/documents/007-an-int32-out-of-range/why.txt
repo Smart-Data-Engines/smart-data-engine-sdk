@@ -1,0 +1,1 @@
+An int32 field takes no value outside int32.

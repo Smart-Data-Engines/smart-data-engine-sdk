@@ -39,6 +39,10 @@ namespace sde::testing_support {
 /// counts, as `isinstance` does in the reference runner).
 [[nodiscard]] bool is_instance(const std::exception& error, std::string_view class_name);
 
+/// The library class the vectors would name for exactly this error's type, not a base of it; empty
+/// for anything else.
+[[nodiscard]] std::string exact_class(const std::exception& error);
+
 /// Runs `body`, which must throw the named class with `match` in its message.
 void expect_refusal(const std::function<void()>& body, std::string_view class_name,
                     std::string_view match);

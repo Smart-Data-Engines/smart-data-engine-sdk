@@ -93,8 +93,8 @@ def test_current_map_prints_only_the_bytes_it_verified(
 
     real_verify = placement._verify_signature
 
-    def swap(raw: Any, keys: Any) -> Any:
-        result = real_verify(raw, keys)
+    def swap(raw: Any, keys: Any, **options: Any) -> Any:
+        result = real_verify(raw, keys, **options)
         changed = {**original, "map_version": 999}
         (state / "active-map.json").write_text(json.dumps(changed))
         return result

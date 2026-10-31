@@ -1,0 +1,36 @@
+{
+  "id": "7985c390c9e7e3033490279a7c83b26babf7dfffa5cef4af2a34e0d985046a86",
+  "source": {
+    "amount": {
+      "$int": "-999999999999999999"
+    },
+    "at": 1792742400123456,
+    "count": -2147483648,
+    "day": "9999-12-31",
+    "home_code": "WAW",
+    "level": 0.1,
+    "local": {
+      "$int": "-62135596799999999"
+    },
+    "note": "Red apple, RED apples",
+    "ok": false,
+    "ref": "0000000a-0000-0000-0000-000000000001",
+    "station": "e\u0301",
+    "total": {
+      "$int": "9223372036854775807"
+    },
+    "__sde_tokens": {
+      "home_code": [
+        "waw"
+      ],
+      "note": [
+        "apple",
+        "apples",
+        "red"
+      ],
+      "station": [
+        "\u00e9"
+      ]
+    }
+  }
+}

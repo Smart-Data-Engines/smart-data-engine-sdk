@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 import sde
+from sde.engines.elasticsearch import HttpStatus
 from sde.errors import EngineError, ResourceBusy
 from sde.testing.loader import model_from_neutral
 from sde.testing.memory import MemoryEngine
@@ -109,6 +110,9 @@ def test_an_adapter_without_a_catalogue_leaves_its_groups_unknown() -> None:
         (type("InsufficientPrivilege", (Exception,), {"sqlstate": "42501"})("denied"), "refused"),
         (Exception("Code: 497. DB::Exception: Not enough privileges"), "refused"),
         (Exception("connection reset by peer"), "failed"),
+        # Elasticsearch: a key without the monitor privilege, and any other refused answer.
+        (HttpStatus(403), "refused"),
+        (HttpStatus(500), "failed"),
     ],
 )
 def test_a_refused_or_failed_read_is_an_unknown_size_not_an_exception(

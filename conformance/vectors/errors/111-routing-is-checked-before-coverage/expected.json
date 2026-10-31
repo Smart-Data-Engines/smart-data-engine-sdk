@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "'routing' must be a mapping from shape id to materialisation id",
+  "stage": "map",
+  "why": "The map misses a group and its routing is a list. The reference reads routing's shape straight after the groups, before coverage; TypeScript named the missing group."
+}

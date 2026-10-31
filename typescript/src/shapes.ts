@@ -19,6 +19,7 @@ export const SHAPE_KINDS = [
   'relation_walk',
   'write',
   'bulk_write',
+  'search',
 ] as const
 
 export type ShapeKind = (typeof SHAPE_KINDS)[number]
@@ -33,6 +34,16 @@ export type ShapeKind = (typeof SHAPE_KINDS)[number]
  * surfaced as a group that looked twice as write-heavy as it was.
  */
 export const WRITE_KINDS: ReadonlySet<ShapeKind> = new Set(['write', 'bulk_write'] as const)
+
+/**
+ * Reads that always go to the group's source, and that a routing table may not name at all.
+ *
+ * A search is checked row by row in the library (`search.ts`), so its engine only supplies
+ * candidates - and only the source is known to hold every row. Refused in a routing table rather
+ * than ignored, unlike a write entry, because a library that predates the kind refuses an entry
+ * for a shape it does not enumerate: this one has to refuse the same document (contract section 8).
+ */
+export const SOURCE_ONLY_KINDS: ReadonlySet<ShapeKind> = new Set(['search'] as const)
 
 /**
  * Types over which a range predicate is meaningful. Ranges over strings and uuids are legal in every
@@ -113,6 +124,12 @@ export function enumerateShapes(model: LogicalModel): readonly OperationShape[] 
           fields: [field.name],
         })
       }
+    }
+
+    // One search per entity that has text, whichever fields a call chooses: the window reports
+    // the choice (`searched_on`), as `filtered_on` reports a filter.
+    if (spec.fields.some((field) => field.type === 'string')) {
+      shapes.push({ group, entity: spec.name, target: null, kind: 'search', fields: [] })
     }
   }
 

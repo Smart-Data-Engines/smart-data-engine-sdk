@@ -1,0 +1,1 @@
+The same letter composed: another _id. Every other engine compares keys byte by byte, so these are two rows there and must be two documents here.
