@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: the orderbook adapter's connection, as the C++ port found it** (Python,
+[`docs/orderbook.md`](docs/orderbook.md)).
+- A write with no connection was reported as a write that may have been stored. The adapter read
+  its connection inside the write's own `try`, so `insert` before `connect()` answered that the
+  engine did not confirm the write and logged `sde.write.failed`. `insert_many` failed with an
+  `AttributeError`, and after a lost connection it reported an unknown outcome for updates never
+  sent. Both now refuse with `not connected; call connect() first`, before anything is sent, as
+  TypeScript does.
+- `connect()` kept a connection the engine's client had closed. After an exchange that does not
+  finish, the client closes its connection and says why on every later call, and `connect()`
+  returned at once because a client was set. It pings the connection now and replaces a closed one.
+
 **Fixed: `sde.schema.extra_columns` named the library's own generation column** (Python). The event
 is for a column added outside SDE. From contract 4 a table carries `__sde_write_epoch`, which
 provisioning adds for a map with write generations, and every schema check named it. An alert on the
