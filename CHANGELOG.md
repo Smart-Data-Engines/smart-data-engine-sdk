@@ -74,11 +74,10 @@ reference's and those of the engine's Python client the reference puts into its 
 - Its tests run against a fake engine and a TLS server in the process, and its slice against the
   pinned `ob_tcp_server`, plain and with credentials and TLS, with one book written here and read by
   the reference, and the other way round.
-- Two decisions differ from the reference, and a write with no connection is the first: refused
-  before anything is sent, where the reference reports a write it never sent as one that may have
-  been stored. The second: `connect()` opens a new connection after an exchange closed the old one.
-  Both, and the reference client's IPv4-only sockets and a timeout it accepts and cannot wait for,
-  are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
+- Two decisions differed from the reference until #122 brought it to both: a write with no
+  connection is refused before anything is sent, and `connect()` opens a new connection after an
+  exchange closed the old one. The reference client's IPv4-only sockets and a timeout it accepts and
+  cannot wait for are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
 - Fixed on the way, in the C++ library: Python's `float()` of text, which the DSN's timeout is,
   stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
   infinity or zero by the sign of its exponent rather than its size. Neither reached a release.
@@ -144,9 +143,9 @@ source and confirms every missing row with a point read. `sde::VerificationReque
 comparison to its request, project, map and group, and `sde::verify_frozen` compares under named
 write barriers. `sde::load_cutover_plan`, `sde::load_staging_plan` and `sde::load_index_plan` decode
 and authorise the signed packets of §7g, §7h and §7j without executing anything.
-- Every `migration/` vector passes, so the library claims Tier 2. It has no engine adapter yet; the
-  engines cell of [`docs/implementations.md`](docs/implementations.md) says `none` until one
-  round-trips.
+- Every `migration/` vector passes, so the library claims Tier 2: the vectors. Which engines it
+  reaches is the engines cell of [`docs/implementations.md`](docs/implementations.md), separately,
+  and an engine enters it when its adapter round-trips.
 - The three packet loaders were compared with the reference's on 102,384 signed packets, made
   by changing every accepted packet vector at each of its paths and in random pairs and signing them
   again. Outside three named classes, recorded in [`docs/implementing.md`](docs/implementing.md),
