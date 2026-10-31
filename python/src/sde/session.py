@@ -29,6 +29,7 @@ from .bulk import batch_columns, bulk_writer, snapshot_rows
 from .errors import (
     BulkWriteRefused,
     EngineError,
+    MapError,
     MigrationRefused,
     ModelPlanningError,
     ResourceBusy,
@@ -43,7 +44,7 @@ from .generation import (
 )
 from .groups import Group, colocation_groups
 from .hashing import NameMap
-from .layout import group_columns
+from .layout import group_columns, zone_refusal
 from .logging import log
 from .migration import precision_refusal
 from .model import LogicalModel
@@ -234,6 +235,21 @@ class Session:
                 "cannot route an operation to an engine it has no adapter for, and guessing at a "
                 "connection is not something a library should do."
             )
+
+        # A temporal column keeps its field's zone (format contract 7a): groups in name order,
+        # materialisations in document order. Here, as the fan-out rule below, because only an
+        # engine says which dialect's spelling a layout is written in.
+        for group in sorted(self._groups, key=lambda item: item.name):
+            spot = placement.groups.get(group.name)
+            if spot is None:
+                continue
+            for material in spot.all():
+                zone = zone_refusal(
+                    model, group.name, material.id, material.layout,
+                    self._engines[material.engine].dialect,
+                )
+                if zone is not None:
+                    raise MapError(zone)
 
         # A copy that silently holds different values from its source is refused before the first
         # write rather than discovered by `verify` at the end of one. The rule is `backfill`'s and

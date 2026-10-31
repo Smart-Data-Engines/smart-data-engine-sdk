@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "session",
+  "match": "group 'Reading': 'Reading@ch': Reading.wall is timestamp, so its clickhouse column must not carry a zone",
+  "why": "The other direction: a wall-clock time in a column with a zone, read by key as an instant. `at` is right here, so the refusal is about `wall` alone."
+}

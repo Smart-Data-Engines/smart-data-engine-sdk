@@ -94,7 +94,7 @@ PG_LAYOUT = {
 }
 CH_LAYOUT = {
     "tables": {"Reading": "reading"},
-    "columns": {"Reading": {"at": "DateTime64(3)", "celsius": "Int32", "id": "Int64"}},
+    "columns": {"Reading": {"at": "DateTime64(6, 'UTC')", "celsius": "Int32", "id": "Int64"}},
 }
 """Written with each dialect's real spelling rather than one set of types twice.
 
@@ -104,9 +104,24 @@ reader checking our honesty would notice that before they noticed the rule.
 """
 
 
+OTHER_LAYOUT = {
+    "tables": {"Reading": "reading"},
+    "columns": {"Reading": {"at": "DateTime64(3)", "celsius": "Int32", "id": "Int64"}},
+}
+"""`errors/038`'s copy, in a dialect this library has no facts for, as the vector was signed.
+
+`021`'s ClickHouse copy said `DateTime64(3)` too, from before ClickHouse rendered six digits, and a
+`timestamptz` field in a column without a zone is read as two types: refused at session open since
+31 October 2026 (format contract 7a). The rule reads only the dialects it knows, so this copy, on a
+`mysql` engine, keeps the spelling it was signed with.
+"""
+
+
 def _map(*, source_engine: str, source_layout: Any, copy_engine: str, copy_layout: Any) -> dict:
     return {
-        "contract": sde.MAP_CONTRACT,
+        # The contract these vectors were written in. The library's current one asks for a
+        # project_id from contract 4, and nothing here is about one.
+        "contract": 3,
         "model_version": _model().version,
         "map_version": 1,
         "groups": {
@@ -142,7 +157,7 @@ def _refusal_case() -> None:
         source_engine="pg-main",
         source_layout=PG_LAYOUT,
         copy_engine="other-1",
-        copy_layout=CH_LAYOUT,
+        copy_layout=OTHER_LAYOUT,
     )
     # **Signed, and that is what makes the empty call list a constraint rather than a decoration.**
     # The forward-only check does nothing at all for an unsigned map - the no-account mode promises

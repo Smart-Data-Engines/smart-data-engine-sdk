@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "session",
+  "match": "group 'Reading': 'Reading@ch': Reading.at is timestamptz, so its clickhouse column must carry a zone",
+  "why": "Both columns are wrong, and the refusal names `at`: fields in name order, so one document refuses the same way in every language."
+}

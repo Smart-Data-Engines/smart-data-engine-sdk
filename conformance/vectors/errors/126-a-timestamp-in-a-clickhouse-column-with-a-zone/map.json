@@ -1,0 +1,25 @@
+{
+  "contract": 3,
+  "model_version": "33f717b446fc783c",
+  "map_version": 1,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@ch",
+        "engine": "ch-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading"
+          },
+          "columns": {
+            "Reading": {
+              "at": "DateTime64(6, 'UTC')",
+              "id": "Int64",
+              "wall": "DateTime64(6, 'UTC')"
+            }
+          }
+        }
+      }
+    }
+  }
+}
