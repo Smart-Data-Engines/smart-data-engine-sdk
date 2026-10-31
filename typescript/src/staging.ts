@@ -189,7 +189,7 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   for (const material of [old.source, next.derived[0]!]) {
     if (!equal(Object.keys(material.layout.tables).sort(compareCodePoints), Object.keys(columns).sort(compareCodePoints)) ||
         !equal(Object.keys(material.layout.columns).sort(compareCodePoints), Object.keys(columns).sort(compareCodePoints))) {
-      throw new MigrationRefused('staging layouts must cover exactly the group entities')
+      throw new MigrationRefused("staging layouts must cover exactly the group's entities")
     }
     for (const [entity, fields] of Object.entries(columns)) {
       if (!equal(Object.keys(material.layout.columns[entity]!).sort(compareCodePoints), Object.keys(fields).sort(compareCodePoints))) {

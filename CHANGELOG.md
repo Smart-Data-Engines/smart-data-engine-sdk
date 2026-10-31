@@ -20,6 +20,26 @@ call that relied on an engine's conversion, such as text for an integer key, whi
 found. `errors/131`-`136` pin it. Finding 34 of the C++ port: the orderbook adapters read a time
 given as text differently, and through a session they now refuse it alike.
 
+**Fixed: a temporal column keeps its field's zone** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §7a). A scan reads a value by its field's type,
+and a read by key by its column's. A hand-written layout that gave a `timestamptz` field a column
+without a zone, or a `timestamp` field one with a zone, therefore read one row as two types: aware in
+a scan and naive by key, or the other way round. Measured on ClickHouse 24.8, and PostgreSQL has the
+same two types. A session now refuses such a layout when it opens, with `MapError`, before any engine
+is called: by the dialect's spelling of the column type, which the contract writes out for
+ClickHouse, PostgreSQL and Elasticsearch. A spelling the rule does not read, or a dialect the library
+has no facts for, is left alone. `errors/125`-`130` pin it. `migration/021`'s ClickHouse copy says
+`DateTime64(6, 'UTC')` now, the spelling the library renders, where it said `DateTime64(3)` from
+before ClickHouse rendered six digits. Finding 27 of the C++ port.
+
+**Fixed: a staging packet's refusals name a staging** (Python, TypeScript). The reference's staging
+loader shared its helpers with the cutover packet's, and they named a cutover unless told otherwise:
+a staging packet was refused with "cutover stage_id must be ...", "cutover signature must be an
+object" and "cutover staging authorization must be an object". TypeScript and C++ said "staging".
+TypeScript also said "the group entities" where Python and C++ say "the group's entities". The 24
+refused staging vectors named only the class; each now names its refusal too, so the words cannot
+drift apart again. Finding 11 of the C++ port.
+
 **Fixed: an entity the model does not declare is refused in one way** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8d). `save`, `save_many` and `get` naming one
 raise `ModelPlanningError`: `this model has no entity '<name>'`, before any operation shape is looked

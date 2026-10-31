@@ -96,13 +96,26 @@ PG_LAYOUT = {
 }
 CH_LAYOUT = {
     "tables": {"Reading": "reading"},
-    "columns": {"Reading": {"at": "DateTime64(3)", "celsius": "Int32", "id": "Int64"}},
+    "columns": {"Reading": {"at": "DateTime64(6, 'UTC')", "celsius": "Int32", "id": "Int64"}},
 }
 """Written with each dialect's real spelling rather than one set of types twice.
 
 The layout is not what the rule reads - it reads the neutral types from the model - but a vector
 whose ClickHouse copy claimed `timestamptz` columns would be a document nobody could deploy, and a
 reader checking our honesty would notice that before they noticed the rule.
+"""
+
+
+OTHER_LAYOUT = {
+    "tables": {"Reading": "reading"},
+    "columns": {"Reading": {"at": "DateTime64(3)", "celsius": "Int32", "id": "Int64"}},
+}
+"""`errors/038`'s copy, in a dialect this library has no facts for, as the vector was signed.
+
+`021`'s ClickHouse copy said `DateTime64(3)` too, from before ClickHouse rendered six digits, and a
+`timestamptz` field in a column without a zone is read as two types: refused at session open since
+31 October 2026 (format contract 7a). The rule reads only the dialects it knows, so this copy, on a
+`mysql` engine, keeps the spelling it was signed with.
 """
 
 
@@ -146,7 +159,7 @@ def _refusal_case() -> None:
         source_engine="pg-main",
         source_layout=PG_LAYOUT,
         copy_engine="other-1",
-        copy_layout=CH_LAYOUT,
+        copy_layout=OTHER_LAYOUT,
     )
     # **Signed, and that is what makes the empty call list a constraint rather than a decoration.**
     # The forward-only check does nothing at all for an unsigned map - the no-account mode promises
