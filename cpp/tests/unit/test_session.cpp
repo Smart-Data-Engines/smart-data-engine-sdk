@@ -2,12 +2,14 @@
 /// names, logical reads, storage sizes, a fan-out that fails, nested transactions and batches.
 
 #include <chrono>
+#include <functional>
 #include <future>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <typeinfo>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -273,6 +275,25 @@ TEST(Session, HashedNamesStayTheApplicationsOnBothSides) {
               session.save("Reading", sde::Row{{"id", 2}, {"at", "2026-10-06T10:00:00Z"}});
             }),
             "Reading.station is required and this row leaves it out");
+  // A name with no hash is one the model does not declare, and a write or a point read of it is
+  // refused as such (format contract 8d) - never with the name map's DeclarationError, and with
+  // ModelPlanningError exactly, not a subclass.
+  const auto undeclared = [](const std::function<void()>& body) -> std::string {
+    try {
+      body();
+    } catch (const sde::ModelPlanningError& error) {
+      return typeid(error) == typeid(sde::ModelPlanningError) ? error.what() : "a subclass";
+    } catch (const std::exception& error) {
+      return std::string("another class: ") + error.what();
+    }
+    return "no refusal";
+  };
+  EXPECT_EQ(undeclared([&] { session.save("Ghost", sde::Row{{"id", 2}}); }),
+            "this model has no entity 'Ghost'");
+  EXPECT_EQ(undeclared([&] { session.save_many("Ghost", {sde::Row{{"id", 2}}}); }),
+            "this model has no entity 'Ghost'");
+  EXPECT_EQ(undeclared([&] { static_cast<void>(session.get("Ghost", sde::Row{{"id", 2}})); }),
+            "this model has no entity 'Ghost'");
 }
 
 /// An engine that answers reads with canned rows and records the plan it was given.

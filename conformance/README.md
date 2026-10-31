@@ -180,7 +180,9 @@ vectors exist to catch, and it is invisible after parsing.
    A `write` case opens a session on its valid map, makes `write.accepted` - a write that must
    succeed - and then `write.refused`, which must raise exactly the named class. `calls.json` holds
    the accepted write and nothing of the refused one: a row the model does not allow is refused
-   before any engine is called (contract §8b).
+   before any engine is called (contract §8b). A step is a `save` (`values`), a `save_many`
+   (`rows`) or a `get` (`key`); a `get` is only ever the refused step, of an entity the model does
+   not declare (contract §8d).
 
 7. For signature vectors, load `map.json` with the keys in `keys.json` and assert which one
    verified it. A single entry under the **empty** name means the caller passed one bare key and

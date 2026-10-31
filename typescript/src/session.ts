@@ -155,6 +155,14 @@ function storageRefusal(error: unknown): StorageUnavailable {
   return code === '42501' || text.includes('Code: 497') || status === 403 ? 'refused' : 'failed'
 }
 
+/**
+ * A write or a point read of an entity the model does not declare (format contract 8d): one refusal,
+ * in every library, before any operation shape is looked up or any engine is called.
+ */
+function noEntity(entity: string): ModelPlanningError {
+  return new ModelPlanningError(`this model has no entity '${entity}'`)
+}
+
 export class Session {
   private readonly shapes = new Map<string, OperationShape>()
   private readonly inputFields = new Map<string, Readonly<Record<string, string>>>()
@@ -459,6 +467,9 @@ export class Session {
   private shapeFor(entity: string, kind: ShapeKind, fields: readonly string[] = []): OperationShape {
     const shape = this.shapes.get(shapeKey(entity, kind, fields))
     if (shape === undefined) {
+      // Asked only once the lookup has failed: an entity typed wrong is not a shape the model
+      // forgot, and the caller is told which (format contract 8d).
+      if (!this.model.entities.some((e) => e.name === entity)) throw noEntity(entity)
       throw new ModelPlanningError(
         `this model has no ${kind} of ${entity}${
           fields.length > 0 ? ` over [${fields.join(', ')}]` : ''
@@ -637,7 +648,7 @@ export class Session {
       const translated = rows.map((row) => this.fieldsIn(entity, row))
       const fields = Object.keys(translated[0] as Row)
       const spec = this.model.entities.find((e) => e.name === target)
-      if (spec === undefined) throw new ModelPlanningError(`this model has no entity '${entity}'`)
+      if (spec === undefined) throw noEntity(entity)
       const declared = new Set(Object.keys(groupColumns(this.model, this.groupOf(entity))[target]!))
       const required = new Set([...spec.fields.filter((field) => !field.nullable).map((field) => field.name), ...spec.key])
       if (fields.some((field) => !declared.has(field)) || [...required].some((field) => !fields.includes(field))) {
@@ -798,7 +809,7 @@ export class Session {
       const target = this.entityName(entity)
       const given = this.fieldsIn(entity, key)
       const spec = this.model.entities.find((e) => e.name === target)
-      if (spec === undefined) throw new ModelPlanningError(`this model has no entity '${entity}'`)
+      if (spec === undefined) throw noEntity(entity)
       const expected = [...spec.key].sort(compareCodePoints)
       const supplied = Object.keys(given).sort(compareCodePoints)
       if (supplied.join(SEP) !== expected.join(SEP)) {

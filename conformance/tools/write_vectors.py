@@ -88,12 +88,17 @@ def dump(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
 
 
-def save(values: dict[str, Any]) -> dict[str, Any]:
-    return {"operation": "save", "entity": "Thing", "values": values}
+def save(values: dict[str, Any], entity: str = "Thing") -> dict[str, Any]:
+    return {"operation": "save", "entity": entity, "values": values}
 
 
-def save_many(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"operation": "save_many", "entity": "Thing", "rows": rows}
+def save_many(rows: list[dict[str, Any]], entity: str = "Thing") -> dict[str, Any]:
+    return {"operation": "save_many", "entity": entity, "rows": rows}
+
+
+def get(key: dict[str, Any], entity: str) -> dict[str, Any]:
+    """A point read, only ever as the refused step: of an entity the model does not declare."""
+    return {"operation": "get", "entity": entity, "key": key}
 
 
 ACCEPTED_ONE = [{"engine": "pg-main", "call": "insert", "table": "thing"}]
@@ -158,6 +163,40 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
         "A batch already refused a row that left a required field out; it let a null through. The "
         "whole batch is refused, row 0 included, because a batch is checked before anything is "
         "sent. The row is named by its position and the field by name - never a value.",
+    ),
+    # An entity the model does not declare (format contract 8d), refused before any shape is
+    # looked up. Until 31 October 2026 the three libraries refused each call in their own way.
+    (
+        "122-a-save-of-an-entity-the-model-does-not-declare",
+        "ModelPlanningError",
+        save(FULL),
+        save({"amount": 2, "id": "g-1", "label": "ghost", "note": None}, entity="Ghost"),
+        "this model has no entity 'Ghost'",
+        ACCEPTED_ONE,
+        "Python and C++ said the model admits no write on Ghost, and TypeScript that it has no "
+        "write of Ghost: each read a name typed wrong as an operation the model forgot to shape. "
+        "With hashed identifiers C++ and Python raised a DeclarationError instead. The entity is "
+        "what is missing, and the refusal names it.",
+    ),
+    (
+        "123-a-batch-of-an-entity-the-model-does-not-declare",
+        "ModelPlanningError",
+        save(FULL),
+        save_many([{"amount": 2, "id": "g-1", "label": "ghost", "note": None}], entity="Ghost"),
+        "this model has no entity 'Ghost'",
+        ACCEPTED_ONE,
+        "The batch's refusal is the entity's, not a batch's: the class is ModelPlanningError "
+        "exactly, never its BulkWriteRefused, since no row was looked at.",
+    ),
+    (
+        "124-a-point-read-of-an-entity-the-model-does-not-declare",
+        "ModelPlanningError",
+        save(FULL),
+        get({"id": "g-1"}, entity="Ghost"),
+        "this model has no entity 'Ghost'",
+        ACCEPTED_ONE,
+        "Python raised a bare KeyError from the model's lookup, C++ a DeclarationError, and "
+        "TypeScript already the words above. A point read reaches no engine either.",
     ),
 ]
 

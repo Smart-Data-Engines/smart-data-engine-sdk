@@ -1,0 +1,30 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "this model has no entity 'Ghost'",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save_many",
+      "entity": "Ghost",
+      "rows": [
+        {
+          "amount": 2,
+          "id": "g-1",
+          "label": "ghost",
+          "note": null
+        }
+      ]
+    }
+  },
+  "why": "The batch's refusal is the entity's, not a batch's: the class is ModelPlanningError exactly, never its BulkWriteRefused, since no row was looked at."
+}

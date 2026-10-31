@@ -799,13 +799,17 @@ def _refuse_at_session(case: Path, exc_type: type[Exception], expected: Mapping[
 def _write(session: sde.Session, step: Mapping[str, Any]) -> None:
     if step["operation"] == "save":
         session.save(step["entity"], step["values"])
+    elif step["operation"] == "get":
+        # Only ever the refused step: an entity the model does not declare (format contract 8d).
+        session.get(step["entity"], step["key"])
     else:
         assert step["operation"] == "save_many", step["operation"]
         session.save_many(step["entity"], step["rows"])
 
 
 def _refuse_at_write(case: Path, exc_type: type[Exception], expected: Mapping[str, Any]) -> None:
-    """A row the model does not allow, refused before any engine is called.
+    """A row the model does not allow, or an entity it does not declare, refused before any engine
+    is called.
 
     The session is open on a valid map and one accepted write comes first. It is the control: the
     engine records what it receives, so the empty remainder of ``calls.json`` says the refused row

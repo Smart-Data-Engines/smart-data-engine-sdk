@@ -39,8 +39,15 @@ sde::LoadOptions load_options(const sde::Model& model, const sde::Json& expected
 
 void write(sde::Session& session, const sde::Json& step) {
   const std::string& entity = step.find("entity")->as_string();
-  if (step.find("operation")->as_string() == "save") {
+  const std::string& operation = step.find("operation")->as_string();
+  if (operation == "save") {
     session.save(entity, sde::testing::row_from_json(*step.find("values")));
+    return;
+  }
+  if (operation == "get") {
+    // A point read in a write-stage case is the refused step of an entity the model does not
+    // declare (format contract 8d): its answer is never reached.
+    static_cast<void>(session.get(entity, sde::testing::row_from_json(*step.find("key"))));
     return;
   }
   std::vector<sde::Row> rows;
