@@ -286,6 +286,28 @@ TEST(Session, APointReadGivesTheEngineItsKeyInTheFormAFilterGets) {
   EXPECT_EQ(std::get<std::int64_t>(engine.last.at("id")), 7);
 }
 
+TEST(Session, AHashedModelsKeyReachesTheEngineInTheFormAFilterGets) {
+  // The general path of a point read, which a hashed model takes: the key the engine receives is
+  // the checked one, under the field's digest, and a decimal at its column's scale.
+  const sde::Model model = sde::load_neutral_model(R"json({"entities": [
+    {"name": "Ledger", "fields": [{"name": "code", "type": "decimal(12,2)"},
+                                  {"name": "id", "type": "int64"}], "key": ["code", "id"]}]})json");
+  const auto [hashed, names] = sde::hash_identifiers(model, "a salt of sixteen bytes or more");
+  const std::string text = R"({"contract": 3, "model_version": ")" + hashed.version() +
+                           R"(", "map_version": 1, "groups": {")" + names.entity("Ledger") +
+                           R"(": {"source": {"id": "l", "engine": "pg", "layout": {"auto": true}}}}})";
+  sde::LoadOptions load;
+  load.model = &hashed;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), load);
+  KeyEngine engine;
+  sde::SessionOptions options;
+  options.names = &names;
+  sde::Session session(hashed, map, {{"pg", &engine}}, options);
+  (void)session.get("Ledger", sde::Row{{"code", sde::Decimal("1.230")}, {"id", std::int64_t{7}}});
+  EXPECT_EQ(std::get<sde::Decimal>(engine.last.at(names.field("Ledger", "code"))).to_string(), "1.23");
+  EXPECT_EQ(engine.last.count("code"), 0U) << "the engine sees digests only";
+}
+
 TEST(Session, ABatchIsCheckedWholeBeforeAnyEngine) {
   const sde::Model model = readings();
   const sde::PlacementMap map = placed(model);
