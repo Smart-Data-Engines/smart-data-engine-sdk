@@ -8,6 +8,14 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a staging packet's refusals name a staging** (Python, TypeScript). The reference's staging
+loader shared its helpers with the cutover packet's, and they named a cutover unless told otherwise:
+a staging packet was refused with "cutover stage_id must be ...", "cutover signature must be an
+object" and "cutover staging authorization must be an object". TypeScript and C++ said "staging".
+TypeScript also said "the group entities" where Python and C++ say "the group's entities". The 24
+refused staging vectors named only the class; each now names its refusal too, so the words cannot
+drift apart again. Finding 11 of the C++ port.
+
 **Fixed: an entity the model does not declare is refused in one way** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8d). `save`, `save_many` and `get` naming one
 raise `ModelPlanningError`: `this model has no entity '<name>'`, before any operation shape is looked

@@ -21,6 +21,45 @@ VECTORS = ROOT / "conformance/vectors"
 PROJECT, STAGE = "1" * 32, "5" * 32
 
 
+# What each refused case's refusal says, in every library (finding 11 of the C++ port: the
+# reference named a staging a cutover, and the vectors pinned only the class). A refusal of a
+# map inside the packet keeps the map loader's own words after the common prefix.
+STAGING_MATCHES: dict[str, str] = {
+    "100-staging-refuses-another-local-project": (
+        "staging authorization belongs to another local project"
+    ),
+    "101-staging-needs-a-newer-map": "staging must allocate a newer prepared map",
+    "102-staging-keeps-current-source": "staging cannot change the existing source",
+    "103-staging-keeps-write-generation": (
+        "staging retains the source generation and needs two spare generations"
+    ),
+    "104-staging-keeps-other-groups": "staging cannot change an unaffected group",
+    "105-staging-keeps-routing": "staging cannot change routing or other map attributes",
+    "106-staging-copy-needs-fanout": "staging authorization refused: ",
+    "107-staging-refuses-extra-copies": "staging prepares exactly one maintained copy",
+    "108-staging-needs-source-only-current": "staging begins with a source-only group",
+    "109-staging-needs-another-binding": "staging target must use another engine binding",
+    "110-staging-name-binds-stage-id": (
+        "staging needs fresh physical names bound to its stage id and entity order"
+    ),
+    "111-staging-columns-match-model": "staging layout columns must match the logical group",
+    "112-staging-refuses-auto-layout": "staging maps need explicit physical layouts",
+    "113-staging-model-is-bound": "staging authorization refused: ",
+    "114-staging-verifies-envelope": "staging authorization refused: ",
+    "115-staging-verifies-both-maps": "staging authorization refused: ",
+    "116-staging-refuses-unknown-protocol": "unsupported staging authorization kind or protocol",
+    "117-staging-group-must-exist": "staging cannot add or remove colocation groups",
+    "118-staging-reserves-cutover-generations": (
+        "staging retains the source generation and needs two spare generations"
+    ),
+    "119-staging-refuses-extra-instructions": "staging authorization has missing or unknown fields",
+    "120-staging-current-must-be-signed": "staging signature must be an object",
+    "139-staging-relayout-needs-the-same-binding": (
+        "a relayout (staging protocol 2) prepares its copy in the source's own engine binding"
+    ),
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
@@ -227,6 +266,8 @@ def main() -> None:
             expected: dict[str, Any] = {"project_id": PROJECT}
             if bad:
                 expected["error"] = "MigrationRefused"
+                if name in STAGING_MATCHES:
+                    expected["match"] = STAGING_MATCHES[name]
             else:
                 expected.update(
                     stage_fingerprint=hashlib.sha256(payload(plan)).hexdigest(),

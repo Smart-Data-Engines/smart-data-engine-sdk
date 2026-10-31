@@ -41,9 +41,15 @@ _FIELDS = {
 }
 
 
+STAGING = "staging"
+"""The subject of every refusal of a staging packet. The helpers it shares with the cutover packet
+name a cutover unless told otherwise, and a staging refused as a cutover sends its reader to the
+wrong packet (finding 11 of the C++ port)."""
+
+
 def staging_table_name(stage_id: str, position: int) -> str:
     """Portable physical name: fresh stage id plus a one-based, code-point ordered entity index."""
-    _hex(stage_id, 32, "stage_id")
+    _hex(stage_id, 32, "stage_id", STAGING)
     if type(position) is not int or not 1 <= position <= 999999:
         raise MigrationRefused("staging entity position must be an integer from 1 through 999999")
     return f"sde_m_{stage_id}_{position:06d}"
@@ -103,7 +109,7 @@ def _load(
     project_id: str,
     public_key: bytes | Mapping[str, bytes],
 ) -> StagingPlan:
-    body = _record(json_numbers(deepcopy(raw)), "staging authorization")
+    body = _record(json_numbers(deepcopy(raw)), "authorization", STAGING)
     if set(body) != _FIELDS:
         raise MigrationRefused("staging authorization has missing or unknown fields")
     if (
@@ -113,27 +119,29 @@ def _load(
     ):
         raise MigrationRefused("unsupported staging authorization kind or protocol")
     protocol: int = body["protocol"]
-    identity = _hex(body["stage_id"], 32, "stage_id")
-    local = _hex(body["project_id"], 32, "project_id")
+    identity = _hex(body["stage_id"], 32, "stage_id", STAGING)
+    local = _hex(body["project_id"], 32, "project_id", STAGING)
     if local != project_id:
         raise MigrationRefused("staging authorization belongs to another local project")
     group = body["group"]
     if not isinstance(group, str) or not group:
         raise MigrationRefused("staging group must be a nonempty string")
-    _signature(body)
+    _signature(body, STAGING)
     verified = _verify_signature(body, public_key)
     maps = []
     for name in ("current", "prepared"):
-        document = _record(body[name], name)
-        _signature(document)
-        for raw_group in _record(document.get("groups"), "groups").values():
-            value = _record(raw_group, "group")
+        document = _record(body[name], name, STAGING)
+        _signature(document, STAGING)
+        for raw_group in _record(document.get("groups"), "groups", STAGING).values():
+            value = _record(raw_group, "group", STAGING)
             copies = value.get("derived", [])
             if not isinstance(copies, list):
                 raise MigrationRefused("staging derived copies must be an array")
             for raw_material in (value.get("source"), *copies):
                 raw_layout = _record(
-                    _record(raw_material, "materialization").get("layout"), "layout"
+                    _record(raw_material, "materialization", STAGING).get("layout"),
+                    "layout",
+                    STAGING,
                 )
                 if raw_layout.get("auto"):
                     raise MigrationRefused("staging maps need explicit physical layouts")

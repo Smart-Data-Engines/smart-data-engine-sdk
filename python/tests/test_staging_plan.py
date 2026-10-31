@@ -6,6 +6,7 @@ import base64
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -77,6 +78,30 @@ def test_integral_json_numbers_preserve_packet_identity() -> None:
 def test_table_names_require_a_bounded_entity_position(position: int) -> None:
     with pytest.raises(sde.MigrationRefused, match="position"):
         sde.staging_table_name("5" * 32, position)
+
+
+@pytest.mark.parametrize(
+    ("change", "words"),
+    [
+        (lambda raw: [], "staging authorization must be an object"),
+        (lambda raw: {**raw, "stage_id": "x"}, "staging stage_id must be 32 lowercase hexadecimal"),
+        (lambda raw: {**raw, "project_id": "x"}, "staging project_id must be 32 lowercase"),
+        (lambda raw: {**raw, "signature": "x"}, "staging signature must be an object"),
+    ],
+)
+def test_a_staging_packet_is_refused_as_a_staging(change: Any, words: str) -> None:
+    """The loader shares its helpers with the cutover packet's, which name a cutover unless told
+    otherwise: "cutover stage_id must be ..." for a staging (finding 11 of the C++ port). These are
+    the refusals before the envelope's signature is verified, which no signed vector reaches."""
+    raw, model, keys, _ = fixture()
+    with pytest.raises(sde.MigrationRefused, match=words) as raised:
+        sde.load_staging_plan(change(raw), model=model, project_id="1" * 32, public_key=keys)
+    assert "cutover" not in str(raised.value)
+
+
+def test_a_fresh_name_refuses_a_stage_id_as_a_staging() -> None:
+    with pytest.raises(sde.MigrationRefused, match="staging stage_id must be 32"):
+        sde.staging_table_name("x", 1)
 
 
 def test_fresh_names_have_an_explicit_portable_form() -> None:
