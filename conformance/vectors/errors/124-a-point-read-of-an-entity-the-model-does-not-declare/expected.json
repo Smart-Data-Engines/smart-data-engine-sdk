@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "this model has no entity 'Ghost'",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Ghost",
+      "key": {
+        "id": "g-1"
+      }
+    }
+  },
+  "why": "Python raised a bare KeyError from the model's lookup, C++ a DeclarationError, and TypeScript already the words above. A point read reaches no engine either."
+}

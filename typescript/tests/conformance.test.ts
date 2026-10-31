@@ -205,10 +205,11 @@ const ERRORS: Record<string, new (...args: never[]) => Error> = {
 }
 
 interface WriteStep {
-  readonly operation: 'save' | 'save_many'
+  readonly operation: 'save' | 'save_many' | 'get'
   readonly entity: string
   readonly values?: Readonly<Record<string, unknown>>
   readonly rows?: readonly Readonly<Record<string, unknown>>[]
+  readonly key?: Readonly<Record<string, unknown>>
 }
 
 interface ErrorExpectation {
@@ -221,6 +222,8 @@ interface ErrorExpectation {
 
 async function write(session: Session, step: WriteStep): Promise<void> {
   if (step.operation === 'save') await session.save(step.entity, step.values!)
+  // Only ever the refused step: an entity the model does not declare (format contract 8d).
+  else if (step.operation === 'get') await session.get(step.entity, step.key!)
   else await session.saveMany(step.entity, step.rows!)
 }
 
