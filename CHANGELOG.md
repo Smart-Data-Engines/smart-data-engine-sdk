@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: an entity the model does not declare is refused in one way** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §8d). `save`, `save_many` and `get` naming one
+raise `ModelPlanningError`: `this model has no entity '<name>'`, before any operation shape is looked
+up and before any engine is called. The three libraries refused these calls in five ways: Python
+raised a bare `KeyError` from `get`, a write named a shape the model does not have, and with hashed
+identifiers Python and C++ raised a `DeclarationError`. A query still refuses an undeclared entity as
+a query. `errors/122`-`124` pin it, and a `write`-stage case may now have a `get` as its refused
+step. Finding 9 of the C++ port.
+
 **Fixed: the C++ library's PostgreSQL adapter read a `real` as the decimal its text names** (C++,
 decision 42 of the port's findings). The server's shortest text for the float nearest 1.1 is `1.1`,
 and the adapter parsed it as a double, so it read 1.1: another number than the one stored, and
