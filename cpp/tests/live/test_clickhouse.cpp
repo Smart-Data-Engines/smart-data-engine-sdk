@@ -256,6 +256,17 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
   const std::optional<sde::Row> nan = session.get("Probe", {{"id", std::int64_t{4}}});
   ASSERT_TRUE(nan.has_value());
   EXPECT_TRUE(std::isnan(std::get<double>(nan->at("f64"))));
+
+  // A float32 is read as the float it is, widened exactly (decision 42 of the port's findings): 1.1
+  // stored is 1.100000023841858 read. 1.5 above is a float exactly and cannot tell the two apart.
+  sde::Row narrow = empty;
+  narrow["id"] = std::int64_t{6};
+  narrow["f32"] = 1.1;
+  session.save("Probe", narrow);
+  const std::optional<sde::Row> widened = session.get("Probe", {{"id", std::int64_t{6}}});
+  ASSERT_TRUE(widened.has_value());
+  EXPECT_EQ(std::get<double>(widened->at("f32")), static_cast<double>(1.1F));
+  EXPECT_NE(std::get<double>(widened->at("f32")), 1.1);
 }
 
 TEST_F(ClickHouseLive, AValueTheColumnCannotHoldIsRefusedNeverChanged) {

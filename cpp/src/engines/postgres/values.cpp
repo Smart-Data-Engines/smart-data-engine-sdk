@@ -27,6 +27,19 @@ std::int64_t integer_cell(std::string_view text) {
   return value;
 }
 
+/// A `real` read as the float it is, widened exactly to a double: decision 42 of the C++ port's
+/// findings, which every library takes. 1.1 stored is 1.100000023841858 read, from every engine.
+/// Read as a double, the server's shortest text for it would give 1.1, not the number stored.
+double float32_cell(std::string_view text) {
+  if (text == "NaN") return std::numeric_limits<double>::quiet_NaN();
+  if (text == "Infinity") return std::numeric_limits<double>::infinity();
+  if (text == "-Infinity") return -std::numeric_limits<double>::infinity();
+  float value = 0;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (error != std::errc() || end != text.data() + text.size()) unrepresentable(text, "real");
+  return static_cast<double>(value);
+}
+
 double float_cell(std::string_view text) {
   if (text == "NaN") return std::numeric_limits<double>::quiet_NaN();
   if (text == "Infinity") return std::numeric_limits<double>::infinity();
@@ -86,6 +99,7 @@ Value cell_value(std::string_view text, unsigned type) {
     case oid::kInt8:
       return integer_cell(text);
     case oid::kFloat4:
+      return float32_cell(text);
     case oid::kFloat8:
       return float_cell(text);
     case oid::kNumeric:

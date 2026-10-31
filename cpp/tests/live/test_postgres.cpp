@@ -116,6 +116,17 @@ TEST_F(PostgresLive, EveryNeutralTypeRoundTripsThroughARealServer) {
   }
   session.save(entity_, empty);
   EXPECT_EQ(session.get(entity_, {{"id", std::int64_t{2}}}), empty);
+
+  // A float32 is read as the float it is, widened exactly (decision 42 of the port's findings): 1.1
+  // stored is 1.100000023841858 read. 1.5 above is a float exactly and cannot tell the two apart.
+  sde::Row narrow = empty;
+  narrow["id"] = std::int64_t{3};
+  narrow["f32"] = 1.1;
+  session.save(entity_, narrow);
+  const std::optional<sde::Row> widened = session.get(entity_, {{"id", std::int64_t{3}}});
+  ASSERT_TRUE(widened.has_value());
+  EXPECT_EQ(std::get<double>(widened->at("f32")), static_cast<double>(1.1F));
+  EXPECT_NE(std::get<double>(widened->at("f32")), 1.1);
 }
 
 TEST_F(PostgresLive, TheServersNoticesAreNeverPrinted) {
