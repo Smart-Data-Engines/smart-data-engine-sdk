@@ -3,6 +3,9 @@
 /// scalar code point and on a hundred thousand generated names, and agreed on all of them. The
 /// cases below are the ones worth naming.
 
+#include <optional>
+#include <vector>
+
 #include <gtest/gtest.h>
 
 #include "sde/errors.hpp"
@@ -233,3 +236,51 @@ TEST(CanStore, AnswersAboutEnginesAndRefusesTheRest) {
 }
 
 }  // namespace
+
+TEST(Layout, ASpellingSaysWhetherItsColumnCarriesAZone) {
+  // Format contract 7a. The same table is in the Python and TypeScript libraries' tests: the
+  // vectors pin the refusals, and this pins every spelling that must be read, in either direction,
+  // and every one that must not.
+  struct Case {
+    const char* dialect;
+    const char* spelling;
+    std::optional<bool> zoned;
+  };
+  const std::vector<Case> cases{
+      {"clickhouse", "DateTime64(6, 'UTC')", std::optional<bool>{true}},
+      {"clickhouse", "DateTime64(3,'Europe/Warsaw')", std::optional<bool>{true}},
+      {"clickhouse", "DateTime64( 6 , 'UTC' )", std::optional<bool>{true}},
+      {"clickhouse", "DateTime('UTC')", std::optional<bool>{true}},
+      {"clickhouse", "Nullable(DateTime64(6, 'UTC'))", std::optional<bool>{true}},
+      {"clickhouse", "Nullable( DateTime64(6) )", std::optional<bool>{false}},
+      {"clickhouse", "DateTime64(6)", std::optional<bool>{false}},
+      {"clickhouse", "DateTime", std::optional<bool>{false}},
+      {"clickhouse", "DateTime64(6, UTC)", std::nullopt},
+      {"clickhouse", "datetime64(6)", std::nullopt},
+      {"clickhouse", "DateTime64()", std::nullopt},
+      {"clickhouse", "DateTime64(6) ", std::nullopt},
+      {"clickhouse", "Date", std::nullopt},
+      {"clickhouse", "timestamptz", std::nullopt},
+      {"postgres", "timestamptz", std::optional<bool>{true}},
+      {"postgres", "TIMESTAMPTZ(3)", std::optional<bool>{true}},
+      {"postgres", "timestamp with time zone", std::optional<bool>{true}},
+      {"postgres", "timestamp(6) with time zone", std::optional<bool>{true}},
+      {"postgres", "Timestamp (6)  With  Time  Zone", std::optional<bool>{true}},
+      {"postgres", "timestamp", std::optional<bool>{false}},
+      {"postgres", "timestamp(6)", std::optional<bool>{false}},
+      {"postgres", "timestamp without time zone", std::optional<bool>{false}},
+      {"postgres", "TIMESTAMP(6) WITHOUT TIME ZONE", std::optional<bool>{false}},
+      {"postgres", "timestamp ", std::nullopt},
+      {"postgres", "timestamptz with time zone", std::nullopt},
+      {"postgres", "timestamp(x)", std::nullopt},
+      {"postgres", "date", std::nullopt},
+      {"postgres", "DateTime64(6)", std::nullopt},
+      {"elasticsearch", "long/timestamptz", std::optional<bool>{true}},
+      {"elasticsearch", "long/timestamp", std::optional<bool>{false}},
+      {"elasticsearch", "long", std::nullopt},
+      {"mysql", "DateTime64(3)", std::nullopt},
+  };
+  for (const Case& c : cases) {
+    EXPECT_EQ(sde::column_zone(c.spelling, c.dialect), c.zoned) << c.dialect << " " << c.spelling;
+  }
+}

@@ -79,6 +79,24 @@ std::string storage_refusal(const std::exception& error) {
   return dynamic_cast<const detail::CatalogueRefused*>(&error) != nullptr ? "refused" : "failed";
 }
 
+/// A write or a point read of an entity the model does not declare (format contract 8d): one
+/// refusal, in every library, before any operation shape is looked up or any engine is called.
+ModelPlanningError no_entity(std::string_view entity) {
+  return ModelPlanningError("this model has no entity '" + std::string(entity) + "'");
+}
+
+/// `Session::target_of` for a write or a point read: with hashed identifiers, a name with no hash
+/// is one the model does not declare, and is refused as such. A query keeps the name map's
+/// refusal, as the reference does.
+template <typename TargetOf>
+std::string operation_target(std::string_view entity, TargetOf&& target_of) {
+  try {
+    return target_of(entity);
+  } catch (const DeclarationError&) {
+    throw no_entity(entity);
+  }
+}
+
 }  // namespace
 
 Session::Session(const Model& model, const PlacementMap& placement,
@@ -159,6 +177,18 @@ Session::Session(const Model& model, const PlacementMap& placement,
                       python_repr(std::vector<std::string>(missing.begin(), missing.end())) +
                       ". A session cannot route an operation to an engine it has no adapter for, "
                       "and guessing at a connection is not something a library should do.");
+  }
+
+  // A temporal column keeps its field's zone (format contract 7a): groups in name order,
+  // materialisations in document order. Here, as the fan-out rule below, because only an engine says
+  // which dialect's spelling a layout is written in.
+  for (const auto& [name, spot] : placement.groups()) {  // a std::map: groups in name order
+    for (const Materialization* material : spot.all()) {
+      if (auto refusal = zone_refusal(model, name, material->id, material->layout,
+                                      engines_.at(material->engine)->dialect())) {
+        throw MapError(*refusal);
+      }
+    }
   }
 
   // A point read's shape and where it goes are fixed by the model and the map, so with nothing
@@ -281,6 +311,9 @@ const OperationShape& Session::shape(const std::string& entity, std::string_view
                                      const std::vector<std::string>& fields) const {
   const auto found = shapes_.find({entity, std::string(kind), fields});
   if (found == shapes_.end()) {
+    // Asked only once the lookup has failed: an entity typed wrong is not a shape the model
+    // forgot, and the caller is told which (format contract 8d).
+    if (model_.find_entity(entity) == nullptr) throw no_entity(entity);
     throw ModelPlanningError("the model admits no " + std::string(kind) + " on " + entity +
                              " over " + python_repr(fields) +
                              ". Shapes are enumerated from the model, so an operation with no "
@@ -394,7 +427,8 @@ void Session::report_physical() const {
 
 void Session::save(std::string_view entity, const Row& given) {
   const Use use(*this);
-  const std::string target_entity = target_of(entity);
+  const std::string target_entity =
+      operation_target(entity, [this](std::string_view name) { return target_of(name); });
   const Row translated = fields_in(entity, given);
   const OperationShape& write = shape(target_entity, "write");
   const Row values = admit(entity, target_entity, translated);
@@ -417,7 +451,8 @@ void Session::save(std::string_view entity, const Row& given) {
 
 void Session::save_many(std::string_view entity, const std::vector<Row>& given) {
   const Use use(*this);
-  const std::string target_entity = target_of(entity);
+  const std::string target_entity =
+      operation_target(entity, [this](std::string_view name) { return target_of(name); });
   const OperationShape& write = shape(target_entity, "bulk_write");
   const auto [engine, materialization] = target(write, false);
   const GroupPlacement& spot = placement_.placement_of(write.group);
@@ -547,9 +582,12 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
         fresh || in_write_transaction_ ? known->second.source : known->second.routed;
     return read_one(*known->second.shape, entity, *place.engine, *place.table, key);
   }
-  const std::string target_entity = target_of(entity);
+  const std::string target_entity =
+      operation_target(entity, [this](std::string_view name) { return target_of(name); });
   const Row given = fields_in(entity, key);
-  const Entity& spec = model_.entity(target_entity);
+  const Entity* declared = model_.find_entity(target_entity);
+  if (declared == nullptr) throw no_entity(entity);
+  const Entity& spec = *declared;
   std::vector<std::string> expected = spec.key;
   std::sort(expected.begin(), expected.end());
   if (names_of(given) != expected) {

@@ -1,0 +1,28 @@
+{
+  "entities": [
+    {
+      "name": "Reading",
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz",
+          "nullable": true
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "wall",
+          "type": "timestamp",
+          "nullable": true
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [],
+  "atomic": []
+}

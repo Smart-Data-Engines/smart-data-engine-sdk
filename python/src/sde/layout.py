@@ -43,6 +43,7 @@ __all__ = [
     "POSTGRES_TYPES",
     "DerivedLayout",
     "can_store",
+    "column_zone",
     "default_layout",
     "denormalized_layout",
     "fixed_schema_mismatch",
@@ -417,6 +418,87 @@ def _column_type(neutral: str, dialect: str) -> str:
             f"no {dialect} type for {neutral!r}. Every member of the neutral vocabulary needs one; "
             "this is a gap in the adapter rather than a problem with the model."
         ) from None
+
+
+# The spellings of a temporal column type each dialect is read for a zone in (format contract 7a).
+# Spaces only and ASCII digits: `\s` and `\d` match more in some languages than in others.
+_CH_ZONED: Final = re.compile(r"DateTime64\( *[0-9]+ *, *'[^']*' *\)|DateTime\( *'[^']*' *\)")
+_CH_ZONELESS: Final = re.compile(r"DateTime64\( *[0-9]+ *\)|DateTime")
+_PG_ZONED: Final = re.compile(
+    r"timestamptz( *\( *[0-9]+ *\))?|timestamp( *\( *[0-9]+ *\))? +with +time +zone"
+)
+_PG_ZONELESS: Final = re.compile(r"timestamp( *\( *[0-9]+ *\))?( +without +time +zone)?")
+_ASCII_LOWER: Final = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _nullable_inner(column_type: str) -> str:
+    """The type inside one ``Nullable(...)``, without the spaces around it, or the type itself.
+
+    Read without a regular expression: a lazy group beside optional spaces, ``Nullable\\( *(.*?)
+    *\\)``, backtracks through every split of a long run of spaces, which is quadratic in it -
+    CodeQL found it in the TypeScript twin (``js/polynomial-redos``). The same text either way.
+    """
+    if column_type.startswith("Nullable(") and column_type.endswith(")"):
+        return column_type[len("Nullable(") : -1].strip(" ")
+    return column_type
+
+
+def column_zone(column_type: str, *, dialect: str) -> bool | None:
+    """Whether a temporal column type carries a zone in this dialect, or ``None`` when this is not a
+    temporal spelling of the dialect, or not a dialect the rule reads (format contract 7a).
+
+    ClickHouse: ``DateTime64(p, 'zone')`` and ``DateTime('zone')`` carry one, ``DateTime64(p)``
+    and ``DateTime`` do not, inside a ``Nullable(...)`` too. PostgreSQL, in any ASCII case:
+    ``timestamptz``, ``timestamptz(p)`` and ``timestamp(p) with time zone`` carry one;
+    ``timestamp``, ``timestamp(p)`` and ``timestamp(p) without time zone`` do not. Elasticsearch:
+    ``long/timestamptz`` and ``long/timestamp``.
+    """
+    if dialect == "clickhouse":
+        inner = _nullable_inner(column_type)
+        if _CH_ZONED.fullmatch(inner):
+            return True
+        return False if _CH_ZONELESS.fullmatch(inner) else None
+    if dialect == "postgres":
+        lowered = column_type.translate(_ASCII_LOWER)
+        if _PG_ZONED.fullmatch(lowered):
+            return True
+        return False if _PG_ZONELESS.fullmatch(lowered) else None
+    if dialect == "elasticsearch":
+        return {"long/timestamptz": True, "long/timestamp": False}.get(column_type)
+    return None
+
+
+def zone_refusal(
+    model: LogicalModel, group: str, material_id: str, layout: PhysicalLayout, dialect: str
+) -> str | None:
+    """The refusal of a layout whose temporal column does not keep its field's zone, or ``None``.
+
+    A scan reads a value by its field's type and a read by key by its column's, so a ``timestamptz``
+    field in a column without a zone - or a ``timestamp`` in one with a zone - would be read as two
+    types (finding 27 of the C++ port). Entities in name order, fields in name order.
+    """
+    declared = {spec.name: spec for spec in model.entities}
+    for entity in sorted(layout.columns):
+        spec = declared.get(entity)
+        if spec is None:
+            continue
+        columns = layout.columns[entity]
+        for field in sorted(spec.fields, key=lambda item: item.name):
+            kind = columns.get(field.name)
+            if field.type not in ("timestamp", "timestamptz") or kind is None:
+                continue
+            zoned = column_zone(kind, dialect=dialect)
+            wants = field.type == "timestamptz"
+            if zoned is None or zoned == wants:
+                continue
+            must, found = ("carry", "has none") if wants else ("not carry", "does")
+            return (
+                f"group {group!r}: {material_id!r}: {entity}.{field.name} is {field.type}, so its "
+                f"{dialect} column must {must} a zone, and {kind!r} {found}. A scan reads a value "
+                f"by its field's type and a read by key by its column's, so one row would be read "
+                f"as two types (format contract 7a)."
+            )
+    return None
 
 
 def can_store(neutral: str, *, dialect: str) -> bool:
