@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "lag_budget_ms must be a non-negative integer",
+  "stage": "map",
+  "why": "int(\"30000\") and Number(\"30000\") both accepted it, and int() truncated 1.5 where Number() kept it. A budget is a count of milliseconds."
+}

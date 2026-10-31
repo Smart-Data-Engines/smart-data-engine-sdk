@@ -75,6 +75,15 @@ An unrelated table is refused, even if its columns match. Once recorded, a nativ
 must remain identical. PostgreSQL indexes must match the exact parent table, key columns and
 ordinary btree shape, including absence of INCLUDE columns.
 
+On Elasticsearch the copy is an index, created with the mapping the layout renders and the marker in
+its `_meta.sde.stage`, in the one request that creates it. Every reader in both languages accepts
+exactly that key beside the mapping (format contract §7m). There is nothing to grant: each runtime
+key must already cover the fresh name, `sde_m_<stage_id>_<position>`, by a pattern such as
+`sde_m_*`. The staging asks each key, through `_has_privileges`, before it creates anything, and
+opens the copy only when every key reads it ([access by blocks](local-cutover.md#elasticsearch-access-by-blocks)).
+A relayout (protocol 2) on Elasticsearch is refused by name: a layout there names its fields and
+nothing else.
+
 The operator installs the current write generation, checks schema and runtime privileges, grants
 target access, persists its prepared decision, advances map watermarks, publishes the active map
 and finally records its receipt. Resume rechecks identities and repeats idempotent steps. A replaced
@@ -106,7 +115,8 @@ creation marker and, once its identity was recorded, that native object - also a
 just before a crash, whose identity was never recorded. Anything else under the name is left
 alone. Indexes and generation constraints go with the table. On ClickHouse the runtime logins'
 grants on the copy are revoked as well: measured on 24.8.14.39, table grants outlive `DROP TABLE`
-(`qualification/staging-abandon/`). The map in force, the watermarks and every running process
+(`qualification/staging-abandon/`). On Elasticsearch the index is deleted, and then its write
+fence's pipeline, which outlives the index, when the pipeline names the index removed. The map in force, the watermarks and every running process
 stay as they were. Abandonment needs only the same native database - not the runtime logins, not a
 source free of another barrier - which is what keeps it available when a staging cannot finish.
 An interrupted abandonment is finished by `resume` or by `abandon` again, and the authorization is

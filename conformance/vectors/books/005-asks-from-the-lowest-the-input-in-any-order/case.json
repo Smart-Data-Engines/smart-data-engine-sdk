@@ -1,0 +1,20 @@
+{
+ "kind": "diff",
+ "name": "asks from the lowest, the input in any order",
+ "side": "ask",
+ "before": [
+  [203, 1, 1],
+  [201, 1, 1],
+  [202, 1, 1]
+ ],
+ "after": [
+  [204, 1, 1],
+  [202, 1, 1]
+ ],
+ "diff": [
+  [201, 0, 0],
+  [203, 0, 0],
+  [204, 1, 1]
+ ],
+ "why": "removals best first, then changes best first: the side's order, not the input"
+}

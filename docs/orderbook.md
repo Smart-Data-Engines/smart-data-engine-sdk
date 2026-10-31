@@ -151,12 +151,59 @@ the range but not the value, which is read data.
 local mode the C API keeps no reason for a failed query, so an unknown book and a failure read alike.
 There a failed read stays a failure and says why.
 
+## Books by price
+
+Since the engine's #233 an update is a set of price levels: each level sets the quantity of its
+price, a quantity of 0 removes the price, and a price the update does not name stays. The book at an
+instant is composed from every update up to it, in time order. So a writer of whole books has to
+remove the prices that dropped out of its top levels, and a writer may send only what changed. The
+library does both.
+
+**`Session.book_stream(entity, symbol=..., exchange=..., mode=...)`** - in TypeScript
+`session.bookStream(entity, { symbol, exchange, mode })` - is one book, sent one side at a time:
+- `mode="full"` sends every side whole, as `MREPLACE`, and the engine removes every price the update
+  does not name;
+- `mode="incremental"`, the default, sends what changed. `update(side, levels)` takes the whole
+  side and sends its difference from the side last sent. `apply(side, changes)` takes changes as an
+  exchange sends them - a quantity of 0 removes a price - and sends them as given.
+
+An incremental stream sends a side whole the first time, after a send that failed, when its resync is
+due - `Resync(updates=1000, seconds=60)`, whichever comes first - and whenever the whole side is
+smaller than its changes. The resync heals a change the application missed. Each update the stream
+sends is one `bulk_write` of the entity.
+
+Two refusals come before anything is sent:
+- a side deeper than the engine's 1000 prices: give its best 1000;
+- a time earlier than the last one sent for that side. The engine's history applies updates in time
+  order and its live book in arrival order, so the two would disagree.
+
+Without a time, an update takes this machine's clock. A stream is one writer of one book: TypeScript
+refuses a second update while one is in flight (`ResourceBusy`), and in Python a stream is not shared
+between threads. The rules are [format-contract.md §8c](format-contract.md#8c-a-book-stream), and
+`conformance/vectors/books/` holds both libraries to the same sends.
+
+**`Session.book_at(entity, symbol=..., exchange=..., at_ns=...)`** - `session.bookAt(...)` - reads the
+book as the engine composes it at that instant: `{"bid": [...], "ask": [...]}`, each side best first
+as (price, quantity, order count). A stream that sends only changes stores only changes, and this is
+the book they make.
+
+A server without the capability `replace_side` composes a book by position and cannot replace a
+side. `book_stream` and `book_at` refuse it, before sending or reading anything.
+
+[`examples/book-stream/`](../examples/book-stream/README.md) sends one exchange feed both ways, from
+Python and from TypeScript, and checks the book the engine composes at every tenth step.
+
+**`Session.save_many` writes updates by price too.** An update of the top levels of a book leaves in it
+every price that dropped out of them, unless the update removes it with a quantity of 0. A writer of
+whole books uses a full book stream.
+
 ## Telemetry
 
 The window sees every call:
-- `bulk_write` with its rows;
+- `bulk_write` with its rows, a book stream's updates among them;
 - `point_read`;
-- `range_read` over `timestamp_ns` or `price`, with `filtered_on`.
+- `range_read` over `timestamp_ns` or `price`, with `filtered_on`. `book_at` is one over
+  `timestamp_ns`, filtered on the symbol and the exchange: a book is its history up to an instant.
 
 A group's size stays unknown (`total_bytes` in `missing`, `unsupported` in
 `Session.measure_storage().unavailable`), because the engine reports no size per book.
@@ -200,7 +247,12 @@ the last flush. **Another connection sees a write at the server's next flush tic
 two processes, a read can miss the last tick's writes. Measured on 2 October 2026: a reader in another
 process found none of a book written a moment earlier, until the writer flushed. Call `flush()` on
 the writer where a reader elsewhere must see the data at once; it is not done after every write,
-because a flush in local mode costs 3.4 ms (measured).
+because a flush after a write waits for the device. In local mode the engine syncs its segments
+before the checkpoint that claims them (its #245): 2.48-2.74 ms median after one row, 4.92-5.06 ms
+at the 90th percentile, measured at the pinned engine on an i3-7100U with ext4 over LUKS on NVMe.
+
+In local mode the engine replays its WAL when it opens (its #245), so a process that ends without a
+flush or a close loses none of its writes. A power cut can lose those since the last flush or close.
 
 ## Running the slices
 

@@ -1,0 +1,1 @@
+the rule is case-insensitive equality, not linguistics: the sharp s has no one-letter lower case other than itself

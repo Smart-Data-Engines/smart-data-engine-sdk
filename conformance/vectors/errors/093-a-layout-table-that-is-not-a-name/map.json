@@ -1,0 +1,41 @@
+{
+  "contract": 3,
+  "model_version": "d342947c3bf04095",
+  "map_version": 1,
+  "groups": {
+    "Event": {
+      "source": {
+        "id": "Event@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Event": 5
+          }
+        }
+      }
+    },
+    "Line": {
+      "source": {
+        "id": "Line@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Line": "line",
+            "Order": "order"
+          },
+          "columns": {
+            "Line": {
+              "line": "integer",
+              "order_id": "bigint",
+              "qty": "bigint"
+            },
+            "Order": {
+              "id": "bigint",
+              "placed": "timestamptz"
+            }
+          }
+        }
+      }
+    }
+  }
+}

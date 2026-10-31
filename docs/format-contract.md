@@ -336,13 +336,32 @@ Seven refusals, all `DeclarationError`, and all of them tightenings under §11:
 7. `relations` has at most one entry per (`from`, `name`), and every `from` and `to` is a declared
    entity.
 
+**And every value has the shape this section writes, or the document is refused.** The two libraries
+coerced a value of another shape, or failed with their runtime's own error rather than this one, and
+the third library - which has to give a value a type before it can read it - met each of those. One
+value read two ways is one declaration with two model versions, so each is a refusal now, with the
+message fragment every library gives (`errors/121` and `084`-`088`):
+
+- `nullable` is `true` or `false`. Python read it as truthy and TypeScript as `=== true`, so `1` made
+  a field optional in one library and required in the other;
+- `residency` is a string or null;
+- `relations` is a list, and each relation an object of three strings, `name`, `from` and `to`. A
+  missing `to` was a `KeyError` in one library and a lookup of `undefined` in the other;
+- `atomic` is a list of groups, each a list of **two or more distinct** entity names, and **no
+  entity is in two groups**. Section 4 merges atomicity transitively; a document whose groups overlap
+  is refused rather than merged, because the loaders copied groups into the IR as written - another
+  `model_version` than the same atomicity declared as one group, which is what a library's own
+  `neutral_declaration` writes;
+- `cost_ceiling` is exactly `{"amount", "currency"}`, both strings - for the decorator path as well,
+  which checked only that the two keys were there.
+
 A field and a relation on one entity **may** share a name, and the rule that would have refused it
 was written and then deleted: §2a says the digest collision between them is intended, and
 `hashing/003-reserved-object-keys` declares exactly that shape. It is legal because a relation does
 not reach a layout under its own name — it reaches it as `<relation>_<target key field>` — so there
-is no column for it to collide with. Our TypeScript library refuses it in `buildModel` today, which
-means the model that vector pins cannot be declared through that library's own front door. That check
-is the one that should go.
+is no column for it to collide with. The TypeScript library used to refuse it in `buildModel`, so the
+model that vector pins could not be declared through that library's own front door; the check is
+gone.
 
 **The IR is not this document, and the difference is one key.** They are close enough to be
 confused: an IR entity has `name`, `fields`, `pii` and `residency` in the same places, and differs
@@ -384,12 +403,14 @@ which changes its version.
 ```
 
 `kind` is one of `point_read`, `range_read`, `aggregate`, `full_scan`, `relation_walk`, `write`,
-`bulk_write`.
+`bulk_write`, `search`.
 
 Enumeration, per entity: one `point_read` on the key, one `write`, one `bulk_write`, one `full_scan`,
 one `aggregate`, and one `range_read` per field whose type is ordered — `int32`, `int64`, `float32`,
-`float64`, `decimal(...)`, `date`, `timestamp`, `timestamptz`. Per relation: one `relation_walk` from
-the source entity, with the relation name in `fields` and the target in `target`.
+`float64`, `decimal(...)`, `date`, `timestamp`, `timestamptz`. One `search`, with no fields, when the
+entity has a field of type `string`: which fields a call looked in is the window's to report (§6a,
+`searched_on`), as a filter is. Per relation: one `relation_walk` from the source entity, with the
+relation name in `fields` and the target in `target`.
 
 Ranges over `string` and `uuid` are not enumerated. They are legal in every engine and almost never
 what anybody means.
@@ -488,8 +509,9 @@ list was wrong by one the day a sixth field was added, which is why it is derive
 
 **The sizes come from the engine's catalogue, read on the client's side.** `Session.measure_storage()`
 reads each group's source materialisation - one catalogue statement per engine: PostgreSQL's
-`pg_total_relation_size` and its non-primary indexes, ClickHouse's active `system.parts` - and records a
-sample per group; `Recorder.record_storage()` takes one directly. A sample belongs to the window in
+`pg_total_relation_size` and its non-primary indexes, ClickHouse's active `system.parts`,
+Elasticsearch's `_stats` of each index's primary shards with no secondary index beside the store -
+and records a sample per group; `Recorder.record_storage()` takes one directly. A sample belongs to the window in
 which it was recorded, by the recorder's own state rather than by comparing clock readings. A size is
 a number about the customer's storage, never a row. The two features that need time use the
 recorder's clock: growth is projected to a day only from samples at least an hour apart, because a
@@ -514,6 +536,8 @@ model's own field names, digests when the client hashes them.
 | `errors` | failed calls |
 | `rows` | the total the calls returned or wrote, as the recorder was given it: a bulk write counts its rows, a failed call counts none |
 | `latency_p50_ms`, `latency_p99_ms` | the shape's own histogram, by the rules below |
+| `examined` | on a `search` only: the rows its calls checked, which are the candidates their engine supplied. Next to `rows` it is what the searches cost where they ran: an engine with a text index supplies rows that hold the tokens, one without supplies rows in key order (§7l) |
+| `searched_on` | on a `search` only: one entry per combination of `fields` the calls looked in (sorted), with its `calls`, in code point order; the entries' calls add up to the shape's. Never the text |
 | `filtered_on` | for a read that takes a `where` - `range_read`, `full_scan`, `aggregate` - what its calls filtered on: one entry per combination of `equal` (the fields compared by equality, sorted) and `range` (the field a range bounded, **absent** when none), with its `calls`, in code point order of `equal` then `range`; the entries' calls add up to the shape's. Absent on a shape whose operations take no filter |
 
 `filtered_on` exists because one shape can want two layouts. A range read over `at` is the same
@@ -648,7 +672,9 @@ implementation wrote exactly that.
 Rules a library must enforce, all of them refusals rather than warnings, because this document decides
 where data is written:
 
-- `contract` must equal the version the library implements. Not "at least" — equal.
+- `contract` is in the range the library reads, `MAP_CONTRACT_FLOOR` through `MAP_CONTRACT`, and
+  refused outside it in either direction (above). This bullet said "equal, not at least" until
+  6 October 2026, two contracts after the range replaced equality.
 - `model_version` must equal the version of the declared model. A mismatch is refused, never
   reconciled.
 - `map_version` must be present and a positive integer. Both libraries used to read it as
@@ -661,6 +687,17 @@ where data is written:
 - Every `derived` materialisation **must** carry `lag_budget_ms`. Without it nobody can tell a healthy
   copy from one that is hours behind.
 - Materialisation ids are unique within a group.
+- **Every value has the shape this section writes** (`errors/089`-`097`), found when a third library
+  had to give each one a type before it could read it. The two before it coerced or failed with their
+  runtime's own error, and `str(True)` is `"True"` in Python where `String(true)` is `"true"` in
+  JavaScript, so a materialisation id written as `true` named two different copies:
+  - a group's `source` and each `derived` entry is an object, and `derived` is a list or absent;
+  - a materialisation's `id` and `engine` are strings;
+  - `lag_budget_ms` is an integer of milliseconds, zero or more;
+  - a layout's `tables` map an entity to a non-empty table name, and its `columns`, when present and
+    not null, map an entity to an object of column name to non-empty type name.
+- `groups` is a non-empty object (`errors/108`): a map that places nothing is refused, with a model
+  or without one.
 - Every group in the model must be placed.
 - **No group may be placed that the model does not have.** The converse of the rule above, and it
   needs saying separately: checking one direction reads as checking both. Python fell through to a
@@ -685,11 +722,21 @@ where data is written:
   rather than "no tables in this layout". The Python library separates the two with
   `schema_is_fixed(dialect)`; an implementation may spell it differently, since it never reaches a
   byte of the format.
-- `routing` is optional. A shape with no entry routes to the source.
-- **A derived materialisation carries an explicit layout, never `{"auto": true}`.** `auto` derives the
-  *normalised* layout, which is the source's shape - so a derived copy asking for it would be a second
-  copy of the source in another engine, paying for storage and lag to answer questions the source
-  already answers. What a derived materialisation is *for* is a different physical shape, and the
+- `routing` is optional. A shape with no entry routes to the source. Absent, null, `false`, `0` and
+  an empty list or object all say "no routing", as they always did; anything else must be an object
+  (`errors/109`).
+- **A copy may not be the source under another name.** A derived materialisation in the source's
+  engine may not reuse any of the source's tables: its lag would always read zero, and a read routed
+  to it would silently be a read of the source (`errors/101`). Checked whenever the tables are known
+  - after `{"auto": true}` layouts are derived, with a model, and on explicit layouts without one -
+  where Python had checked it only with a model and TypeScript before the copies' fan-out.
+- **A derived materialisation is meant to carry an explicit layout.** `auto` derives the *normalised*
+  layout, which is the source's shape - so a derived copy asking for it is a second copy of the source
+  in another engine, paying for storage and lag to answer questions the source already answers. The
+  libraries accept it nonetheless - in the source's own engine it is refused as the source under
+  another name, above - and the control plane never writes `auto` at all. Until 6 October 2026 this
+  bullet said "never", as a rule a library enforces, and no library did. What a derived
+  materialisation is *for* is a different physical shape, and the
   Python library derives one with `denormalized_layout()`: one wide table at the root entity's grain,
   with intra-group relations flattened in under `<relation>_<field>` - the same convention the foreign
   key uses, so a client reading their own analytical table knows where a column came from.
@@ -705,6 +752,11 @@ where data is written:
 - **Every `routing` value must name a materialisation of the shape's own group**, and every key must
   be a shape this model produces. Checked when the map is loaded, not when the shape is first
   routed — see §8.
+- **A write shape is never routed at a copy** (`errors/100`). Section 8 sends `write` and
+  `bulk_write` to the source before the table is consulted, so an entry sending one elsewhere can only
+  be a planner that believes something untrue. The control plane refuses to issue such an entry; a
+  library refuses to load one, when it has the model that says which shapes are writes. An entry
+  naming the source says nothing new and is accepted.
 
 ### Signing
 
@@ -1314,15 +1366,22 @@ routing key that is not a shape of this model is a divergence too: the model ver
 so the two sides enumerated shapes differently, and that is how one library's write lands in a table
 another library never looks at.
 
-Three conditions, then a lookup:
+Four conditions, then a lookup:
 
 1. `write` and `bulk_write` go to the source. Always, before anything else is consulted.
-2. An operation inside a transaction that has already written goes to the source.
-3. An operation that asked for no staleness goes to the source.
-4. Otherwise: `routing[shape.id]`, and the source if there is no entry.
+2. `search` goes to the source, always (§7l).
+3. An operation inside a transaction that has already written goes to the source.
+4. An operation that asked for no staleness goes to the source.
+5. Otherwise: `routing[shape.id]`, and the source if there is no entry.
 
-Conditions 2 and 3 are correctness rather than policy — a derived copy is behind by design, so it
-cannot show a write the caller just made. Everything else is a lookup, which is the point: decisions
+Conditions 2 to 4 are correctness rather than policy — a derived copy is behind by design, so it
+cannot show a write the caller just made, and a search over it would miss rows nobody could tell
+were missing.
+
+**A routing entry for a `search` shape is refused at load**, even one naming the source, while an
+entry for a write is accepted and ignored. The asymmetry is §11's rule and not a preference: a
+library that predates the kind refuses an entry for a shape it does not enumerate, so a library that
+knows the kind refuses the same document, and one stored map loads, or does not, in both. Everything else is a lookup, which is the point: decisions
 need telemetry, a cost model and an explanation, and reimplementing that judgement four times and
 keeping the four identical forever is not a plan.
 
@@ -1353,21 +1412,39 @@ depends on how the caller's JSON parser preserves keys.
 
 **The map stage:**
 
-1. the document is an object; `contract` is in range; `model_version` matches; `map_version` is a
+1. the document is an object; `contract` is in range; every string of the payload is NFC scalar
+   text (§7f); from contract 4 the `project_id`; `model_version` matches; `map_version` is a
    positive integer;
-2. `require_signature`, then the signature itself. Before the structure, deliberately: a document
-   whose origin cannot be established is not worth a detailed reading, and the refusal a client needs
-   is the one about the key rather than the one about the seventh group;
-3. every group, **in name order**, and within a group: the source, then the derived copies in
-   document order (an array's order is the document's), then id uniqueness, then `also_write`.
-   Within one materialisation's layout: reserved table names, then - below contract 5 -
-   `partition_by` before `key_order`, and from contract 5 `key_order`, then `partition_by`, each
-   entity in name order, then `indexes` in document order (§7i);
-4. group coverage, both directions (§7);
-5. the physical design rules that need the model (§7i): groups in name order, materialisations in
+2. `require_signature`, then the signature itself: the block and its `alg`, its value as base64, the
+   configured keys (an empty set, a key of the wrong length), the payload's canonical form, then
+   verification. Before the structure, deliberately: a document whose origin cannot be established
+   is not worth a detailed reading, and the refusal a client needs is the one about the key rather
+   than the one about the seventh group;
+3. `groups` is a non-empty object; then every group, **in name order**, and within a group: its
+   shape and `source`, the write generation, the source, then the derived copies in document order
+   (an array's order is the document's), then id uniqueness, then `also_write`. Within one
+   materialisation: its shape and its `id`, `engine` and `layout` keys, the lag budget's presence,
+   the layout, and then the values of `id`, `engine` and the lag budget. Within the layout: its
+   tables as names, each entity in name order, then the reserved table names, then the columns in
+   name order, then - below contract 5 - `partition_by` before `key_order`, and from contract 5
+   `key_order`, then `partition_by`, each entity in name order, then `indexes` in document order
+   (§7i);
+4. the shape of `routing`, when it says anything;
+5. with a model, group coverage, both directions (§7); without one, a layout asking to be derived;
+6. a copy that is the source under another name, groups in name order;
+7. the physical design rules that need the model (§7i): groups in name order, materialisations in
    document order within a group, entities in name order within a layout - the key permutation
    before the partition rules for one entity;
-6. `routing`, entries **in shape-id order**.
+8. `routing`, entries **in shape-id order**: every value a declared id, and then, with a model,
+   every key a shape of this model, its target in the shape's own group, and a write shape's target
+   the source;
+9. from contract 4, the reserved write-epoch column and drain table (§7d);
+10. from contract 4, the payload's canonical form, safe integers included (§7d).
+
+Three of these orderings were different in the TypeScript library until the third library chose
+between the two, and each has a case with two defects: coverage before a layout is derived
+(`errors/110`), the shape of `routing` before coverage (`errors/111`), and the configured keys before
+the payload is encoded (`errors/112`).
 
 **The session stage** — Tier 2 only, and it exists because §7's fifth `also_write` refusal needs the
 adapters:
@@ -1423,6 +1500,41 @@ The same model meant different things on different engines, and moving a group w
 which. `errors/078`-`082` pin the refusals at the `write` stage: a session is open on a valid map, one
 accepted write comes first, and `calls.json` holds that write and nothing of the refused one.
 
+## 8c. A book stream
+
+A Tier 2 library with the orderbook engine offers a **book stream**: one book - one symbol on one
+exchange - written as whole sides or as their changes. The engine applies an update by price (its
+#233): each level sets the quantity of its price, a quantity of 0 removes the price, and a price the
+update does not name stays. `MREPLACE` replaces a side whole, removing every price the update does
+not name. A stream sends a whole side as `MREPLACE` and changes as an ordinary update, and the rules
+below decide which, so that two libraries writing the same book send the same updates. `books/`
+pins them, and §10 says how to run it.
+
+- **A difference** (the `diff` cases of `books/`) between two whole sides is a quantity of 0 for every price the
+  first holds and the second does not, then every price the second holds that the first does not,
+  or holds with another quantity or count. Each part goes best first: bids from the highest price,
+  asks from the lowest. The removals go first because the engine applies an update in its order and
+  a full side has no room for a new price until they are applied. A whole side lists each price
+  once, none with a quantity of 0, or it is refused.
+- **Two modes.** `full` sends every side whole. `incremental` sends the difference against the side
+  it last sent, or changes as the application gives them - an exchange's diff stream - removals
+  first, then the rest, each best first and each price once. A removal of a price the stream does
+  not hold is sent too: the engine may hold it.
+- **An incremental stream sends a side whole** the first time it sends it, after a send that failed,
+  when the side's resync is due, and when the whole side has fewer levels than its changes. A resync
+  is due after `updates` updates of the side since it was last sent whole, or `seconds` of the policy
+  clock since then, whichever comes first; `0` turns a clause off. An update that changes nothing is
+  not sent, and it counts towards the resync.
+- **Depth.** A side holds at most the engine's 1000 prices. A whole side deeper than that is
+  refused, and a side that changes made deeper is sent whole as its best 1000.
+- **Time.** A side's times never go back: an update earlier than the last one accepted for its side
+  is refused, because the engine's history applies updates in time order and its live book in the
+  order they arrive. An update without a time takes the machine's clock, never earlier than the
+  side's last; an explicit resync without a time takes the side's last.
+- **A refused call sends nothing and changes nothing.**
+
+Neither number in §11 moves for this family: no IR and no map contains what a stream sends.
+
 ## 9. Capability tiers
 
 An implementation declares which tier it reaches, and "supported" has to mean the same thing across
@@ -1432,11 +1544,19 @@ languages or the word is worthless.
 |---|---|---|
 | 0 | model → IR → version; shape enumeration and ids; map parsing, signature, refusals; routing; error semantics | `model/`, `routing/`, `errors/` |
 | 1 | telemetry: measurement, window aggregation, local buffering | `telemetry/` |
-| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write) | `schema/`, `migration/`, `query/` |
+| 2 | schema creation, logical read plans/exact summaries, and participation in migration (dual write); book streams (§8c), with the orderbook engine; with the Elasticsearch engine, its documents (§7m); with `Session.search`, its rule (§7l) | `schema/`, `migration/`, `query/`; `books/`, `documents/`, `search/` |
 | 3 | ergonomics: framework integrations, async variants, pooling | — |
 
 Tier 0 is not optional. An implementation that does not pass the Tier 0 vectors is not an SDE
 library, whoever wrote it.
+
+**Three Tier 2 families go with a capability as well as the tier.** `books/` is required of a Tier 2
+library that offers book streams, which need the orderbook engine; `documents/` of one with the
+Elasticsearch engine; and `search/` of one that offers `Session.search`. A library declares each
+capability, as it declares hashing below, and its vectors check the claim. Python and TypeScript
+have all three. The C++ library has none yet ([`implementations.md`](implementations.md)). An
+orderbook adapter without book streams still reads and writes a book, and a library that has one
+says so rather than claiming the streams.
 
 **Name hashing (§2a) is orthogonal to the tiers.** It is a mode, not a level: a Tier 0 library may
 omit it entirely and still be complete, and a Tier 3 library may not have it. What is not optional is
@@ -1447,7 +1567,7 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are ten kinds:
+There are thirteen kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -1461,6 +1581,9 @@ There are ten kinds:
 | `schema/` | the DDL a layout renders, per dialect, and the compatibility view beside it |
 | `telemetry/` | a window document, compared parsed rather than as bytes — see below |
 | `migration/` | taking part in a migration: the record a gate reads **and** the calls that produced it |
+| `books/` | a side's difference, and what a book stream sends on a clock - whole sides and changes, with their times - or refuses |
+| `search/` | the tokens of a text, and whether a row matches a query in its chosen fields - or the refusal of a query with no token |
+| `documents/` | a row as an Elasticsearch document - its `_id` and `_source` - or the refusal of a value the index would not keep exactly |
 
 This table said "five" and listed five for as long as there were nine, with the other four argued
 in the prose below it. Nothing counted them, which is the failure mode of a number about our own
@@ -1526,7 +1649,11 @@ the refusal's own text must contain, compared literally and case-sensitively. Th
 part of this contract, which is deliberate and was earned: a refusal of an incompatible contract
 version once rendered a literal `{CONTRACT}` in Python and the number in TypeScript, and no vector
 reached it because the suite compared encodings and that path produces only a diagnostic. A library
-may say more than `match` and in any language it likes; it may not say less.
+may say more than `match` and in any language it likes; it may not say less. Literally means
+literally: until 6 October 2026 both reference runners compiled `match` as a regular expression,
+four write-stage cases were written for that (`Thing\.amount`), and the C++ runner, comparing as
+this paragraph says, could not pass them. The cases say `Thing.amount` now and every runner compares
+a substring.
 
 An `errors/` case carries a `stage`. `model` cases feed `model.json` to the model builder; `map`
 cases build the model **first, outside the assertion**, then feed `map.json` to the map loader with
@@ -1762,3 +1889,207 @@ A signed contract-6 map reports write generations only for the groups that carry
 contract 6, since no such group can appear through one. Each carries the group byte for byte when it
 acts on another (`migration/192`-`199`). The Python local operator needs no binding for an engine
 that hosts only such groups, refuses one offered for it, and reads none of its tables.
+
+## 7l. Search
+
+`Session.search(entity, text, fields, after, limit, max_examined)` returns the rows of an entity
+whose chosen text fields hold every token of `text`, in key order, a page at a time. It is a filter,
+not a ranking: the answer is a set of rows this section determines, so it is the same in every engine
+and in every language.
+
+**The rule.**
+- A **token** is a maximal run of code points, in the text normalised to NFC, whose general category
+  is a letter (`L*`) or a number (`N*`). Everything else separates tokens: spaces, punctuation, `_`,
+  `-`, `'`, symbols, and combining marks NFC did not compose.
+- Two tokens **match** when they are equal after each code point is replaced by its simple lower-case
+  mapping: one code point for one, without context. Where a language's lower-casing of one code
+  point gives more than one, the code point stays as it is, except `U+0130`, whose simple mapping is
+  `i`. That is the simple mapping of the Unicode Character Database, which Java's
+  `Character.toLowerCase` also gives. `ß` stays `ß`, so `strasse` does not match `Straße`: this is
+  equality without case, not linguistics.
+- A row **matches** when every token of the query matches some token of some chosen field. A field
+  that is null holds no token.
+
+Categories and mappings come from the runtime's own Unicode database, so a code point assigned in a
+version one runtime knows and another does not can tokenise differently. The vectors use code points
+assigned by Unicode 1.1.
+
+**The engine supplies candidates, the library decides.** The rule is applied to every row before it
+is returned. An engine with a text index supplies rows its index says hold every token. An engine
+without one supplies rows in key order, a page at a time, and is never given a text predicate:
+PostgreSQL's `lower()` under the `C` collation changes ASCII only, the Kelvin sign is a letter whose
+lower case is `k`, and a candidate an engine wrongly leaves out is a wrong answer nobody would see.
+
+**The page.**
+- `fields` are the entity's `string` fields to look in, all of them when absent.
+- `limit` is 1 to 1000. `max_examined`, 1 to 1,000,000 and 100,000 when absent, is the most rows
+  one call checks.
+- `after` is a position in key order, exactly as for a scan.
+- The call stops when the page holds `limit` rows or `max_examined` rows have been checked. The
+  next position is the key of the last row checked when anything is left after it, and absent
+  only when nothing is. A page cut short by the bound has fewer rows than the limit and still a
+  position: a short page is not the last page.
+- A search reads the group's source, always (§8).
+
+**Refused before any engine is asked:**
+- a query with no token;
+- `fields` empty, not a list, or naming a field the entity does not declare or one whose type is
+  not `string`;
+- an entity with no `string` field;
+- `limit` or `max_examined` outside its range, and `after` that is not exactly the key.
+
+**Telemetry.** One `search` shape per entity that has a `string` field, with no fields (§6). The
+window reports the rows the calls examined and the fields they looked in (§6a). The text of a query
+is never recorded.
+
+**Which number moves: neither.** The IR is unchanged, so `contract-version.txt` stays. A map means
+what it meant: a library that predates the kind refuses a routing entry for a shape it does not
+enumerate, and one that knows the kind refuses the same entry (§8). The only vector files that
+changed are `shapes.json` in `model/002`-`004`, and only by the `search` shapes they gained. Every
+existing identifier is unchanged.
+
+`search/001`-`014` pin the rule. A library runs them without an engine, from `case.json`: a
+`tokens` case gives the tokens of a text, and a `match` case gives the folded, sorted, distinct
+tokens of a query and whether a row matches it in the chosen fields, or the refusal of a query
+without a token.
+
+## 7m. Elasticsearch: an index per entity, a document per row
+
+Dialect `elasticsearch`. A group placed there is held whole: writes, reads by key, bounded scans,
+exact counts and searches (§7l), with an index of its own supplying a search's candidates. It has
+no transactions. It has write generations (below), so the local operator copies a group onto it and
+off it as on the SQL engines.
+
+**Column types.** A layout's column type is the Elasticsearch type, followed by `/` and the neutral
+type when the native type alone does not say how to read the value back.
+
+| Neutral | Column type | Kept as |
+|---|---|---|
+| `bool` | `boolean` | `true` or `false` |
+| `int32`, `int64` | `integer`, `long` | the integer |
+| `float32` | `float` | the nearest float32, as a number; NaN, infinity and a value past the largest float32 are refused |
+| `float64` | `double` | the number; NaN and infinity are refused |
+| `string` | `keyword` | the text exactly as written, at most 32,766 UTF-8 bytes; a lone surrogate is refused |
+| `uuid` | `keyword/uuid` | lowercase canonical text |
+| `date` | `date` | `YYYY-MM-DD`, mapped with `"format": "strict_date"` |
+| `timestamp`, `timestamptz` | `long/timestamp`, `long/timestamptz` | microseconds since the epoch; a naive value counted as UTC |
+| `decimal(p,s)`, `p ≤ 18` | `long/decimal(p,s)` | the value times `10^s`, refused rather than rounded |
+
+A `float` field is indexed as a float32 and its `_source` is returned as written, so the library
+writes the float32 (`documents/009`, `010`): the value a filter compares is then the value a read
+returns, as from PostgreSQL's `real` and ClickHouse's `Float32`. A decimal is scaled with integer
+arithmetic: a caller's decimal context, which rounds, has no say (`decimal.getcontext()` in Python).
+
+`bytes`, `json` and a decimal of more than eighteen digits have no column type, so a group with one
+cannot be laid out here (`can_store`). An entity's index name is its table name, which has to be a
+valid index name - lowercase, none of `\ / * ? " < > | , #`, space or `:`, not starting with `-`,
+`_` or `+`, at most 255 bytes - or the layout is refused. No layout here carries a key order, a
+partition or an index: every field is indexed already.
+
+**The mapping** (`schema/019`, `020`). One statement per entity, in code point order of the entity
+name: the canonical JSON (§1) of `{"index": name, "mappings": m}`, where `m` is
+
+- `"dynamic": "strict"`;
+- `"_meta": {"sde": {"entity": entity, "key": [the key in declared order]}}`;
+- `"properties"`: each column as `{"type": native}`, with `"format": "strict_date"` on a date and
+  `"meta": {"sde_type": neutral}` where the column type has one; and, when the entity has a
+  `keyword` column, `"__sde_tokens": {"properties": {column: {"type": "keyword"}}}` for each.
+
+`_meta.sde` may carry one key more, `stage`: the creation marker of the staging that created the
+index, `sde.stage1.<project id>.<stage id>.<16 hex digits>`, written in the request that creates it.
+A reader accepts exactly that key in exactly that form beside the rendered mapping, and anything
+else under `_meta.sde` is a mapping this library would not create.
+
+A key column of a float type is refused - an `_id` needs exact bytes - as are a column whose name is
+empty, contains a dot or starts with `__sde_`, and a column type outside the table above. Creating
+an index that exists is the `IF NOT EXISTS` of the other dialects: the adapter then compares the
+existing mapping with this one and refuses a difference, because Elasticsearch changes no field in
+place. The comparison is of the whole mapping, as values, every time an adapter first reads an
+index - not of each field's type alone. A `normalizer`, a `null_value`, an `ignore_above`, a token
+field mapped as `text` or a disabled `_source` would each change an answer while every type still
+matched; and an index whose `_meta` names another entity is another entity's.
+
+**A document** (`documents/`). Its `_source` holds every column of the index - `null` where the row
+has none - as the table above keeps it, and `__sde_tokens` holds, for each `keyword` column with a
+value, its tokens by §7l: distinct, in code point order. A token is one term, so a token longer than
+32,766 UTF-8 bytes is refused before anything is sent, although its text may be shorter: NFC and the
+fold can lengthen a text (`documents/011`). Its `_id` is the SHA-256, in lowercase hexadecimal, of
+its key values as stored, in declared key order, each framed as
+
+```text
+tag (one byte) || length (four bytes, big-endian) || payload
+s: the UTF-8 of a text exactly as stored
+i: the decimal digits of an integer, after a `-` when it is negative (an instant before 1970)
+b: true or false
+```
+
+Not the canonical encoding: §1 normalises text to NFC, and two keys that differ only in how an
+accent is composed are two rows in every other engine, so they are two documents here
+(`documents/003`, `004`, and `012` for a negative key). A second save of a key replaces the first
+(`newest_wins`).
+
+**Reads.** By key: the document under its `_id`, checked to hold that key. A page: a `bool` filter
+of `term` for equality, `must_not exists` for null and `range` for a bound, sorted by the plan's
+order with `"missing": "_last"`. The position of a page is a filter, not `search_after`, built as
+the SQL dialects build theirs: for each order column with a value, equality on the columns before
+it and, on it, beyond the value or null. So the engine's own sort values never stand in for a
+value. A count is `_count` over the same filter. A search adds, for each query token, a `term` on
+the token field of some chosen field. No other text predicate is ever sent, so no analyzer of the
+engine's is in any answer. Summaries are refused: Elasticsearch aggregates in double precision.
+
+A bound on a decimal column is a question about the column, not a value to store: with more
+fractional digits than the scale, `>= v` and `< v` both become their bound at the ceiling of
+`v × 10^s` - `>= 0.005` on a scale of 2 is `>= 0.01` - and an equality matches nothing. A bound whose
+`v × 10^s` is at least `10^p` in magnitude becomes `±10^p`, past every value the column holds, and
+an equality with it matches nothing. That is what PostgreSQL and ClickHouse answer, where it was a
+refusal.
+
+Every search is sent with `allow_partial_search_results=false`, and an answer with `"timed_out":
+true` or a failed shard is refused, a count's too. A page missing a shard's rows would move the
+position past them for good, and a count would not be exact.
+
+**Writes** return once a search and a scan can see them (`refresh=wait_for`), which waits for the
+index's refresh, a second by default. A read by key sees a write at once. A batch is one `_bulk`
+request and is not atomic: on a refusal, the error says how many documents were written and how
+many refused, and never which values. A refused single write names the engine's error type, never
+its reason, which can quote the document's value.
+
+**Write generations.** A group on Elasticsearch carries a generation like a group on any other
+engine with fences (§7d), and a contract-6 map that leaves it out is refused, as §7k says of every
+engine that has them. Its fence is the protocol of `write-fences.md` in the index's final pipeline,
+with a write block as the drain. The generation is a `long` field beside the layout's, written into
+every document and returned in no row. It is no part of the `_id` (`documents/014`), and the whole
+mapping a reader compares may have exactly that one field more.
+
+**A copy between engines.** A migration reads in key order, a key never null, with the position as
+a filter as a page's is, in searches of a thousand documents. A row read for a copy carries its
+generation, as `SELECT *` does in SQL. A copy is a `_bulk` of `create` actions, visible to a search
+on return (`refresh=true`). A document already there is refused with 409 and kept, so a chunk
+copied twice changes nothing: `ON CONFLICT DO NOTHING`, not an overwrite. A barrier's drain refreshes
+the index (`write-fences.md`), because a copy and a comparison read by searching.
+
+**The bookkeeping** is two indexes, read before anything creates them, so a login that only reads
+and writes them needs no `create_index`. An index of either name with another mapping is refused:
+- `sde_map_state`: `dynamic: strict`, `map_version` a `long`, `model_version` a `keyword`, a document
+  per map version applied, the watermark the largest;
+- `sde_backfill_state`: `dynamic: strict`, `materialization` and `entity` as `keyword`, `rows_copied`
+  a `long`, a document per chunk copied, the marker the largest for its copy and entity.
+
+Neither has a column the engine fills by default, so neither keeps `seen_at` or `at`. An index is
+cluster-wide, so the cluster is the namespace the SQL engines' database is: one stream of maps per
+cluster, and a copy's marker named by its materialization id across the cluster. The control plane
+names every staged copy afresh (`stage-<id>`), and a hand-written map that reuses an id for a new
+copy resumes from the old marker - which the cutover's repair, rebuilding the copy whole, does not
+depend on.
+
+**The size** of an index is its primary shards' store, read from `_stats` with `ignore_unavailable`:
+an index that does not exist is absent from the answer rather than a zero, and an alias is never
+measured under its name. A size that came back from fewer primary shards than the index's
+`number_of_shards` is refused, because an unassigned primary counts as neither a success nor a
+failure in `_shards`. Its secondary index bytes are 0, because an index keeps none beside its
+store, so a window's `index_to_table_ratio` is a measured 0. The read takes the index privilege
+`monitor` ([`runtime-roles.md`](runtime-roles.md)); without it the size is unknown, `refused`.
+
+**Which number moves: neither.** No IR and no map contains a mapping or a document; `schema/019`,
+`020` and `documents/` are new, and no existing vector changed. The second review's `documents/009`
+to `013` changed no earlier case either.

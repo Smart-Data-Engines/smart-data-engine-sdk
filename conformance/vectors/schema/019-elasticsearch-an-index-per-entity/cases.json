@@ -1,0 +1,12 @@
+[
+  {
+    "materialization": "Reading@es",
+    "dialect": "elasticsearch",
+    "fixed": false,
+    "statements": [
+      "{\"index\":\"reading\",\"mappings\":{\"_meta\":{\"sde\":{\"entity\":\"Reading\",\"key\":[\"station\",\"at\"]}},\"dynamic\":\"strict\",\"properties\":{\"__sde_tokens\":{\"properties\":{\"home_code\":{\"type\":\"keyword\"},\"note\":{\"type\":\"keyword\"},\"station\":{\"type\":\"keyword\"}}},\"amount\":{\"meta\":{\"sde_type\":\"decimal(18,4)\"},\"type\":\"long\"},\"at\":{\"meta\":{\"sde_type\":\"timestamptz\"},\"type\":\"long\"},\"count\":{\"type\":\"integer\"},\"day\":{\"format\":\"strict_date\",\"type\":\"date\"},\"home_code\":{\"type\":\"keyword\"},\"level\":{\"type\":\"double\"},\"local\":{\"meta\":{\"sde_type\":\"timestamp\"},\"type\":\"long\"},\"note\":{\"type\":\"keyword\"},\"ok\":{\"type\":\"boolean\"},\"ref\":{\"meta\":{\"sde_type\":\"uuid\"},\"type\":\"keyword\"},\"station\":{\"type\":\"keyword\"},\"total\":{\"type\":\"long\"}}}}",
+      "{\"index\":\"station\",\"mappings\":{\"_meta\":{\"sde\":{\"entity\":\"Station\",\"key\":[\"code\"]}},\"dynamic\":\"strict\",\"properties\":{\"__sde_tokens\":{\"properties\":{\"code\":{\"type\":\"keyword\"},\"name\":{\"type\":\"keyword\"}}},\"code\":{\"type\":\"keyword\"},\"name\":{\"type\":\"keyword\"}}}}"
+    ],
+    "why": "One strict index per entity, as the canonical JSON of what creates it. Every column is typed - the neutral type in `meta.sde_type` where the native type alone would not say how to read the value back - the key keeps its declared order in `_meta.sde.key`, and each text field, but not the uuid one, has a token field beside it under `__sde_tokens`. The relation's column is a plain keyword: every mapped field is indexed, so there is no index for a layout to declare."
+  }
+]

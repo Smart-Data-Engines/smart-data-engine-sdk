@@ -31,7 +31,19 @@ describe('reading the catalogue back', () => {
     expect(parseIdentifierList(text)).toEqual(names)
   })
 
-  it.each(['`unterminated', '`dangling\\', 'a,b', 'a, ', 'a, , b', 'toYYYYMM(at)', '1abc'])(
+  // ClickHouse 26.5 and later keep the parentheses `ORDER BY (id)` was written with; 26.4 and every
+  // release before it - 24.8, 25.3, 25.8, 26.3 measured - read `id`.
+  it.each([
+    ['(id)', ['id']],
+    ['(`a b`)', ['a b']],
+    ['(`a)`)', ['a)']],
+    ['(a, b)', ['a', 'b']],
+  ])('reads %j in one pair of parentheses as the same key, as ClickHouse 26.5 writes it', (text, names) => {
+    expect(parseIdentifierList(text)).toEqual(names)
+  })
+
+  it.each(['`unterminated', '`dangling\\', 'a,b', 'a, ', 'a, , b', 'toYYYYMM(at)', '1abc',
+    '()', '((id))', '(a) + (b)', '(id', 'id)', '(a,b)', '(toYYYYMM(at))'])(
     'refuses %j, which is not evidence that the table matches',
     (text) => {
       expect(() => parseIdentifierList(text)).toThrow()
@@ -42,7 +54,9 @@ describe('reading the catalogue back', () => {
     expect(parsePartitionKey('')).toBeNull()
     expect(parsePartitionKey('toYYYYMM(at)')).toEqual(['toYYYYMM', 'at'])
     expect(parsePartitionKey('toDate(`posted day`)')).toEqual(['toDate', 'posted day'])
-    for (const text of ['at', 'toYYYYMM(toDate(at))', "toYYYYMM(at, 'UTC')", 'toYYYYMM(a, b)']) {
+    expect(parsePartitionKey('(toYYYYMM(at))')).toEqual(['toYYYYMM', 'at'])
+    for (const text of ['at', '(at)', 'toYYYYMM(toDate(at))', "toYYYYMM(at, 'UTC')", 'toYYYYMM(a, b)',
+      '((toYYYYMM(at)))', '(a)(b)', 'toYYYYMM((at))']) {
       expect(() => parsePartitionKey(text)).toThrow()
     }
   })

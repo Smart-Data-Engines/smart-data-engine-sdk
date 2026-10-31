@@ -98,17 +98,33 @@ def _text(value: str) -> str:
     return value
 
 
+WHITE_SPACE: Final = (
+    "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008"
+    "\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+)
+"""Unicode's ``White_Space`` property: what may surround a decimal written as text.
+
+Named rather than left to ``str.strip()``, because the three libraries' own stripping disagreed and
+so did what they accepted. ``str.strip()`` also removes U+001C to U+001F, which Unicode calls
+information separators; JavaScript's ``trim()`` keeps U+0085 and removes U+FEFF. Measured on
+6 October 2026: ``'\x1c1.5'`` was accepted here and refused by TypeScript, ``'\ufeff1.5'`` the
+other way round. One property, written out, is the rule in all three.
+"""
+
+
 def _decimal(value: Any) -> Decimal:
     if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
         raise QueryRefused("decimal query values require Decimal, integer or decimal text")
-    if (
-        isinstance(value, str)
-        and re.fullmatch(
-            r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value.strip()
-        )
-        is None
-    ):
-        raise QueryRefused("invalid decimal query value")
+    if isinstance(value, str):
+        # Stripped here, by the named set, before the pattern sees it. `Decimal()` strips again with
+        # `str.strip()`, which is harmless only because nothing the pattern lets through is left to
+        # strip: reading the unstripped text would accept the same set, and that is not a reason to.
+        value = value.strip(WHITE_SPACE)
+        if (
+            re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", value)
+            is None
+        ):
+            raise QueryRefused("invalid decimal query value")
     try:
         number = Decimal(value)
     except InvalidOperation:
@@ -123,6 +139,12 @@ def _decimal(value: Any) -> Decimal:
     if digits > 76 or scale > 76:
         raise QueryRefused("decimal query values may use at most 76 digits")
     return number
+
+
+_TIMESTAMP: Final = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ](\d{2}):\d{2}:\d{2}(?:\.\d{1,6})?"
+    r"(?:Z|[+-](\d{2}):(\d{2})(?::(\d{2}))?)?"
+)
 
 
 def query_value(column: ReadColumn, value: Any) -> Any:
@@ -177,15 +199,23 @@ def query_value(column: ReadColumn, value: Any) -> Any:
         raise QueryRefused("a date query value must be a date or YYYY-MM-DD text")
     if kind in ("timestamp", "timestamptz"):
         if isinstance(value, str):
-            if (
-                re.fullmatch(
-                    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?"
-                    r"(?:Z|[+-]\d{2}:\d{2}(?::\d{2})?)?",
-                    value,
-                )
-                is None
-            ):
+            shape = _TIMESTAMP.fullmatch(value)
+            if shape is None:
                 raise QueryRefused("timestamp query text needs at most six fractional digits")
+            hour, offset_hours, offset_minutes, offset_seconds = shape.groups()
+            # ISO 8601's ranges, checked here because `fromisoformat` does not keep them alike:
+            # CPython 3.14 reads 24:00 as the next midnight where 3.11 to 3.13 refuse it, and every
+            # version reads an offset by its total, so `+10:60` was eleven hours. Measured in
+            # python:3.11/3.13/3.14 containers on 6 October 2026.
+            if int(hour) > 23 or (
+                offset_hours is not None
+                and (
+                    int(offset_hours) > 23
+                    or int(offset_minutes) > 59
+                    or int(offset_seconds or 0) > 59
+                )
+            ):
+                raise QueryRefused("invalid timestamp query value")
             try:
                 value = datetime.fromisoformat(value)
             except ValueError:

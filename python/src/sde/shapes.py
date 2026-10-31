@@ -27,7 +27,13 @@ from .canonical import digest16
 from .groups import Group, colocation_groups, group_of
 from .model import LogicalModel
 
-__all__ = ["SHAPE_KINDS", "WRITE_KINDS", "OperationShape", "enumerate_shapes"]
+__all__ = [
+    "SHAPE_KINDS",
+    "SOURCE_ONLY_KINDS",
+    "WRITE_KINDS",
+    "OperationShape",
+    "enumerate_shapes",
+]
 
 SHAPE_KINDS: Final[tuple[str, ...]] = (
     "point_read",
@@ -37,6 +43,7 @@ SHAPE_KINDS: Final[tuple[str, ...]] = (
     "relation_walk",
     "write",
     "bulk_write",
+    "search",
 )
 
 WRITE_KINDS: Final[frozenset[str]] = frozenset({"write", "bulk_write"})
@@ -51,6 +58,20 @@ write for routing and a read for scoring, and nothing would have raised.
 Public because a producer of routing tables needs it. A write shape is never routed - the library
 sends writes to the source unconditionally - so an entry for one is a line in a signed document
 that nothing reads, and the control plane cannot avoid writing one without knowing this set.
+"""
+
+SOURCE_ONLY_KINDS: Final[frozenset[str]] = frozenset({"search"})
+"""Reads that always go to the group's source, and that a routing table may not name at all.
+
+A search is checked row by row in the library (:mod:`sde.search`), so the engine that answers it
+only has to supply candidates - and only the source is known to hold every row. A derived copy is
+behind by design, and a search over it would miss rows nobody could tell were missing.
+
+Refused in a routing table rather than ignored, which is the opposite of what a write entry gets,
+and the asymmetry is the compatibility rule of the format contract (section 11): a library that
+predates this kind refuses an entry for a shape it does not enumerate, so a library that knows the
+kind has to refuse the same document, or one stored map would load in one version and not in the
+other. Public for the same reason as :data:`WRITE_KINDS` - a producer of routing tables needs it.
 """
 
 # Types over which a range predicate is meaningful. Ranges over strings and uuids are legal SQL and
@@ -136,6 +157,11 @@ def enumerate_shapes(model: LogicalModel) -> tuple[OperationShape, ...]:
                         group=group, kind="range_read", entity=spec.name, fields=(spec_field.name,)
                     )
                 )
+
+        # One search per entity that has text to search, whichever fields a call chooses: the
+        # choice is reported by the window (``searched_on``), as ``filtered_on`` reports a filter.
+        if any(spec_field.type == "string" for spec_field in spec.fields):
+            shapes.append(OperationShape(group=group, kind="search", entity=spec.name, fields=()))
 
     for relation in model.relations:
         group = group_of(groups, relation.source).name

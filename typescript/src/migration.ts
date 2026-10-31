@@ -63,6 +63,8 @@ export const DIALECT_PRECISION: Readonly<Record<string, number>> = {
   'timestamptz|postgres': 6,
   'timestamp|clickhouse': 6,
   'timestamptz|clickhouse': 6,
+  'timestamp|elasticsearch': 6,
+  'timestamptz|elasticsearch': 6,
 }
 
 /**

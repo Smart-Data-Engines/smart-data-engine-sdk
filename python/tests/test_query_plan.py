@@ -9,6 +9,7 @@ from uuid import UUID
 
 import pytest
 
+from sde import query
 from sde.query import QueryRefused, Range, ReadColumn, plan_read, query_value, read_sql
 
 
@@ -157,3 +158,28 @@ def test_count_does_not_inherit_page_key_width_and_wide_decimal_cursor_refuses()
     assert sql(query, count=True)[1] == []
     with pytest.raises(QueryRefused, match="76 digits"):
         plan_read([ReadColumn("id", "decimal(77,0)")], ["id"])
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["2026-09-14T24:00:00", "2026-09-14T24:00:00.000000Z", "2026-09-14T10:00:00+10:60",
+     "2026-09-14T10:00:00+00:00:60", "2026-09-14T10:00:00+24:00"],
+)
+def test_iso_ranges_do_not_depend_on_the_interpreters_parser(
+    monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    """The ranges are checked here, not left to ``fromisoformat``, which changes between versions.
+
+    CPython 3.14 reads 24:00 as the next midnight and every version folds an offset into its total,
+    so `query/025` alone would pass on 3.11 to 3.13 with the check removed. A parser that accepts
+    anything stands in for the most permissive interpreter, and the refusal must not move.
+    """
+
+    class Anything(datetime):
+        @classmethod
+        def fromisoformat(cls, _text: str) -> Anything:  # type: ignore[override]
+            return cls(2026, 9, 15, tzinfo=UTC)
+
+    monkeypatch.setattr(query, "datetime", Anything)
+    with pytest.raises(QueryRefused, match="invalid timestamp query value"):
+        query_value(ReadColumn("at", "timestamptz"), text)

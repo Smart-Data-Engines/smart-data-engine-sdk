@@ -1,0 +1,58 @@
+{
+  "cases": {
+    "nothing": {},
+    "owner only": {
+      "__sde_f_owner_00000000000000000000000000000001": "1"
+    },
+    "one generation": {
+      "__sde_f_owner_00000000000000000000000000000001": "1",
+      "__sde_f_min_3": "__sde_write_epoch >= 3",
+      "__sde_f_max_3": "__sde_write_epoch <= 3"
+    },
+    "held": {
+      "__sde_f_owner_00000000000000000000000000000001": "1",
+      "__sde_f_min_3": "__sde_write_epoch >= 3",
+      "__sde_f_max_3": "__sde_write_epoch <= 3",
+      "__sde_f_hold_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0"
+    },
+    "mid-advance": {
+      "__sde_f_owner_00000000000000000000000000000001": "1",
+      "__sde_f_min_3": "__sde_write_epoch >= 3",
+      "__sde_f_max_3": "__sde_write_epoch <= 3",
+      "__sde_f_min_10": "__sde_write_epoch >= 10",
+      "__sde_f_max_10": "__sde_write_epoch <= 10"
+    }
+  },
+  "processors": {
+    "nothing": {
+      "fail": {
+        "if": "false",
+        "message": "the write generation {{__sde_write_epoch}} is not one this index admits (generations none recorded)"
+      }
+    },
+    "owner only": {
+      "fail": {
+        "if": "false",
+        "message": "the write generation {{__sde_write_epoch}} is not one this index admits (generations none recorded)"
+      }
+    },
+    "one generation": {
+      "fail": {
+        "if": "def e = ctx['__sde_write_epoch']; if (!(e instanceof Integer || e instanceof Long)) { return true; } long v = ((Number) e).longValue(); return v < 3L || v > 3L;",
+        "message": "the write generation {{__sde_write_epoch}} is not one this index admits (generations from 3 to 3)"
+      }
+    },
+    "held": {
+      "fail": {
+        "if": "true",
+        "message": "a write barrier holds this index: no write is admitted until it is released"
+      }
+    },
+    "mid-advance": {
+      "fail": {
+        "if": "def e = ctx['__sde_write_epoch']; if (!(e instanceof Integer || e instanceof Long)) { return true; } long v = ((Number) e).longValue(); return v < 3L || v < 10L || v > 3L || v > 10L;",
+        "message": "the write generation {{__sde_write_epoch}} is not one this index admits (generations from 10 to 3)"
+      }
+    }
+  }
+}
