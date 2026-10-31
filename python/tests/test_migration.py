@@ -450,7 +450,9 @@ def _timestamp_session(*, target_dialect: str) -> tuple[sde.Session, str]:
         at: sde.Timestamp
 
     model = sde.build_model(Event)
-    columns = {"Event": {"id": "integer", "at": "timestamptz"}}
+    # `timestamp`, as the field is: a column with a zone for a field without one is refused when a
+    # session opens (format contract 7a), and these cases are about the fan-out's precision.
+    columns = {"Event": {"id": "integer", "at": "timestamp"}}
     group = sde.colocation_groups(model)[0].name
     raw = {
         "contract": 3,

@@ -1,0 +1,25 @@
+{
+  "contract": 3,
+  "model_version": "33f717b446fc783c",
+  "map_version": 1,
+  "groups": {
+    "Reading": {
+      "source": {
+        "id": "Reading@pg",
+        "engine": "pg-main",
+        "layout": {
+          "tables": {
+            "Reading": "reading"
+          },
+          "columns": {
+            "Reading": {
+              "at": "TIMESTAMP(6) WITHOUT TIME ZONE",
+              "id": "bigint",
+              "wall": "timestamp(6)"
+            }
+          }
+        }
+      }
+    }
+  }
+}

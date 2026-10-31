@@ -78,4 +78,22 @@ using NeutralColumns = std::vector<std::pair<std::string, std::string>>;
 [[nodiscard]] PhysicalLayout default_layout(const Model& model, const Group& group,
                                             std::string_view dialect = "postgres");
 
+/// Whether a temporal column type carries a zone in this dialect, or nothing when it is not a
+/// temporal spelling of the dialect, or not a dialect the rule reads (format contract 7a).
+/// ClickHouse: `DateTime64(p, 'zone')` and `DateTime('zone')` carry one, `DateTime64(p)` and
+/// `DateTime` do not, inside a `Nullable(...)` too. PostgreSQL, in any ASCII case: `timestamptz`,
+/// `timestamptz(p)` and `timestamp(p) with time zone` carry one; `timestamp`, `timestamp(p)` and
+/// `timestamp(p) without time zone` do not. Elasticsearch: `long/timestamptz` and `long/timestamp`.
+[[nodiscard]] std::optional<bool> column_zone(std::string_view column_type,
+                                              std::string_view dialect);
+
+/// The refusal of a layout whose temporal column does not keep its field's zone, or nothing. A
+/// scan reads a value by its field's type and a read by key by its column's, so a `timestamptz`
+/// field in a column without a zone - or a `timestamp` in one with a zone - would be read as two
+/// types (finding 27 of the C++ port). Entities in name order, fields in name order.
+[[nodiscard]] std::optional<std::string> zone_refusal(const Model& model, std::string_view group,
+                                                      std::string_view material_id,
+                                                      const PhysicalLayout& layout,
+                                                      std::string_view dialect);
+
 }  // namespace sde

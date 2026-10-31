@@ -1,7 +1,11 @@
 #include "sde/layout.hpp"
 
 #include <algorithm>
+#include <initializer_list>
 #include <iterator>
+#include <optional>
+#include <string>
+#include <string_view>
 
 #include "python_compat.hpp"
 #include "sde/errors.hpp"
@@ -348,6 +352,163 @@ PhysicalLayout default_layout(const Model& model, const Group& group, std::strin
     }
   }
   return layout;
+}
+
+namespace {
+
+/// A cursor over a column type's spelling, for the zone grammar of format contract 7a: spaces only
+/// and ASCII digits, as the other libraries' patterns read it. Every optional part restores the
+/// cursor when it does not match, as a regular expression's optional group would.
+struct Spelling {
+  std::string_view text;
+  std::size_t at = 0;
+
+  bool literal(std::string_view word) {
+    if (text.substr(at, word.size()) != word) return false;
+    at += word.size();
+    return true;
+  }
+  void spaces() {
+    while (at < text.size() && text[at] == ' ') ++at;
+  }
+  bool some_spaces() {
+    const std::size_t from = at;
+    spaces();
+    return at > from;
+  }
+  bool digits() {
+    const std::size_t from = at;
+    while (at < text.size() && text[at] >= '0' && text[at] <= '9') ++at;
+    return at > from;
+  }
+  bool quoted() {
+    if (!literal("'")) return false;
+    while (at < text.size() && text[at] != '\'') ++at;
+    return literal("'");
+  }
+  /// ` *( *[0-9]+ *)`, optional: consumes nothing unless all of it is there.
+  void precision() {
+    const std::size_t from = at;
+    spaces();
+    if (literal("(")) {
+      spaces();
+      if (digits()) {
+        spaces();
+        if (literal(")")) return;
+      }
+    }
+    at = from;
+  }
+  /// ` +word` for each word, all or nothing.
+  bool words(std::initializer_list<std::string_view> list) {
+    const std::size_t from = at;
+    for (const std::string_view word : list) {
+      if (!some_spaces() || !literal(word)) {
+        at = from;
+        return false;
+      }
+    }
+    return true;
+  }
+  [[nodiscard]] bool done() const { return at == text.size(); }
+};
+
+std::optional<bool> clickhouse_zone(std::string_view type) {
+  std::string_view inner = type;
+  if (type.starts_with("Nullable(") && type.ends_with(")")) {
+    inner = type.substr(9, type.size() - 10);
+    while (!inner.empty() && inner.front() == ' ') inner.remove_prefix(1);
+    while (!inner.empty() && inner.back() == ' ') inner.remove_suffix(1);
+  }
+  {
+    Spelling s{inner};
+    if (s.literal("DateTime64(")) {
+      s.spaces();
+      if (s.digits()) {
+        s.spaces();
+        if (s.literal(",")) {
+          s.spaces();
+          if (s.quoted()) {
+            s.spaces();
+            if (s.literal(")") && s.done()) return true;
+          }
+        } else if (s.literal(")") && s.done()) {
+          return false;
+        }
+      }
+    }
+  }
+  {
+    Spelling s{inner};
+    if (s.literal("DateTime(")) {
+      s.spaces();
+      if (s.quoted()) {
+        s.spaces();
+        if (s.literal(")") && s.done()) return true;
+      }
+    }
+  }
+  if (inner == "DateTime") return false;
+  return std::nullopt;
+}
+
+std::optional<bool> postgres_zone(std::string_view type) {
+  std::string lowered(type);
+  for (char& c : lowered) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  {
+    Spelling s{lowered};
+    if (s.literal("timestamptz")) {
+      s.precision();
+      if (s.done()) return true;
+    }
+  }
+  Spelling s{lowered};
+  if (!s.literal("timestamp")) return std::nullopt;
+  s.precision();
+  const std::size_t after = s.at;
+  if (s.words({"with", "time", "zone"}) && s.done()) return true;
+  s.at = after;
+  if (!s.words({"without", "time", "zone"})) s.at = after;
+  if (s.done()) return false;
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<bool> column_zone(std::string_view column_type, std::string_view dialect) {
+  if (dialect == "clickhouse") return clickhouse_zone(column_type);
+  if (dialect == "postgres") return postgres_zone(column_type);
+  if (dialect == "elasticsearch") {
+    if (column_type == "long/timestamptz") return true;
+    if (column_type == "long/timestamp") return false;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> zone_refusal(const Model& model, std::string_view group,
+                                        std::string_view material_id,
+                                        const PhysicalLayout& layout, std::string_view dialect) {
+  for (const auto& [entity, columns] : layout.columns) {  // a std::map: names in byte order
+    const Entity* spec = model.find_entity(entity);
+    if (spec == nullptr) continue;
+    for (const Field& field : spec->fields) {  // sorted by name, in code point order
+      if (field.type != "timestamp" && field.type != "timestamptz") continue;
+      const auto column = columns.find(field.name);
+      if (column == columns.end()) continue;
+      const std::optional<bool> zoned = column_zone(column->second, dialect);
+      const bool wants = field.type == "timestamptz";
+      if (!zoned || *zoned == wants) continue;
+      return "group " + python_repr(group) + ": " + python_repr(material_id) + ": " + entity + "." +
+             field.name + " is " + field.type + ", so its " + std::string(dialect) +
+             " column must " + (wants ? "carry" : "not carry") + " a zone, and " +
+             python_repr(column->second) + (wants ? " has none" : " does") +
+             ". A scan reads a value by its field's type and a read by key by its column's, so one "
+             "row would be read as two types (format contract 7a).";
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace sde
