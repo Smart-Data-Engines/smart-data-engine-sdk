@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript's ClickHouse adapter left a listener on its socket after every request**
+(TypeScript). Node's global agent keeps sockets alive from Node 19, so one socket serves request after
+request, and each request added an `error` listener to it that stayed. One engine's socket held 52
+after 50 requests, measured, and Node warned of a leak after eleven: memory that grew with every query
+of a long-lived application. A request's listeners now come off when it ends, and a live test counts
+them after thirty requests.
+
 **Fixed: the C++ library's PostgreSQL adapter read a `real` as the decimal its text names** (C++,
 decision 42 of the port's findings). The server's shortest text for the float nearest 1.1 is `1.1`,
 and the adapter parsed it as a double, so it read 1.1: another number than the one stored, and
