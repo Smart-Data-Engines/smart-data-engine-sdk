@@ -21,6 +21,7 @@
 import { compareCodePoints } from './canonical.js'
 import type { Group } from './groups.js'
 import type { LogicalModel } from './model.js'
+import type { PhysicalLayout } from './placement.js'
 
 /**
  * Every column a group's tables need, per entity, in the neutral vocabulary.
@@ -60,4 +61,85 @@ export function groupColumns(
     out[member] = columns
   }
   return out
+}
+
+// The spellings of a temporal column type each dialect is read for a zone in (format contract 7a).
+// Spaces only and ASCII digits: `\s` and `\d` match more in some languages than in others.
+const CH_NULLABLE = /^Nullable\( *(.*?) *\)$/
+const CH_ZONED = /^(?:DateTime64\( *[0-9]+ *, *'[^']*' *\)|DateTime\( *'[^']*' *\))$/
+const CH_ZONELESS = /^(?:DateTime64\( *[0-9]+ *\)|DateTime)$/
+const PG_ZONED = /^(?:timestamptz( *\( *[0-9]+ *\))?|timestamp( *\( *[0-9]+ *\))? +with +time +zone)$/
+const PG_ZONELESS = /^timestamp( *\( *[0-9]+ *\))?( +without +time +zone)?$/
+
+function asciiLower(text: string): string {
+  return text.replace(/[A-Z]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32))
+}
+
+/** A string as Python's `repr` writes one without escapes: double quotes when it holds a `'`. */
+function pythonQuoted(text: string): string {
+  return text.includes("'") && !text.includes('"') ? `"${text}"` : `'${text}'`
+}
+
+/**
+ * Whether a temporal column type carries a zone in this dialect, or `null` when this is not a
+ * temporal spelling of the dialect, or not a dialect the rule reads (format contract 7a).
+ *
+ * ClickHouse: `DateTime64(p, 'zone')` and `DateTime('zone')` carry one, `DateTime64(p)` and
+ * `DateTime` do not, inside a `Nullable(...)` too. PostgreSQL, in any ASCII case: `timestamptz`,
+ * `timestamptz(p)` and `timestamp(p) with time zone` carry one; `timestamp`, `timestamp(p)` and
+ * `timestamp(p) without time zone` do not. Elasticsearch: `long/timestamptz` and `long/timestamp`.
+ */
+export function columnZone(columnType: string, dialect: string): boolean | null {
+  if (dialect === 'clickhouse') {
+    const inner = CH_NULLABLE.exec(columnType)?.[1] ?? columnType
+    if (CH_ZONED.test(inner)) return true
+    return CH_ZONELESS.test(inner) ? false : null
+  }
+  if (dialect === 'postgres') {
+    const lowered = asciiLower(columnType)
+    if (PG_ZONED.test(lowered)) return true
+    return PG_ZONELESS.test(lowered) ? false : null
+  }
+  if (dialect === 'elasticsearch') {
+    if (columnType === 'long/timestamptz') return true
+    return columnType === 'long/timestamp' ? false : null
+  }
+  return null
+}
+
+/**
+ * The refusal of a layout whose temporal column does not keep its field's zone, or `null`.
+ *
+ * A scan reads a value by its field's type and a read by key by its column's, so a `timestamptz`
+ * field in a column without a zone - or a `timestamp` in one with a zone - would be read as two
+ * types (finding 27 of the C++ port). Entities in name order, fields in name order.
+ */
+export function zoneRefusal(
+  model: LogicalModel,
+  group: string,
+  materialId: string,
+  layout: PhysicalLayout,
+  dialect: string,
+): string | null {
+  const declared = new Map(model.entities.map((spec) => [spec.name, spec]))
+  for (const entity of Object.keys(layout.columns).sort(compareCodePoints)) {
+    const spec = declared.get(entity)
+    if (spec === undefined) continue
+    const columns = layout.columns[entity] ?? {}
+    for (const field of [...spec.fields].sort((a, b) => compareCodePoints(a.name, b.name))) {
+      const kind = Object.hasOwn(columns, field.name) ? columns[field.name] : undefined
+      if ((field.type !== 'timestamp' && field.type !== 'timestamptz') || kind === undefined) continue
+      const zoned = columnZone(kind, dialect)
+      const wants = field.type === 'timestamptz'
+      if (zoned === null || zoned === wants) continue
+      const [must, found] = wants ? ['carry', 'has none'] : ['not carry', 'does']
+      return (
+        `group '${group}': '${materialId}': ${entity}.${field.name} is ${field.type}, so its ` +
+        `${dialect} column must ${must} a zone, and ${pythonQuoted(kind)} ${found}. A scan reads a ` +
+        `value by its field's type and a read by key by its column's, so one row would be read as ` +
+        `two types (format contract 7a).`
+      )
+    }
+  }
+  return null
 }

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "session",
+  "match": "group 'Reading': 'Reading@ch': Reading.at is timestamptz, so its clickhouse column must carry a zone",
+  "why": "A nullable column is the type inside `Nullable(...)`, and its zone is that type's."
+}
