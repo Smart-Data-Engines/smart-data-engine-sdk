@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <future>
 #include <map>
 #include <memory>
@@ -242,6 +243,47 @@ TEST(Session, AKeyReachesTheEngineInTheFormAFilterGets) {
   const auto row = session.get("Tag", sde::Row{{"id", "6BA7B810-9DAD-11D1-80B4-00C04FD430C8"}});
   ASSERT_TRUE(row.has_value());
   EXPECT_EQ(std::get<std::string>(row->at("label")), "a");
+}
+
+/// An engine that answers no row and keeps the last key a point read gave it.
+class KeyEngine final : public sde::Engine {
+ public:
+  [[nodiscard]] std::string_view dialect() const noexcept override { return "postgres"; }
+  std::vector<sde::PhysicalFinding> ensure_schema(const sde::PhysicalLayout&,
+                                                  const sde::Keys&) override {
+    return {};
+  }
+  void insert(const std::string&, const sde::Row&) override {}
+  std::optional<sde::Row> get(const std::string&, const sde::Row& key) override {
+    last = key;
+    return std::nullopt;
+  }
+  void transaction(const std::function<void()>& body) override { body(); }
+  sde::Row last;
+};
+
+TEST(Session, APointReadGivesTheEngineItsKeyInTheFormAFilterGets) {
+  // A decimal's form is its digits at the column's scale, which equality does not see: 1.230 and
+  // 1.23 are one number, and an engine given the first would receive it as written.
+  const sde::Model model = sde::load_neutral_model(R"json({"entities": [
+    {"name": "Ledger", "fields": [{"name": "code", "type": "decimal(12,2)"},
+                                  {"name": "id", "type": "int64"}], "key": ["code", "id"]}]})json");
+  const std::string text = R"({"contract": 3, "model_version": ")" + model.version() +
+                           R"(", "map_version": 1, "groups": {"Ledger": {"source": {
+      "id": "Ledger@pg", "engine": "pg", "layout": {"auto": true}}}}})";
+  sde::LoadOptions load;
+  load.model = &model;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), load);
+  KeyEngine engine;
+  sde::Session session(model, map, {{"pg", &engine}});
+  const auto code_given = [&](sde::Value code) {
+    (void)session.get("Ledger", sde::Row{{"code", std::move(code)}, {"id", std::int64_t{7}}});
+    return std::get<sde::Decimal>(engine.last.at("code")).to_string();
+  };
+  EXPECT_EQ(code_given(sde::Decimal("1.230")), "1.23");
+  EXPECT_EQ(code_given(std::string("1.2")), "1.20");
+  EXPECT_EQ(code_given(sde::Decimal("1.23")), "1.23");
+  EXPECT_EQ(std::get<std::int64_t>(engine.last.at("id")), 7);
 }
 
 TEST(Session, ABatchIsCheckedWholeBeforeAnyEngine) {

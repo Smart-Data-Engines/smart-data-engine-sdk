@@ -222,7 +222,14 @@ class Session {
     const OperationShape* shape = nullptr;
     Place routed;
     Place source;
+    /// Each key field's neutral type and check, in code point order: a written value's checks
+    /// (section 8b point 4) for the key alone, found once rather than on every read.
+    std::vector<std::tuple<std::string, std::string, std::function<Value(const Value&)>>> checks;
   };
+  /// The rules of `checked_key` on the point-read path: the key itself when every value is already
+  /// in the form engines receive, so a read that needs no change copies nothing; else `changed`.
+  [[nodiscard]] const Row& checked_point_key(std::string_view entity, const PointRead& read,
+                                             const Row& key, std::optional<Row>& changed) const;
   std::map<std::string, PointRead, std::less<>> point_reads_;
   std::map<std::string, std::map<std::string, std::string>> input_fields_;    ///< client entity
   std::map<std::string, std::map<std::string, std::string>> reverse_fields_;  ///< hashed entity
