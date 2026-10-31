@@ -30,8 +30,9 @@ inline constexpr bool SEARCH = false;
 inline constexpr bool BOOK_STREAMS = false;
 
 /// The engines this library has an adapter for, by dialect: `documents/` goes with the
-/// Elasticsearch engine (section 9). None yet: the engines cell of docs/implementations.md says
-/// the same.
-inline constexpr std::array<std::string_view, 0> ADAPTERS{};
+/// Elasticsearch engine (section 9). The engines cell of docs/implementations.md names the same
+/// three, which a test there holds. The orderbook adapter reads and writes a book; book streams are
+/// `BOOK_STREAMS`, a separate claim.
+inline constexpr std::array<std::string_view, 3> ADAPTERS{"clickhouse", "orderbook", "postgres"};
 
 }  // namespace sde

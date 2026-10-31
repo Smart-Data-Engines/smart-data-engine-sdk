@@ -37,4 +37,8 @@ void append_code_point_unchecked(std::string& out, std::uint32_t code_point);
 /// regular expression over text, which is more than `[0-9]`.
 [[nodiscard]] bool is_decimal_digit(char32_t code_point) noexcept;
 
+/// The NFKC form of scalar UTF-8: compatibility characters replaced by what they stand for, as
+/// `unicodedata.normalize("NFKC", ...)` does. Python's `urlsplit` checks a host with it.
+[[nodiscard]] std::string nfkc(std::string_view text);
+
 }  // namespace sde::detail

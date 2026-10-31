@@ -103,13 +103,13 @@ jobs:
 
       - name: lint
         working-directory: python
-        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/zone_vectors.py ../conformance/tools/books_vectors.py
+        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/value_vectors.py ../conformance/tools/zone_vectors.py
 
       - name: types
         working-directory: python
         # Not decoration: several guarantees in this design are enforced by types rather than by
         # runtime checks, so a weakened annotation is a deleted guarantee.
-        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/zone_vectors.py ../conformance/tools/books_vectors.py
+        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/value_vectors.py ../conformance/tools/zone_vectors.py
 
       - name: start Elasticsearch
         # The engine behind Session.search's text index (format contract 7m). Started with its own
@@ -492,6 +492,16 @@ jobs:
           npm ci
           npm run build
 
+      # Built before the Python slices: the trading example's C++ half runs in them, and so under
+      # both sanitizers.
+      - name: build the C++ library, under AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libssl-dev libutf8proc-dev libpq-dev clang
+          cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSDE_WERROR=ON \
+            -DSDE_SANITIZE=address,undefined -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build cpp/build
+
       - name: the orderbook slices, in-process and over TCP, plain and with TLS
         working-directory: python
         env:
@@ -499,6 +509,9 @@ jobs:
           SDE_ORDERBOOK_TCP: 127.0.0.1:59090
           SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
           SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+          SDE_CPP_TRADING: ${{ github.workspace }}/cpp/build/examples/sde_example_trading
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           export OB_LIB_PATH="$GITHUB_WORKSPACE/engine/build/liborderbook_shared.so"
           export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
@@ -508,6 +521,21 @@ jobs:
             tests/test_orderbook_books.py tests/test_orderbook_book_stream_example.py \
             -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
+
+      # The C++ adapter against the same two servers, under both sanitizers - its TLS runs over
+      # OpenSSL calls of its own - and a book written by it and read by the reference, and the
+      # other way round, with this job's interpreter as the reference.
+      - name: the C++ orderbook slice, plain and with TLS, and beside the reference
+        # With CI=true a test without its variable fails rather than skips, and a label that
+        # matched nothing fails too.
+        env:
+          SDE_ORDERBOOK_TCP: 127.0.0.1:59090
+          SDE_PYTHON: python
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/engine/python"
+          ctest --test-dir cpp/build -L orderbook --output-on-failure --no-tests=error
 
       # The TypeScript adapter against the same two servers, and the same book written by one
       # library and read by the other in both directions: the Python half is this job's own
@@ -548,6 +576,50 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [gcc-12, clang-16]
+    # The live tests of the PostgreSQL and ClickHouse adapters run against these servers; with
+    # CI=true, which Actions sets, a live test without its DSN fails rather than skips.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        # 127.0.0.1, not localhost: see the TypeScript job's note on the alpine image's wget.
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      # A current release beside the LTS above. From 26.5 the catalogue keeps the parentheses of a
+      # single expression written in them - `ORDER BY (id)` reads back `(id)` - and with 24.8 alone
+      # nothing here could see it; moved by a deliberate edit, like the LTS.
+      clickhouse-current:
+        image: clickhouse/clickhouse-server:26.9-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["18123:8123"]
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -555,7 +627,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libssl-dev libutf8proc-dev g++-12 clang-16
+            ninja-build libssl-dev libutf8proc-dev libpq-dev libcurl4-openssl-dev g++-12 clang-16
 
       - name: configure
         env:
@@ -575,10 +647,39 @@ jobs:
       - name: build, every warning an error
         run: cmake --build cpp/build
 
-      - name: the unit tests and every vector family of the library's tier
+      - name: the unit tests, every vector family of the library's tier, and the live tests
         # test_families.cpp fails on a family it has never heard of, so a family added to
-        # conformance/ cannot pass here by being ignored.
-        run: ctest --test-dir cpp/build --output-on-failure
+        # conformance/ cannot pass here by being ignored. The live tests, labelled `live`, are the
+        # adapters against the servers above.
+        # The orderbook slice needs an engine, which only the `orderbook` job builds: it runs
+        # there, by its label. The orderbook adapter's own tests, against a fake engine in the
+        # process, run here with the rest.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+        run: ctest --test-dir cpp/build --output-on-failure -LE orderbook
+
+      - name: the live tests again, against a current ClickHouse
+        # Only the ClickHouse DSN moves: what new deployments start on, where the LTS is what most
+        # run.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:18123/sde
+        run: ctest --test-dir cpp/build --output-on-failure -L live -LE orderbook
+
+      - name: the library's cost per operation, built optimised
+        # Requirement 3.5 gives the library one percent of an operation, and it is release-blocking.
+        # A debug build measures the compiler, so the overhead tests judge only an optimised,
+        # unsanitised build: this one, of the two test programs that hold them. Against the
+        # loopback floor without telemetry, and against a PostgreSQL point read with it.
+        env:
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+        run: |
+          cmake -S cpp -B cpp/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSDE_WERROR=ON -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+          cmake --build cpp/build-release --target sde_unit_tests sde_live_tests
+          cpp/build-release/tests/sde_unit_tests --gtest_filter='Overhead.*'
+          cpp/build-release/tests/sde_live_tests --gtest_filter='PostgresOverhead.*'
 
       - name: a client's build, against the installed package
         # find_package(sde) is how somebody else's build sees this library, and nothing above
@@ -597,6 +698,34 @@ jobs:
     # wrote is where an out-of-bounds read hides behind a green test, and undefined behaviour is what
     # the next optimiser turns into a different answer.
     runs-on: ubuntu-latest
+    # The live tests too: libpq and libcurl call back into this library's code, and the threads of
+    # a barrier test meet the adapters' usage gates. With CI=true a live test without its DSN fails.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: sde
+          POSTGRES_DB: sde
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_PASSWORD: sde
+          CLICKHOUSE_DB: sde
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        # 127.0.0.1, not localhost: see the TypeScript job's note on the alpine image's wget.
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -604,7 +733,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libssl-dev libutf8proc-dev clang
+            ninja-build libssl-dev libutf8proc-dev libpq-dev libcurl4-openssl-dev clang
 
       - name: configure
         run: |
@@ -618,7 +747,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir cpp/build --output-on-failure
+          SDE_POSTGRES_DSN: postgresql://postgres:sde@127.0.0.1:5432/sde
+          SDE_CLICKHOUSE_DSN: clickhouse://default:sde@127.0.0.1:8123/sde
+        run: ctest --test-dir cpp/build --output-on-failure -LE orderbook
 
       - name: the recorder's and the session's threads, under ThreadSanitizer
         # The recorder takes no lock on an operation's path, so the claim that a roll racing writes
