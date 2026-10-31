@@ -133,9 +133,18 @@ def test_a_wrong_key_is_reported_in_the_clients_vocabulary() -> None:
 
 
 def test_an_undeclared_entity_is_refused() -> None:
+    """As without hashing (format contract 8d): a name with no hash is one the model does not
+    declare, and a write or a point read of it says so, rather than the name map's refusal."""
     session, _, _ = _session()
-    with pytest.raises(sde.DeclarationError, match="not in this model"):
-        session.save("Ghost", {"id": uuid.uuid4()})
+    for call in (
+        lambda: session.save("Ghost", {"id": uuid.uuid4()}),
+        lambda: session.save_many("Ghost", [{"id": uuid.uuid4()}]),
+        lambda: session.get("Ghost", {"id": uuid.uuid4()}),
+    ):
+        refusal = "this model has no entity 'Ghost'"
+        with pytest.raises(sde.ModelPlanningError, match=refusal) as raised:
+            call()
+        assert type(raised.value) is sde.ModelPlanningError
 
 
 def test_a_transaction_over_the_whole_model_uses_client_names() -> None:

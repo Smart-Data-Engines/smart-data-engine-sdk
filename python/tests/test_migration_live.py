@@ -108,11 +108,12 @@ def pair(request: pytest.FixtureRequest) -> Iterator[tuple[Any, Any]]:
 
 
 def _model() -> sde.LogicalModel:
-    """No timestamp column, deliberately.
+    """No timestamp column, and not for precision's sake: the subject here is the copy itself.
 
-    PostgreSQL keeps six sub-second digits and ClickHouse three, so a timestamp column would be
-    refused before the copy - which is its own test, in ``test_migration.py``. Here the subject is
-    the copy itself, so the model stays inside what both engines represent identically.
+    Both engines keep a timestamp's six sub-second digits - ClickHouse layouts render
+    ``DateTime64(6, 'UTC')`` - and ``test_clickhouse_datetime_queries.py`` copies a timestamptz
+    key both ways, exactly. This docstring said ClickHouse kept three, from before that
+    rendering; the C++ port found it (finding 26).
     """
 
     @sde.entity

@@ -19,7 +19,8 @@ add_library(sde_test_support STATIC support/vectors.cpp)
 target_include_directories(sde_test_support
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 target_compile_definitions(sde_test_support PUBLIC SDE_VECTORS_DIR="${SDE_VECTORS_DIR}")
-target_link_libraries(sde_test_support PUBLIC sde::sde GTest::gtest sde_build_flags)
+target_link_libraries(sde_test_support
+  PUBLIC sde::sde GTest::gtest OpenSSL::Crypto sde_build_flags)
 
 add_executable(sde_unit_tests
   unit/test_json.cpp
@@ -27,6 +28,9 @@ add_executable(sde_unit_tests
   unit/test_crypto.cpp
   unit/test_encoding.cpp
   unit/test_python_compat.cpp
+  unit/test_python_int.cpp
+  unit/test_python_value.cpp
+  unit/test_physical_catalogue.cpp
   unit/test_layout.cpp
   unit/test_placement.cpp
   unit/test_telemetry.cpp
@@ -36,13 +40,54 @@ add_executable(sde_unit_tests
   unit/test_schema.cpp
   unit/test_write_fence.cpp
   unit/test_session.cpp
+  unit/test_admission.cpp
   unit/test_packets.cpp
   unit/test_migration.cpp
   unit/test_verification.cpp
+  unit/test_read_sql.cpp
+  unit/test_provisioning.cpp
+  unit/test_log.cpp
+  unit/test_overhead.cpp
+  unit/test_invariants.cpp
 )
-target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main
-  OpenSSL::Crypto)
+target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
+# The vocabulary test reads the library's sources and the reference's, as they are in the tree.
+target_compile_definitions(sde_unit_tests PRIVATE
+  SDE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../src"
+  SDE_REFERENCE_LOGGING="${CMAKE_CURRENT_SOURCE_DIR}/../../python/src/sde/logging.py")
+# An adapter's own logic - its codec, its SQL - is tested without its engine.
+if(TARGET sde_postgres)
+  target_sources(sde_unit_tests PRIVATE unit/test_postgres_values.cpp
+    unit/test_postgres_offline.cpp)
+  target_link_libraries(sde_unit_tests PRIVATE sde_postgres)
+endif()
+if(TARGET sde_orderbook)
+  target_sources(sde_unit_tests PRIVATE unit/test_orderbook_dsn.cpp unit/test_orderbook_wire.cpp)
+  target_link_libraries(sde_unit_tests PRIVATE sde_orderbook)
+endif()
+if(TARGET sde_clickhouse)
+  target_sources(sde_unit_tests PRIVATE unit/test_clickhouse_dsn.cpp)
+  target_link_libraries(sde_unit_tests PRIVATE sde_clickhouse)
+  # The connection vectors every library runs, read in place.
+  target_compile_definitions(sde_unit_tests PRIVATE
+    SDE_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../testdata")
+endif()
 gtest_discover_tests(sde_unit_tests DISCOVERY_MODE PRE_TEST)
+
+# Requirement 6.1, read from the archives: the core leaves no network symbol for the linker, and each
+# adapter's archive, the control, shows the library it is built on.
+set(SDE_SYMBOLS ${CMAKE_CURRENT_SOURCE_DIR}/support/core_symbols.cmake)
+add_test(NAME invariant.the_core_links_no_network COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
+  -DARCHIVE=$<TARGET_FILE:sde> -DEXPECT=none -P ${SDE_SYMBOLS})
+foreach(adapter_and_library IN ITEMS "sde_orderbook;sockets" "sde_postgres;libpq"
+                                    "sde_clickhouse;libcurl")
+  list(GET adapter_and_library 0 adapter)
+  list(GET adapter_and_library 1 library)
+  if(TARGET ${adapter})
+    add_test(NAME invariant.${adapter}_links_${library} COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
+      -DARCHIVE=$<TARGET_FILE:${adapter}> -DEXPECT=${library} -P ${SDE_SYMBOLS})
+  endif()
+endforeach()
 
 add_executable(sde_conformance
   conformance/stages.cpp
@@ -64,3 +109,71 @@ target_link_libraries(sde_conformance PRIVATE sde_test_support sde::testing GTes
 # rebuild was not run by ctest at all, and nothing said so. Run whole, the binary reads the tree each
 # time, and test_families.cpp fails on a family it has never heard of.
 add_test(NAME conformance COMMAND sde_conformance --gtest_brief=1)
+
+# The adapters against real engines. Without a DSN each test is skipped, and says so; with CI=true
+# it fails instead, because a green job that ran nothing looks exactly like one that passed.
+if(TARGET sde_postgres)
+  add_executable(sde_live_tests
+    live/test_postgres.cpp
+    live/test_postgres_schema.cpp
+    live/test_postgres_reads.cpp
+    live/test_postgres_batches.cpp
+    live/test_postgres_fences.cpp
+    live/test_postgres_storage.cpp
+    live/test_postgres_tls.cpp
+    live/test_overhead_postgres.cpp
+  )
+  # OpenSSL's TLS half for the certificate witness the TLS tests talk to; the library links none.
+  find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
+  target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing sde_postgres
+    PostgreSQL::PostgreSQL OpenSSL::SSL GTest::gtest_main)
+  gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
+endif()
+if(TARGET sde_clickhouse)
+  if(NOT TARGET sde_live_tests)
+    find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
+    add_executable(sde_live_tests)
+    target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
+    gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
+  endif()
+  target_sources(sde_live_tests PRIVATE live/test_clickhouse.cpp live/test_clickhouse_schema.cpp
+    live/test_clickhouse_types.cpp live/test_clickhouse_reads.cpp live/test_clickhouse_fences.cpp
+    live/test_clickhouse_storage.cpp live/test_clickhouse_tls.cpp)
+  target_link_libraries(sde_live_tests PRIVATE sde_clickhouse OpenSSL::SSL)
+endif()
+# The orderbook adapter against servers in this process that speak its protocol: no DSN needed.
+if(TARGET sde_orderbook)
+  if(NOT TARGET sde_live_tests)
+    find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
+    add_executable(sde_live_tests)
+    target_link_libraries(sde_live_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
+    gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
+  endif()
+  target_sources(sde_live_tests PRIVATE live/test_orderbook_wire.cpp live/test_orderbook_tls.cpp
+    live/test_orderbook_adapter.cpp)
+  target_link_libraries(sde_live_tests PRIVATE sde_orderbook OpenSSL::SSL)
+  # The adapter against a real ob_tcp_server, plain and with TLS, and beside the reference: built
+  # everywhere, run where an engine is - the SDK's `orderbook` CI job, which builds one. Labelled so
+  # that a job without one can leave it out by name rather than by a skip.
+  add_executable(sde_orderbook_live_tests live/test_orderbook_slice.cpp)
+  target_link_libraries(sde_orderbook_live_tests PRIVATE sde_test_support sde::testing sde_orderbook
+    GTest::gtest_main)
+  target_compile_definitions(sde_orderbook_live_tests PRIVATE
+    SDE_REPOSITORY="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+  gtest_discover_tests(sde_orderbook_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS orderbook)
+endif()
+# What runs against whichever adapters are built: copies in every direction they allow, and the
+# agreement of two engines on one value, which needs both.
+if(TARGET sde_live_tests)
+  target_sources(sde_live_tests PRIVATE live/test_copies.cpp live/test_bookkeeping.cpp
+    live/test_generations.cpp)
+  if(TARGET sde_postgres)
+    target_compile_definitions(sde_live_tests PRIVATE SDE_LIVE_POSTGRES)
+  endif()
+  if(TARGET sde_clickhouse)
+    target_compile_definitions(sde_live_tests PRIVATE SDE_LIVE_CLICKHOUSE)
+  endif()
+  if(TARGET sde_postgres AND TARGET sde_clickhouse)
+    target_sources(sde_live_tests PRIVATE live/test_agreement.cpp)
+  endif()
+endif()

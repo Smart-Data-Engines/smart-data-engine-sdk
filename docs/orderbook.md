@@ -75,7 +75,11 @@ Settings that would do nothing are refused rather than ignored:
 - `tls_verify=False` without TLS.
 
 `connect()` asks a TCP server for its capabilities and refuses a server that cannot store a write's
-event time, which would stamp every update with its arrival instead.
+event time, which would stamp every update with its arrival instead. After an exchange that does not
+finish, the connection is not used again. TypeScript and C++ drop it, and their next `connect()`
+opens a new one. In Python the engine's client closes it, and `connect()` pings a connection it
+already has and replaces a closed one. A write with no connection is refused before anything is
+sent: `not connected; call connect() first`.
 
 ## Writing
 
@@ -96,7 +100,12 @@ In local mode you choose the number, from 1; 0 is the engine's "unknown".
 **Values the engine cannot store are refused before sending**, with the field named:
 - a negative time, quantity or order count;
 - a level past 999 (the engine stores 1000 levels per side);
-- whitespace, a quote, a backslash or a control character in a symbol or an exchange.
+- whitespace, a quote, a backslash or a character that does not print, in a symbol or an exchange.
+  "Does not print" is Unicode's Other and Separator categories, as Python's `str.isprintable()`
+  decides it: controls, format characters such as a zero-width space or a bidirectional mark, and
+  private use. Each library asks its runtime's Unicode, so a character newer than that version is
+  refused as unassigned. Node 18 (Unicode 15.1) accepts the 627 characters 15.1 assigned, which
+  Python 3.12 (15.0) refuses.
 
 Measured: the server refuses `INSERT BTC USD ...` as "unexpected token" and a negative quantity as
 "unknown command", which tells a client nothing.
@@ -239,6 +248,31 @@ in this library is, and a write takes a `bigint` or a safe `number`. A nanosecon
 2^53, so in practice it is a `bigint`. `orderbook.slice.test.ts` writes a book from each library and
 reads it from the other, in both directions, against a live server.
 
+## From C++
+
+`sde::OrderbookEngine` from `sde/orderbook.hpp`, in the target `sde::orderbook`, is the same adapter
+again, over the engine's TCP protocol only, which it speaks itself as TypeScript does; it links
+OpenSSL for TLS and never the engine. Its DSN is read as the reference reads it - compared with the
+reference's parser on 280,000 generated DSNs - and its refusals are the reference's, word for word,
+including the words of the engine's own Python client that the reference puts into its messages:
+
+```cpp
+#include "sde/orderbook.hpp"
+
+sde::OrderbookEngine engine(std::getenv("SDE_ORDERBOOK_DSN"));
+engine.connect();
+engine.insert_levels("orderbook", "BTCUSDT", "binance", "bid", timestamp_ns,
+                     {{6500000, 1000, 1}, {6499900, 1001, 2}});  // levels 0 and 1 of one update
+```
+
+Every integer of a row is a `std::int64_t`, and a value the engine stores that the model's type
+cannot hold is refused on read rather than returned. Two decisions differ from the reference, both
+toward saying less that is not so: a write with no connection is refused before anything is sent,
+where the reference reports it as one that may have been stored, and `connect()` opens a new
+connection after an exchange closed the old one, where the reference repeats the reason until
+`close()`. Its slice (`ctest -L orderbook` in a C++ build) writes a book here and reads it with the
+reference, and the other way round.
+
 ## Who sees a write, and when
 
 A process reads its own writes: the adapter flushes before a read when it has written anything since
@@ -269,6 +303,7 @@ OB_LIB_PATH=$PWD/../ob/build/liborderbook_shared.so PYTHONPATH=$PWD/../ob/python
 
 `SDE_ORDERBOOK_SECURE_DSN` adds a server with `--auth-secret-file` and `--tls-client`. The CI job
 generates a CA, a certificate and a secret for one. The TypeScript slices run with the same two
-variables (`npx vitest run tests/orderbook.slice.test.ts` in `typescript/`), and `SDE_PYTHON` names
-an interpreter with this SDK and the engine's client for the half written in Python. `test_orderbook_three_engines.py` needs
+variables (`npx vitest run tests/orderbook.slice.test.ts` in `typescript/`), and so do the C++ ones
+(`ctest --test-dir cpp/build -L orderbook`); `SDE_PYTHON` names an interpreter with this SDK and the
+engine's client for the half written in Python. `test_orderbook_three_engines.py` needs
 `SDE_POSTGRES_DSN` and `SDE_CLICKHOUSE_DSN` as well, as every live slice does.

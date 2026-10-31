@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace sde {
@@ -79,5 +80,29 @@ struct PhysicalLayout {
 [[nodiscard]] std::vector<std::string> effective_key(
     std::string_view where, std::string_view entity, const std::vector<std::string>& key,
     const std::map<std::string, std::vector<std::string>>& key_order);
+
+/// One index a layout declares for a table, as an engine's catalogue is compared with it.
+struct DeclaredIndex {
+  std::string name;
+  std::string method;
+  std::vector<std::string> columns;
+  std::optional<std::int64_t> granularity;
+  std::string type_full;  ///< the type as ClickHouse's catalogue writes it: `set(100)` for a set
+};
+
+/// What one table should look like physically, from a layout and the model's keys.
+struct DeclaredTable {
+  std::string table;
+  std::vector<std::string> key;  ///< in physical order
+  /// ClickHouse's partition function and the field it partitions on.
+  std::optional<std::pair<std::string, std::string>> partition;
+  std::vector<DeclaredIndex> indexes;  ///< by name
+};
+
+/// The physical expectations of every table a layout names, in table order: the reference's
+/// `declared_tables`. Refuses (`MapError`) a key order that is not a permutation of the key, and a
+/// partition outside it.
+[[nodiscard]] std::vector<DeclaredTable> declared_tables(
+    const PhysicalLayout& layout, const std::map<std::string, std::vector<std::string>>& keys);
 
 }  // namespace sde

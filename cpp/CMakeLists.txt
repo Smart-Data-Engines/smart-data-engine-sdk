@@ -19,6 +19,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SDE_BUILD_TESTS "Build the unit tests and the conformance runner" ${PROJECT_IS_TOP_LEVEL})
 option(SDE_WERROR "Treat compiler warnings as errors" OFF)
+option(SDE_POSTGRES "Build sde::postgres, the PostgreSQL adapter, over libpq" ON)
+option(SDE_CLICKHOUSE "Build sde::clickhouse, the ClickHouse adapter, over libcurl" ON)
+option(SDE_ORDERBOOK "Build sde::orderbook, the orderbook engine adapter, over its TCP protocol" ON)
 set(SDE_SANITIZE "" CACHE STRING "Comma-separated sanitizers to build with, e.g. address,undefined")
 
 include(GNUInstallDirs)
@@ -29,6 +32,16 @@ include(CMakePackageConfigHelpers)
 # dependency the format contract forces. Nothing else reaches the core library.
 find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 find_package(utf8proc REQUIRED)
+# Each adapter's driver is that adapter's alone: the core links no network library.
+if(SDE_POSTGRES)
+  find_package(PostgreSQL REQUIRED)
+endif()
+if(SDE_CLICKHOUSE)
+  find_package(CURL 7.77 REQUIRED)
+endif()
+if(SDE_ORDERBOOK)
+  find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
+endif()
 
 # --- warnings and sanitizers, as an interface target every target here links ------------------
 add_library(sde_build_flags INTERFACE)
@@ -52,6 +65,7 @@ add_library(sde
   src/errors.cpp
   src/json.cpp
   src/unicode.cpp
+  src/bulk.cpp
   src/canonical.cpp
   src/crypto.cpp
   src/encoding.cpp
@@ -59,7 +73,9 @@ add_library(sde
   src/neutral.cpp
   src/hashing.cpp
   src/python_compat.cpp
+  src/python_url.cpp
   src/physical.cpp
+  src/provisioning.cpp
   src/layout.cpp
   src/placement.cpp
   src/routing.cpp
@@ -69,6 +85,7 @@ add_library(sde
   src/value.cpp
   src/schema.cpp
   src/query.cpp
+  src/admission.cpp
   src/log.cpp
   src/write_fence.cpp
   src/watermark.cpp
@@ -110,8 +127,68 @@ target_include_directories(sde_testing
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(sde_testing PUBLIC sde PRIVATE $<BUILD_INTERFACE:sde_build_flags>)
 
+# --- the adapters: a target each, so an application links the drivers of the engines it uses ---
+set(SDE_ADAPTERS "")
+if(SDE_POSTGRES)
+  add_library(sde_postgres
+    src/engines/postgres.cpp
+    src/engines/postgres/connection.cpp
+    src/engines/postgres/fences.cpp
+    src/engines/postgres/values.cpp)
+  add_library(sde::postgres ALIAS sde_postgres)
+  target_compile_features(sde_postgres PUBLIC cxx_std_20)
+  set_target_properties(sde_postgres PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME postgres)
+  target_include_directories(sde_postgres
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(sde_postgres
+    PUBLIC sde PRIVATE PostgreSQL::PostgreSQL $<BUILD_INTERFACE:sde_build_flags>)
+  list(APPEND SDE_ADAPTERS sde_postgres)
+endif()
+if(SDE_CLICKHOUSE)
+  add_library(sde_clickhouse
+    src/engines/clickhouse.cpp
+    src/engines/clickhouse/dsn.cpp
+    src/engines/clickhouse/fences.cpp
+    src/engines/clickhouse/http.cpp
+    src/engines/clickhouse/values.cpp)
+  add_library(sde::clickhouse ALIAS sde_clickhouse)
+  target_compile_features(sde_clickhouse PUBLIC cxx_std_20)
+  set_target_properties(sde_clickhouse PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME clickhouse)
+  target_include_directories(sde_clickhouse
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(sde_clickhouse
+    PUBLIC sde PRIVATE CURL::libcurl OpenSSL::Crypto $<BUILD_INTERFACE:sde_build_flags>)
+  list(APPEND SDE_ADAPTERS sde_clickhouse)
+endif()
+if(SDE_ORDERBOOK)
+  add_library(sde_orderbook
+    src/engines/orderbook.cpp
+    src/engines/orderbook/dsn.cpp
+    src/engines/orderbook/wire.cpp)
+  add_library(sde::orderbook ALIAS sde_orderbook)
+  target_compile_features(sde_orderbook PUBLIC cxx_std_20)
+  set_target_properties(sde_orderbook PROPERTIES CXX_EXTENSIONS OFF EXPORT_NAME orderbook)
+  target_include_directories(sde_orderbook
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(sde_orderbook
+    PUBLIC sde PRIVATE OpenSSL::SSL OpenSSL::Crypto $<BUILD_INTERFACE:sde_build_flags>)
+  list(APPEND SDE_ADAPTERS sde_orderbook)
+endif()
+
 # --- installation: find_package(sde CONFIG) -------------------------------------------------------
-install(TARGETS sde sde_testing EXPORT sdeTargets
+install(TARGETS sde sde_testing ${SDE_ADAPTERS} EXPORT sdeTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -72,7 +72,7 @@ import {
   watermarkRecord,
 } from '../src/index.js'
 import type { MemoryEngine } from '../src/testing/memory.js'
-import { enginesFrom } from '../src/testing/memory.js'
+import { enginesFrom, vectorForm } from '../src/testing/memory.js'
 import type { LogicalModel, Materialization, PlacementMap } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
@@ -205,10 +205,11 @@ const ERRORS: Record<string, new (...args: never[]) => Error> = {
 }
 
 interface WriteStep {
-  readonly operation: 'save' | 'save_many'
+  readonly operation: 'save' | 'save_many' | 'get'
   readonly entity: string
   readonly values?: Readonly<Record<string, unknown>>
   readonly rows?: readonly Readonly<Record<string, unknown>>[]
+  readonly key?: Readonly<Record<string, unknown>>
 }
 
 interface ErrorExpectation {
@@ -221,6 +222,8 @@ interface ErrorExpectation {
 
 async function write(session: Session, step: WriteStep): Promise<void> {
   if (step.operation === 'save') await session.save(step.entity, step.values!)
+  // Only ever the refused step: an entity the model does not declare (format contract 8d).
+  else if (step.operation === 'get') await session.get(step.entity, step.key!)
   else await session.saveMany(step.entity, step.rows!)
 }
 
@@ -864,9 +867,9 @@ async function driveSession(
     const engine = engines[name] as MemoryEngine
     const tables: Record<string, unknown> = {}
     for (const table of Object.keys(engine.tables).sort()) {
-      tables[table] = [...(engine.tables[table] as Record<string, unknown>[])].sort((a, b) =>
-        JSON.stringify(sortedKeys(a)) < JSON.stringify(sortedKeys(b)) ? -1 : 1,
-      )
+      tables[table] = (engine.tables[table] as Record<string, unknown>[])
+        .map((row) => Object.fromEntries(Object.entries(row).map(([column, value]) => [column, vectorForm(value)])))
+        .sort((a, b) => (JSON.stringify(sortedKeys(a)) < JSON.stringify(sortedKeys(b)) ? -1 : 1))
     }
     gotTables[name] = tables
   }

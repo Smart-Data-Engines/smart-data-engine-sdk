@@ -39,7 +39,7 @@ from sde.errors import (
 )
 from sde.hashing import hash_identifiers
 from sde.testing.loader import model_from_neutral
-from sde.testing.memory import engines_from
+from sde.testing.memory import engines_from, vector_form
 
 VECTORS = Path(__file__).resolve().parents[2] / "conformance" / "vectors"
 CONTRACT_FILE = Path(__file__).resolve().parents[2] / "conformance" / "contract-version.txt"
@@ -412,7 +412,8 @@ def _drive_session(
     got_tables = {
         name: {
             table: sorted(
-                (dict(row) for row in rows), key=lambda row: json.dumps(row, sort_keys=True)
+                ({column: vector_form(value) for column, value in row.items()} for row in rows),
+                key=lambda row: json.dumps(row, sort_keys=True),
             )
             for table, rows in sorted(engine.tables.items())
         }
@@ -799,13 +800,17 @@ def _refuse_at_session(case: Path, exc_type: type[Exception], expected: Mapping[
 def _write(session: sde.Session, step: Mapping[str, Any]) -> None:
     if step["operation"] == "save":
         session.save(step["entity"], step["values"])
+    elif step["operation"] == "get":
+        # Only ever the refused step: an entity the model does not declare (format contract 8d).
+        session.get(step["entity"], step["key"])
     else:
         assert step["operation"] == "save_many", step["operation"]
         session.save_many(step["entity"], step["rows"])
 
 
 def _refuse_at_write(case: Path, exc_type: type[Exception], expected: Mapping[str, Any]) -> None:
-    """A row the model does not allow, refused before any engine is called.
+    """A row the model does not allow, or an entity it does not declare, refused before any engine
+    is called.
 
     The session is open on a valid map and one accepted write comes first. It is the control: the
     engine records what it receives, so the empty remainder of ``calls.json`` says the refused row

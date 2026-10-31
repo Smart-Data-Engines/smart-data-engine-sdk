@@ -1,0 +1,29 @@
+{
+  "entities": [
+    {
+      "name": "Thing",
+      "fields": [
+        {
+          "name": "amount",
+          "type": "int32"
+        },
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "label",
+          "type": "string"
+        },
+        {
+          "name": "note",
+          "type": "string",
+          "nullable": true
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}
