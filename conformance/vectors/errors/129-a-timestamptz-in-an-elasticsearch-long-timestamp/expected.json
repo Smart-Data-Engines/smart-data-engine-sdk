@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "session",
+  "match": "group 'Reading': 'Reading@es': Reading.at is timestamptz, so its elasticsearch column must carry a zone",
+  "why": "Elasticsearch keeps microseconds in a `long` and the neutral type after the slash, which is what a reader reads the value back by: the same defect in the second half."
+}

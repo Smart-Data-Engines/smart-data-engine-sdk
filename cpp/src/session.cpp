@@ -179,6 +179,18 @@ Session::Session(const Model& model, const PlacementMap& placement,
                       "and guessing at a connection is not something a library should do.");
   }
 
+  // A temporal column keeps its field's zone (format contract 7a): groups in name order,
+  // materialisations in document order. Here, as the fan-out rule below, because only an engine says
+  // which dialect's spelling a layout is written in.
+  for (const auto& [name, spot] : placement.groups()) {  // a std::map: groups in name order
+    for (const Materialization* material : spot.all()) {
+      if (auto refusal = zone_refusal(model, name, material->id, material->layout,
+                                      engines_.at(material->engine)->dialect())) {
+        throw MapError(*refusal);
+      }
+    }
+  }
+
   // A point read's shape and where it goes are fixed by the model and the map, so with nothing
   // translating names they are found here once rather than by lookups on every call: requirement
   // 3.5 gives this library one percent of an operation, and building those lookups' keys was most

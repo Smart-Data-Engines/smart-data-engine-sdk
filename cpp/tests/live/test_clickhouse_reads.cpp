@@ -484,10 +484,12 @@ TEST_F(ClickHouseReads, ADecimalIsReadAtItsDeclaredScale) {
   EXPECT_EQ(std::get<sde::Decimal>(rows[1].at("value")).to_string(), "7.000000000000000000");
 }
 
-TEST_F(ClickHouseReads, AScanReadsEachValueByItsFieldsTypeWhateverTheColumnsZone) {
-  // A hand-written layout can give an instant field a column without a zone, and a wall-clock
-  // field one with UTC. A scan reads each by the field's type, as the reference's does; a point read
-  // gives the column's, as the reference's does too - recorded as a finding about both.
+TEST_F(ClickHouseReads, ALayoutWhoseColumnsDropTheirFieldsZonesIsRefusedWhenTheSessionOpens) {
+  // Finding 27: a hand-written layout gave an instant field a column without a zone, and a
+  // wall-clock field one with UTC. A scan read each value by its field's type and a point read by
+  // its column's - one row, two types, against this server. A session refuses such a layout when
+  // it opens (format contract 7a), before anything is read or written; the table exists, so the
+  // refusal is the rule's and not the engine's.
   const ClickHouseRoles roles(dsn_);
   const sde::Model model = sde::load_neutral_model(R"({"entities": [{"name": "Tick", "fields": [
       {"name": "id", "type": "int64"}, {"name": "at", "type": "timestamptz"},
@@ -504,16 +506,17 @@ TEST_F(ClickHouseReads, AScanReadsEachValueByItsFieldsTypeWhateverTheColumnsZone
   (void)provisioning->ensure_schema(map.placement_of("Tick").source.layout, {{"Tick", {"id"}}});
   roles.grant("tick");
   const auto runtime = connected(roles.runtime_dsn());
-  sde::Session session(model, map, {{"db", runtime.get()}});
-  const sde::Value instant = *sde::TimestampTz::parse("2026-10-07T12:00:00.123456Z");
-  const sde::Value wall = *sde::Timestamp::parse("2026-10-07T12:00:00.123456");
-  session.save("Tick", {{"id", std::int64_t{1}}, {"at", instant}, {"wall", wall}});
-  EXPECT_EQ(session.scan("Tick").rows,
-            (std::vector<sde::Row>{{{"id", std::int64_t{1}}, {"at", instant}, {"wall", wall}}}));
-  EXPECT_EQ(session.get("Tick", {{"id", std::int64_t{1}}}),
-            (sde::Row{{"id", std::int64_t{1}},
-                      {"at", *sde::Timestamp::parse("2026-10-07T12:00:00.123456")},
-                      {"wall", *sde::TimestampTz::parse("2026-10-07T12:00:00.123456Z")}}));
+  try {
+    const sde::Session session(model, map, {{"db", runtime.get()}});
+    ADD_FAILURE() << "a session opened on a layout whose columns drop their fields' zones";
+  } catch (const sde::MapError& error) {
+    // Both fields are wrong, and the first in name order is named.
+    EXPECT_NE(std::string(error.what()).find(
+                  "group 'Tick': 's': Tick.at is timestamptz, so its clickhouse column must carry a "
+                  "zone"),
+              std::string::npos)
+        << error.what();
+  }
 }
 
 // --- what the server ran ------------------------------------------------------------------------

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "stage": "session",
+  "match": "group 'Reading': 'Reading@ch': Reading.at is timestamptz, so its clickhouse column must carry a zone",
+  "why": "The finding itself: an instant stored in a column without a zone. A scan gave it back aware and a read by key naive, so a client comparing the two got a TypeError, on the day the group moved and not before."
+}

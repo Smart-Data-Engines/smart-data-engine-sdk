@@ -29,12 +29,12 @@ import { batchColumns, bulkWriter, snapshotRows } from './bulk.js'
 import { BookStream } from './books.js'
 import type { BookEngine, BookUpdate, Level, Mode, Resync, Side } from './books.js'
 import { compareCodePoints } from './canonical.js'
-import { BulkWriteRefused, EngineError, MigrationRefused, ModelPlanningError } from './errors.js'
+import { BulkWriteRefused, EngineError, MapError, MigrationRefused, ModelPlanningError } from './errors.js'
 import { type Check, checkFor, Misfit } from './admission.js'
 import type { Group } from './groups.js'
 import { colocationGroups, groupOf } from './groups.js'
 import type { NameMap } from './hashing.js'
-import { groupColumns } from './layout.js'
+import { groupColumns, zoneRefusal } from './layout.js'
 import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
 import { countEngine, isQueryMapping, MAX_PAGE_ROWS, numericSummary, planRead, QueryRefused, queryEngine, queryValue, summaryEngine, summaryScale } from './query.js'
@@ -280,6 +280,17 @@ export class Session {
             `session cannot route an operation to an engine it has no adapter for, and guessing at ` +
             `a connection is not something a library should do.`,
         )
+      }
+      // A temporal column keeps its field's zone (format contract 7a): groups in name order,
+      // materialisations in document order. Here, as the fan-out rule below, because only an engine
+      // says which dialect's spelling a layout is written in.
+      for (const group of [...colocationGroups(model)].sort((a, b) => compareCodePoints(a.name, b.name))) {
+        if (placement.groups[group.name] === undefined) continue
+        const body = placementOf(placement, group.name)
+        for (const material of [body.source, ...body.derived]) {
+          const zone = zoneRefusal(model, group.name, material.id, material.layout, (engines[material.engine] as Engine).dialect)
+          if (zone !== null) throw new MapError(zone)
+        }
       }
       // A copy that silently holds different values from its source is refused before the first
       // write rather than discovered by verify at the end of one. The rule is backfill's and it
