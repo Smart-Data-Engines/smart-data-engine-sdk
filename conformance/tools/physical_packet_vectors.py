@@ -51,6 +51,15 @@ DESIGN = [
 ]
 
 
+# What each refused case's refusal says, in every library (finding 11 of the C++ port: the
+# reference named a staging a cutover, and the vectors pinned only the class). A refusal of a
+# map inside the packet keeps the map loader's own words after the common prefix.
+STAGING_MATCHES: dict[str, str] = {
+    "134-staging-cannot-lower-the-contract": "staging cannot lower the placement map contract",
+    "135-staging-refuses-a-design-the-model-rejects": "staging authorization refused: ",
+}
+
+
 def _source_only(document: dict[str, Any]) -> dict[str, Any]:
     document["groups"]["Event"].pop("derived")
     document["groups"]["Event"].pop("also_write")
@@ -202,6 +211,8 @@ def main() -> None:
             expected: dict[str, Any] = {"project_id": PROJECT}
             if bad:
                 expected["error"] = "MigrationRefused"
+                if name in STAGING_MATCHES:
+                    expected["match"] = STAGING_MATCHES[name]
             else:
                 expected.update(
                     stage_fingerprint=hashlib.sha256(payload(plan)).hexdigest(),
