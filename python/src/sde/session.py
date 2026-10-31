@@ -29,6 +29,7 @@ from .books import BookStream, Resync
 from .bulk import batch_columns, bulk_writer, snapshot_rows
 from .errors import (
     BulkWriteRefused,
+    DeclarationError,
     EngineError,
     MapError,
     MigrationRefused,
@@ -149,6 +150,12 @@ class _BookSink:
         self._session._book_write(self._target, self._shape, symbol=self._symbol,
                                   exchange=self._exchange, side=side, levels=levels,
                                   timestamp_ns=timestamp_ns, whole=False)
+
+
+def _no_entity(entity: str) -> ModelPlanningError:
+    """A write or a point read of an entity the model does not declare (format contract 8d): one
+    refusal, in every library, before any operation shape is looked up or any engine is called."""
+    return ModelPlanningError(f"this model has no entity '{entity}'")
 
 
 class Session:
@@ -561,6 +568,10 @@ class Session:
         try:
             return self._shapes[(entity, kind, fields)]
         except KeyError:
+            # Asked only once the lookup has failed: an entity typed wrong is not a shape the
+            # model forgot, and the caller is told which (format contract 8d).
+            if not any(spec.name == entity for spec in self._model.entities):
+                raise _no_entity(entity) from None
             raise ModelPlanningError(
                 f"the model admits no {kind} on {entity} over {list(fields)}. Shapes are "
                 "enumerated from the model, so an operation with no shape is one the planner never "
@@ -602,7 +613,11 @@ class Session:
 
     @session_call
     def save(self, entity: str, values: Mapping[str, Any]) -> None:
-        target = self._entity(entity)
+        try:
+            target = self._entity(entity)
+        except DeclarationError:
+            # With hashed identifiers a name with no hash is one the model does not declare (8d).
+            raise _no_entity(entity) from None
         values = self._fields_in(entity, values)
         shape = self._shape(target, "write")
         values = self._admit(entity, target, values)
@@ -633,7 +648,11 @@ class Session:
     @session_call
     def save_many(self, entity: str, rows: Sequence[Mapping[str, Any]]) -> None:
         """Insert one bounded batch. No splitting or retry; see docs/bulk-writes.md."""
-        target = self._entity(entity)
+        try:
+            target = self._entity(entity)
+        except DeclarationError:
+            # With hashed identifiers a name with no hash is one the model does not declare (8d).
+            raise _no_entity(entity) from None
         shape = self._shape(target, "bulk_write")
         engine, materialization = self._target(shape, fresh=False)
         spot = self._placement.placement_of(shape.group)
@@ -855,9 +874,16 @@ class Session:
 
     @session_call
     def get(self, entity: str, key: Mapping[str, Any], *, fresh: bool = False) -> Any:
-        target = self._entity(entity)
+        try:
+            target = self._entity(entity)
+        except DeclarationError:
+            # With hashed identifiers a name with no hash is one the model does not declare (8d).
+            raise _no_entity(entity) from None
         given = self._fields_in(entity, key)
-        spec = self._model.entity(target)
+        try:
+            spec = self._model.entity(target)
+        except KeyError:
+            raise _no_entity(entity) from None
         expected = tuple(sorted(spec.key))
         if tuple(sorted(given)) != expected:
             # Both lists are put back into the client's vocabulary: with hashing on, an error naming

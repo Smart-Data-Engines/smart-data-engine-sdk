@@ -1,0 +1,28 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "this model has no entity 'Ghost'",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Ghost",
+      "values": {
+        "amount": 2,
+        "id": "g-1",
+        "label": "ghost",
+        "note": null
+      }
+    }
+  },
+  "why": "Python and C++ said the model admits no write on Ghost, and TypeScript that it has no write of Ghost: each read a name typed wrong as an operation the model forgot to shape. With hashed identifiers C++ and Python raised a DeclarationError instead. The entity is what is missing, and the refusal names it."
+}

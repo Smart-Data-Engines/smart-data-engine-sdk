@@ -20,6 +20,31 @@ has no facts for, is left alone. `errors/125`-`130` pin it. `migration/021`'s Cl
 `DateTime64(6, 'UTC')` now, the spelling the library renders, where it said `DateTime64(3)` from
 before ClickHouse rendered six digits. Finding 27 of the C++ port.
 
+**Fixed: a staging packet's refusals name a staging** (Python, TypeScript). The reference's staging
+loader shared its helpers with the cutover packet's, and they named a cutover unless told otherwise:
+a staging packet was refused with "cutover stage_id must be ...", "cutover signature must be an
+object" and "cutover staging authorization must be an object". TypeScript and C++ said "staging".
+TypeScript also said "the group entities" where Python and C++ say "the group's entities". The 24
+refused staging vectors named only the class; each now names its refusal too, so the words cannot
+drift apart again. Finding 11 of the C++ port.
+
+**Fixed: an entity the model does not declare is refused in one way** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §8d). `save`, `save_many` and `get` naming one
+raise `ModelPlanningError`: `this model has no entity '<name>'`, before any operation shape is looked
+up and before any engine is called. The three libraries refused these calls in five ways: Python
+raised a bare `KeyError` from `get`, a write named a shape the model does not have, and with hashed
+identifiers Python and C++ raised a `DeclarationError`. A query still refuses an undeclared entity as
+a query. `errors/122`-`124` pin it, and a `write`-stage case may now have a `get` as its refused
+step. Finding 9 of the C++ port.
+
+**Fixed: the C++ library's PostgreSQL adapter read a `real` as the decimal its text names** (C++,
+decision 42 of the port's findings). The server's shortest text for the float nearest 1.1 is `1.1`,
+and the adapter parsed it as a double, so it read 1.1: another number than the one stored, and
+another than its ClickHouse adapter reads for the same value from RowBinary. It parses a `real` as
+a float now and widens it exactly, to 1.100000023841858, as the reference and TypeScript have read
+every engine's float32 since #139. A `double precision` column is read as before. It never reached
+a release.
+
 **Fixed: a value its field's type does not hold is refused before any engine** (both libraries,
 [`docs/format-contract.md`](docs/format-contract.md#a-value-its-type-holds) §8b). A row's values
 went to the driver as the application gave them, and each engine answered for them in its own way.

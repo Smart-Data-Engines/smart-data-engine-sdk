@@ -50,7 +50,10 @@ TEST(PostgresValues, EachCellIsReadAsTheTypeTheServerSent) {
   EXPECT_EQ(cell_value("-32768", oid::kInt2), sde::Value(std::int64_t{-32768}));
   EXPECT_EQ(cell_value("9223372036854775807", oid::kInt8),
             sde::Value(std::int64_t{9223372036854775807}));
-  EXPECT_EQ(cell_value("1.1", oid::kFloat4), sde::Value(1.1));
+  // A real is the float its text names, widened exactly: 1.1 is the float nearest it, not 1.1
+  // (decision 42 of the C++ port's findings, the reference's and TypeScript's since #139).
+  EXPECT_EQ(cell_value("1.1", oid::kFloat4), sde::Value(static_cast<double>(1.1F)));
+  EXPECT_EQ(cell_value("1.1", oid::kFloat8), sde::Value(1.1));
   EXPECT_EQ(cell_value("-Infinity", oid::kFloat8),
             sde::Value(-std::numeric_limits<double>::infinity()));
   EXPECT_TRUE(std::isnan(std::get<double>(cell_value("NaN", oid::kFloat8))));

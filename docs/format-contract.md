@@ -1619,6 +1619,23 @@ pins them, and §10 says how to run it.
 
 Neither number in §11 moves for this family: no IR and no map contains what a stream sends.
 
+## 8d. An entity the model does not declare
+
+**A write or a point read of an entity the model does not declare is refused before anything else
+is looked up.** `save`, `save_many` and `get` naming one raise `ModelPlanningError` with
+`this model has no entity '<name>'`, the name as the caller gave it, before any operation shape is
+looked up and before any engine is called. With hashed identifiers (§2a) such a name has no hash, and
+the refusal is the same. A query names its entity inside the query and is refused as a query.
+
+Before 31 October 2026 the three libraries refused the same calls in five ways. Python and C++ said
+of a write that the model admits no write on that entity, and TypeScript that it has no write of it:
+a name typed wrong read as an operation the model forgot to shape. For `get`, Python raised a bare
+`KeyError` from the model's lookup, C++ a `DeclarationError`, and TypeScript the words above. With
+hashed identifiers Python and C++ raised the name map's `DeclarationError` for every call.
+`errors/122`-`124` pin the refusal at the `write` stage, for `save`, `save_many` and `get`: the
+session is open on a valid map, and an accepted write comes first, so the recorded calls show that
+the refused step reached no engine. A `get` step in a `write`-stage case is only ever a refused one.
+
 ## 9. Capability tiers
 
 An implementation declares which tier it reaches, and "supported" has to mean the same thing across
