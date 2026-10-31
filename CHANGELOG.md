@@ -8,6 +8,38 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript's orderbook reader judged an answer by its first sixteen bytes** (TypeScript).
+It waited for sixteen bytes before deciding whether they began an answer. A row a subscription
+pushed in front of an answer, longer than that and still arriving, was refused as an answer the
+client could not read. A few bytes that began no answer were waited on until the timeout. It now
+decides by what an answer can begin with: it waits while the bytes are on their way to one, a
+pushed row included, and refuses at once when they cannot be. Finding 35 of the C++ port.
+
+**Fixed: TypeScript's orderbook adapter accepted a symbol with a character that does not print**
+([`docs/orderbook.md`](docs/orderbook.md)). It refused whitespace and controls, but not a zero-width
+space, a bidirectional mark, a byte-order mark or private use. Two books that printed alike were
+then two addresses. It refuses what the reference's `str.isprintable()` refuses now, by Unicode
+category. Compared over every code point, the only difference left is Unicode's version: Node 18
+knows 15.1, Python 3.12 knows 15.0. Finding 33 of the C++ port.
+
+**Fixed: the orderbook adapter's connection, as the C++ port found it** (Python,
+[`docs/orderbook.md`](docs/orderbook.md)).
+- A write with no connection was reported as a write that may have been stored. The adapter read
+  its connection inside the write's own `try`, so `insert` before `connect()` answered that the
+  engine did not confirm the write and logged `sde.write.failed`. `insert_many` failed with an
+  `AttributeError`, and after a lost connection it reported an unknown outcome for updates never
+  sent. Both now refuse with `not connected; call connect() first`, before anything is sent, as
+  TypeScript does.
+- `connect()` kept a connection the engine's client had closed. After an exchange that does not
+  finish, the client closes its connection and says why on every later call, and `connect()`
+  returned at once because a client was set. It pings the connection now and replaces a closed one.
+
+**Fixed: `sde.schema.extra_columns` named the library's own generation column** (Python). The event
+is for a column added outside SDE. From contract 4 a table carries `__sde_write_epoch`, which
+provisioning adds for a map with write generations, and every schema check named it. An alert on the
+event fired on every start of every such deployment, about a column that is ours. A column a client
+adds is still named.
+
 **Measured: what the C++ library costs per operation** ([`docs/implementing.md`](docs/implementing.md#measuring-your-overhead)).
 Requirement 3.5 gives the library one percent of an operation. Measured in C++ for the first time,
 a point read through the session cost 0.64 µs at the median built optimised, 2.5% of the cheapest
@@ -42,11 +74,10 @@ reference's and those of the engine's Python client the reference puts into its 
 - Its tests run against a fake engine and a TLS server in the process, and its slice against the
   pinned `ob_tcp_server`, plain and with credentials and TLS, with one book written here and read by
   the reference, and the other way round.
-- Two decisions differ from the reference, and a write with no connection is the first: refused
-  before anything is sent, where the reference reports a write it never sent as one that may have
-  been stored. The second: `connect()` opens a new connection after an exchange closed the old one.
-  Both, and the reference client's IPv4-only sockets and a timeout it accepts and cannot wait for,
-  are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
+- Two decisions differed from the reference until #122 brought it to both: a write with no
+  connection is refused before anything is sent, and `connect()` opens a new connection after an
+  exchange closed the old one. The reference client's IPv4-only sockets and a timeout it accepts and
+  cannot wait for are findings in [`docs/implementing.md`](docs/implementing.md#the-orderbook-adapter-over-the-engines-own-protocol).
 - Fixed on the way, in the C++ library: Python's `float()` of text, which the DSN's timeout is,
   stripped U+001C to U+001F, which CPython keeps, and read a number past the double range as an
   infinity or zero by the sign of its exponent rather than its size. Neither reached a release.

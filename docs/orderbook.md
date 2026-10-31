@@ -75,7 +75,11 @@ Settings that would do nothing are refused rather than ignored:
 - `tls_verify=False` without TLS.
 
 `connect()` asks a TCP server for its capabilities and refuses a server that cannot store a write's
-event time, which would stamp every update with its arrival instead.
+event time, which would stamp every update with its arrival instead. After an exchange that does not
+finish, the connection is not used again. TypeScript and C++ drop it, and their next `connect()`
+opens a new one. In Python the engine's client closes it, and `connect()` pings a connection it
+already has and replaces a closed one. A write with no connection is refused before anything is
+sent: `not connected; call connect() first`.
 
 ## Writing
 
@@ -96,7 +100,12 @@ In local mode you choose the number, from 1; 0 is the engine's "unknown".
 **Values the engine cannot store are refused before sending**, with the field named:
 - a negative time, quantity or order count;
 - a level past 999 (the engine stores 1000 levels per side);
-- whitespace, a quote, a backslash or a control character in a symbol or an exchange.
+- whitespace, a quote, a backslash or a character that does not print, in a symbol or an exchange.
+  "Does not print" is Unicode's Other and Separator categories, as Python's `str.isprintable()`
+  decides it: controls, format characters such as a zero-width space or a bidirectional mark, and
+  private use. Each library asks its runtime's Unicode, so a character newer than that version is
+  refused as unassigned. Node 18 (Unicode 15.1) accepts the 627 characters 15.1 assigned, which
+  Python 3.12 (15.0) refuses.
 
 Measured: the server refuses `INSERT BTC USD ...` as "unexpected token" and a negative quantity as
 "unknown command", which tells a client nothing.

@@ -586,13 +586,14 @@ and agreed in class and text. Two things for whoever writes the next adapter ove
   for writers in its `ALTER TABLE`, so removing the `LOCK TABLE` leaves that test green. The lock is
   what proves the table quiet on a retry, when the constraint exists, no DDL runs, and a delete - which
   no `CHECK` refuses - still holds the table. The C++ suite tests that case, the reference's adapter
-  waits in it too, and the same test is a finding for the other two libraries;
-- **the reference applies its connection bound when the DSN does not contain the word.** It tests
-  `"connect_timeout" not in dsn`, so a DSN that merely mentions it - in an application name, a
-  password - loses the bound: against a host that accepts and never answers, measured, its connect
-  was still waiting after 20 s, where the plain DSN gave up at 10. TypeScript matches the parameter,
-  and this library hands libpq its default before the DSN, so only a `connect_timeout` the DSN sets
-  overrides it; a live test holds the mentioned case at ten seconds.
+  waits in it too, and the other two libraries test it as well since #121;
+- **the reference applied its connection bound only when the DSN did not contain the word, until
+  #119.** It tested `"connect_timeout" not in dsn`, so a DSN that merely mentioned it - in an
+  application name, a password - lost the bound: against a host that accepts and never answers,
+  measured, its connect was still waiting after 20 s, where the plain DSN gave up at 10. It reads the
+  DSN's keys as libpq does since #119. TypeScript matches the parameter, and this library hands libpq
+  its default before the DSN, so only a `connect_timeout` the DSN sets overrides it; a live test holds
+  the mentioned case at ten seconds.
 
 #### The ClickHouse adapter, against the reference on one server
 
@@ -682,11 +683,13 @@ needs:
   slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
 - **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
   its answer may still arrive, and the next command would read it as its own (the engine's #171).
-  The reference keeps the closed client and `connect()` does nothing until `close()`; this library
-  says the reason on every call in between and lets `connect()` open another;
-- **a write that cannot be sent is not a write that may have been stored.** The reference reads its
-  client inside the write's own failure, so it reports a write it never sent as one whose outcome is
-  unknown. This library refuses it first, as TypeScript does;
+  The reference kept the closed client and `connect()` did nothing until `close()`, until #122 made
+  it ping and replace a closed one; this library says the reason on every call in between and lets
+  `connect()` open another;
+- **a write that cannot be sent is not a write that may have been stored.** The reference read its
+  client inside the write's own failure, so it reported a write it never sent as one whose outcome
+  was unknown. This library refuses it first, as TypeScript does, and as the reference does since
+  #122;
 - **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
   address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
   CPython cannot wait for, refused only at connect. This library connects to either family and
@@ -697,8 +700,8 @@ needs:
   `[Errno 104]`; CPython appends `(_ssl.c:1000)`, which names its own source.
 
 Each difference from the reference or from TypeScript is a finding for the contract, to become a
-rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepts an
-invisible format character the reference refuses), a key of another type in a point read
+rule in every library: the DSN's grammar as vectors, a symbol's characters (TypeScript accepted an
+invisible format character the reference refuses, until #123), a key of another type in a point read
 (TypeScript answers "no row" where the reference reads it with `int()`), and the four above.
 
 ### Verification-request protocol check
