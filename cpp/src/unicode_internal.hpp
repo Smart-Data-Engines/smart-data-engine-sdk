@@ -41,4 +41,8 @@ void append_code_point_unchecked(std::string& out, std::uint32_t code_point);
 /// `unicodedata.normalize("NFKC", ...)` does. Python's `urlsplit` checks a host with it.
 [[nodiscard]] std::string nfkc(std::string_view text);
 
+/// A filter's refusal of text holding U+0000, which a row's admission reads as its own: `text
+/// holding U+0000` (format contract section 8b). PostgreSQL cannot hold it, and ClickHouse can.
+inline constexpr std::string_view kNulRefusal = "query strings must not contain U+0000";
+
 }  // namespace sde::detail

@@ -26,7 +26,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Final
 
-from .query import QueryRefused, ReadColumn, exact_decimal, query_value
+from .query import NUL_REFUSAL, QueryRefused, ReadColumn, exact_decimal, query_value
 
 Check = Callable[[Any], Any]
 """Returns the value as engines receive it, or raises :class:`Misfit`."""
@@ -55,7 +55,11 @@ def _as_filter(kind: str) -> Check:
     def check(value: Any) -> Any:
         try:
             return query_value(column, value)
-        except QueryRefused:
+        except QueryRefused as refusal:
+            # Text, but not text every engine holds: PostgreSQL refuses U+0000, and ClickHouse
+            # stored it (format contract section 8b).
+            if str(refusal) == NUL_REFUSAL:
+                raise Misfit("text holding U+0000") from None
             raise Misfit(f"a value that is not {noun}") from None
 
     return check

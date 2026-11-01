@@ -92,6 +92,8 @@ accepts:
   optionally `Z` or an offset `+HH:MM` or `+HH:MM:SS`. Every part keeps ISO 8601's range: hours
   00-23 - there is no 24:00 - and minutes and seconds 00-59, in the offset too. The instant must
   fall between years 0001 and 9999 in UTC.
+- **Text** for a `string` field is Unicode scalar values other than U+0000, which PostgreSQL's
+  `text` cannot hold (`query/029`; format contract section 8b).
 
 Each rule replaced a disagreement that had shipped. Python stripped with `str.strip()`, which also
 removes U+001C-U+001F. TypeScript stripped with `trim()`, which removes U+FEFF and keeps U+0085.

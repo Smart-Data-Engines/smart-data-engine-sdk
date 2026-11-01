@@ -283,6 +283,12 @@ def main() -> None:
             "decimal-byte-order-mark-refused",
             {**base, "options": {"bounds": {"field": "amount", "low": "\ufeff1.5"}}},
         ),
+        # U+0000 is a Unicode scalar value, and PostgreSQL's text cannot hold it: its driver refused
+        # a filter on it, and ClickHouse answered one (section 8b, the `string` row).
+        (
+            "text-holding-u0000-refused",
+            {**base, "options": {"where": {"label": "a\u0000b"}}},
+        ),
     ]
     for index, (name, case) in enumerate(cases, 1):
         expected = outcome(case)

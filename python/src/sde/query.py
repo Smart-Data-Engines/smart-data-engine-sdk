@@ -90,11 +90,19 @@ def count_engine(engine: object) -> Queryable:
     return cast(Queryable, engine)
 
 
+NUL_REFUSAL: Final = "query strings must not contain U+0000"
+"""The refusal of text holding U+0000, which a row's admission reads as its own (section 8b)."""
+
+
 def _text(value: str) -> str:
     try:
         value.encode("utf-8")
     except UnicodeEncodeError:
         raise QueryRefused("query strings must contain Unicode scalar values") from None
+    # PostgreSQL cannot hold U+0000 in text, and ClickHouse can: a group holding it never moved to
+    # PostgreSQL, and a filter on it was refused by one engine's driver and answered by the other.
+    if "\x00" in value:
+        raise QueryRefused(NUL_REFUSAL)
     return value
 
 
