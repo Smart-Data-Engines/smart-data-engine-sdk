@@ -43,7 +43,11 @@ interface Read {
   readonly compared: boolean
 }
 
-/** `Date.now`, called or passed; `new Date()` with no argument; `Date()` called. */
+/**
+ * `Date.now`, called or passed; `new Date()` with no argument; `Date()` called; and
+ * `performance.timeOrigin`, the epoch instant a monotonic reading counts from, which with
+ * `performance.now()` added is the wall clock by another name.
+ */
 function wallClockReads(file: string, text: string): Read[] {
   const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
   const found: Read[] = []
@@ -60,6 +64,12 @@ function wallClockReads(file: string, text: string): Read[] {
     if (ts.isPropertyAccessExpression(node) && date(node.expression) && node.name.text === 'now') what = 'Date.now'
     else if (ts.isNewExpression(node) && date(node.expression) && (node.arguments?.length ?? 0) === 0) what = 'new Date()'
     else if (ts.isCallExpression(node) && date(node.expression)) what = 'Date()'
+    else if (
+      ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'performance' &&
+      node.name.text === 'timeOrigin'
+    ) {
+      what = 'performance.timeOrigin'
+    }
     if (what !== undefined) found.push({ where: file, what, compared: compared(node) })
     ts.forEachChild(node, visit)
   }
@@ -101,6 +111,7 @@ describe('no expiry', () => {
         'const d = Date()',
         'const e = new Date(0)',
         'if (expires < Date.now()) throw new Error()',
+        'const f = performance.timeOrigin + performance.now()',
       ].join('\n'),
     )
     expect(reads.map((read) => `${read.what}${read.compared ? ' compared' : ''}`)).toEqual([
@@ -109,6 +120,7 @@ describe('no expiry', () => {
       'new Date()',
       'Date()',
       'Date.now compared',
+      'performance.timeOrigin',
     ])
   })
 
