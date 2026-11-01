@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <set>
 #include <string>
@@ -303,13 +304,25 @@ EntityProgress backfill_one(const Copy& copy, const std::string& group, std::int
                         chunks, complete};
 }
 
+/// Whether the copy holds the value the source holds: `==`, except that NaN is NaN (format
+/// contract section 7e, "The same value"). Every engine stores a NaN and reads it back as itself,
+/// and `==` made each row holding one differ, so such a group never verified. A zero is a zero of
+/// either sign, as `==` says: ClickHouse reads a negative zero back as zero from a part it wrote
+/// sparsely.
+bool same_value(const Value& source, const Value& target) {
+  const auto* left = std::get_if<double>(&source);
+  const auto* right = std::get_if<double>(&target);
+  if (left != nullptr && right != nullptr && std::isnan(*left) && std::isnan(*right)) return true;
+  return source == target;
+}
+
 /// The columns of the source row whose values the target does not match - over the source's
 /// columns, because a copy table may carry a column the map does not name.
 std::vector<std::string> differing_columns(const Row& source, const Row& target) {
   std::vector<std::string> out;
   for (const auto& [column, value] : source) {
     const auto there = target.find(column);
-    if (there == target.end() || !(there->second == value)) out.push_back(column);
+    if (there == target.end() || !same_value(value, there->second)) out.push_back(column);
   }
   return out;
 }

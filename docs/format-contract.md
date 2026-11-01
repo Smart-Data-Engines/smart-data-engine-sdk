@@ -1373,6 +1373,23 @@ content plus stable counts, and rechecks table identity and its holds. It neithe
 nor permits releasing those holds. `migration/071`–`078` pin the result and the combined barrier/
 data-read trace. The ordinary live verification record retains its existing meaning.
 
+### The same value
+
+Verification, live or under barriers, compares each source row with its copy column by column, and
+a column differs when the copy does not hold the same value. Two values are the same when they are
+equal, and two rules for floats say what equal means:
+- **NaN is the same as NaN.** A float admits NaN (§8b), and every engine here stores it and reads it
+  back as itself. Compared by the host's `==`, under which NaN equals nothing, a copy holding every
+  NaN of its source differed on each of them: measured on 1 November 2026 on PostgreSQL 15 and
+  ClickHouse 24.8, a group with a NaN in a float column never verified in the reference or in C++,
+  in any of the four directions.
+- **A zero is the same as a zero of either sign.** ClickHouse writes a part whose column is mostly
+  zeros sparsely and reads a negative zero back as zero (24.8), and the JSON it answers in writes
+  one as `0`. No copy can be held to the sign of a zero, so a library does not promise to keep it.
+
+NaN and the infinities are not the same as anything else, null included. These rules live in each
+library's tests rather than in a vector: the `migration/` fixtures are JSON, which has no NaN.
+
 ## 8. Routing
 
 **The routing table is validated when the map is loaded.** It used to be validated at the first read
@@ -1545,7 +1562,7 @@ a refusal is logged, and the value is the client's.
 |---|---|---|
 | `bool` | a boolean | `a value that is not a boolean` |
 | `int32`, `int64` | an integer the type holds; where every number is binary floating point, a safe integer or the host's big integer | `a value that is not an integer`, `an integer outside int32` (`int64`) |
-| `float32`, `float64` | a number, NaN and the infinities included. `float32` refuses a finite number it rounds to an infinity, or one that is not zero and that it rounds to zero | `a value that is not a number`, `a number outside float32` (and `float64`, for an integer past it where integers are unbounded) |
+| `float32`, `float64` | a number, NaN and the infinities included, each read back as itself; the sign of a zero is not kept (§7e). `float32` refuses a finite number it rounds to an infinity, or one that is not zero and that it rounds to zero | `a value that is not a number`, `a number outside float32` (and `float64`, for an integer past it where integers are unbounded) |
 | `decimal(p,s)` | an exact decimal: an integer, decimal text, or the host's decimal type; finite; at most `s` fractional digits once trailing zeros are dropped, and at most `p-s` integer digits | `a value that is not an exact decimal`, `more than <s> fractional digits`, `more than <p-s> integer digits` |
 | `string` | text of Unicode scalar values other than U+0000 | `a value that is not text`, `text holding U+0000` |
 | `bytes` | the host's bytes | `a value that is not bytes` |

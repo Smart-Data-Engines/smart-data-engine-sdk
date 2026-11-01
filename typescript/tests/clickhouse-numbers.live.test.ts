@@ -32,7 +32,10 @@ describe.skipIf(!dsn)('native exact JSON numbers',()=>{
       expect(await engine.keyRange(name,['id'],{after:[expected[0]!.id],limit:1})).toEqual([expected[1]])
     } finally { await engine.close(); await native(`DROP TABLE IF EXISTS ${name} SYNC`) }
   })
-  it.each([{readonly:1,quoted:true},{readonly:1,quoted:false},{readonly:2,quoted:false}])('preserves exact data or refuses incompatible locked defaults ($readonly/$quoted)',async({readonly,quoted})=>{
+  // `denormals` is the fourth output setting, pinned since 1 November 2026 (decision 41): a
+  // `readonly=1` profile that fixes the other three and not it is refused at connect, as one
+  // that fixes none is - a breaking change for such an account, and this case is its record.
+  it.each([{readonly:1,quoted:true,denormals:true},{readonly:1,quoted:true,denormals:false},{readonly:1,quoted:false,denormals:false},{readonly:2,quoted:false,denormals:false}])('preserves exact data or refuses incompatible locked defaults ($readonly/$quoted/$denormals)',async({readonly,quoted,denormals})=>{
     const suffix=randomUUID().replaceAll('-',''),table='sde_exact_'+suffix,user='sde_exact_'+suffix+'_app'
     const password=randomUUID(),runtime=new URL(dsn!)
     runtime.username=user;runtime.password=password
@@ -40,9 +43,9 @@ describe.skipIf(!dsn)('native exact JSON numbers',()=>{
     try {
       await native(`CREATE TABLE ${table} (id Int64, amount Decimal(38,18)) ENGINE=ReplacingMergeTree ORDER BY id`)
       await native(`INSERT INTO ${table} SELECT toInt64('9007199254740993'),toDecimal128('12345678901234567890.123456789012345678',18)`)
-      await native(`CREATE USER ${user} IDENTIFIED WITH sha256_password BY '${password}' SETTINGS output_format_json_quote_64bit_integers=${Number(quoted)},output_format_json_quote_decimals=${Number(quoted)},output_format_decimal_trailing_zeros=${Number(quoted)},readonly=${readonly}`)
+      await native(`CREATE USER ${user} IDENTIFIED WITH sha256_password BY '${password}' SETTINGS output_format_json_quote_64bit_integers=${Number(quoted)},output_format_json_quote_decimals=${Number(quoted)},output_format_decimal_trailing_zeros=${Number(quoted)},output_format_json_quote_denormals=${Number(denormals)},readonly=${readonly}`)
       await native(`GRANT SELECT ON ${root!.pathname.slice(1)}.${table} TO ${user}`)
-      if (readonly === 1 && !quoted) {
+      if (readonly === 1 && !(quoted && denormals)) {
         // This profile forbids correcting a lossy wire format. Refuse before returning data.
         await expect(engine.connect()).rejects.toThrow(/Cannot modify.*readonly/)
       } else {
