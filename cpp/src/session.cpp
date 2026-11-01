@@ -999,8 +999,8 @@ class Session::StreamSink final : public BookSink {
 BookStream Session::book_stream(std::string_view entity, const std::string& symbol,
                                 const std::string& exchange, BookStreamMode mode, Resync resync) {
   const Use use(*this);
-  const std::string target_entity =
-      operation_target(entity, [this](std::string_view name) { return target_of(name); });
+  // The entity as the model knows it, as both other libraries look it up for a stream.
+  const std::string target_entity = target_of(entity);
   const OperationShape& write = shape(target_entity, "bulk_write");
   Engine* engine = target(write, false).first;
   BookWritable* books = engine->capabilities().books;
@@ -1082,19 +1082,19 @@ Book Session::book_at(std::string_view entity, const std::string& symbol,
   }
   const std::string& table = materialization->layout.table_for(target_entity);
   const std::int64_t started = now();
+  // Recorded as the reference records it: a range read of the time, filtered on the book's names.
   const Filter filter{equal, moment};
-  bool failed = false;
-  std::uint64_t returned = 0;
+  Book book;
   try {
-    Book book = books->book_at(table, symbol, exchange, at_ns, depth);
-    returned = book.bid.size() + book.ask.size();
-    if (recorder_ != nullptr) recorder_->record(read, steady_ns() - started, returned, false, &filter);
-    return book;
+    book = books->book_at(table, symbol, exchange, at_ns, depth);
   } catch (...) {
-    failed = true;
-    if (recorder_ != nullptr) recorder_->record(read, steady_ns() - started, returned, failed, &filter);
+    if (recorder_ != nullptr) recorder_->record(read, steady_ns() - started, 0, true, &filter);
     throw;
   }
+  if (recorder_ != nullptr) {
+    recorder_->record(read, steady_ns() - started, book.bid.size() + book.ask.size(), false, &filter);
+  }
+  return book;
 }
 
 void Session::observe(const OperationShape& shape, std::int64_t started, std::uint64_t rows,
