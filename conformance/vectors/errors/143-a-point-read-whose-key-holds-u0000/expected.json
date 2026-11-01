@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Thing.id is string and this key gives it text holding U+0000",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Thing",
+      "key": {
+        "id": "t\u00001"
+      }
+    }
+  },
+  "why": "A point read's key is held to a written row's rules (section 8b, \"A point read's key\"), so a key holding U+0000 is refused in a key's words, before any engine is called."
+}

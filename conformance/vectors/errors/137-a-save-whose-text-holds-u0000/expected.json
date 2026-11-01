@@ -1,0 +1,28 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Thing.label is string and this row gives it text holding U+0000",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-2",
+        "label": "fir\u0000st",
+        "note": null
+      }
+    }
+  },
+  "why": "Measured from the reference on 1 November 2026: PostgreSQL's driver refused this save, and ClickHouse stored the text with its U+0000. A copy of such a group from ClickHouse to PostgreSQL stopped at the chunk holding it, with the driver's error, after 2 of 5 rows. Refused before either engine."
+}
