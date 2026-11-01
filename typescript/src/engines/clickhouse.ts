@@ -107,8 +107,16 @@ interface JsonResult {
  * side - which is what makes the two agree.
  */
 function convert(value: unknown, type: string): unknown {
-  if (value === null || value === undefined) return null
   const bare = type.replace(/^Nullable\((.*)\)$/, '$1').replace(/^LowCardinality\((.*)\)$/, '$1')
+  if (value === null || value === undefined) {
+    // A float column that cannot hold NULL answered null: a NaN or an infinity written unquoted,
+    // which is what the server does without `output_format_json_quote_denormals`. Returned as null,
+    // it would be another value than the one stored.
+    if (/^Float(32|64)$/.test(bare) && !type.includes('Nullable(')) {
+      throw new Error('ClickHouse returned null for a float column that cannot hold one')
+    }
+    return null
+  }
   if (/^U?Int(64|128|256)/.test(bare)) {
     // A string in ClickHouse's JSON, because a JSON number cannot hold an int64 - and a `number`
     // here would lose precision above 2^53, which is not exotic for an identifier column.
@@ -133,12 +141,31 @@ function convert(value: unknown, type: string): unknown {
     return String(value)
   }
   if (bare.startsWith('Bool')) return Boolean(value)
-  if (bare === 'Float32') {
+  if (bare === 'Float32' || bare === 'Float64') {
+    // NaN and the infinities come quoted, `"nan"`, `"inf"` and `"-inf"`
+    // (`output_format_json_quote_denormals`, pinned in `send`), and a profile that quotes 64-bit
+    // floats quotes the rest too. A JSON number is every other float.
+    const number = typeof value === 'number' ? value : floatText(String(value))
+    if (number === undefined) throw new Error('ClickHouse returned a float as text it does not write')
     // The float32 itself, as the PostgreSQL adapter reads a `real`: the JSON text is its shortest
     // decimal, which parses to another double than the stored value.
-    return Math.fround(Number(value))
+    return bare === 'Float32' ? Math.fround(number) : number
   }
   return value
+}
+
+/** The floats ClickHouse's JSON writes as text, with `output_format_json_quote_denormals`. */
+const NON_FINITE: ReadonlyMap<string, number> = new Map([
+  ['nan', Number.NaN],
+  ['inf', Number.POSITIVE_INFINITY],
+  ['-inf', Number.NEGATIVE_INFINITY],
+])
+
+/** A quoted float: NaN or an infinity by name, or decimal text. Anything else is not one. */
+function floatText(text: string): number | undefined {
+  const named = NON_FINITE.get(text)
+  if (named !== undefined) return named
+  return /^-?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(text) ? Number(text) : undefined
 }
 
 /** One value on the way *in*, as a JSON-safe form ClickHouse will accept. */
@@ -236,6 +263,9 @@ export class ClickHouseEngine {
         search.set('output_format_json_quote_64bit_integers', '1')
         search.set('output_format_json_quote_decimals', '1')
         search.set('output_format_decimal_trailing_zeros', '1')
+        // JSON has no NaN and no infinity, and without this the server writes null for them, which
+        // a read by key returned as null: another value than the one stored (24.8 and 26.9).
+        search.set('output_format_json_quote_denormals', '1')
       }
       // A URL is what a proxy or a load balancer in between logs, and a statement holds the values
       // a read filters on, so the statement is the body. An INSERT's rows are its body: its
