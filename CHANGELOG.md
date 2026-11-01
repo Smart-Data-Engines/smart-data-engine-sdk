@@ -8,6 +8,12 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: the C++ library holds the no-account mode's silence with a test** (C++). Every event the
+no-account mode emits, the account mode emits too. The test runs the same work on a hand-written
+unsigned map and on the same document signed: the unsigned run says `sde.map.loaded` and
+`sde.schema.applied`, and the signed run says those and `sde.map.forward_only`. The reference holds
+the same claim live, and the TypeScript library has no output channel.
+
 **Changed: TypeScript holds the account-free mode against live engines too** (TypeScript).
 `no-account.live.test.ts` covers the import and the full operation set on PostgreSQL and ClickHouse,
 on a hand-written unsigned map, and every connection the library attempts is to one of the client's
