@@ -315,6 +315,53 @@ std::vector<std::string> bookkeeping(const sde::testing::Recorded& journal) {
   return out;
 }
 
+TEST(Invariants, TheNoAccountModeSaysNothingTheAccountModeDoesNot) {
+  // The no-account mode is a hand-written, unsigned map, and the same document signed is the account
+  // mode. The same work on each, and every event the unsigned map's run emits, the signed map's run
+  // emits too: a line telling a client what they would get if they paid, or anything else only the
+  // no-account mode says, fails here. The reference holds the same with `test_no_account_live.py`;
+  // the TypeScript library has no output channel at all.
+  const sde::Model model = users();
+  const std::string text = R"({"contract": 3, "model_version": ")" + model.version() +
+                           R"(", "map_version": 1, "groups": {"User": {"source": {"id": "User@e",
+      "engine": "e", "layout": {"auto": true}}}}})";
+  const sde::testing_support::Signer signer("no-account");
+  const auto run = [&](bool with_account) {
+    std::vector<std::string> events;
+    const sde::LogSink sink = [&events](std::string_view event, const sde::Json&) {
+      events.emplace_back(event);
+    };
+    sde::LoadOptions load;
+    load.model = &model;
+    load.log = sink;
+    if (with_account) load.public_keys = signer.keys();
+    const sde::PlacementMap map = with_account
+                                      ? sde::load_map(signer.signed_document(sde::parse_json(text)), load)
+                                      : sde::load_map(text, load);
+    sde::testing::MemoryEngineOptions engine_options;
+    engine_options.dialect = "postgres";
+    engine_options.name = "e";
+    sde::testing::MemoryEngine engine(engine_options);
+    sde::SessionOptions options;
+    options.log = sink;
+    sde::Session session(model, map, {{"e", &engine}}, options);
+    session.ensure_schema();
+    session.save("User", {{"id", sde::Uuid(ID)}, {"email", std::string("a")},
+                          {"name", std::string("b")}, {"age", std::int64_t{1}}});
+    (void)session.get("User", {{"id", sde::Uuid(ID)}});
+    return events;
+  };
+  const std::vector<std::string> without = run(false);
+  const std::vector<std::string> with = run(true);
+  // Both runs say something, so the comparison is not of two silences.
+  ASSERT_FALSE(without.empty());
+  ASSERT_FALSE(with.empty());
+  const std::set<std::string> said(with.begin(), with.end());
+  for (const std::string& event : without) {
+    EXPECT_EQ(said.count(event), 1U) << event << " is said only without an account";
+  }
+}
+
 TEST(Invariants, AnUnsignedMapCostsNoTableAndNoQuery) {
   const sde::Model model = users();
   const auto journal = std::make_shared<sde::testing::Recorded>();
