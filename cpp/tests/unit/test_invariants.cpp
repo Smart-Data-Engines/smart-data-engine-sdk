@@ -62,6 +62,9 @@ std::vector<fs::path> sources() {
       out.push_back(entry.path());
     }
   }
+  // In path order, not the directory's: the order a file system lists entries in differs between
+  // machines, and a list of findings compared whole would differ with it.
+  std::sort(out.begin(), out.end());
   return out;
 }
 
