@@ -1,0 +1,9 @@
+{
+ "name": "an at sign in an identity",
+ "dsn": "orderbook://app%40desk:s3cret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's identity is 1 to 64 characters of [A-Za-z0-9_.:-], as the server's --auth-secret-file takes them",
+  "absent": "s3cret"
+ },
+ "why": "the server's --auth-secret-file takes no @, so this identity could never authenticate"
+}

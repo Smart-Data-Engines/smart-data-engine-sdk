@@ -1,0 +1,8 @@
+{
+ "name": "port zero",
+ "dsn": "orderbook://ob1:0",
+ "refused": {
+  "match": "an orderbook DSN's port is a number from 1 to 65535"
+ },
+ "why": "Python accepted it and failed at connect"
+}

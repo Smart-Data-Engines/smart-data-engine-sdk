@@ -1,0 +1,8 @@
+{
+ "name": "two ports",
+ "dsn": "orderbook://ob1:1:2",
+ "refused": {
+  "match": "an orderbook DSN's port is a number from 1 to 65535"
+ },
+ "why": "a name has no :, so everything after the first is the port"
+}

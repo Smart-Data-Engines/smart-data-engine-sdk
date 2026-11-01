@@ -1,0 +1,8 @@
+{
+ "name": "a port past every integer",
+ "dsn": "orderbook://ob1:99999999999999999999999",
+ "refused": {
+  "match": "an orderbook DSN's port is a number from 1 to 65535"
+ },
+ "why": "read without overflowing, in every language"
+}

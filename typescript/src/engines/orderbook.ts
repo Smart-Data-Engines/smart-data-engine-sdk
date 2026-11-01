@@ -27,6 +27,7 @@
 import { readFileSync } from 'node:fs'
 
 import { UsageGate } from '../_usage.js'
+import { IDENTITY, parseOrderbookDsn } from './_orderbook-dsn.js'
 import type { BookUpdate, ComposedBook } from '../books.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
@@ -297,8 +298,6 @@ function minOf(left: bigint, right: bigint): bigint {
   return left < right ? left : right
 }
 
-const DSN_PARAMETERS = new Set(['tls', 'ca', 'verify', 'timeout'])
-const SWITCH: Readonly<Record<string, boolean>> = { on: true, off: false }
 
 export class OrderbookEngine {
   readonly dialect = 'orderbook'
@@ -338,15 +337,17 @@ export class OrderbookEngine {
     const { host, port } = options
     if (typeof host !== 'string' || host === '') throw new EngineError('an orderbook engine needs a host')
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new EngineError('a host needs a port; this engine has no default port worth guessing')
+      throw new EngineError('a host needs a port from 1 to 65535; this engine has no default port worth guessing')
     }
     const auth = options.auth
     if (auth !== undefined && (
-      typeof auth.identity !== 'string' || auth.identity === '' || /\s/u.test(auth.identity) ||
+      typeof auth.identity !== 'string' || !IDENTITY.test(auth.identity) ||
       typeof auth.secret !== 'string' || auth.secret === '')) {
+      // The server's identities (format contract 7n): one outside them can never authenticate, and
+      // the identity is sent on the wire, where a space would end it.
       throw new EngineError(
-        'auth is {identity, secret}: two non-empty strings, the identity without whitespace, as in the ' +
-          "server's --auth-secret-file",
+        'auth is {identity, secret}: an identity of 1 to 64 characters of [A-Za-z0-9_.:-], as the ' +
+          "server's --auth-secret-file takes them, and a non-empty secret",
       )
     }
     const tls = options.tls === true
@@ -360,7 +361,11 @@ export class OrderbookEngine {
       throw new EngineError('tlsCaFile with tlsVerify: false is a trust anchor nothing consults')
     }
     const timeoutMs = options.timeoutMs ?? 10_000
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new EngineError('timeoutMs is a positive number of milliseconds')
+    // The range in which every library's socket waits as long as it is asked (contract 7n): Node.js
+    // cuts a longer timer to 2^31 - 1 milliseconds, and a socket timeout of 0 never fires.
+    if (typeof timeoutMs !== 'number' || !(timeoutMs >= 1 && timeoutMs <= 2147483647)) {
+      throw new EngineError('timeoutMs is a number of milliseconds from 1 to 2147483647')
+    }
     this.wire = {
       host,
       port,
@@ -381,53 +386,24 @@ export class OrderbookEngine {
   }
 
   /**
-   * A connection from `orderbook://[identity[:secret]@]host:port[?tls=on&ca=PATH&verify=off&timeout=S]`,
-   * the form the reference implementation reads, with the same refusals. No message repeats the
-   * DSN, which carries the secret.
+   * A connection from `orderbook://[identity:secret@]host:port[?tls=on&ca=PATH&verify=off&timeout=S]`,
+   * read by format contract 7n's grammar and by no URL parser, so every library reads one DSN alike.
+   * No refusal repeats the DSN, which carries the secret.
    */
   static fromDsn(dsn: string): OrderbookEngine {
-    if (typeof dsn !== 'string') throw new EngineError('an orderbook DSN is a string')
-    let parts: URL
-    try {
-      parts = new URL(dsn)
-    } catch {
-      throw new EngineError('an orderbook DSN is orderbook://[identity:secret@]host:port[?options]')
-    }
-    if (parts.protocol !== 'orderbook:') throw new EngineError('an orderbook DSN starts with orderbook://')
-    if (parts.hostname === '' || parts.port === '') {
-      throw new EngineError('an orderbook DSN names a host and a port: orderbook://host:port')
-    }
-    if ((parts.pathname !== '' && parts.pathname !== '/') || parts.hash !== '') {
-      throw new EngineError('an orderbook DSN has no path or fragment')
-    }
-    const identity = parts.username === '' ? undefined : decodeURIComponent(parts.username)
-    const secret = parts.password === '' ? undefined : decodeURIComponent(parts.password)
-    if ((identity === undefined) !== (secret === undefined)) {
-      throw new EngineError("an orderbook DSN's identity needs its secret: identity:secret@host")
-    }
-    const options = new Map<string, string>()
-    for (const [key, value] of parts.searchParams) {
-      if (!DSN_PARAMETERS.has(key)) {
-        throw new EngineError(`the orderbook DSN parameter ${JSON.stringify(key)} is unknown; it takes ${JSON.stringify([...DSN_PARAMETERS].sort())}`)
-      }
-      if (options.has(key)) throw new EngineError(`the orderbook DSN gives ${JSON.stringify(key)} twice`)
-      options.set(key, value)
-    }
-    for (const key of ['tls', 'verify']) {
-      const value = options.get(key)
-      if (value !== undefined && !(value in SWITCH)) throw new EngineError(`the orderbook DSN parameter ${JSON.stringify(key)} is on or off`)
-    }
-    const seconds = Number(options.get('timeout') ?? '10')
-    if (!Number.isFinite(seconds) || seconds <= 0) throw new EngineError("the orderbook DSN parameter 'timeout' is a number of seconds")
-    const host = parts.hostname.startsWith('[') ? parts.hostname.slice(1, -1) : parts.hostname
+    const parsed = parseOrderbookDsn(dsn)
     return new OrderbookEngine({
-      host,
-      port: Number(parts.port),
-      ...(identity === undefined || secret === undefined ? {} : { auth: { identity, secret } }),
-      tls: SWITCH[options.get('tls') ?? 'off']!,
-      ...(options.get('ca') === undefined ? {} : { tlsCaFile: options.get('ca')! }),
-      tlsVerify: SWITCH[options.get('verify') ?? 'on']!,
-      timeoutMs: seconds * 1000,
+      host: parsed.host,
+      port: parsed.port,
+      ...(parsed.identity === null || parsed.secret === null
+        ? {}
+        : { auth: { identity: parsed.identity, secret: parsed.secret } }),
+      tls: parsed.tls,
+      ...(parsed.ca === null ? {} : { tlsCaFile: parsed.ca }),
+      tlsVerify: parsed.verify,
+      // Monotonic: the range in seconds maps into the range in milliseconds, 0.001 to 1 and
+      // 2147483.647 to 2147483647 exactly.
+      timeoutMs: parsed.timeout * 1000,
     })
   }
 

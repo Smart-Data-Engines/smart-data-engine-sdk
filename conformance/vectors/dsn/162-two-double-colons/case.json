@@ -1,0 +1,8 @@
+{
+ "name": "two double colons",
+ "dsn": "orderbook://[1::2::3]:9090",
+ "refused": {
+  "match": "an orderbook DSN's host is a name of letters, digits, '.', '-' and '_', or an IPv6 address in brackets"
+ },
+ "why": "one :: at most, or the groups it stands for are not known"
+}

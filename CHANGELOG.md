@@ -18,6 +18,30 @@ the chunk holding it, after 2 of 5 rows. A row is refused before any engine with
 Elasticsearch: binary data with a zero byte is `bytes`. `errors/137`-`139` and `query/029` pin it.
 Decision 44 of the C++ port.
 
+**Changed: the orderbook DSN is read by one grammar in every library** (Python, TypeScript and C++;
+format contract §7n, [`docs/orderbook.md`](docs/orderbook.md)). Each library read it with its
+language's URL parser, and those disagree exactly where a DSN is written by hand. WHATWG's turned the
+host `0x7f.1` into `127.0.0.1`, which a TLS check then compared with the certificate. Python's
+`float()` read `timeout=1_0` as ten seconds and `timeout=inf` as forever, which failed at the first
+socket. The contract now writes the grammar out rule by rule, and the new `dsn/`
+vectors hold all three libraries to it, written by hand rather than computed by a library. A DSN
+any library accepted before may now be refused, always with a message naming the part:
+- a space, a control character or a character beyond ASCII, raw: percent-encode it. A trailing
+  newline is refused rather than trimmed;
+- a `#` anywhere, an empty fragment included: a `#` in a secret is `%23`;
+- an identity outside the server's `[A-Za-z0-9_.:-]{1,64}`, which could never authenticate, and a
+  `%` without two hexadecimal digits or bytes that are not UTF-8 in the credentials;
+- a host other than a name of letters, digits, `.`, `-` and `_` or a bracketed IPv6 address
+  without a zone; port 0;
+- a timeout other than decimal digits from 0.001 to 2147483.647 seconds - `inf`, `1e3`, `.5`,
+  `1_0` - the range in which every library's socket waits as long as it is asked;
+- an empty `ca`, or one holding a NUL, and a `ca` with `verify=off` (Python refused it at connect,
+  in its engine client's words).
+
+The constructors take the same rules field by field: the identity, a port from 1 to 65535, the
+timeout's range (in milliseconds in TypeScript: 1 to 2147483647), and a CA file with verification
+off. Findings 29 and 32 of the C++ port.
+
 **Fixed: a temporal column keeps its field's zone** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §7a). A scan reads a value by its field's type,
 and a read by key by its column's. A hand-written layout that gave a `timestamptz` field a column

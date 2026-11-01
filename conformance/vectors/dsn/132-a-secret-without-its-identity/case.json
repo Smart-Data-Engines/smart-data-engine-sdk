@@ -1,0 +1,9 @@
+{
+ "name": "a secret without its identity",
+ "dsn": "orderbook://:s3cret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's credentials are identity:secret, and neither is empty",
+  "absent": "s3cret"
+ },
+ "why": "an empty identity is none"
+}

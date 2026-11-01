@@ -1,0 +1,8 @@
+{
+ "name": "a name that does not decode",
+ "dsn": "orderbook://ob1:9090?%ZZ=1",
+ "refused": {
+  "match": "the orderbook DSN parameter '%ZZ' is not percent-encoded UTF-8"
+ },
+ "why": "quoted as written"
+}

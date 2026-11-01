@@ -1,0 +1,8 @@
+{
+ "name": "a trailing newline",
+ "dsn": "orderbook://ob1:9090\n",
+ "refused": {
+  "match": "an orderbook DSN is printable ASCII: a space, a control character or a character beyond ASCII is written percent-encoded"
+ },
+ "why": "read from a file and not trimmed: refused, where every URL parser dropped it in silence"
+}

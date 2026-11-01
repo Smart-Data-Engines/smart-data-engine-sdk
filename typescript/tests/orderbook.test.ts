@@ -244,8 +244,19 @@ describe('connecting', () => {
     expect(() => new OrderbookEngine({ ...base, port: 0 })).toThrow('needs a port')
     expect(() => new OrderbookEngine({ ...base, tlsVerify: false })).toThrow('no certificate to decline')
     expect(() => new OrderbookEngine({ ...base, tlsCaFile: '/nope' })).toThrow('verifies nothing')
-    expect(() => new OrderbookEngine({ ...base, auth: { identity: 'a b', secret: 's' } })).toThrow('without whitespace')
-    expect(() => new OrderbookEngine({ ...base, auth: { identity: 'a', secret: '' } })).toThrow('two non-empty strings')
+    expect(() => new OrderbookEngine({ ...base, tls: true, tlsCaFile: '/nope', tlsVerify: false })).toThrow('nothing consults')
+    // The server's identities (format contract 7n), and a non-empty secret.
+    for (const identity of ['a b', 'app@desk', 'a'.repeat(65), 'app\u200b', '', 'app\ufeff']) {
+      expect(() => new OrderbookEngine({ ...base, auth: { identity, secret: 's' } }), identity).toThrow('1 to 64 characters')
+    }
+    expect(() => new OrderbookEngine({ ...base, auth: { identity: 'a', secret: '' } })).toThrow('a non-empty secret')
+    expect(new OrderbookEngine({ ...base, auth: { identity: 'desk:1', secret: 's' } }).toString()).toContain('identity="desk:1"')
+    // A timeout every library's socket waits as asked: 1 to 2^31 - 1 milliseconds.
+    for (const timeoutMs of [0, 0.5, 2147483648, Number.POSITIVE_INFINITY, Number.NaN, -1]) {
+      expect(() => new OrderbookEngine({ ...base, timeoutMs }), String(timeoutMs)).toThrow('from 1 to 2147483647')
+    }
+    expect(() => new OrderbookEngine({ ...base, timeoutMs: 1 })).not.toThrow()
+    expect(() => new OrderbookEngine({ ...base, timeoutMs: 2147483647 })).not.toThrow()
   })
 
   it('reads a DSN and never repeats its secret', () => {
@@ -256,11 +267,11 @@ describe('connecting', () => {
       ['postgres://h:1', 'starts with orderbook://'],
       ['orderbook://h', 'names a host and a port'],
       ['orderbook://h:1/db', 'no path'],
-      ['orderbook://desk@h:1', 'needs its secret'],
+      ['orderbook://desk@h:1', 'credentials are identity:secret'],
       ['orderbook://h:1?sslmode=require', 'is unknown'],
       ['orderbook://h:1?tls=yes', 'is on or off'],
       ['orderbook://h:1?verify=off', 'no certificate to decline'],
-      ['orderbook://h:1?timeout=-1', 'number of seconds'],
+      ['orderbook://h:1?timeout=-1', 'seconds in decimal digits'],
     ] as const) {
       expect(() => OrderbookEngine.fromDsn(dsn), dsn).toThrow(fragment)
     }

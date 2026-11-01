@@ -61,18 +61,29 @@ PostgreSQL and ClickHouse DSNs:
 orderbook://trading-app:SECRET@ob1.internal:9443?tls=on&ca=/etc/ssl/ca.pem&timeout=10
 ```
 
-Rules for the DSN:
-- the identity and the secret are percent-decoded;
-- `verify=off` is accepted only together with `tls=on` and only when written out;
-- an unknown parameter is refused.
+Every library reads the DSN by one grammar, format contract §7n, and by no URL parser: the URL
+parsers of Python and of JavaScript disagree exactly where a DSN is written by hand, and until
+31 October 2026 one DSN could connect to two places. The rules that matter when writing one:
+- it is printable ASCII: a space, a character beyond ASCII and a `#` in a secret are
+  percent-encoded, and a trailing newline is refused rather than trimmed;
+- the identity is 1 to 64 characters of `[A-Za-z0-9_.:-]`, as the server's `--auth-secret-file`
+  takes them, and a `:` in it is written `%3A`; the secret is any text, percent-encoded;
+- the host is a name or a bracketed IPv6 address, kept as written - `0x7f.1` is not `127.0.0.1` -
+  and the port is from 1 to 65535;
+- `timeout` is seconds in decimal digits, from 0.001 to 2147483.647, the range in which every
+  library's socket waits as long as it is asked: `inf`, `1e3` and `1_0` are refused;
+- in a parameter a `+` is a space, so a `+` in a CA path is written `%2B`;
+- an unknown parameter is refused, and so is one given twice.
 
 Every refusal names the part of the DSN that is wrong and never repeats the DSN, which carries the
-secret; `repr()` shows the identity, never the secret.
+secret; `repr()` shows the identity, never the secret. The `dsn/` vectors hold every library to
+each rule.
 
-Settings that would do nothing are refused rather than ignored:
+Settings that would do nothing are refused rather than ignored, in a DSN and field by field alike:
 - credentials or TLS in local mode;
 - a CA file without TLS;
-- `tls_verify=False` without TLS.
+- `verify=off` (`tls_verify=False`) without TLS;
+- a CA file with verification off, a trust anchor nothing consults.
 
 `connect()` asks a TCP server for its capabilities and refuses a server that cannot store a write's
 event time, which would stamp every update with its arrival instead. After an exchange that does not
@@ -252,9 +263,9 @@ reads it from the other, in both directions, against a live server.
 
 `sde::OrderbookEngine` from `sde/orderbook.hpp`, in the target `sde::orderbook`, is the same adapter
 again, over the engine's TCP protocol only, which it speaks itself as TypeScript does; it links
-OpenSSL for TLS and never the engine. Its DSN is read as the reference reads it - compared with the
-reference's parser on 280,000 generated DSNs - and its refusals are the reference's, word for word,
-including the words of the engine's own Python client that the reference puts into its messages:
+OpenSSL for TLS and never the engine. Its DSN is read by the contract's grammar, as every
+library's is (`dsn/`), and its other refusals are the reference's, word for word, including the
+words of the engine's own Python client that the reference puts into its messages:
 
 ```cpp
 #include "sde/orderbook.hpp"

@@ -1,0 +1,8 @@
+{
+ "name": "no port",
+ "dsn": "orderbook://ob1",
+ "refused": {
+  "match": "an orderbook DSN names a host and a port: orderbook://host:port"
+ },
+ "why": "the engine has no default port worth guessing"
+}

@@ -1,0 +1,9 @@
+{
+ "name": "a hash in a secret",
+ "dsn": "orderbook://app:p#ss@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN has no fragment: a '#' in a secret is written %23",
+  "absent": "p#ss"
+ },
+ "why": "a URL parser read the rest as a fragment and reported a port that is not a number"
+}

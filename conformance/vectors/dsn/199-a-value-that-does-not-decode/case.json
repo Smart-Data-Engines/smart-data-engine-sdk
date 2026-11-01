@@ -1,0 +1,8 @@
+{
+ "name": "a value that does not decode",
+ "dsn": "orderbook://ob1:9090?tls=%FF",
+ "refused": {
+  "match": "the orderbook DSN parameter 'tls' is not percent-encoded UTF-8"
+ },
+ "why": "a value is percent-encoded UTF-8 too"
+}

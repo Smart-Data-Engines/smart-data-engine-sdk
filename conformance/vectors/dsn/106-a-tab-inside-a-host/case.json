@@ -1,0 +1,8 @@
+{
+ "name": "a tab inside a host",
+ "dsn": "orderbook://ob\t1:9090",
+ "refused": {
+  "match": "an orderbook DSN is printable ASCII: a space, a control character or a character beyond ASCII is written percent-encoded"
+ },
+ "why": "both URL parsers removed a tab wherever it stood"
+}

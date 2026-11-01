@@ -1,0 +1,8 @@
+{
+ "name": "a ca without tls",
+ "dsn": "orderbook://ob1:9090?ca=/etc/ssl/ca.pem",
+ "refused": {
+  "match": "the orderbook DSN's ca needs tls=on: without TLS it verifies nothing"
+ },
+ "why": "without TLS the connection is plain text, and a CA file would read as protection"
+}

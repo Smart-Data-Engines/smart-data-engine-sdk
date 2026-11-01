@@ -1,0 +1,15 @@
+{
+ "name": "verification off under tls",
+ "dsn": "orderbook://ob1:9090?tls=on&verify=off",
+ "says": {
+  "host": "ob1",
+  "port": 9090,
+  "identity": null,
+  "secret": null,
+  "tls": true,
+  "ca": null,
+  "verify": false,
+  "timeout": 10.0
+ },
+ "why": "written out, and only with TLS"
+}
