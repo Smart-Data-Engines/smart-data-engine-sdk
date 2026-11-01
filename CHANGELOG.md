@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript's ClickHouse adapter left a listener on its socket after every request**
+(TypeScript). Node's global agent keeps sockets alive from Node 19, so one socket serves request after
+request, and each request added an `error` listener to it that stayed. One engine's socket held 52
+after 50 requests, measured, and Node warned of a leak after eleven: memory that grew with every query
+of a long-lived application. A request's listeners now come off when it ends, and a live test counts
+them after thirty requests.
+
 **Fixed: a ClickHouse request is not sent on a connection the server is closing, and a transport
 failure names its causes** (Python). ClickHouse closes a kept-alive connection once the
 keep-alive timeout it announces has passed since its response: 10 s by default, and measured on
