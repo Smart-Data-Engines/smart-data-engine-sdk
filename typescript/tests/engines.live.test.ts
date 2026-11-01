@@ -557,6 +557,47 @@ describe.skipIf(!PG_DSN || !CH_DSN)('the two engines agree', () => {
     expect(report.chunksCompared + report.tailRowsRead).toBeGreaterThan(0)
   })
 
+  it.each(['pg', 'ch'] as const)(
+    'copies NaN and the infinities from %s, verifies the copy and holds them in it',
+    async (source) => {
+      // Before 1 November 2026 a read from ClickHouse gave null for each of them: a copy from
+      // PostgreSQL never verified, and a copy from ClickHouse stored NULL in PostgreSQL and
+      // verified as matched, because both sides then read null (decision 41 of the C++ port).
+      // Verification takes NaN as NaN and a zero as a zero of either sign (format contract
+      // section 7e), so a zero is compared here as a zero.
+      const { backfill, verify } = await import('../src/migration.js')
+      const run = randomUUID().replace(/-/g, '')
+      const tables = { pg: `sample_pg_${run}`, ch: `sample_ch_${run}` }
+      const target = source === 'pg' ? 'ch' : 'pg'
+      const migrating = await Session.open(model, loadMap(fanOutMap(source, run), { model }), {
+        'pg-main': postgres,
+        'ch-1': clickhouse,
+      })
+      try {
+        await migrating.ensureSchema()
+        const values = [Number.NaN, Infinity, -Infinity, -0, 1.5]
+        const ids = values.map(() => randomUUID())
+        const engine = { pg: postgres, ch: clickhouse }
+        for (const [index, value] of values.entries()) {
+          await engine[source].insert(tables[source], { ...sample(ids[index]!), approx: value, narrow: value })
+        }
+        expect((await backfill(migrating, 'Sample', { chunkRows: 10 })).complete).toBe(true)
+        const report = await verify(migrating, 'Sample', { chunkRows: 10 })
+        expect(report.matched, `differences: ${JSON.stringify(report.differences)}`).toBe(true)
+        const zero = (value: unknown): unknown => (value === 0 ? 0 : value)
+        const copied: unknown[][] = []
+        for (const id of ids) {
+          const row = await engine[target].get(tables[target], { id })
+          copied.push([zero(row?.['approx']), zero(row?.['narrow'])])
+        }
+        expect(copied).toEqual(values.map((value) => [zero(value), zero(value)]))
+      } finally {
+        await dropPostgres([tables.pg])
+        await dropClickHouse([tables.ch])
+      }
+    },
+  )
+
   /**
    * The fixture's map with a fan-out, from whichever engine is named as the source, on tables of
    * its own.

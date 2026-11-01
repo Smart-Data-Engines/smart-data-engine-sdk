@@ -27,12 +27,12 @@ async function endpoint(meta: Array<{name: string, type: string}>, data: string)
 }
 
 describe('exact ClickHouse JSON', () => {
-  it('pins exact integer, decimal and decimal-scale settings on every JSON exchange', async () => {
+  it('pins exact integer, decimal, decimal-scale and non-finite float settings on every JSON exchange', async () => {
     const {engine,requests} = await endpoint([{name:'amount',type:'Decimal(38, 18)'}],'{"amount":"12345678901234567890.123456789012345678"}')
     try {
       expect((await engine.get('prices',{id:1n}))?.amount).toBe('12345678901234567890.123456789012345678')
       expect(requests.length).toBe(2)
-      for(const request of requests) for(const key of ['output_format_json_quote_64bit_integers','output_format_json_quote_decimals','output_format_decimal_trailing_zeros']) expect(request.searchParams.get(key)).toBe('1')
+      for(const request of requests) for(const key of ['output_format_json_quote_64bit_integers','output_format_json_quote_decimals','output_format_decimal_trailing_zeros','output_format_json_quote_denormals']) expect(request.searchParams.get(key)).toBe('1')
     } finally { await engine.close() }
   })
   it.each([
@@ -45,6 +45,32 @@ describe('exact ClickHouse JSON', () => {
   ])('refuses unquoted %s rather than converting a rounded number back to text', async(type, literal) => {
     const {engine}=await endpoint([{name:'value',type}],'{"value":'+literal+'}')
     try { await expect(engine.get('values',{id:1})).rejects.toThrow() }
+    finally {await engine.close()}
+  })
+  it('reads NaN and the infinities by the names the server quotes them with, in both widths', async () => {
+    // Without `output_format_json_quote_denormals` the server writes null for them, and a read by
+    // key returned null: another value than the one stored (decision 41 of the C++ port).
+    const meta = [{name:'wide',type:'Float64'},{name:'narrow',type:'Float32'},{name:'maybe',type:'Nullable(Float64)'},{name:'quoted',type:'Float64'}]
+    const {engine}=await endpoint(meta,'{"wide":"nan","narrow":"-inf","maybe":"inf","quoted":"1.5"}')
+    try {
+      const row = await engine.get('values',{id:1})
+      expect(row?.['wide']).toBeNaN()
+      expect(row).toMatchObject({narrow:-Infinity,maybe:Infinity,quoted:1.5})
+    } finally {await engine.close()}
+  })
+  it.each([
+    ['null in a float column that cannot hold one','Float64','null','cannot hold one'],
+    ['null in a float32 column that cannot hold one','Float32','null','cannot hold one'],
+    ['text that is not a float','Float64','"soon"','text it does not write'],
+    ['a name with another case','Float64','"NaN"','text it does not write'],
+  ])('refuses %s rather than returning another value', async (_, type, literal, match) => {
+    const {engine}=await endpoint([{name:'value',type}],'{"value":'+literal+'}')
+    try { await expect(engine.get('values',{id:1})).rejects.toThrow(match) }
+    finally {await engine.close()}
+  })
+  it('keeps a null in a float column that can hold one', async () => {
+    const {engine}=await endpoint([{name:'maybe',type:'Nullable(Float32)'}],'{"maybe":null}')
+    try {expect(await engine.get('values',{id:1})).toEqual({maybe:null})}
     finally {await engine.close()}
   })
   it('preserves exact strings and nullable values',async()=>{
