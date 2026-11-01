@@ -361,11 +361,49 @@ TYPED_CASES: list[
 ]
 
 
+# Text every engine holds: U+0000 is a Unicode scalar value, PostgreSQL's text cannot hold it, and
+# ClickHouse stores it. Numbered after errors/131-136, which a point read's key holds.
+NUL_CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, Any]], str]] = [
+    (
+        "137-a-save-whose-text-holds-u0000",
+        "ModelPlanningError",
+        save(FULL),
+        save({**FULL, "id": "t-2", "label": "fir\u0000st"}),
+        "Thing.label is string and this row gives it text holding U+0000",
+        ACCEPTED_ONE,
+        "Measured from the reference on 1 November 2026: PostgreSQL's driver refused this save, "
+        "and ClickHouse stored the text with its U+0000. A copy of such a group from ClickHouse to "
+        "PostgreSQL stopped at the chunk holding it, with the driver's error, after 2 of 5 rows. "
+        "Refused before either engine.",
+    ),
+    (
+        "138-a-batch-row-whose-nullable-text-holds-u0000",
+        "BulkWriteRefused",
+        save_many([FULL]),
+        save_many([{**FULL, "id": "t-3"}, {**FULL, "id": "t-4", "note": "\u0000"}]),
+        "row 1: Thing.note is string and this row gives it text holding U+0000",
+        [{"engine": "pg-main", "call": "insert_many", "table": "thing", "rows": 1}],
+        "A nullable field holds null, and U+0000 is not null. The whole batch is refused, the row "
+        "that fits included, and the row is named by its position.",
+    ),
+    (
+        "139-a-save-whose-key-holds-u0000",
+        "ModelPlanningError",
+        save(FULL),
+        save({**FULL, "id": "t\u00005"}),
+        "Thing.id is string and this row gives it text holding U+0000",
+        ACCEPTED_ONE,
+        "A key's text is held to the same rule: the row it addresses is the row one engine refuses "
+        "and another keeps.",
+    ),
+]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
     parser.parse_args()
-    for name, error, accepted, refused, match, calls, why in CASES + TYPED_CASES:
+    for name, error, accepted, refused, match, calls, why in CASES + TYPED_CASES + NUL_CASES:
         directory = ERRORS / name
         directory.mkdir(exist_ok=True)
         model, placement = MODEL, MAP
@@ -389,7 +427,7 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
-    print(f"Wrote {len(CASES) + len(TYPED_CASES)} write-stage refusals without importing an SDK")
+    print(f"Wrote {len(CASES) + len(TYPED_CASES) + len(NUL_CASES)} write-stage refusals without importing an SDK")
 
 
 if __name__ == "__main__":

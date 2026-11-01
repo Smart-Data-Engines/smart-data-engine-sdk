@@ -1,0 +1,28 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Thing.id is string and this row gives it text holding U+0000",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t-1",
+        "label": "first",
+        "note": null
+      }
+    },
+    "refused": {
+      "operation": "save",
+      "entity": "Thing",
+      "values": {
+        "amount": 1,
+        "id": "t\u00005",
+        "label": "first",
+        "note": null
+      }
+    }
+  },
+  "why": "A key's text is held to the same rule: the row it addresses is the row one engine refuses and another keeps."
+}

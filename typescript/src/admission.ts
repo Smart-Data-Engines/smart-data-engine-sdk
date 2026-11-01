@@ -19,7 +19,7 @@
  * receives one representation per type. A refusal says what the type does not hold and never the
  * value: a refusal is logged, and the value is the client's.
  */
-import { decimalParts, QueryRefused, queryValue } from './query.js'
+import { decimalParts, NUL_REFUSAL, QueryRefused, queryValue } from './query.js'
 
 /** Returns the value as engines receive it, or throws `Misfit`. */
 export type Check = (value: unknown) => unknown
@@ -47,6 +47,9 @@ function asFilter(kind: string): Check {
     try {
       return queryValue(column, value)
     } catch (error) {
+      // Text, but not text every engine holds: PostgreSQL refuses U+0000, and ClickHouse stored
+      // it (format contract section 8b).
+      if (error instanceof QueryRefused && error.message === NUL_REFUSAL) throw new Misfit('text holding U+0000')
       if (error instanceof QueryRefused) throw new Misfit(`a value that is not ${noun}`)
       throw error
     }
