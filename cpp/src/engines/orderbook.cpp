@@ -323,6 +323,20 @@ std::string command_of(const std::string& symbol, const std::string& exchange,
   return out;
 }
 
+/// The bytes of one side replacement (`MREPLACE`, the engine's #233): always the block, for one
+/// level and for none as well, which empties the side and is the header alone.
+std::string replace_command_of(const std::string& symbol, const std::string& exchange,
+                               const std::string& side, std::int64_t timestamp,
+                               const std::vector<OrderbookLevel>& levels) {
+  std::string out = "MREPLACE " + symbol + " " + exchange + " " + side + " " +
+                    std::to_string(levels.size()) + " " + std::to_string(timestamp);
+  for (const OrderbookLevel& level : levels) {
+    out += "\n" + std::to_string(level.price) + " " + std::to_string(level.quantity) + " " +
+           std::to_string(level.order_count);
+  }
+  return out;
+}
+
 const char* const kNotConnected = "not connected; call connect() first";
 
 }  // namespace
@@ -428,6 +442,7 @@ void OrderbookEngine::connect() {
         "time it carries. Upgrade the server; nothing was written.");
   }
   connection_ = std::move(opened);
+  server_capabilities_ = std::move(capabilities);
 }
 
 void OrderbookEngine::close() noexcept {
@@ -1125,9 +1140,125 @@ void OrderbookEngine::transaction(const std::function<void()>& /*body*/) {
       "the method.");
 }
 
+bool OrderbookEngine::supports_replace_side() {
+  const Use use(*this);
+  (void)ready();
+  return server_capabilities_.contains("replace_side");
+}
+
+void OrderbookEngine::check_book(const std::string& symbol, const std::string& exchange) {
+  (void)name_of(Value(symbol), "symbol");
+  (void)name_of(Value(exchange), "exchange");
+}
+
+void OrderbookEngine::apply_levels(const std::string& table, const std::string& symbol,
+                                   const std::string& exchange, BookSide side,
+                                   std::int64_t timestamp_ns, const std::vector<BookLevel>& levels) {
+  book_write(table, symbol, exchange, side, timestamp_ns, levels, false);
+}
+
+void OrderbookEngine::replace_levels(const std::string& table, const std::string& symbol,
+                                     const std::string& exchange, BookSide side,
+                                     std::int64_t timestamp_ns,
+                                     const std::vector<BookLevel>& levels) {
+  book_write(table, symbol, exchange, side, timestamp_ns, levels, true);
+}
+
+void OrderbookEngine::book_write(const std::string& table, const std::string& symbol,
+                                 const std::string& exchange, BookSide side,
+                                 std::int64_t timestamp_ns, const std::vector<BookLevel>& levels,
+                                 bool replace) {
+  const Use use(*this);
+  check_table(table);
+  const std::string checked_symbol = name_of(Value(symbol), "symbol");
+  const std::string checked_exchange = name_of(Value(exchange), "exchange");
+  const std::int64_t stamp = integer_of(Value(timestamp_ns), "timestamp_ns", 0, kMaxTimestamp);
+  // The checks of an update's levels but none on how many there are - a replacement may empty its
+  // side - beyond the engine's 1000.
+  if (levels.size() > static_cast<std::size_t>(MAX_LEVEL + 1)) {
+    throw EngineError("has " + std::to_string(levels.size()) +
+                      " levels and this engine stores at most " + std::to_string(MAX_LEVEL + 1) +
+                      " per side");
+  }
+  std::vector<OrderbookLevel> checked;
+  checked.reserve(levels.size());
+  for (const BookLevel& level : levels) {
+    checked.push_back({integer_of(Value(level.price), "price", kMinPrice, kMaxPrice),
+                       integer_of(Value(level.quantity), "quantity", 0, kMaxQuantity),
+                       integer_of(Value(level.order_count), "order_count", 0, kMaxOrderCount)});
+  }
+  if (checked.empty() && !replace) return;  // a change of nothing is not an update
+  const std::string side_text(to_string(side));
+  const std::string command =
+      replace ? replace_command_of(checked_symbol, checked_exchange, side_text, stamp, checked)
+              : command_of(checked_symbol, checked_exchange, side_text, stamp, checked);
+  Connection& connection = ready();
+  try {
+    const Answer answer = detail::orderbook::parse_answer(connection.execute(command));
+    if (answer.error) {
+      const char* verb = replace ? "TCP MREPLACE" : checked.size() > 1 ? "TCP MINSERT" : "TCP INSERT";
+      throw WireError(std::string(verb) + " failed: " + answer.message, "OrderbookError");
+    }
+  } catch (const WireError& error) {
+    write_failed(table, error.python_class());
+    throw EngineError("the engine did not confirm the update of " + table + ": " + error.what() +
+                      ". If the connection dropped after it was sent, it may still have been "
+                      "applied: the stream sends this side whole next.");
+  }
+  // At least one: a replacement of no levels writes the removals the engine computes.
+  unflushed_ += std::max<std::int64_t>(static_cast<std::int64_t>(checked.size()), 1);
+}
+
+Book OrderbookEngine::book_at(const std::string& table, const std::string& symbol,
+                              const std::string& exchange, std::int64_t at_ns,
+                              std::optional<std::int64_t> depth) {
+  const Use use(*this);
+  check_table(table);
+  const std::string checked_symbol = name_of(Value(symbol), "symbol");
+  const std::string checked_exchange = name_of(Value(exchange), "exchange");
+  const std::int64_t at = integer_of(Value(at_ns), "at_ns", 0, kMaxTimestamp);
+  std::string bound;
+  if (depth) {
+    bound = " AND level < " + std::to_string(integer_of(Value(*depth), "depth", 1, MAX_LEVEL + 1));
+  }
+  (void)ready();
+  if (!server_capabilities_.contains("replace_side")) {
+    throw EngineError(
+        "this orderbook server composes a book by position, not by price (it predates the "
+        "capability replace_side, which came with reads by price), and would read a book written "
+        "by price wrongly. Upgrade the server; nothing was read.");
+  }
+  flush_now();
+  const std::vector<std::vector<std::string>> rows =
+      query("SELECT * FROM " + literal(checked_symbol) + "." + literal(checked_exchange) +
+            " WHERE AT " + std::to_string(at) + bound);
+  std::vector<Row> parsed;
+  parsed.reserve(rows.size());
+  for (const std::vector<std::string>& fields : rows) {
+    parsed.push_back(row_of(checked_symbol, checked_exchange, raw_of(fields)));
+  }
+  std::stable_sort(parsed.begin(), parsed.end(), [](const Row& a, const Row& b) {
+    const std::string& side_a = std::get<std::string>(a.at("side"));
+    const std::string& side_b = std::get<std::string>(b.at("side"));
+    if (side_a != side_b) return side_a < side_b;
+    return std::get<std::int64_t>(a.at("level")) < std::get<std::int64_t>(b.at("level"));
+  });
+  Book out;
+  for (const Row& row : parsed) {
+    const std::string& side = std::get<std::string>(row.at("side"));
+    std::vector<BookLevel>* into = side == "bid" ? &out.bid : side == "ask" ? &out.ask : nullptr;
+    if (into == nullptr) throw EngineError("the engine answered a level of side " + python_repr(side));
+    into->push_back({std::get<std::int64_t>(row.at("price")),
+                     std::get<std::int64_t>(row.at("quantity")),
+                     std::get<std::int64_t>(row.at("order_count"))});
+  }
+  return out;
+}
+
 Capabilities OrderbookEngine::capabilities() noexcept {
   Capabilities offered;
   offered.query = this;
+  offered.books = this;
   offered.count_refusal = std::string(COUNT_REFUSAL);
   offered.summary_refusal = std::string(SUMMARY_REFUSAL);
   offered.bulk = this;

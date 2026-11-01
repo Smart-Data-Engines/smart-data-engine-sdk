@@ -49,6 +49,7 @@ add_executable(sde_unit_tests
   unit/test_log.cpp
   unit/test_overhead.cpp
   unit/test_invariants.cpp
+  unit/test_books.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # The vocabulary test reads the library's sources and the reference's, as they are in the tree.
@@ -102,6 +103,7 @@ add_executable(sde_conformance
   conformance/test_schema.cpp
   conformance/test_query.cpp
   conformance/test_migration.cpp
+  conformance/test_books.cpp
 )
 target_link_libraries(sde_conformance PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # `dsn/` goes with the orderbook adapter (format contract section 9), whose DSN it reads.
@@ -156,12 +158,13 @@ if(TARGET sde_orderbook)
     gtest_discover_tests(sde_live_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS live)
   endif()
   target_sources(sde_live_tests PRIVATE live/test_orderbook_wire.cpp live/test_orderbook_tls.cpp
-    live/test_orderbook_adapter.cpp)
+    live/test_orderbook_adapter.cpp live/test_orderbook_books.cpp)
   target_link_libraries(sde_live_tests PRIVATE sde_orderbook OpenSSL::SSL)
   # The adapter against a real ob_tcp_server, plain and with TLS, and beside the reference: built
   # everywhere, run where an engine is - the SDK's `orderbook` CI job, which builds one. Labelled so
   # that a job without one can leave it out by name rather than by a skip.
-  add_executable(sde_orderbook_live_tests live/test_orderbook_slice.cpp)
+  add_executable(sde_orderbook_live_tests live/test_orderbook_slice.cpp
+    live/test_orderbook_books_slice.cpp)
   target_link_libraries(sde_orderbook_live_tests PRIVATE sde_test_support sde::testing sde_orderbook
     GTest::gtest_main)
   target_compile_definitions(sde_orderbook_live_tests PRIVATE

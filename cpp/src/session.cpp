@@ -967,6 +967,136 @@ StorageMeasurement Session::measure_storage() {
   return out;
 }
 
+// --- book streams -------------------------------------------------------------------------------
+
+class Session::StreamSink final : public BookSink {
+ public:
+  StreamSink(Session& session, std::string target, const OperationShape& shape, std::string symbol,
+             std::string exchange)
+      : session_(session),
+        target_(std::move(target)),
+        shape_(shape),
+        symbol_(std::move(symbol)),
+        exchange_(std::move(exchange)) {}
+
+  void send_whole(BookSide side, const std::vector<BookLevel>& levels,
+                  std::int64_t timestamp_ns) override {
+    session_.book_write(target_, shape_, symbol_, exchange_, side, levels, timestamp_ns, true);
+  }
+  void send_changes(BookSide side, const std::vector<BookLevel>& levels,
+                    std::int64_t timestamp_ns) override {
+    session_.book_write(target_, shape_, symbol_, exchange_, side, levels, timestamp_ns, false);
+  }
+
+ private:
+  Session& session_;
+  std::string target_;
+  const OperationShape& shape_;
+  std::string symbol_;
+  std::string exchange_;
+};
+
+BookStream Session::book_stream(std::string_view entity, const std::string& symbol,
+                                const std::string& exchange, BookStreamMode mode, Resync resync) {
+  const Use use(*this);
+  // The entity as the model knows it, as both other libraries look it up for a stream.
+  const std::string target_entity = target_of(entity);
+  const OperationShape& write = shape(target_entity, "bulk_write");
+  Engine* engine = target(write, false).first;
+  BookWritable* books = engine->capabilities().books;
+  if (books == nullptr) {
+    throw EngineError(std::string(entity) +
+                      " is placed on an engine that does not take a book by price: a book stream "
+                      "writes to the orderbook engine, which applies an update by price and "
+                      "replaces a side whole");
+  }
+  if (!books->supports_replace_side()) {
+    throw EngineError(
+        "this orderbook server does not replace a side of a book (capability replace_side), which "
+        "a book stream needs: in full mode for every update, in incremental mode for each resync. "
+        "Upgrade the server; nothing was sent.");
+  }
+  books->check_book(symbol, exchange);
+  BookStreamOptions options;
+  options.mode = mode;
+  options.resync = resync;
+  return BookStream(std::make_shared<StreamSink>(*this, target_entity, write, symbol, exchange),
+                    std::move(options));
+}
+
+void Session::book_write(const std::string& target_entity, const OperationShape& write,
+                         const std::string& symbol, const std::string& exchange, BookSide side,
+                         const std::vector<BookLevel>& levels, std::int64_t timestamp_ns,
+                         bool whole) {
+  const Use use(*this);
+  const auto [engine, materialization] = target(write, false);
+  if (!placement_.placement_of(write.group).also_write.empty()) {
+    // Unreachable while a map refuses copies of a group without generations, which every group on
+    // the orderbook engine is. Refused rather than skipped if that ever changes: a copy that misses
+    // the stream's updates is a copy that is silently wrong.
+    throw EngineError(target_entity +
+                      " has copies being written, and a book stream writes only the source");
+  }
+  BookWritable* books = engine->capabilities().books;
+  if (books == nullptr) {
+    throw EngineError(target_entity + " is placed on an engine that does not take a book by price");
+  }
+  const std::string& table = materialization->layout.table_for(target_entity);
+  const std::int64_t started = now();
+  try {
+    if (whole) {
+      books->replace_levels(table, symbol, exchange, side, timestamp_ns, levels);
+    } else {
+      books->apply_levels(table, symbol, exchange, side, timestamp_ns, levels);
+    }
+  } catch (...) {
+    observe(write, started, levels.size(), true);
+    throw;
+  }
+  observe(write, started, levels.size(), false);
+}
+
+Book Session::book_at(std::string_view entity, const std::string& symbol,
+                      const std::string& exchange, std::int64_t at_ns,
+                      std::optional<std::int64_t> depth, bool fresh) {
+  const Use use(*this);
+  const std::string target_entity = target_of(entity);
+  const auto field = [&](const std::string& name) {
+    try {
+      return fields_in(entity, Row{{name, Value()}}).begin()->first;
+    } catch (const ModelPlanningError& error) {
+      throw QueryRefused(std::string(entity) + " is not a book: it has no field '" + name + "' (" +
+                         error.what() + ")");
+    }
+  };
+  const std::string moment = field("timestamp_ns");
+  std::vector<std::string> equal = {field("symbol"), field("exchange")};
+  std::sort(equal.begin(), equal.end());
+  const OperationShape& read = shape(target_entity, "range_read", {moment});
+  const auto [engine, materialization] = target(read, fresh);
+  BookWritable* books = engine->capabilities().books;
+  if (books == nullptr) {
+    throw QueryRefused(std::string(entity) +
+                       " is placed on an engine that does not compose a book: the orderbook "
+                       "engine does");
+  }
+  const std::string& table = materialization->layout.table_for(target_entity);
+  const std::int64_t started = now();
+  // Recorded as the reference records it: a range read of the time, filtered on the book's names.
+  const Filter filter{equal, moment};
+  Book book;
+  try {
+    book = books->book_at(table, symbol, exchange, at_ns, depth);
+  } catch (...) {
+    if (recorder_ != nullptr) recorder_->record(read, steady_ns() - started, 0, true, &filter);
+    throw;
+  }
+  if (recorder_ != nullptr) {
+    recorder_->record(read, steady_ns() - started, book.bid.size() + book.ask.size(), false, &filter);
+  }
+  return book;
+}
+
 void Session::observe(const OperationShape& shape, std::int64_t started, std::uint64_t rows,
                       bool failed, const ReadPlan* plan) {
   if (recorder_ == nullptr) return;

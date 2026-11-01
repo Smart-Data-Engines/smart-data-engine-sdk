@@ -26,8 +26,9 @@ inline constexpr bool HASHING = true;
 inline constexpr bool SEARCH = false;
 
 /// Whether this library offers book streams (section 8c), which need the orderbook engine:
-/// `books/` goes with this capability (section 9).
-inline constexpr bool BOOK_STREAMS = false;
+/// `books/` goes with this capability (section 9). `sde/books.hpp`, and `Session::book_stream` and
+/// `Session::book_at` over the orderbook adapter.
+inline constexpr bool BOOK_STREAMS = true;
 
 /// The engines this library has an adapter for, by dialect: `documents/` goes with the
 /// Elasticsearch engine (section 9). The engines cell of docs/implementations.md names the same
