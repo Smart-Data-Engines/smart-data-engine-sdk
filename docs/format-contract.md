@@ -1584,6 +1584,37 @@ Before 7 October 2026 a value went to the driver as the application gave it. Mea
 - PostgreSQL dropped the offset of a timestamp written to a timezone-free column, and ClickHouse
   refused it.
 
+### A day or an instant an engine holds
+
+The contract admits a date and a timestamp from year 0001 to 9999 in UTC, and an engine may hold
+fewer. ClickHouse 24.8 holds `Date32` and `DateTime64` from 1900-01-01 to 2299-12-31, and moves a
+value outside to the nearer end without an error. Measured on 1 November 2026, through `VALUES` and
+`JSONEachRow` alike: 1800-01-01 was stored as 1900-01-01, and 2500-06-01 12:00 as 2299-12-31 12:00.
+The server's `date_time_overflow_behavior='throw'` did not apply to an insert. ClickHouse 26.9 holds
+the whole range.
+
+So the range is the server's, and an adapter reads it from the server once per connection: a
+conversion moves a value as an insert does, so converting the contract's ends gives the server's.
+
+```sql
+SELECT toString(toDate32('0001-01-01')), toString(toDate32('9999-12-31')),
+       toString(toDateTime64('0001-01-01 00:00:00', 6, 'UTC')),
+       toString(toDateTime64('9999-12-31 23:59:59.999999', 6, 'UTC'))
+```
+
+A session refuses, before any engine is called, a row whose `date`, `timestamp` or `timestamptz`
+field is outside the range of an engine its write goes to: the engine the write is routed to and
+each `also_write` copy. That way no copy is written before another refuses. It is an `EngineError`,
+a limit of the engine rather than of the model, with no value in it:
+`<engine> holds a date from 1900-01-01 to 2299-12-31, and this row gives <Entity>.<field> one
+outside it; nothing was sent`. A timestamp is `a timestamp` and is described by the same days, and a
+batch's refusal begins `row <i>: `. A migration refuses a chunk its target cannot hold
+(`MigrationRefused`) before writing any of it, where a copy would otherwise change the value and
+verification would find it only after the whole group had been copied. An engine whose server holds
+the whole range, PostgreSQL among them, has no range. `errors/140`-`142` pin the session's
+refusals with an engine set that declares ClickHouse 24.8's range (`temporal_range` in
+`engines.json`).
+
 ## 8c. A book stream
 
 A Tier 2 library with the orderbook engine offers a **book stream**: one book - one symbol on one

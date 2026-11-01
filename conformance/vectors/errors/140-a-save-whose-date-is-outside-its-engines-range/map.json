@@ -1,0 +1,27 @@
+{
+  "contract": 3,
+  "model_version": "1d78c15aa7623338",
+  "map_version": 1,
+  "groups": {
+    "Entry": {
+      "source": {
+        "id": "Entry@ch",
+        "engine": "ch-main",
+        "layout": {
+          "tables": {
+            "Entry": "entry"
+          },
+          "columns": {
+            "Entry": {
+              "amount": "Decimal(12, 2)",
+              "at": "Nullable(DateTime64(6, 'UTC'))",
+              "count": "Int32",
+              "day": "Date32",
+              "id": "String"
+            }
+          }
+        }
+      }
+    }
+  }
+}

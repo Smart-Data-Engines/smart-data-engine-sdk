@@ -1,0 +1,12 @@
+[
+  {
+    "engine": "pg-main",
+    "call": "insert",
+    "table": "entry"
+  },
+  {
+    "engine": "ch-copy",
+    "call": "insert",
+    "table": "entry_copy"
+  }
+]

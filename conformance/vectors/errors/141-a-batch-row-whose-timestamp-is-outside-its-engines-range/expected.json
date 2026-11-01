@@ -1,0 +1,41 @@
+{
+  "error": "EngineError",
+  "stage": "write",
+  "match": "row 1: ch-main holds a timestamp from 1900-01-01 to 2299-12-31, and this row gives Entry.at one outside it; nothing was sent",
+  "write": {
+    "accepted": {
+      "operation": "save_many",
+      "entity": "Entry",
+      "rows": [
+        {
+          "amount": "1.230",
+          "at": "2299-12-31T23:59:59.999999Z",
+          "count": 1,
+          "day": "1900-01-01",
+          "id": "e-1"
+        }
+      ]
+    },
+    "refused": {
+      "operation": "save_many",
+      "entity": "Entry",
+      "rows": [
+        {
+          "amount": "1.230",
+          "at": null,
+          "count": 1,
+          "day": "2026-10-07",
+          "id": "e-3"
+        },
+        {
+          "amount": "1.230",
+          "at": "2500-06-01T12:00:00Z",
+          "count": 1,
+          "day": "2026-10-07",
+          "id": "e-4"
+        }
+      ]
+    }
+  },
+  "why": "ClickHouse 24.8 stored 2500-06-01 12:00 as 2299-12-31 12:00. The whole batch is refused, the row that fits included, and the row is named by its position."
+}

@@ -25,7 +25,8 @@ vectors/
     map.json                  for the `map`, `session` and `write` stage cases
     engines.json              the engine set to build, for `session` and `write` cases - the same
                               document the migration family uses, and `dialect` is the field that
-                              matters
+                              matters, with `temporal_range` where an engine holds fewer days than
+                              the contract (its four ends as a server answers them; section 8b)
     calls.json                for `session` and `write` cases: what the library was allowed to do
                               to those engines on its way to refusing - nothing for a session, and
                               only the accepted write for a write

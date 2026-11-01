@@ -141,6 +141,43 @@ class StorageMeasurable {
 
 /// Which optional interfaces an adapter implements. Null means it does not; a count or a summary it
 /// refuses for a reason of its own says so in `count_refusal` or `summary_refusal`.
+/// The days and instants an engine holds, read from its server (format contract section 8b). The
+/// contract admits years 0001 to 9999 in UTC; ClickHouse 24.8 holds `Date32` and `DateTime64` from
+/// 1900-01-01 to 2299-12-31 and moves a value outside to the nearer end without an error, and 26.9
+/// holds the whole range.
+struct TemporalRange {
+  Date first_day;
+  Date last_day;
+  /// Microseconds from 1970-01-01T00:00:00 UTC, as `Timestamp` and `TimestampTz` hold them.
+  std::int64_t first_micros = 0;
+  std::int64_t last_micros = 0;
+
+  /// Whether a value is inside: a `Date` by its day, a `Timestamp` or a `TimestampTz` by its
+  /// microseconds, and text by the type of field it is given for (`kind`). Anything else is not a
+  /// date or a time and is not this range's to judge.
+  [[nodiscard]] bool holds(std::string_view kind, const Value& value) const;
+  /// The range as a refusal says it: by its days, a timestamp's as well.
+  [[nodiscard]] std::string describe() const;
+  /// The range from four answers to `range_sql()`, or nothing for the contract's whole range.
+  [[nodiscard]] static std::optional<TemporalRange> from_engine_text(std::string_view first_day,
+                                                                     std::string_view last_day,
+                                                                     std::string_view first,
+                                                                     std::string_view last);
+  /// ClickHouse's own ends: the contract's, moved as an insert would move them.
+  [[nodiscard]] static std::string_view range_sql() noexcept;
+};
+
+/// `a date` or `a timestamp`, for a field of `kind`.
+[[nodiscard]] std::string_view temporal_noun(std::string_view kind) noexcept;
+
+/// An engine whose server may hold fewer days and instants than the contract admits.
+class TemporalBounded {
+ public:
+  virtual ~TemporalBounded() = default;
+  /// The server's range, or nothing for the contract's whole range. Read once per connection.
+  [[nodiscard]] virtual std::optional<TemporalRange> temporal_range() = 0;
+};
+
 struct Capabilities {
   Queryable* query = nullptr;
   Countable* count = nullptr;
@@ -153,6 +190,7 @@ struct Capabilities {
   Fencable* fences = nullptr;
   SchemaValidator* schema = nullptr;
   StorageMeasurable* storage = nullptr;
+  TemporalBounded* temporal = nullptr;
 };
 
 /// One engine, as a session uses it. Not shared between threads unless the adapter says it may be.

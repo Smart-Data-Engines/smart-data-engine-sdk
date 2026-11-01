@@ -222,7 +222,8 @@ MemoryEngine::MemoryEngine(MemoryEngineOptions options)
       can_keep_bookkeeping_(options.can_keep_bookkeeping),
       can_migrate_(options.can_migrate),
       can_bulk_write_(options.can_bulk_write),
-      fail_inserts_(std::move(options.fail_inserts)) {
+      fail_inserts_(std::move(options.fail_inserts)),
+      temporal_range_(std::move(options.temporal_range)) {
   if (options.watermark) watermarks_.push_back(*options.watermark);
   for (const auto& [key, rows] : options.markers) markers_[key].push_back(rows);
 }
@@ -236,6 +237,7 @@ Capabilities MemoryEngine::capabilities() noexcept {
   if (can_keep_bookkeeping_) offered.watermark = this;
   if (can_bulk_write_) offered.bulk = this;
   if (can_migrate_) offered.migration = this;
+  if (temporal_range_.has_value()) offered.temporal = this;
   if (!fences_.empty()) {
     offered.fences = this;
     offered.schema = this;
@@ -493,6 +495,11 @@ std::map<std::string, std::unique_ptr<MemoryEngine>> engines_from(const Json& sp
       for (const auto& [table, count] : failing->as_object()) {
         options.fail_inserts[table] = *count.to_int64();
       }
+    }
+    if (const Json* range = body.find("temporal_range"); range != nullptr && !range->is_null()) {
+      options.temporal_range = TemporalRange::from_engine_text(
+          range->find("first_day")->as_string(), range->find("last_day")->as_string(),
+          range->find("first_instant")->as_string(), range->find("last_instant")->as_string());
     }
     built.emplace(name, std::make_unique<MemoryEngine>(std::move(options)));
   }

@@ -62,6 +62,7 @@ import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
 import { QUOTE, schemaStatements } from '../schema.js'
 import type { Row } from '../session.js'
+import { fromEngineText, RANGE_SQL, type TemporalRange } from '../temporal-range.js'
 
 const quote = QUOTE['clickhouse'] as (identifier: string) => string
 
@@ -165,6 +166,8 @@ export class ClickHouseEngine {
   private trust: ConnectionOptions = {}
   private open = false
   private serverVersion: string | null = null
+  /** The server's range once read on this connection; `undefined` until then. */
+  private range: TemporalRange | null | undefined = undefined
 
   constructor(dsn: string) {
     this.target = parseDsn(dsn)
@@ -203,6 +206,8 @@ export class ClickHouseEngine {
       // keep alive. Present so that the shape matches the other adapter - a caller writing
       // `close()` in a `finally` should not have to know which engine they have.
       this.open = false
+      // A server may be upgraded between two connections, and its range with it.
+      this.range = undefined
 
     })
   }
@@ -210,6 +215,27 @@ export class ClickHouseEngine {
   /** What the server said it is, or null before `connect()`. Read by nothing; useful in a report. */
   get version(): string | null {
     return this.serverVersion
+  }
+
+  /**
+   * The days and instants this server holds, or `null` for the contract's whole range.
+   *
+   * Read from the server once per connection (`RANGE_SQL`): ClickHouse 24.8 holds `Date32` and
+   * `DateTime64` from 1900-01-01 to 2299-12-31 and moves a value outside to the nearer end without
+   * an error, and 26.9 holds the whole range. A session refuses a row outside it before writing
+   * (format contract section 8b).
+   */
+  async temporalRange(): Promise<TemporalRange | null> {
+    if (this.range !== undefined) return this.range
+    let answer: Row | undefined
+    try {
+      answer = (await this.query(RANGE_SQL))[0]
+    } catch (error) {
+      throw new EngineError(`could not read this server's date range: ${message(error)}`)
+    }
+    const part = (name: string): string => String(answer?.[name] ?? '')
+    this.range = fromEngineText(part('first_day'), part('last_day'), part('first_instant'), part('last_instant'))
+    return this.range
   }
 
   private ensureOpen(): void {

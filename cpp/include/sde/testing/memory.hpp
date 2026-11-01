@@ -100,6 +100,8 @@ struct MemoryEngineOptions {
   std::map<std::pair<std::string, std::string>, std::int64_t> markers;
   /// How many of the next inserts into each table must fail.
   std::map<std::string, std::int64_t> fail_inserts;
+  /// The days and instants the engine holds, as a server reports its own; the whole range if empty.
+  std::optional<TemporalRange> temporal_range;
 };
 
 /// One dialect, a set of named tables, and the optional interfaces an adapter may offer.
@@ -108,7 +110,8 @@ class MemoryEngine final : public Engine,
                            public BulkWritable,
                            public Migratable,
                            public Fencable,
-                           public SchemaValidator {
+                           public SchemaValidator,
+                           public TemporalBounded {
  public:
   explicit MemoryEngine(MemoryEngineOptions options = {});
 
@@ -153,6 +156,9 @@ class MemoryEngine final : public Engine,
   void record_backfill_marker(const std::string& materialization, const std::string& entity,
                               std::int64_t rows) override;
 
+  // TemporalBounded: the range a case declares (format contract 8b)
+  [[nodiscard]] std::optional<TemporalRange> temporal_range() override { return temporal_range_; }
+
   // Fencable and SchemaValidator, once bound
   WriteFence write_fence(const std::string& table, const std::string& project_id) override;
   std::vector<PhysicalFinding> validate_schema(const PhysicalLayout& layout,
@@ -171,6 +177,7 @@ class MemoryEngine final : public Engine,
   std::map<std::pair<std::string, std::string>, std::vector<std::int64_t>> markers_;
   std::map<std::string, std::int64_t> fail_inserts_;
   std::map<std::string, std::shared_ptr<MemoryFences>> fences_;
+  std::optional<TemporalRange> temporal_range_;
 };
 
 /// The engine set a `migration/` case describes (`engines.json`), sharing one journal. Read here

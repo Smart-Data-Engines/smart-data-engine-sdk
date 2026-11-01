@@ -155,6 +155,9 @@ Session::Session(const Model& model, const PlacementMap& placement,
       // `columns` is a map, so the checks are in code point order, the order a refusal names.
       for (const auto& [name, kind] : columns.at(member)) {
         if (detail::Check check = detail::check_for(kind)) admission.checks.emplace_back(name, kind, std::move(check));
+        if (kind == "date" || kind == "timestamp" || kind == "timestamptz") {
+          admission.temporal.emplace_back(name, kind);
+        }
       }
       if (placement.contract() >= 4) admission.declared.insert(std::string(EPOCH_COLUMN));
       for (const Field& field : spec.fields) {
@@ -433,6 +436,7 @@ void Session::save(std::string_view entity, const Row& given) {
   const OperationShape& write = shape(target_entity, "write");
   const Row values = admit(entity, target_entity, translated);
   const auto [engine, materialization] = target(write, false);
+  held(entity, target_entity, write.group, materialization->engine, {values}, false);
   const std::string& table = materialization->layout.table_for(target_entity);
   const std::int64_t started = now();
   bool failed = false;
@@ -496,6 +500,7 @@ void Session::save_many(std::string_view entity, const std::vector<Row>& given) 
       throw BulkWriteRefused("row " + std::to_string(index) + ": " + error.what());
     }
   }
+  held(entity, target_entity, write.group, materialization->engine, rows, true);
   BulkWritable* writer = engine->capabilities().bulk;
   if (writer == nullptr) {
     throw BulkWriteRefused("this adapter does not support bulk writes (insert_many)");
@@ -518,6 +523,40 @@ void Session::save_many(std::string_view entity, const std::vector<Row>& given) 
     throw;
   }
   observe(write, started, rows.size(), false);
+}
+
+// Format contract section 8b. ClickHouse 24.8 holds a date and a timestamp from 1900-01-01 to
+// 2299-12-31 and moved a value outside to the nearer end without an error (measured on 1 November
+// 2026: 1800-01-01 stored as 1900-01-01); 26.9 holds the contract's whole range. The range is the
+// server's, and every engine the row goes to is asked - the one the write is routed to and each
+// `also_write` copy - so that no copy is written before another refuses. An engine that is not
+// `TemporalBounded`, or that answers nothing, holds them all.
+void Session::held(std::string_view entity, const std::string& target, const std::string& group,
+                   const std::string& engine, const std::vector<Row>& rows, bool batch) const {
+  const Admission& admission = admission_.at(target);
+  if (admission.temporal.empty()) return;
+  std::vector<std::string> names{engine};
+  for (const Materialization* copy : placement_.placement_of(group).also_write_targets()) {
+    names.push_back(copy->engine);
+  }
+  for (const std::string& name : names) {
+    TemporalBounded* bounded = engines_.at(name)->capabilities().temporal;
+    if (bounded == nullptr) continue;
+    const std::optional<TemporalRange> span = bounded->temporal_range();
+    if (!span.has_value()) continue;
+    for (std::size_t index = 0; index < rows.size(); ++index) {
+      for (const auto& [field, kind] : admission.temporal) {
+        const auto value = rows[index].find(field);
+        if (value == rows[index].end() || is_null(value->second) || span->holds(kind, value->second)) {
+          continue;
+        }
+        throw EngineError((batch ? "row " + std::to_string(index) + ": " : std::string()) + name +
+                          " holds " + std::string(temporal_noun(kind)) + " " + span->describe() +
+                          ", and this row gives " + std::string(entity) + "." +
+                          client_name(entity, field) + " one outside it; nothing was sent");
+      }
+    }
+  }
 }
 
 void Session::fan_out(const std::string& entity, const std::string& group,
