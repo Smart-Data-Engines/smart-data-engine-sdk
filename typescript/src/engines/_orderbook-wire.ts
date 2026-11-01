@@ -201,11 +201,15 @@ export class WireConnection {
     waiting?.()
   }
 
-  /** Wait for more bytes, or the end of the connection, or the deadline. */
+  /**
+   * Wait for more bytes, or the end of the connection, or the deadline. A deadline is on the monotonic
+   * clock: the wall clock moves when the system's does, and a wait timed by it could end at once or
+   * not for an hour.
+   */
   private async more(deadline: number): Promise<void> {
     if (this.failure !== null) throw new EngineError(`the connection to ${this.where()} failed: ${text(this.failure)}`)
     if (this.ended) throw new EngineError(`the connection to ${this.where()} was closed by the server`)
-    const remaining = deadline - Date.now()
+    const remaining = deadline - performance.now()
     if (remaining <= 0) throw new EngineError(`no answer from ${this.where()} within ${this.options.timeoutMs} ms`)
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
@@ -220,7 +224,7 @@ export class WireConnection {
   }
 
   private async readGreeting(): Promise<void> {
-    const deadline = Date.now() + this.options.timeoutMs
+    const deadline = performance.now() + this.options.timeoutMs
     for (;;) {
       const end = this.buffer.indexOf('\n\n')
       if (end !== -1) {
@@ -291,7 +295,7 @@ export class WireConnection {
 
   /** One whole answer off the front of the buffer, waiting for the rest of it if it has not come. */
   private async answer(): Promise<string> {
-    const deadline = Date.now() + this.options.timeoutMs
+    const deadline = performance.now() + this.options.timeoutMs
     for (;;) {
       this.skipPushes()
       const end = this.answerEnd()
