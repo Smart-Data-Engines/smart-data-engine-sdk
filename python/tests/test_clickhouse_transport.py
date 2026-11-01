@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -46,6 +47,166 @@ def test_transport_error_cannot_enter_the_drivers_remote_close_retry_handler() -
     with pytest.raises(EngineError, match="outcome may be unknown"):
         _NoReplayTransport(pool).request("POST", "http://example.invalid", body=b"insert")
     assert len(pool.calls) == 1
+
+
+SECRET_URL = "http://reader:hunter2@example.invalid:8123/?query=SELECT+secret"
+
+
+def test_a_transport_failure_names_its_causes_and_none_of_their_text() -> None:
+    """A reconnect failed in CI with "transport failed" and nothing else, so its log could not
+    tell a server that had closed the connection from one that refused it or timed out. The
+    message names the classes of the chain, outermost first; their text carries the URL."""
+    from http.client import RemoteDisconnected
+
+    from urllib3.exceptions import ProtocolError
+
+    class Closed(Pool):
+        def request(self, method: str, url: str, **options: Any) -> Any:
+            raise ProtocolError(
+                f"Connection aborted. {url}",
+                RemoteDisconnected("Remote end closed connection without response"),
+            )
+
+    with pytest.raises(EngineError) as closed:
+        _NoReplayTransport(Closed()).request("POST", SECRET_URL, body=b"insert")
+    message = str(closed.value)
+    assert "ClickHouse transport failed (ProtocolError <- RemoteDisconnected);" in message
+    assert "not replayed" in message
+    assert "outcome may be unknown" in message
+    for text in ("example.invalid", "hunter2", "secret", "Remote end", "aborted"):
+        assert text not in message, text
+
+
+def test_a_refused_connection_is_named_by_the_error_that_caused_it() -> None:
+    """urllib3 raises ``NewConnectionError`` from the socket's own error, so the chain is
+    ``__cause__``, not an argument, and a cause that is also the context is named once."""
+    import socket
+
+    import urllib3
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    transport = _NoReplayTransport(urllib3.PoolManager())
+    with pytest.raises(EngineError) as refused:
+        transport.request("GET", f"http://127.0.0.1:{port}/?query=SELECT+secret")
+    message = str(refused.value)
+    assert "ClickHouse transport failed (NewConnectionError <- ConnectionRefusedError);" in message
+    assert str(port) not in message
+    assert "secret" not in message
+
+
+def test_a_chain_that_loops_is_named_once_round() -> None:
+    from urllib3.exceptions import ProtocolError
+
+    outer = ProtocolError("outer")
+    inner = OSError("inner")
+    outer.__cause__ = inner
+    inner.__context__ = outer
+
+    class Looping(Pool):
+        def request(self, method: str, url: str, **options: Any) -> Any:
+            raise outer
+
+    with pytest.raises(EngineError, match=r"transport failed \(ProtocolError <- OSError\);"):
+        _NoReplayTransport(Looping()).request("GET", SECRET_URL)
+
+
+def test_a_connection_the_driver_could_not_open_names_its_classes_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sde.engines.clickhouse as adapter
+
+    def refused(_parameters: Any) -> Any:
+        # Raised while handling the reset, without ``from``, as a driver may: the chain is then
+        # ``__context__`` alone.
+        try:
+            raise ConnectionResetError(f"reset by {SECRET_URL}")
+        except ConnectionResetError:
+            raise RuntimeError(f"driver could not read {SECRET_URL}")  # noqa: B904
+
+    monkeypatch.setattr(adapter, "_connect_client", refused)
+    engine = adapter.ClickHouseEngine("clickhouse://reader:hunter2@example.invalid:8123/default")
+    with pytest.raises(EngineError) as failed:
+        engine.connect()
+    message = str(failed.value)
+    assert message == (
+        "could not connect to ClickHouse with the configured transport "
+        "(RuntimeError <- ConnectionResetError)"
+    )
+
+
+class Answering(Pool):
+    """A pool whose responses announce a keep-alive timeout, and which records when it is cleared
+    of its idle connections."""
+
+    def __init__(self, announced: str | None) -> None:
+        super().__init__()
+        self.events: list[str] = []
+        self.announced = announced
+
+    def request(self, method: str, url: str, **options: Any) -> Any:
+        self.events.append("request")
+        headers = {} if self.announced is None else {"Keep-Alive": self.announced}
+        return SimpleNamespace(headers=headers)
+
+    def clear(self) -> None:
+        self.events.append("clear")
+
+
+@pytest.mark.parametrize(("announced", "half"), [("timeout=10, max=9999", 5.0), ("timeout=3", 1.5)])
+def test_idle_connections_are_dropped_once_half_the_announced_keep_alive_has_passed(
+    announced: str, half: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ClickHouse closes a kept-alive connection the timeout it announces after its response, and
+    a request sent while that close is on its way is never read. Before half of it has passed the
+    connection is reused; from then on the pool's idle connections are closed first."""
+    import sde.engines.clickhouse as adapter
+
+    now = [100.0]
+    monkeypatch.setattr(adapter, "_now", lambda: now[0])
+    pool = Answering(announced)
+    transport = _NoReplayTransport(pool, owned=True)
+    transport.request("POST", SECRET_URL)
+    now[0] += half - 0.001
+    transport.request("POST", SECRET_URL)
+    now[0] += half
+    transport.request("POST", SECRET_URL)
+    assert pool.events == ["request", "request", "clear", "request"]
+
+
+@pytest.mark.parametrize(
+    ("announced", "limit"),
+    [
+        ("timeout=10, max=9999", 5.0),  # ClickHouse's own
+        ("timeout=3", 1.5),
+        ("max=100, timeout=0", 0.0),
+        ("max=100", 5.0),
+        ("timeout=ten", 5.0),
+        (None, 5.0),  # announced by no one: half of ClickHouse's default
+    ],
+)
+def test_the_limit_is_half_the_keep_alive_the_server_announces(
+    announced: str | None, limit: float
+) -> None:
+    from sde.engines.clickhouse import _idle_limit
+
+    headers = {} if announced is None else {"Keep-Alive": announced}
+    assert _idle_limit(SimpleNamespace(headers=headers)) == limit
+
+
+def test_a_pool_the_client_does_not_own_is_never_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An environment proxy's pool is the driver's, shared with whoever else it serves."""
+    import sde.engines.clickhouse as adapter
+
+    now = [0.0]
+    monkeypatch.setattr(adapter, "_now", lambda: now[0])
+    pool = Answering("timeout=10")
+    transport = _NoReplayTransport(pool)
+    transport.request("POST", SECRET_URL)
+    now[0] += 3600.0
+    transport.request("POST", SECRET_URL)
+    assert pool.events == ["request", "request"]
 
 
 @pytest.mark.parametrize("installed", ["0.7.0", "1.7.1", "1.7.2rc1", "1.8.0.dev1"])
