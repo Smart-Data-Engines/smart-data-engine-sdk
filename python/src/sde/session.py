@@ -82,6 +82,7 @@ from .search import (
 )
 from .shapes import OperationShape, enumerate_shapes
 from .telemetry import Recorder, StorageMeasurement, StorageSize
+from .temporal_range import TEMPORAL_KINDS, kind_noun
 from .verification import check_project_id
 from .watermark import WatermarkCheck, enforce_forward_only
 
@@ -552,6 +553,45 @@ class Session:
                 admitted[name] = given
         return values if admitted is None else admitted
 
+    def _held(
+        self,
+        entity: str,
+        target: str,
+        group: str,
+        engine: str,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        batch: bool,
+    ) -> None:
+        """Refuse a row an engine its write goes to cannot hold, before any engine is written to.
+
+        Format contract section 8b. ClickHouse 24.8 holds a date and a timestamp from 1900-01-01
+        to 2299-12-31 and moved a value outside to the nearer end without an error (measured on
+        1 November 2026: 1800-01-01 stored as 1900-01-01); 26.9 holds the contract's whole range.
+        The range is the server's (``temporal_range``), and every engine the row goes to is asked:
+        the one the write is routed to and each ``also_write`` copy, so that no copy is written
+        before another refuses. An engine without a range holds them all.
+        """
+        fields = self._admission[target].temporal
+        if not fields:
+            return
+        spot = self._placement.placement_of(group)
+        for name in (engine, *(copy.engine for copy in spot.also_write)):
+            span = getattr(self._engines[name], "temporal_range", None)
+            if span is None:
+                continue
+            for index, row in enumerate(rows):
+                for field, kind in fields:
+                    value = row.get(field)
+                    if value is None or span.holds(kind, value):
+                        continue
+                    client = self._client_names(entity, (field,))[0]
+                    raise EngineError(
+                        f"{f'row {index}: ' if batch else ''}{name} holds {kind_noun(kind)} "
+                        f"{span.describe()}, and this row gives {entity}.{client} one outside it; "
+                        f"nothing was sent"
+                    )
+
     # --- structure -------------------------------------------------------------------------
 
     def group_of(self, entity: str) -> Group:
@@ -622,6 +662,7 @@ class Session:
         shape = self._shape(target, "write")
         values = self._admit(entity, target, values)
         engine, materialization = self._target(shape, fresh=False)
+        self._held(entity, target, shape.group, materialization.engine, (values,), batch=False)
         table = materialization.layout.table_for(target)
         started = perf_counter_ns() if self._recorder else 0
         failed = False
@@ -685,6 +726,7 @@ class Session:
             except ModelPlanningError as exc:
                 raise BulkWriteRefused(f"row {index}: {exc}") from None
         translated = tuple(typed)
+        self._held(entity, target, shape.group, materialization.engine, translated, batch=True)
         writer = bulk_writer(engine)
         for copy in spot.also_write:
             bulk_writer(self._engines[copy.engine])
@@ -1442,7 +1484,7 @@ def _predicates(plan: ReadPlan) -> dict[str, Any]:
 class _Admission:
     """What a row of one entity must and may carry, computed once per session."""
 
-    __slots__ = ("checks", "declared", "needed", "required")
+    __slots__ = ("checks", "declared", "needed", "required", "temporal")
 
     def __init__(
         self,
@@ -1456,6 +1498,8 @@ class _Admission:
         self.needed = frozenset(required)
         self.checks = checks
         """Each typed field, its neutral type and its check, in code-point order."""
+        self.temporal = tuple((name, kind) for name, kind, _ in checks if kind in TEMPORAL_KINDS)
+        """The date and timestamp fields, which an engine's range may not hold (section 8b)."""
 
 
 def _admission(

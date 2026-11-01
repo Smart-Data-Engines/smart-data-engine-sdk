@@ -31,6 +31,7 @@ from uuid import UUID
 
 from ..errors import EngineError
 from ..placement import PhysicalLayout
+from ..temporal_range import TemporalRange, from_engine_text
 
 __all__ = ["MemoryEngine", "Recorded", "engines_from", "vector_form"]
 
@@ -127,8 +128,12 @@ class MemoryEngine:
         watermark: int | None = None,
         markers: Mapping[tuple[str, str], int] | None = None,
         fail_inserts: Mapping[str, int] | None = None,
+        temporal_range: TemporalRange | None = None,
     ) -> None:
         self.dialect = dialect
+        # The days and instants this engine holds, as a server reports its own (format contract
+        # 8b): ``None``, the contract's whole range, unless a case declares a narrower one.
+        self.temporal_range = temporal_range
         self.tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in (tables or {}).items()
         }
@@ -351,5 +356,15 @@ def engines_from(
             fail_inserts={
                 table: int(count) for table, count in (body.get("fail_inserts") or {}).items()
             },
+            temporal_range=_temporal_range(body.get("temporal_range")),
         )
     return built
+
+
+def _temporal_range(spec: Mapping[str, str] | None) -> TemporalRange | None:
+    """A case's ``temporal_range``: its first and last day and instant, as a server answers them."""
+    if spec is None:
+        return None
+    return from_engine_text(
+        spec["first_day"], spec["last_day"], spec["first_instant"], spec["last_instant"]
+    )
