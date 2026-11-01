@@ -16,7 +16,7 @@ Both are checked mechanically, in this repository, by tests you can run:
 
 | Claim | Where it is checked |
 |---|---|
-| No connection is attempted to anything but your own engines | `python/tests/test_no_account_live.py` — an interpreter audit hook, with a connection the test makes itself as the control |
+| No connection is attempted to anything but your own engines | `python/tests/test_no_account_live.py` — an interpreter audit hook, with a connection the test makes itself as the control; `typescript/tests/no-account.live.test.ts` — `net.Socket.prototype.connect` wrapped before the library is imported, with the same control |
 | The import surface has nothing that could open one | `python/tests/test_no_account.py` |
 | The no-account mode emits no event the account mode does not | `python/tests/test_no_account_live.py` |
 | The library has no channel louder than one INFO event | `python/tests/test_no_account.py` |

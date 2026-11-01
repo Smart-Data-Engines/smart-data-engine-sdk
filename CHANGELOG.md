@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: TypeScript holds the account-free mode against live engines too** (TypeScript).
+`no-account.live.test.ts` covers the import and the full operation set on PostgreSQL and ClickHouse,
+on a hand-written unsigned map, and every connection the library attempts is to one of the client's
+own engines. The instrument wraps `net.Socket.prototype.connect` before the library is imported, and
+a connection the test makes itself is the control that it sees one. The reference holds the same
+claim with an interpreter audit hook. Until now TypeScript checked only the static import closure.
+
 **Changed: TypeScript holds the whole of the no-expiry promise with tests** (TypeScript). After #164 it
 named every wall-clock read. Now it also holds the other three halves the reference holds:
 - the map parser reads no key that could hold a date, read from `placement.ts`'s syntax tree;
