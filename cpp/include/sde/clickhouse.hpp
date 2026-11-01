@@ -59,7 +59,8 @@ class ClickHouseEngine final : public Engine,
                                public Migratable,
                                public Fencable,
                                public SchemaValidator,
-                               public StorageMeasurable {
+                               public StorageMeasurable,
+                               public TemporalBounded {
  public:
   /// Parses the URI - `clickhouse`, `clickhouses`, `http` or `https`, one database segment, and the
   /// options `secure`, `verify`, `ca_cert`, `connect_timeout` and `send_receive_timeout` - and
@@ -90,6 +91,11 @@ class ClickHouseEngine final : public Engine,
   /// Refuses (`EngineError`) before `body` runs: ClickHouse has no multi-statement transactions.
   void transaction(const std::function<void()>& body) override;
   [[nodiscard]] Capabilities capabilities() noexcept override;
+  /// The days and instants this server holds, or nothing for the contract's whole range: read
+  /// from the server once per connection (format contract 8b). ClickHouse 24.8 holds `Date32` and
+  /// `DateTime64` from 1900-01-01 to 2299-12-31 and moves a value outside to the nearer end without
+  /// an error, and 26.9 holds the whole range.
+  [[nodiscard]] std::optional<TemporalRange> temporal_range() override;
 
   // Queryable, Countable, Summarizable
   std::vector<Row> select_rows(const std::string& table, const ReadPlan& plan) override;
@@ -158,6 +164,8 @@ class ClickHouseEngine final : public Engine,
 
   std::unique_ptr<detail::clickhouse::Target> target_;
   ClickHouseOptions options_;
+  /// The server's range once read on this connection: empty until then.
+  std::optional<std::optional<TemporalRange>> range_;
   std::unique_ptr<detail::clickhouse::Http> http_;
   std::unique_ptr<detail::clickhouse::Fences> fences_;
   std::string version_;

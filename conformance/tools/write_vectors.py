@@ -504,6 +504,106 @@ NUL_CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[s
 ]
 
 
+# A date and a timestamp outside the range of an engine the write goes to. The range is the
+# server's own, as ClickHouse 24.8 answers it (section 8b): 24.8 moved a value outside to the nearer
+# end without an error, and 26.9 holds the whole range. Numbered after errors/131-139.
+CH_RANGE = {
+    "first_day": "1900-01-01",
+    "last_day": "2299-12-31",
+    "first_instant": "1900-01-01 00:00:00.000000",
+    "last_instant": "2299-12-31 23:59:59.999999",
+}
+CH_COLUMNS = {
+    "amount": "Decimal(12, 2)",
+    "at": "Nullable(DateTime64(6, 'UTC'))",
+    "count": "Int32",
+    "day": "Date32",
+    "id": "String",
+}
+RANGE_MAP: dict[str, Any] = copy.deepcopy(ENTRY_MAP)
+RANGE_MAP["groups"]["Entry"]["source"] = {
+    "id": "Entry@ch",
+    "engine": "ch-main",
+    "layout": {"tables": {"Entry": "entry"}, "columns": {"Entry": CH_COLUMNS}},
+}
+RANGE_ENGINES = {"ch-main": {"dialect": "clickhouse", "temporal_range": CH_RANGE}}
+COPY_MAP: dict[str, Any] = copy.deepcopy(ENTRY_MAP)
+COPY_MAP["groups"]["Entry"]["derived"] = [
+    {
+        "id": "Entry@ch",
+        "engine": "ch-copy",
+        "layout": {"tables": {"Entry": "entry_copy"}, "columns": {"Entry": CH_COLUMNS}},
+        "lag_budget_ms": 30000,
+    }
+]
+COPY_MAP["groups"]["Entry"]["also_write"] = ["Entry@ch"]
+COPY_ENGINES = {
+    "pg-main": {"dialect": "postgres"},
+    "ch-copy": {"dialect": "clickhouse", "temporal_range": CH_RANGE},
+}
+EDGES = {**ENTRY_FULL, "at": "2299-12-31T23:59:59.999999Z", "day": "1900-01-01"}
+"""The accepted write of the range cases: both ends, which the range holds."""
+
+RANGE_CASES: list[
+    tuple[
+        str, str, dict[str, Any], dict[str, Any], str, list[dict[str, Any]], str,
+        dict[str, Any], dict[str, Any],
+    ]
+] = [
+    (
+        "140-a-save-whose-date-is-outside-its-engines-range",
+        "EngineError",
+        {"operation": "save", "entity": "Entry", "values": EDGES},
+        entry(day="1800-01-01"),
+        "ch-main holds a date from 1900-01-01 to 2299-12-31, and this row gives Entry.day one "
+        "outside it; nothing was sent",
+        [{"engine": "ch-main", "call": "insert", "table": "entry"}],
+        "Measured on 1 November 2026: ClickHouse 24.8 stored 1800-01-01 as 1900-01-01, without an "
+        "error, and 26.9 stored it. The range is the server's, read from it, and a row outside it "
+        "is refused before the engine. The accepted save gives both ends of the range.",
+        RANGE_MAP,
+        RANGE_ENGINES,
+    ),
+    (
+        "141-a-batch-row-whose-timestamp-is-outside-its-engines-range",
+        "EngineError",
+        {"operation": "save_many", "entity": "Entry", "rows": [EDGES]},
+        {
+            "operation": "save_many",
+            "entity": "Entry",
+            "rows": [
+                {**ENTRY_FULL, "id": "e-3"},
+                {**ENTRY_FULL, "id": "e-4", "at": "2500-06-01T12:00:00Z"},
+            ],
+        },
+        "row 1: ch-main holds a timestamp from 1900-01-01 to 2299-12-31, and this row gives "
+        "Entry.at one outside it; nothing was sent",
+        [{"engine": "ch-main", "call": "insert_many", "table": "entry", "rows": 1}],
+        "ClickHouse 24.8 stored 2500-06-01 12:00 as 2299-12-31 12:00. The whole batch is refused, "
+        "the row that fits included, and the row is named by its position.",
+        RANGE_MAP,
+        RANGE_ENGINES,
+    ),
+    (
+        "142-a-save-whose-copy-cannot-hold-its-date",
+        "EngineError",
+        {"operation": "save", "entity": "Entry", "values": ENTRY_FULL},
+        entry(day="1800-01-01"),
+        "ch-copy holds a date from 1900-01-01 to 2299-12-31, and this row gives Entry.day one "
+        "outside it; nothing was sent",
+        [
+            {"engine": "pg-main", "call": "insert", "table": "entry"},
+            {"engine": "ch-copy", "call": "insert", "table": "entry_copy"},
+        ],
+        "PostgreSQL holds 1800-01-01 and the group's copy on ClickHouse 24.8 would not. Every "
+        "engine the write goes to is asked before any is written, so the source does not take a "
+        "row its copy then refuses.",
+        COPY_MAP,
+        COPY_ENGINES,
+    ),
+]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
@@ -550,7 +650,25 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
-    total = len(CASES) + len(TYPED_CASES) + len(KEY_CASES) + len(NUL_CASES)
+    for name, error, accepted, refused, match, calls, why, placement, engines in RANGE_CASES:
+        directory = ERRORS / name
+        directory.mkdir(exist_ok=True)
+        expected = {
+            "error": error,
+            "stage": "write",
+            "match": match,
+            "write": {"accepted": accepted, "refused": refused},
+            "why": why,
+        }
+        for filename, value in (
+            ("model.json", ENTRY),
+            ("map.json", placement),
+            ("engines.json", engines),
+            ("calls.json", calls),
+            ("expected.json", expected),
+        ):
+            dump(directory / filename, value)
+    total = len(CASES) + len(TYPED_CASES) + len(KEY_CASES) + len(NUL_CASES) + len(RANGE_CASES)
     print(f"Wrote {total} write-stage refusals without importing an SDK")
 
 

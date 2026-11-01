@@ -8,6 +8,18 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a day or an instant outside the server's range is refused before it is sent** (Python,
+TypeScript, C++; [`docs/format-contract.md`](docs/format-contract.md) §8b, "A day or an instant an
+engine holds"). ClickHouse 24.8 holds `Date32` and `DateTime64` from 1900-01-01 to 2299-12-31, and
+moved a value outside to the nearer end without an error: 1800-01-01 was stored as 1900-01-01, and
+2500-06-01 12:00 as 2299-12-31 12:00. ClickHouse 26.9 holds the contract's whole range. Each
+ClickHouse adapter reads its server's range once per connection (`temporal_range`,
+`temporalRange()`). A session refuses, with `EngineError`, a row outside the range of any engine its
+write goes to, the `also_write` copies included, before writing to any. A migration refuses a chunk
+its target cannot hold (`MigrationRefused`), where verification found the change only after the
+whole group had been copied. `errors/140`-`142` pin it, with an engine set that declares 24.8's
+range. Decision 43 of the C++ port.
+
 **Changed: text holds no U+0000** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8b). PostgreSQL's `text` cannot hold U+0000,
 and ClickHouse stores it. Measured from the reference: PostgreSQL's driver refused a save holding

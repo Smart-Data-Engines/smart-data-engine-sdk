@@ -113,6 +113,8 @@ struct Copy {
   std::string target_id;
   std::string target_table;
   std::optional<std::int64_t> write_epoch;
+  /// The entity's date and timestamp fields and their types, which the target's range may not hold.
+  std::vector<std::pair<std::string, std::string>> temporal;
 };
 
 constexpr std::size_t kDifferencesKept = 20;
@@ -213,13 +215,42 @@ std::vector<Copy> plan(const MigrationView& view, const std::string& group) {
       shapes_agree(group, entity, placement.source, *copy);
       // No precision check here, deliberately: opening the session refused a map whose fan-out
       // would truncate, over every group, so a copy reaching this line has been through that door.
+      std::vector<std::pair<std::string, std::string>> temporal;
+      for (const Field& field : view.model.entity(entity).fields) {
+        if (field.type == "date" || field.type == "timestamp" || field.type == "timestamptz") {
+          temporal.emplace_back(field.name, field.type);
+        }
+      }
       copies.push_back(Copy{entity, key, source, placement.source.engine,
                             placement.source.layout.table_for(entity), target,
                             view.engines.at(copy->engine), copy->engine, copy->id,
-                            copy->layout.table_for(entity), placement.write_epoch});
+                            copy->layout.table_for(entity), placement.write_epoch,
+                            std::move(temporal)});
     }
   }
   return copies;
+}
+
+/// Refuses a chunk the target cannot hold, before any of it is written (format contract 8b).
+/// ClickHouse 24.8 holds a date and a timestamp from 1900-01-01 to 2299-12-31 and moved a value
+/// outside to the nearer end without an error, so a copy onto it changed the value; verification
+/// found the difference only after the whole group had been copied.
+void held_by_target(const Copy& copy, const std::vector<Row>& rows) {
+  if (copy.temporal.empty() || copy.target_engine_handle == nullptr) return;
+  TemporalBounded* bounded = copy.target_engine_handle->capabilities().temporal;
+  if (bounded == nullptr) return;
+  const std::optional<TemporalRange> span = bounded->temporal_range();
+  if (!span.has_value()) return;
+  for (const Row& row : rows) {
+    for (const auto& [field, kind] : copy.temporal) {
+      const auto value = row.find(field);
+      if (value == row.end() || is_null(value->second) || span->holds(kind, value->second)) continue;
+      throw MigrationRefused(copy.target_engine + " holds " + std::string(temporal_noun(kind)) + " " +
+                             span->describe() + ", and a row of " + copy.entity + " gives " + field +
+                             " one outside it, so this chunk was not copied. A copy onto it would "
+                             "change the value without an error.");
+    }
+  }
 }
 
 Row logical_copy_row(const Copy& copy, Row row) {
@@ -279,6 +310,7 @@ EntityProgress backfill_one(const Copy& copy, const std::string& group, std::int
       stamped[std::string(EPOCH_COLUMN)] = *copy.write_epoch;
       payload.push_back(std::move(stamped));
     }
+    held_by_target(copy, rows);
     copy.target->copy_in(copy.target_table, payload);
     marker += static_cast<std::int64_t>(rows.size());
     copy.target->record_backfill_marker(copy.target_id, copy.entity, marker);

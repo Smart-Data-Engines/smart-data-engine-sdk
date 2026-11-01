@@ -1,0 +1,8 @@
+[
+  {
+    "engine": "ch-main",
+    "call": "insert_many",
+    "table": "entry",
+    "rows": 1
+  }
+]

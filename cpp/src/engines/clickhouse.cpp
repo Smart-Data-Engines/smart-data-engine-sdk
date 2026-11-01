@@ -170,6 +170,25 @@ void ClickHouseEngine::connect() {
 void ClickHouseEngine::close() noexcept {
   http_.reset();
   version_.clear();
+  // A server may be upgraded between two connections, and its range with it.
+  range_.reset();
+}
+
+std::optional<TemporalRange> ClickHouseEngine::temporal_range() {
+  if (range_.has_value()) return *range_;
+  const Use use(*this);
+  const Answer read = answer(std::string(TemporalRange::range_sql()));
+  if (read.rows.size() != 1 || read.rows[0].size() != 4) {
+    throw EngineError("could not read this server's date range: it answered another shape");
+  }
+  std::vector<std::string> ends;
+  for (const Value& part : read.rows[0]) {
+    const auto* text = std::get_if<std::string>(&part);
+    if (text == nullptr) throw EngineError("could not read this server's date range: not text");
+    ends.push_back(*text);
+  }
+  range_ = TemporalRange::from_engine_text(ends[0], ends[1], ends[2], ends[3]);
+  return *range_;
 }
 
 bool ClickHouseEngine::connected() const noexcept { return http_ != nullptr; }
@@ -245,6 +264,7 @@ Capabilities ClickHouseEngine::capabilities() noexcept {
   offered.fences = this;
   offered.schema = this;
   offered.storage = this;
+  offered.temporal = this;
   return offered;
 }
 
