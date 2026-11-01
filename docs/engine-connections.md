@@ -208,13 +208,20 @@ meaning. Missing or malformed peer certificate bytes cause refusal.
 
 ## Exact TypeScript numbers over ClickHouse JSON
 
-Every TypeScript JSON request explicitly selects quoted wide integers, quoted decimals and
-preserved decimal scale. Server defaults changed for integers in newer ClickHouse versions;
-converting a JSON number back to text after `JSON.parse` cannot restore lost digits.
-The decoder refuses unquoted Int64/UInt64/wider integers and decimals rather than returning
+Every TypeScript JSON request explicitly selects quoted wide integers, quoted decimals,
+preserved decimal scale and quoted non-finite floats. Server defaults changed for integers in newer
+ClickHouse versions; converting a JSON number back to text after `JSON.parse` cannot restore lost
+digits. The decoder refuses unquoted Int64/UInt64/wider integers and decimals rather than returning
 rounded data. The setting applies to this request, without changing the server or other clients.
 
-The account must permit these output-format settings or already have all three set to `1`.
+JSON has no NaN and no infinity, and without `output_format_json_quote_denormals` the server writes
+`null` for them. Before 1 November 2026 a read by key returned that null, a copy from PostgreSQL to
+ClickHouse never verified, and a copy from ClickHouse to PostgreSQL stored NULL for each of them and
+verified as matched, because both sides then read null. The decoder reads `"nan"`, `"inf"` and
+`"-inf"` back, and refuses a null in a float column that cannot hold one. The C++ library pins
+the same four settings.
+
+The account must permit these output-format settings or already have all four set to `1`.
 A `readonly=1` profile locking incompatible defaults is refused. The owner can configure these
 exact defaults while keeping `readonly=1`, or use `readonly=2` with SELECT-only grants, permitting
 output settings while refusing modifying queries. Do not grant write privileges just to address

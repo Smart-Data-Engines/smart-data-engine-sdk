@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -856,6 +857,44 @@ def test_a_row_present_with_a_different_value_names_the_column() -> None:
     assert not report.matched
     assert report.differences[0].columns == ("station",)
     assert not report.differences[0].absent
+
+
+@pytest.mark.parametrize(
+    ("held", "copied", "same"),
+    [
+        (math.nan, math.nan, True),
+        (math.inf, math.inf, True),
+        (-0.0, 0.0, True),
+        (0.0, -0.0, True),
+        (1.5, 1.5, True),
+        (math.nan, 1.5, False),
+        (1.5, math.nan, False),
+        (math.nan, None, False),
+        (math.inf, -math.inf, False),
+    ],
+    ids=["nan", "inf", "negative-zero", "zero", "a-number", "nan-then-a-number",
+         "a-number-then-nan", "nan-then-null", "both-infinities"],
+)
+def test_a_copy_holds_a_float_as_the_contract_compares_it(
+    held: float, copied: float | None, same: bool
+) -> None:
+    """NaN is NaN, and a zero is a zero of either sign (format contract section 7e).
+
+    ``nan != nan``, so a copy holding every NaN of its source never verified: measured on
+    PostgreSQL 15 and ClickHouse 24.8 in all four directions (``test_migration_live.py`` holds the
+    engines to it). The fake holds whatever it is given, and the comparison does not read a
+    field's type, so the values sit in the one column this model has.
+    """
+    session, source, target, _ = _session(rows=0)
+    group = _group(session)
+    source.insert("reading", {"id": 1, "station": held})
+    sde.backfill(session, group, chunk_rows=2)
+    for row in target.tables["reading_copy"]:
+        row["station"] = copied
+    report = sde.verify(session, group, chunk_rows=2)
+    assert report.matched is same, report.for_a_human()
+    if not same:
+        assert report.differences[0].columns == ("station",)
 
 
 def test_the_source_window_is_read_before_the_target_window() -> None:

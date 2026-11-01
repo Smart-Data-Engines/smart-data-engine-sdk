@@ -5,6 +5,10 @@
  * `Session.save`, ClickHouse 24.8 stored NULL in a nullable float column and 0.00 in a required
  * decimal one, with no error. Quoted, the server reads them as the values (24.8 and 26.9; the bare
  * token `nan` is refused). A single insert, a batch and a migration's copy share the one path.
+ *
+ * And they come back as themselves. The server writes them as null in JSON unless asked to quote
+ * them, so a read by key returned null for each, and a copy from ClickHouse to PostgreSQL stored
+ * NULL and verified as matched (measured 1 November 2026; decision 41 of the C++ port).
  */
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
@@ -25,12 +29,12 @@ async function native(statement: string): Promise<string> {
 }
 
 describe.skipIf(!dsn)('non-finite floats into ClickHouse', () => {
-  it('stores NaN and both infinities in required and nullable columns of both widths', async () => {
+  it('stores NaN and both infinities in required and nullable columns of both widths, and reads them back', async () => {
     const table = 'sde_nonfinite_' + randomUUID().replaceAll('-', '')
     const engine = new ClickHouseEngine(dsn!)
     try {
       await native(`CREATE TABLE ${table} (id Int64, single Float32, double Float64, ` +
-        'maybe_single Nullable(Float32), maybe_double Nullable(Float64)) ENGINE = MergeTree ORDER BY id')
+        'maybe_single Nullable(Float32), maybe_double Nullable(Float64)) ENGINE = ReplacingMergeTree ORDER BY id')
       await engine.connect()
       const row = (id: number, value: number) => ({ id, single: value, double: value, maybe_single: value, maybe_double: value })
       await engine.insert(table, row(1, Number.NaN))
@@ -45,6 +49,13 @@ describe.skipIf(!dsn)('non-finite floats into ClickHouse', () => {
         '4\tnan\tnan\tnan\tnan',
         '5\t1.5\t1.5\t1.5\t1.5',
       ])
+      const values = (row: Readonly<Record<string, unknown>> | null | undefined): unknown[] =>
+        ['single', 'double', 'maybe_single', 'maybe_double'].map((column) => row?.[column])
+      const expected = [Number.NaN, Infinity, -Infinity, Number.NaN, 1.5].map((value) => Array(4).fill(value))
+      const byKey = []
+      for (const id of [1, 2, 3, 4, 5]) byKey.push(values(await engine.get(table, { id })))
+      expect(byKey).toEqual(expected)
+      expect((await engine.keyRange(table, ['id'])).map(values)).toEqual(expected)
     } finally {
       await engine.close()
       await native(`DROP TABLE IF EXISTS ${table} SYNC`)
