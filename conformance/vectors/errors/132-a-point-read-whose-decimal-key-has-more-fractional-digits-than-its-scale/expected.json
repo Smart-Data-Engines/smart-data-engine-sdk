@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Ledger.code is decimal(12,2) and this key gives it more than 2 fractional digits",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Ledger",
+      "values": {
+        "code": "1.23",
+        "id": 7,
+        "note": "x"
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Ledger",
+      "key": {
+        "code": "1.234",
+        "id": 7
+      }
+    }
+  },
+  "why": "PostgreSQL answered no row, and ClickHouse found the row stored as 1.23, reading the parameter at its column's scale: one call, two answers, by where the group lived."
+}

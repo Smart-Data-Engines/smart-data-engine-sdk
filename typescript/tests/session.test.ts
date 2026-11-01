@@ -173,6 +173,36 @@ describe('the hashing boundary', () => {
     await expect(session.save('Reading', { id, celsius: null })).rejects.toThrow('Reading.celsius is required and this row gives it null')
     expect(engine.recorded.calls.filter((call) => String(call['call']).startsWith('insert'))).toEqual([])
   })
+
+  it('holds a point read\'s key to its field\'s type in the client vocabulary, before the engine', async () => {
+    // Format contract 8b, a point read's key: a written row's rules, with `this key` for `this row`.
+    const built = model()
+    const { model: hashed, names } = hashIdentifiers(built, randomBytes(32))
+    const engine = new MemoryEngine()
+    const session = await Session.open(hashed, loadMap(mapFor(hashed), { model: hashed }), { 'pg-main': engine }, { names })
+    await expect(session.get('Reading', { id: 'not-a-uuid' })).rejects.toThrow(
+      new ModelPlanningError('Reading.id is uuid and this key gives it a value that is not a UUID'),
+    )
+    await expect(session.get('Reading', { id: null })).rejects.toThrow(
+      new ModelPlanningError('Reading.id is required and this key gives it null'),
+    )
+    await expect(session.get('Reading', { id: undefined })).rejects.toThrow(
+      new ModelPlanningError('Reading.id is required and this key gives it undefined'),
+    )
+    expect(engine.recorded.calls.filter((call) => call['call'] === 'get')).toEqual([])
+  })
+
+  it('gives the engine a key in the form a filter gets, so another accepted form finds the row', async () => {
+    // A UUID written in upper case is the UUID a lower-case write stored. Given to the engine as
+    // written, it would be another value there, and the read would answer no row.
+    const built = model()
+    const { model: hashed, names } = hashIdentifiers(built, randomBytes(32))
+    const engine = new MemoryEngine()
+    const session = await Session.open(hashed, loadMap(mapFor(hashed), { model: hashed }), { 'pg-main': engine }, { names })
+    await session.save('Reading', { id: '6ba7b810-9dad-11d1-80b4-00c04fd430c8', celsius: 4 })
+    const row = await session.get('Reading', { id: '6BA7B810-9DAD-11D1-80B4-00C04FD430C8' })
+    expect(row?.['celsius']).toBe(4)
+  })
 })
 
 describe('a row the model does not allow', () => {

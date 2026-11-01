@@ -264,6 +264,101 @@ CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, 
 
 ACCEPTED_ENTRY = [{"engine": "pg-main", "call": "insert", "table": "entry"}]
 
+# The key cases' model: a key of two typed fields, each of a kind a typed refusal names, so a point
+# read can give either a value its type does not hold (format contract 8b, a point read's key).
+LEDGER: dict[str, Any] = {
+    "entities": [
+        {
+            "name": "Ledger",
+            "fields": [
+                {"name": "code", "type": "decimal(12,2)"},
+                {"name": "id", "type": "int64"},
+                {"name": "note", "type": "string", "nullable": True},
+            ],
+            "key": ["code", "id"],
+        }
+    ]
+}
+LEDGER_VERSION = "d4229e11a64d523a"  # its hash, under the same reasoning as MODEL_VERSION
+
+LEDGER_MAP: dict[str, Any] = {
+    "contract": 3,
+    "model_version": LEDGER_VERSION,
+    "map_version": 1,
+    "groups": {
+        "Ledger": {
+            "source": {
+                "id": "Ledger@pg",
+                "engine": "pg-main",
+                "layout": {
+                    "tables": {"Ledger": "ledger"},
+                    "columns": {
+                        "Ledger": {"code": "numeric(12,2)", "id": "bigint", "note": "text"}
+                    },
+                },
+            }
+        }
+    },
+}
+
+LEDGER_SAVE = {
+    "operation": "save",
+    "entity": "Ledger",
+    "values": {"code": "1.23", "id": 7, "note": "x"},
+}
+"""The key cases' accepted write, which the refused point read would find under its own key."""
+
+ACCEPTED_LEDGER = [{"engine": "pg-main", "call": "insert", "table": "ledger"}]
+
+
+def ledger_get(**key: Any) -> dict[str, Any]:
+    return get({"code": "1.23", "id": 7, **key}, "Ledger")
+
+
+KEY_CASES: list[tuple[str, dict[str, Any], str, str]] = [
+    (
+        "131-a-point-read-whose-int64-key-is-text",
+        ledger_get(id="7"),
+        "Ledger.id is int64 and this key gives it a value that is not an integer",
+        "PostgreSQL and ClickHouse both found the row for the text 7, from both libraries, and the "
+        "orderbook reference read a time given as text with int() where TypeScript answered no "
+        "row. A key is held to its field's type before any engine, as a written value is.",
+    ),
+    (
+        "132-a-point-read-whose-decimal-key-has-more-fractional-digits-than-its-scale",
+        ledger_get(code="1.234"),
+        "Ledger.code is decimal(12,2) and this key gives it more than 2 fractional digits",
+        "PostgreSQL answered no row, and ClickHouse found the row stored as 1.23, reading the "
+        "parameter at its column's scale: one call, two answers, by where the group lived.",
+    ),
+    (
+        "133-a-point-read-that-gives-an-int64-key-a-boolean",
+        ledger_get(id=True),
+        "Ledger.id is int64 and this key gives it a value that is not an integer",
+        "PostgreSQL raised an engine error and ClickHouse answered no row, from both libraries.",
+    ),
+    (
+        "134-a-point-read-whose-key-value-is-null",
+        ledger_get(id=None),
+        "Ledger.id is required and this key gives it null",
+        "A key field is never null, so no row could answer. Both engines said no row; the library "
+        "says why, in a written row's words.",
+    ),
+    (
+        "135-a-key-that-misfits-twice-names-the-first-field",
+        ledger_get(code="1.234", id="7"),
+        "Ledger.code is decimal(12,2) and this key gives it more than 2 fractional digits",
+        "Two fields misfit. The first in code-point order is named, as a row's refusal names it.",
+    ),
+    (
+        "136-a-null-in-a-key-is-named-before-a-misfit",
+        ledger_get(code="1.234", id=None),
+        "Ledger.id is required and this key gives it null",
+        "A null is refused before any value's type is checked, as a row's is (8b, points 3 and "
+        "4), so the null is named although code comes first in code-point order.",
+    ),
+]
+
 TYPED_CASES: list[
     tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[str, Any]], str]
 ] = [
@@ -489,6 +584,24 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
+    for name, refused, match, why in KEY_CASES:
+        directory = ERRORS / name
+        directory.mkdir(exist_ok=True)
+        expected = {
+            "error": "ModelPlanningError",
+            "stage": "write",
+            "match": match,
+            "write": {"accepted": LEDGER_SAVE, "refused": refused},
+            "why": why,
+        }
+        for filename, value in (
+            ("model.json", LEDGER),
+            ("map.json", LEDGER_MAP),
+            ("engines.json", ENGINES),
+            ("calls.json", ACCEPTED_LEDGER),
+            ("expected.json", expected),
+        ):
+            dump(directory / filename, value)
     for name, error, accepted, refused, match, calls, why, placement, engines in RANGE_CASES:
         directory = ERRORS / name
         directory.mkdir(exist_ok=True)
@@ -507,7 +620,7 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
-    total = len(CASES) + len(TYPED_CASES) + len(RANGE_CASES)
+    total = len(CASES) + len(TYPED_CASES) + len(KEY_CASES) + len(RANGE_CASES)
     print(f"Wrote {total} write-stage refusals without importing an SDK")
 
 
