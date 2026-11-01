@@ -520,7 +520,7 @@ class Session:
         )
 
     def _typed(
-        self, entity: str, admission: _Admission, values: Mapping[str, Any]
+        self, entity: str, admission: _Admission, values: Mapping[str, Any], *, noun: str = "row"
     ) -> Mapping[str, Any]:
         """Refuse a value its field's type does not hold; return the row as engines receive it.
 
@@ -543,14 +543,34 @@ class Session:
                 given = check(value)
             except Misfit as misfit:
                 raise ModelPlanningError(
-                    f"{entity}.{self._client_names(entity, (name,))[0]} is {kind} and this row "
-                    f"gives it {misfit}"
+                    f"{entity}.{self._client_names(entity, (name,))[0]} is {kind} and this "
+                    f"{noun} gives it {misfit}"
                 ) from None
             if given is not value:
                 if admitted is None:
                     admitted = dict(values)
                 admitted[name] = given
         return values if admitted is None else admitted
+
+    def _key(
+        self, entity: str, target: str, key: Mapping[str, Any], fields: tuple[str, ...]
+    ) -> Mapping[str, Any]:
+        """A point read's key held to a written row's rules (format contract 8b, a point read's
+        key): no value null, then every value one its field's type holds, each refusal naming the
+        first offending field in code-point order. Returns the key as engines receive it.
+
+        A key went to the engine as given until 31 October 2026, and each engine answered for it:
+        `1.234` for a `decimal(12,2)` found no row on PostgreSQL and the row stored as `1.23` on
+        ClickHouse, and a boolean for an `int64` was an engine error on one and no row on the
+        other. Shared vectors: ``errors/131``-``136``.
+        """
+        name = _null_required(key, fields)
+        if name is not None:
+            raise ModelPlanningError(
+                f"{entity}.{self._client_names(entity, (name,))[0]} is required and this key "
+                f"gives it null"
+            )
+        return self._typed(entity, self._admission[target], key, noun="key")
 
     # --- structure -------------------------------------------------------------------------
 
@@ -894,10 +914,10 @@ class Session:
                 f"{self._client_names(entity, given)}. A partial key is a range read, which is a "
                 "different shape and may well be routed somewhere else."
             )
+        key = self._key(entity, target, given, expected)
         shape = self._shape(target, "point_read", expected)
         engine, materialization = self._target(shape, fresh=fresh)
         table = materialization.layout.table_for(target)
-        key = given
         started = perf_counter_ns() if self._recorder else 0
         failed = False
         row: Any = None

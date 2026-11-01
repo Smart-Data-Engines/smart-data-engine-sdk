@@ -198,11 +198,17 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // general path decides it - and refuses it - as before.
   if (names_ == nullptr) {
     for (const Entity& entity : model.entities()) {
-      PointRead read{entity.key, nullptr, {}, {}};
+      PointRead read{entity.key, nullptr, {}, {}, {}};
       std::sort(read.key.begin(), read.key.end());
       const auto found = shapes_.find({entity.name, "point_read", read.key});
       if (found == shapes_.end()) continue;
       read.shape = found->second;
+      // The key's own checks, in code point order: `admission_` lists every typed field so.
+      for (const auto& check : admission_.at(entity.name).checks) {
+        if (std::binary_search(read.key.begin(), read.key.end(), std::get<0>(check))) {
+          read.checks.push_back(check);
+        }
+      }
       try {
         const auto place = [&](bool source) {
           // Named, as in `target`: GCC cannot tell that `resolve` returns into the map.
@@ -365,7 +371,8 @@ Row Session::admit(std::string_view entity, const std::string& target, const Row
   throw std::logic_error("admit: a row refused by no rule");  // unreachable: one of the loops threw
 }
 
-Row Session::typed(std::string_view entity, const Admission& admission, Row values) const {
+Row Session::typed(std::string_view entity, const Admission& admission, Row values,
+                   std::string_view noun) const {
   // Section 8b, point 4: a value takes a form a filter of its type takes, and the type holds it
   // (`admission.hpp`). Each driver and engine used to convert what it was given in its own way,
   // measured on 7 October 2026 in the other two libraries: a decimal rounded by PostgreSQL was
@@ -378,10 +385,71 @@ Row Session::typed(std::string_view entity, const Admission& admission, Row valu
       found->second = check(found->second);
     } catch (const detail::Misfit& misfit) {
       throw ModelPlanningError(std::string(entity) + "." + client_name(entity, name) + " is " + kind +
-                               " and this row gives it " + misfit.what());
+                               " and this " + std::string(noun) + " gives it " + misfit.what());
     }
   }
   return values;
+}
+
+namespace {
+
+/// Whether a checked value is the given one in the form engines receive: the same alternative and
+/// the same value - and for a decimal the same digits and scale, since `1.230 == 1.23` as numbers
+/// and an engine would receive the first as written.
+bool same_form(const Value& checked, const Value& given) {
+  if (checked.index() != given.index()) return false;
+  if (const auto* decimal = std::get_if<Decimal>(&checked)) {
+    const Decimal& other = std::get<Decimal>(given);
+    return decimal->negative() == other.negative() && decimal->scale() == other.scale() &&
+           decimal->coefficient() == other.coefficient();
+  }
+  return checked == given;
+}
+
+}  // namespace
+
+const Row& Session::checked_point_key(std::string_view entity, const PointRead& read,
+                                      const Row& key, std::optional<Row>& changed) const {
+  // The rules of `checked_key`, in its order and words, without a copy of the key when none is
+  // needed: requirement 3.5 gives this library one percent of a point read, and copying the key
+  // on every read cost more than the rest of the path (measured on 31 October 2026).
+  for (const std::string& name : read.key) {
+    if (is_null(key.at(name))) {
+      throw ModelPlanningError(std::string(entity) + "." + client_name(entity, name) +
+                               " is required and this key gives it null");
+    }
+  }
+  for (const auto& [name, kind, check] : read.checks) {
+    const Value& given = key.at(name);
+    Value checked;
+    try {
+      checked = check(given);
+    } catch (const detail::Misfit& misfit) {
+      throw ModelPlanningError(std::string(entity) + "." + client_name(entity, name) + " is " + kind +
+                               " and this key gives it " + misfit.what());
+    }
+    if (!same_form(checked, given)) {
+      if (!changed) changed = key;
+      (*changed)[name] = std::move(checked);
+    }
+  }
+  return changed ? *changed : key;
+}
+
+Row Session::checked_key(std::string_view entity, const std::string& target, const Row& key,
+                         const std::vector<std::string>& fields) const {
+  // A key went to the engine as given until 31 October 2026, and each engine answered for it in
+  // the other two libraries: `1.234` for a `decimal(12,2)` found no row on PostgreSQL and the row
+  // stored as `1.23` on ClickHouse, and a boolean for an `int64` was an engine error on one and no
+  // row on the other. A null first, then the types, each naming the first field in code-point
+  // order, as a row's refusals do. `errors/131` to `136`.
+  for (const std::string& name : fields) {
+    if (is_null(key.at(name))) {
+      throw ModelPlanningError(std::string(entity) + "." + client_name(entity, name) +
+                               " is required and this key gives it null");
+    }
+  }
+  return typed(entity, admission_.at(target), key, "key");
 }
 
 // --- schema -------------------------------------------------------------------------------------
@@ -580,7 +648,10 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
       known != point_reads_.end() && std::ranges::equal(key | std::views::keys, known->second.key)) {
     const PointRead::Place& place =
         fresh || in_write_transaction_ ? known->second.source : known->second.routed;
-    return read_one(*known->second.shape, entity, *place.engine, *place.table, key);
+    // Names nothing translates, so the entity is its own target and the key is the model's.
+    std::optional<Row> changed;
+    return read_one(*known->second.shape, entity, *place.engine, *place.table,
+                    checked_point_key(entity, known->second, key, changed));
   }
   const std::string target_entity =
       operation_target(entity, [this](std::string_view name) { return target_of(name); });
@@ -602,9 +673,10 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
                              ". A partial key is a range read, which is a different shape and may "
                              "well be routed somewhere else.");
   }
+  const Row checked = checked_key(entity, target_entity, given, expected);
   const OperationShape& read = shape(target_entity, "point_read", expected);
   const auto [engine, materialization] = target(read, fresh);
-  return read_one(read, entity, *engine, materialization->layout.table_for(target_entity), given);
+  return read_one(read, entity, *engine, materialization->layout.table_for(target_entity), checked);
 }
 
 std::optional<Row> Session::read_one(const OperationShape& read, std::string_view entity,

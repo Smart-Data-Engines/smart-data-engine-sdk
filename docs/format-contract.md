@@ -1584,6 +1584,32 @@ Before 7 October 2026 a value went to the driver as the application gave it. Mea
 - PostgreSQL dropped the offset of a timestamp written to a timezone-free column, and ClickHouse
   refused it.
 
+### A point read's key
+
+**A point read's key is held to the same rules as a written row's.** `get` takes exactly its
+entity's key (§8a), and before any engine is called each of its values is checked as point 3 and
+point 4 check a written value, in code-point order of the fields: a key value is never null, and it
+is a value its field's type holds. The refusal is `ModelPlanningError`, worded as a write's with
+`this key` for `this row`: `<Entity>.<field> is required and this key gives it null`, or
+`<Entity>.<field> is <type> and this key gives it <what>`. A key then reaches the engine in the form
+a filter gets, so `1.230` finds the row that a write of `1.230` stored as `1.23`.
+
+Before 31 October 2026 a key went to the engine as the application gave it, and each engine
+answered for it in its own way. Measured through `Session.get` from both libraries, on PostgreSQL 15
+and ClickHouse 24.8, for a row stored with the key `{code: 1.23, id: 7}` (`decimal(12,2)`, `int64`):
+
+| Key given | PostgreSQL | ClickHouse |
+|---|---|---|
+| `code` `1.234` | no row | **the row**: the parameter read at the column's scale |
+| `id` `true` | an engine error | no row |
+| `id` `"7"`, `code` as a binary float | the row | the row |
+| `id` null | no row | no row |
+
+So one call found a row on one engine and none on the other, and moving the group changed which. The
+orderbook adapters disagreed the same way: the reference read a time given as text with `int()` and
+found the row, and TypeScript answered "no row" (finding 34 of the C++ port). `errors/131`-`136` pin
+the refusals at the `write` stage, each with a `get` as its refused step.
+
 ## 8c. A book stream
 
 A Tier 2 library with the orderbook engine offers a **book stream**: one book - one symbol on one
