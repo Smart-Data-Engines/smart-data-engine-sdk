@@ -56,6 +56,7 @@ import os
 import re
 import ssl
 import stat
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from importlib.metadata import version
 from typing import Any, cast
@@ -149,6 +150,23 @@ def _row(names: Sequence[str], types: Sequence[Any], row: Sequence[Any]) -> dict
     return out
 
 
+UNANNOUNCED_IDLE_LIMIT = 5.0
+"""Seconds a connection may stay idle and be reused when the server announces no keep-alive
+timeout: half of ClickHouse's default of 10 s."""
+
+_KEEP_ALIVE_TIMEOUT = re.compile(r"(?:^|[\s,;])timeout\s*=\s*(\d+)", re.IGNORECASE)
+
+_now = time.monotonic
+
+
+def _idle_limit(response: Any) -> float:
+    """Half the keep-alive timeout a response announces, or ``UNANNOUNCED_IDLE_LIMIT``."""
+    headers = getattr(response, "headers", None)
+    announced = headers.get("Keep-Alive") if headers is not None else None
+    found = _KEEP_ALIVE_TIMEOUT.search(announced) if isinstance(announced, str) else None
+    return int(found.group(1)) / 2 if found else UNANNOUNCED_IDLE_LIMIT
+
+
 class _NoReplayTransport:
     """Keep the driver's TLS/proxy pool but forbid ambiguous transport replay for this client.
 
@@ -156,10 +174,22 @@ class _NoReplayTransport:
     probe that error followed an accepted INSERT: the driver replayed it and returned success.
     Translate transport errors before that retry handler, and disable urllib3's own retry layer.
     The shared pool is never patched; only this client's reference is wrapped.
+
+    A pool the client owns is also kept from sending on a connection the server is closing.
+    ClickHouse closes a kept-alive connection the keep-alive timeout it announces after its
+    response (``Keep-Alive: timeout=10``; measured on 24.8: 10.006-10.009 s). urllib3 checks a
+    pooled connection for the server's FIN before it reuses it, so a request sent after the FIN
+    arrives goes on a new connection. One sent while the FIN is on its way is never read, and
+    without a replay it fails with an outcome unknown: 3 of 360 requests sent within 30 ms of the
+    edge did. Once half the announced timeout has passed since the last response, the pool's idle
+    connections are closed before the request, which goes on a new one. Nothing is replayed.
     """
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any, *, owned: bool = False) -> None:
         self.pool = pool
+        self._owned = owned
+        self._answered_at: float | None = None
+        self._idle_limit = UNANNOUNCED_IDLE_LIMIT
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.pool, name)
@@ -177,13 +207,19 @@ class _NoReplayTransport:
 
         options["retries"] = False
         options["redirect"] = False
+        answered_at = self._answered_at
+        if self._owned and answered_at is not None and _now() - answered_at >= self._idle_limit:
+            self.pool.clear()
         try:
-            return self.pool.request(method, url, **options)
+            response = self.pool.request(method, url, **options)
         except HTTPError as exc:
             raise EngineError(
                 f"ClickHouse transport failed ({_causes(exc)}); the operation was not replayed and "
                 f"its outcome may be unknown"
             ) from exc
+        self._answered_at = _now()
+        self._idle_limit = _idle_limit(response)
+        return response
 
 
 def _causes(error: BaseException) -> str:
@@ -274,7 +310,20 @@ def _connect_client(parameters: ConnectionParameters) -> Any:
             # HttpClient calls this after constructing its native pool/backend and before the
             # initial version/settings exchange. Change only this client's pool reference.
             try:
-                self.http = cast(Any, _NoReplayTransport(self.http))
+                from clickhouse_connect.driver.httputil import (
+                    default_pool_manager,
+                    get_pool_manager,
+                )
+
+                if not self._owns_pool_manager and self.http is default_pool_manager():
+                    # The shared pool handed a new client a connection another client had left
+                    # idle, which the server could be closing as the request went out. A pool of
+                    # this client's own, from the driver's factory with its defaults, which the
+                    # driver closes with the client.
+                    self.http = get_pool_manager()
+                    self._owns_pool_manager = True
+                    self._backend.owns_pool_manager = True
+                self.http = cast(Any, _NoReplayTransport(self.http, owned=self._owns_pool_manager))
                 self.timeout = Timeout(
                     connect=parameters.connect_timeout, read=parameters.send_receive_timeout
                 )

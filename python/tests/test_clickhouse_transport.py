@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -133,6 +134,78 @@ def test_a_connection_the_driver_could_not_open_names_its_classes_only(
         "could not connect to ClickHouse with the configured transport "
         "(RuntimeError <- ConnectionResetError)"
     )
+
+
+class Answering(Pool):
+    """A pool whose responses announce a keep-alive timeout, and which records when it is cleared
+    of its idle connections."""
+
+    def __init__(self, announced: str | None) -> None:
+        super().__init__()
+        self.events: list[str] = []
+        self.announced = announced
+
+    def request(self, method: str, url: str, **options: Any) -> Any:
+        self.events.append("request")
+        headers = {} if self.announced is None else {"Keep-Alive": self.announced}
+        return SimpleNamespace(headers=headers)
+
+    def clear(self) -> None:
+        self.events.append("clear")
+
+
+def test_idle_connections_are_dropped_once_half_the_announced_keep_alive_has_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ClickHouse closes a kept-alive connection the timeout it announces after its response, and
+    a request sent while that close is on its way is never read. Before half of it has passed the
+    connection is reused; from then on the pool's idle connections are closed first."""
+    import sde.engines.clickhouse as adapter
+
+    now = [100.0]
+    monkeypatch.setattr(adapter, "_now", lambda: now[0])
+    pool = Answering("timeout=10, max=9999")
+    transport = _NoReplayTransport(pool, owned=True)
+    transport.request("POST", SECRET_URL)
+    now[0] += 4.999
+    transport.request("POST", SECRET_URL)
+    now[0] += 5.0
+    transport.request("POST", SECRET_URL)
+    assert pool.events == ["request", "request", "clear", "request"]
+
+
+@pytest.mark.parametrize(
+    ("announced", "limit"),
+    [
+        ("timeout=10, max=9999", 5.0),  # ClickHouse's own
+        ("timeout=3", 1.5),
+        ("max=100, timeout=0", 0.0),
+        ("max=100", 5.0),
+        ("timeout=ten", 5.0),
+        (None, 5.0),  # announced by no one: half of ClickHouse's default
+    ],
+)
+def test_the_limit_is_half_the_keep_alive_the_server_announces(
+    announced: str | None, limit: float
+) -> None:
+    from sde.engines.clickhouse import _idle_limit
+
+    headers = {} if announced is None else {"Keep-Alive": announced}
+    assert _idle_limit(SimpleNamespace(headers=headers)) == limit
+
+
+def test_a_pool_the_client_does_not_own_is_never_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An environment proxy's pool is the driver's, shared with whoever else it serves."""
+    import sde.engines.clickhouse as adapter
+
+    now = [0.0]
+    monkeypatch.setattr(adapter, "_now", lambda: now[0])
+    pool = Answering("timeout=10")
+    transport = _NoReplayTransport(pool)
+    transport.request("POST", SECRET_URL)
+    now[0] += 3600.0
+    transport.request("POST", SECRET_URL)
+    assert pool.events == ["request", "request"]
 
 
 @pytest.mark.parametrize("installed", ["0.7.0", "1.7.1", "1.7.2rc1", "1.8.0.dev1"])

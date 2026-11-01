@@ -8,13 +8,20 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
-**Fixed: a ClickHouse transport failure names its causes** (Python). A reconnect failed in CI with
-`ClickHouse transport failed; the operation was not replayed and its outcome may be unknown` and
-nothing else, so its log could not tell a server that had closed the connection from one that
-refused it or timed out. The message names the classes of the failure's chain now, outermost first,
-and none of their text, which carries the URL:
-`ClickHouse transport failed (ProtocolError <- RemoteDisconnected); …`. A connection the driver
-could not open names its classes the same way.
+**Fixed: a ClickHouse request is not sent on a connection the server is closing, and a transport
+failure names its causes** (Python). ClickHouse closes a kept-alive connection once the
+keep-alive timeout it announces has passed since its response: 10 s by default, and measured on
+24.8 at 10.006 to 10.009 s. A request sent while that close was on its way was never read, and
+since nothing is replayed it failed with
+`ClickHouse transport failed; the operation was not replayed and its outcome may be unknown`: 3 of
+360 requests sent within 30 ms of the edge did. Clients without a CA of their own shared the
+driver's default pool, so a client connecting after a pause took a connection another one had left
+idle. Each client has a pool of its own now, from the driver's factory. A connection is not reused
+once half the announced timeout has passed since the last response, or 5 s when none is announced:
+the request goes on a new connection, and nothing is replayed. A transport failure names the
+classes of its causes, outermost first, and none of their text, which carries the URL:
+`ClickHouse transport failed (ProtocolError <- RemoteDisconnected); …`. So does a connection the
+driver could not open.
 
 **Changed: text holds no U+0000** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8b). PostgreSQL's `text` cannot hold U+0000,

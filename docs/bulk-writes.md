@@ -86,7 +86,8 @@ also applies to ClickHouse transport errors: the Python adapter disables urllib3
 prevents clickhouse-connect's implicit retry after a remote close. A controlled test lost the
 response after a real accepted INSERT; the unguarded driver sent it twice and returned success.
 The guarded path reports one uncertain failure and leaves one physical row. The guard is local
-to that adapter and preserves the existing pool's TLS/proxy configuration.
+to that adapter and keeps the TLS/proxy configuration the driver chose. A client that would have
+shared the driver's default pool gets a pool of its own from the same factory.
 
 ## Generations, transactions and copies
 
