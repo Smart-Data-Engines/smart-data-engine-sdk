@@ -239,8 +239,6 @@ TEST(Invariants, NoValueReachesALogEventATelemetryWindowOrARefusal) {
     summary.where = sde::Row{{"email", std::string(EMAIL)}};
     (void)session.summarize("User", "age", summary);
     session.transaction({"User"}, [&] { session.save("User", user); });
-    // A key of the wrong type is the engine's to refuse, and here it reaches the engine.
-    (void)session.get("User", {{"id", std::string(EMAIL)}});
   }
   // What a refusal says when a value is wrong: the field, never the value.
   said.refusal([&] { (void)session.get("User", {{"id", id}, {"email", std::string(EMAIL)}}); });
@@ -270,8 +268,12 @@ TEST(Invariants, NoValueReachesALogEventATelemetryWindowOrARefusal) {
     (void)session.scan("User", scan);
   });
   said.refusal([&] { session.save_many("User", {user, sde::Row{{"id", id}, {"email", std::string(EMAIL)}}}); });
+  // A key of the wrong type reached the engine until 31 October 2026, which refused it in its own
+  // words. It is refused before any engine now, as a written value is (format contract 8b, a point
+  // read's key): the field and its type, never the value.
+  said.refusal([&] { (void)session.get("User", {{"id", std::string(EMAIL)}}); });
 
-  EXPECT_EQ(said.refusals, 7) << "each of those was meant to be refused, and a refusal's words "
+  EXPECT_EQ(said.refusals, 8) << "each of those was meant to be refused, and a refusal's words "
                                  "are what is searched";
   EXPECT_GE(said.events, 1) << "no event was logged, so the log was not searched";
   const std::optional<sde::Window> window = recorder.roll();

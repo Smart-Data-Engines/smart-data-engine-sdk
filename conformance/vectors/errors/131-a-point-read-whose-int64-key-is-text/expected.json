@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Ledger.id is int64 and this key gives it a value that is not an integer",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Ledger",
+      "values": {
+        "code": "1.23",
+        "id": 7,
+        "note": "x"
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Ledger",
+      "key": {
+        "code": "1.23",
+        "id": "7"
+      }
+    }
+  },
+  "why": "PostgreSQL and ClickHouse both found the row for the text 7, from both libraries, and the orderbook reference read a time given as text with int() where TypeScript answered no row. A key is held to its field's type before any engine, as a written value is."
+}

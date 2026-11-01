@@ -147,6 +147,33 @@ def test_an_undeclared_entity_is_refused() -> None:
         assert type(raised.value) is sde.ModelPlanningError
 
 
+def test_a_key_in_another_form_its_type_admits_finds_the_row_its_write_stored() -> None:
+    """A key reaches the engine in the form a filter gets (format contract 8b, a point read's
+    key): a UUID written as upper-case text finds the row a ``uuid.UUID`` stored. Given to the
+    engine as written, it would be another value there, and the read would answer no row."""
+    session, _, _ = _session()
+    key = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+    session.save("User", {"id": key, "email": "a@b.test", "display_name": "Ada"})
+    row = session.get("User", {"id": "6BA7B810-9DAD-11D1-80B4-00C04FD430C8"})
+    assert row is not None
+    assert row["display_name"] == "Ada"
+
+
+def test_a_key_its_type_does_not_hold_is_refused_in_the_clients_vocabulary() -> None:
+    """A point read's key is held to a written row's rules with hashed identifiers too (format
+    contract 8b, a point read's key), and the refusal names the client's field, not its digest."""
+    session, _, _ = _session()
+    for key, words in (
+        ({"id": "not-a-uuid"}, "User.id is uuid and this key gives it a value that is not a UUID"),
+        ({"id": None}, "User.id is required and this key gives it null"),
+    ):
+        with pytest.raises(ModelPlanningError) as raised:
+            session.get("User", key)
+        assert type(raised.value) is ModelPlanningError
+        assert str(raised.value) == words
+        assert "f_" not in str(raised.value), f"the refusal leaks digests: {raised.value}"
+
+
 def test_a_transaction_over_the_whole_model_uses_client_names() -> None:
     # With hashing on, the no-arguments form used to feed digests back through the translation and
     # fail on a name it had just produced itself.
