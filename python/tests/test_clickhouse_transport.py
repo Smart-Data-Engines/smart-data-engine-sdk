@@ -154,8 +154,9 @@ class Answering(Pool):
         self.events.append("clear")
 
 
+@pytest.mark.parametrize(("announced", "half"), [("timeout=10, max=9999", 5.0), ("timeout=3", 1.5)])
 def test_idle_connections_are_dropped_once_half_the_announced_keep_alive_has_passed(
-    monkeypatch: pytest.MonkeyPatch,
+    announced: str, half: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ClickHouse closes a kept-alive connection the timeout it announces after its response, and
     a request sent while that close is on its way is never read. Before half of it has passed the
@@ -164,12 +165,12 @@ def test_idle_connections_are_dropped_once_half_the_announced_keep_alive_has_pas
 
     now = [100.0]
     monkeypatch.setattr(adapter, "_now", lambda: now[0])
-    pool = Answering("timeout=10, max=9999")
+    pool = Answering(announced)
     transport = _NoReplayTransport(pool, owned=True)
     transport.request("POST", SECRET_URL)
-    now[0] += 4.999
+    now[0] += half - 0.001
     transport.request("POST", SECRET_URL)
-    now[0] += 5.0
+    now[0] += half
     transport.request("POST", SECRET_URL)
     assert pool.events == ["request", "request", "clear", "request"]
 
