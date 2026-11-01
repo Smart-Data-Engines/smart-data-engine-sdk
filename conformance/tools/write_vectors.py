@@ -452,9 +452,9 @@ RANGE_CASES: list[
             {"engine": "pg-main", "call": "insert", "table": "entry"},
             {"engine": "ch-copy", "call": "insert", "table": "entry_copy"},
         ],
-        "PostgreSQL holds 1800-01-01 and the group's copy on ClickHouse 24.8 would not. Every engine "
-        "the write goes to is asked before any is written, so the source does not take a row its "
-        "copy then refuses.",
+        "PostgreSQL holds 1800-01-01 and the group's copy on ClickHouse 24.8 would not. Every "
+        "engine the write goes to is asked before any is written, so the source does not take a "
+        "row its copy then refuses.",
         COPY_MAP,
         COPY_ENGINES,
     ),
@@ -507,7 +507,8 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
-    print(f"Wrote {len(CASES) + len(TYPED_CASES) + len(RANGE_CASES)} write-stage refusals without importing an SDK")
+    total = len(CASES) + len(TYPED_CASES) + len(RANGE_CASES)
+    print(f"Wrote {total} write-stage refusals without importing an SDK")
 
 
 if __name__ == "__main__":
