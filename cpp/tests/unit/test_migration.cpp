@@ -962,4 +962,101 @@ TEST(FrozenComparison, ATableThatIsNotTheMapsIsRefusedBeforeAnyIsClosed) {
   EXPECT_TRUE(frozen.copy_watch.checked.back().empty());
 }
 
+
+// ── A day or an instant the target holds (format contract 8b, decision 43) ───────────────────────
+// The session's refusals are pinned by errors/140-142; these hold the range itself and a
+// migration's copy, which no vector reaches.
+
+std::optional<sde::TemporalRange> narrow() {
+  return sde::TemporalRange::from_engine_text("1900-01-01", "2299-12-31", "1900-01-01 00:00:00.000000",
+                                              "2299-12-31 23:59:59.999999");
+}
+
+TEST(TemporalRange, IsNothingForAServerHoldingTheContractWhole) {
+  EXPECT_FALSE(sde::TemporalRange::from_engine_text("0001-01-01", "9999-12-31",
+                                                    "0001-01-01 00:00:00.000000",
+                                                    "9999-12-31 23:59:59.999999")
+                   .has_value());
+  ASSERT_TRUE(narrow().has_value());
+  EXPECT_EQ(narrow()->describe(), "from 1900-01-01 to 2299-12-31");
+}
+
+TEST(TemporalRange, HoldsItsEndsAndNothingPastThem) {
+  const sde::TemporalRange span = *narrow();
+  EXPECT_TRUE(span.holds("date", sde::Value(sde::Date("1900-01-01"))));
+  EXPECT_TRUE(span.holds("date", sde::Value(sde::Date("2299-12-31"))));
+  EXPECT_FALSE(span.holds("date", sde::Value(sde::Date("1899-12-31"))));
+  EXPECT_FALSE(span.holds("date", sde::Value(sde::Date("2300-01-01"))));
+  EXPECT_TRUE(span.holds("timestamp", sde::Value(sde::Timestamp("2299-12-31T23:59:59.999999"))));
+  EXPECT_FALSE(span.holds("timestamp", sde::Value(sde::Timestamp("2300-01-01T00:00:00"))));
+  EXPECT_TRUE(span.holds("timestamptz", sde::Value(sde::TimestampTz("1900-01-01T00:00:00Z"))));
+  EXPECT_FALSE(span.holds("timestamptz", sde::Value(sde::TimestampTz("1899-12-31T23:59:59.999999Z"))));
+  // A copy's row may hold either as text.
+  EXPECT_FALSE(span.holds("date", sde::Value(std::string("1800-01-01"))));
+  EXPECT_FALSE(span.holds("timestamptz", sde::Value(std::string("2500-06-01T12:00:00Z"))));
+}
+
+struct Dated {
+  explicit Dated(std::optional<sde::TemporalRange> range)
+      : model(sde::load_neutral_model(R"({"entities": [{"name": "Visit", "fields": [
+          {"name": "id", "type": "int32"}, {"name": "on", "type": "date"}], "key": ["id"]}]})")),
+        map(placed_dated(model)),
+        source(options("postgres", "pg-main", std::nullopt)),
+        target(options("clickhouse", "ch-copy", std::move(range))) {
+    source.tables["visit"] = {sde::Row{{"id", std::int64_t{1}}, {"on", sde::Date("2026-10-07")}},
+                              sde::Row{{"id", std::int64_t{2}}, {"on", sde::Date("1800-01-01")}}};
+    session.emplace(model, map,
+                    std::map<std::string, sde::Engine*>{{"pg-main", &source}, {"ch-copy", &target}});
+  }
+
+  static sde::testing::MemoryEngineOptions options(std::string dialect, std::string name,
+                                                   std::optional<sde::TemporalRange> range) {
+    sde::testing::MemoryEngineOptions built;
+    built.dialect = std::move(dialect);
+    built.name = std::move(name);
+    built.temporal_range = std::move(range);
+    return built;
+  }
+  static sde::PlacementMap placed_dated(const sde::Model& model) {
+    const std::string text = R"({"contract": 3, "model_version": ")" + model.version() +
+                             R"(", "map_version": 1, "groups": {"Visit": {
+      "source": {"id": "src", "engine": "pg-main", "layout": {"tables": {"Visit": "visit"},
+        "columns": {"Visit": {"id": "integer", "on": "date"}}}},
+      "derived": [{"id": "dst", "engine": "ch-copy", "lag_budget_ms": 30000, "layout": {
+        "tables": {"Visit": "visit_copy"}, "columns": {"Visit": {"id": "Int32", "on": "Date32"}}}}],
+      "also_write": ["dst"]}}})";
+    sde::LoadOptions loading;
+    loading.model = &model;
+    return sde::load_map(std::string_view(text), loading);
+  }
+
+  sde::Model model;
+  sde::PlacementMap map;
+  sde::testing::MemoryEngine source;
+  sde::testing::MemoryEngine target;
+  std::optional<sde::Session> session;
+};
+
+TEST(MigrationRange, AChunkTheTargetCannotHoldIsRefusedBeforeAnyOfItIsCopied) {
+  Dated dated(narrow());
+  try {
+    (void)sde::backfill(*dated.session, "Visit", {10, std::nullopt});
+    ADD_FAILURE() << "the chunk was copied";
+  } catch (const sde::MigrationRefused& refused) {
+    const std::string message = refused.what();
+    EXPECT_EQ(message.rfind("ch-copy holds a date from 1900-01-01 to 2299-12-31, and a row of Visit "
+                            "gives on one outside it, so this chunk was not copied.", 0),
+              0U)
+        << message;
+    EXPECT_EQ(message.find("1800"), std::string::npos) << "a refusal never repeats the client's value";
+  }
+  EXPECT_TRUE(dated.target.tables["visit_copy"].empty()) << "nor the row inside the range";
+}
+
+TEST(MigrationRange, ATargetHoldingTheWholeRangeTakesTheSameChunk) {
+  Dated dated(std::nullopt);
+  EXPECT_TRUE(sde::backfill(*dated.session, "Visit", {10, std::nullopt}).complete());
+  EXPECT_EQ(dated.target.tables["visit_copy"].size(), 2U);
+}
+
 }  // namespace

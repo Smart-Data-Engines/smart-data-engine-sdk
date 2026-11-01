@@ -269,6 +269,51 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
   EXPECT_NE(std::get<double>(widened->at("f32")), 1.1);
 }
 
+TEST_F(ClickHouseLive, TheServerSaysTheDaysItHoldsAndAValueOutsideThemNeverReachesIt) {
+  // Format contract 8b. ClickHouse 24.8 holds Date32 and DateTime64 from 1900-01-01 to 2299-12-31
+  // and moved 1800-01-01 to 1900-01-01 without an error; 26.9 holds the contract's whole range. What
+  // the test expects is the server's, and CI runs the live slices on both.
+  const ClickHouseScope scope(dsn_);
+  const sde::Model model = sde::load_neutral_model(R"json({"entities": [{"name": "Visit", "fields": [
+      {"name": "id", "type": "int32"}, {"name": "on", "type": "date"},
+      {"name": "at", "type": "timestamptz"}], "key": ["id"]}]})json");
+  const sde::PlacementMap map = auto_map(model);
+  const auto ch = engine(scope.dsn());
+  sde::Session session(model, map, {{"ch", ch.get()}});
+  session.ensure_schema();
+  const std::optional<sde::TemporalRange> span = ch->temporal_range();
+  // Both ends of the narrower range are held wherever the server stands.
+  const sde::Row ends{{"id", std::int64_t{1}},
+                      {"on", sde::Date("1900-01-01")},
+                      {"at", sde::TimestampTz("2299-12-31T23:59:59.999999Z")}};
+  session.save("Visit", ends);
+  const std::optional<sde::Row> held = session.get("Visit", {{"id", std::int64_t{1}}});
+  ASSERT_TRUE(held.has_value());
+  EXPECT_EQ(held->at("on"), ends.at("on"));
+  EXPECT_EQ(held->at("at"), ends.at("at"));
+  const sde::Row before{{"id", std::int64_t{2}},
+                        {"on", sde::Date("1800-01-01")},
+                        {"at", sde::TimestampTz("2026-10-07T00:00:00Z")}};
+  if (!span.has_value()) {
+    session.save("Visit", before);
+    const std::optional<sde::Row> back = session.get("Visit", {{"id", std::int64_t{2}}});
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(back->at("on"), before.at("on"));
+  } else {
+    EXPECT_EQ(span->describe(), "from 1900-01-01 to 2299-12-31");
+    try {
+      session.save("Visit", before);
+      ADD_FAILURE() << "a date the server would have moved was sent";
+    } catch (const sde::EngineError& refused) {
+      EXPECT_EQ(std::string(refused.what()),
+                "ch holds a date from 1900-01-01 to 2299-12-31, and this row gives Visit.on one "
+                "outside it; nothing was sent");
+    }
+    EXPECT_FALSE(session.get("Visit", {{"id", std::int64_t{2}}}).has_value());
+  }
+  EXPECT_EQ(ch->temporal_range().has_value(), span.has_value()) << "read once per connection";
+}
+
 TEST_F(ClickHouseLive, AValueTheColumnCannotHoldIsRefusedNeverChanged) {
   // Measured against the reference on the same server: it stores 1.239 in a Decimal(12, 2) as
   // 1.23 and 12345678901.23 as 12345678901.20, without a word - where PostgreSQL rounds the first
