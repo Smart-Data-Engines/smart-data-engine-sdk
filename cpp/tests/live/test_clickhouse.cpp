@@ -215,7 +215,7 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
       {"text", std::string("Zürich, it's \"quoted\", a `tick`, a \\ back\tand\na line")},
       {"flag", true},
       {"uid", *sde::Uuid::parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")},
-      {"day", *sde::Date::parse("0001-01-01")},
+      {"day", *sde::Date::parse("1900-01-01")},
       {"wall", *sde::Timestamp::parse("2026-10-07T12:34:56.123456")},
       {"at", *sde::TimestampTz::parse("2026-10-07T12:34:56.654321+02:00")},
   };
@@ -231,15 +231,27 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
   session.save("Probe", empty);
   EXPECT_EQ(session.get("Probe", {{"id", std::int64_t{2}}}), empty);
 
-  // Dates and moments outside the range ClickHouse prints and parses as text, 1900 to 2299: in
-  // binary, as the reference's driver writes them, they are the values they were.
+  // The ends of the range the server holds (format contract 8b): ClickHouse 24.8 holds Date32 and
+  // DateTime64 from 1900-01-01 to 2299-12-31, 26.9 the contract's whole range. Outside 24.8's, a
+  // binary write kept the raw value and the server's own toString read it as another date, so
+  // the session refuses it there, and the ends the server does hold are the values they were.
+  const std::optional<sde::TemporalRange> span = ch->temporal_range();
   sde::Row edges = written;
   edges["id"] = std::int64_t{5};
-  edges["day"] = *sde::Date::parse("9999-12-31");
-  edges["wall"] = *sde::Timestamp::parse("0001-01-01T00:00:00.000001");
-  edges["at"] = *sde::TimestampTz::parse("9999-12-31T23:59:59.999999Z");
+  edges["day"] = *sde::Date::parse(span ? "2299-12-31" : "9999-12-31");
+  edges["wall"] =
+      *sde::Timestamp::parse(span ? "1900-01-01T00:00:00.000001" : "0001-01-01T00:00:00.000001");
+  edges["at"] =
+      *sde::TimestampTz::parse(span ? "2299-12-31T23:59:59.999999Z" : "9999-12-31T23:59:59.999999Z");
   session.save("Probe", edges);
   EXPECT_EQ(session.get("Probe", {{"id", std::int64_t{5}}}), edges);
+  if (span.has_value()) {
+    sde::Row outside = edges;
+    outside["id"] = std::int64_t{6};
+    outside["day"] = *sde::Date::parse("9999-12-31");
+    EXPECT_THROW(session.save("Probe", outside), sde::EngineError);
+    EXPECT_FALSE(session.get("Probe", {{"id", std::int64_t{6}}}).has_value());
+  }
 
   // NaN and the infinities, both ways.
   sde::Row floats{{"id", std::int64_t{3}},

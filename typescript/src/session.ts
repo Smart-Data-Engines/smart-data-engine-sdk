@@ -57,6 +57,16 @@ import { kindNoun, TEMPORAL_KINDS, type TemporalRange } from './temporal-range.j
 
 export type Row = Record<string, unknown>
 
+/** One row as it is now, for a single save; deep nesting is refused as a model error there. */
+function snapshotOne(row: Readonly<Row>): Row {
+  try {
+    return snapshotRows([row])[0]!
+  } catch (error) {
+    if (error instanceof BulkWriteRefused) throw new ModelPlanningError('values are nested too deeply')
+    throw error
+  }
+}
+
 /** What a row of one entity must and may carry, computed once per session. */
 interface Admission {
   readonly declared: ReadonlySet<string>
@@ -635,8 +645,11 @@ export class Session {
       const target = this.entityName(entity)
       const given = this.fieldsIn(entity, values)
       const shape = this.shapeFor(target, 'write')
-      const body = this.admit(entity, target, given)
+      const admitted = this.admit(entity, target, given)
       const [engine, materialization] = this.target(shape, false)
+      // The row as it is now, before the first await: asking an engine for its range is the first,
+      // and a caller may change its own row while it waits (as a batch's rows, bulk.test.ts).
+      const body = snapshotOne(admitted)
       await this.held(entity, target, shape.group, materialization.engine, [body], false)
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()
@@ -761,10 +774,11 @@ export class Session {
           throw new BulkWriteRefused(`row ${index}: ${error.message}`)
         }
       }
-      await this.held(entity, target, shape.group, materialization.engine, typed, true)
       const writer = bulkWriter(engine)
       for (const copy of spot.alsoWrite) bulkWriter(this.engines[copy.engine] as Engine)
       const snapshot = snapshotRows(typed)
+      // After the snapshot: asking an engine for its range is the first await (bulk.test.ts).
+      await this.held(entity, target, shape.group, materialization.engine, snapshot, true)
       const stamped = snapshot.map((row) => stampValues(this.placement, shape.group, row))
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()
