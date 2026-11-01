@@ -1,0 +1,15 @@
+{
+ "name": "the scheme in any case and the host in lower case",
+ "dsn": "ORDERBOOK://OB1.Internal:9443",
+ "says": {
+  "host": "ob1.internal",
+  "port": 9443,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 10.0
+ },
+ "why": "the scheme is ASCII case-insensitive, and a name is kept in lower case"
+}

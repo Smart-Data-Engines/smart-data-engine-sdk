@@ -19,20 +19,20 @@ namespace {
 using namespace sde::testing_support;
 
 /// The tier each family belongs to (format contract section 9). `hashing/` is a mode, not a tier,
-/// and is required of a library that offers hashing. Three Tier 2 families go with a capability as
+/// and is required of a library that offers hashing. Four Tier 2 families go with a capability as
 /// well as the tier: see `capable`.
 const std::map<std::string, int>& tier_of_family() {
   static const std::map<std::string, int> tiers = {
       {"canonical", 0}, {"model", 0},     {"routing", 0},   {"errors", 0},
       {"signature", 0}, {"hashing", 0},   {"telemetry", 1}, {"schema", 2},
       {"migration", 2}, {"query", 2},     {"books", 2},     {"search", 2},
-      {"documents", 2}};
+      {"documents", 2}, {"dsn", 2}};
   return tiers;
 }
 
 /// Whether this library has the capability a family goes with (section 9): `books/` book streams,
-/// `documents/` the Elasticsearch engine, and `search/` `Session.search`. Every other family goes
-/// with its tier alone.
+/// `documents/` the Elasticsearch engine, `search/` `Session.search`, and `dsn/` the orderbook
+/// engine. Every other family goes with its tier alone.
 bool capable(const std::string& family) {
   const auto adapter = [](std::string_view dialect) {
     return std::find(sde::ADAPTERS.begin(), sde::ADAPTERS.end(), dialect) != sde::ADAPTERS.end();
@@ -40,14 +40,21 @@ bool capable(const std::string& family) {
   if (family == "books") return sde::BOOK_STREAMS;
   if (family == "documents") return adapter("elasticsearch");
   if (family == "search") return sde::SEARCH;
+  if (family == "dsn") return adapter("orderbook");
   return true;
 }
 
 /// The families this suite has a runner for, each in its own file.
 const std::set<std::string>& run_here() {
-  static const std::set<std::string> families = {"canonical", "model",   "routing",   "errors",
-                                                 "signature", "hashing", "telemetry", "schema",
-                                                 "query",     "migration"};
+  static const std::set<std::string> families = [] {
+    std::set<std::string> out = {"canonical", "model",     "routing", "errors",   "signature",
+                                 "hashing",   "telemetry", "schema",  "query",    "migration"};
+    // Built with the orderbook adapter, whose DSN the family reads (tests/CMakeLists.txt).
+#ifdef SDE_CONFORMANCE_DSN
+    out.insert("dsn");
+#endif
+    return out;
+  }();
   return families;
 }
 

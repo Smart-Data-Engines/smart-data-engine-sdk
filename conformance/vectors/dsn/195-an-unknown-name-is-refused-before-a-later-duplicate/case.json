@@ -1,0 +1,8 @@
+{
+ "name": "an unknown name is refused before a later duplicate",
+ "dsn": "orderbook://ob1:9090?x=1&tls=on&tls=on",
+ "refused": {
+  "match": "the orderbook DSN parameter 'x' is unknown; it takes ca, timeout, tls and verify"
+ },
+ "why": "the parameters are read left to right"
+}

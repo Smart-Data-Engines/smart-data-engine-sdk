@@ -1,0 +1,8 @@
+{
+ "name": "an ipv4 octet with a leading zero",
+ "dsn": "orderbook://[::ffff:192.0.2.01]:9090",
+ "refused": {
+  "match": "an orderbook DSN's host is a name of letters, digits, '.', '-' and '_', or an IPv6 address in brackets"
+ },
+ "why": "some readers take 01 as octal: no octet has a leading zero"
+}

@@ -91,7 +91,7 @@ The Elasticsearch cases of `schema/` (`019` and `020`) are the other two librari
 leaves them out by name. It offers no `Session.search`, no book streams and no Elasticsearch
 adapter, so `search/`, `books/` and `documents/` are not its claim: those three go with a
 capability as well as the tier (format contract §9), and its `SEARCH`, `BOOK_STREAMS` and
-`ADAPTERS` constants say so. **The tier is the vectors, and the engines cell is separate:** an engine enters the cell when its adapter round-trips against a real
+`ADAPTERS` constants say so. It has the orderbook adapter, so it runs `dsn/`, the fourth. **The tier is the vectors, and the engines cell is separate:** an engine enters the cell when its adapter round-trips against a real
 server. The first is PostgreSQL, over libpq, in a target of its own (`sde::postgres`), so an
 application that places nothing there links no libpq and the core links no network library at all.
 Its live tests are the reference's PostgreSQL slice, ported, with every expected message captured
@@ -104,7 +104,8 @@ build has. The third is our orderbook engine, over its own text protocol on TCP 
 this library speaks itself as TypeScript does (`sde::orderbook`, over OpenSSL); the reference calls
 the engine's Python client, so its words are that client's as well as the adapter's, and both were
 captured. Its live tests are the reference's orderbook slices over TCP, plain and with credentials
-and TLS, and one book written here and read by the reference, and the other way round.
+and TLS, and one book written here and read by the reference, and the other way round. Its DSN is
+read by the contract's grammar (§7n), as every library's is, and `dsn/` holds all three to it.
 Build, requirements and use: [`cpp/README.md`](../cpp/README.md). It is not on a package registry;
 it is built from this repository.
 

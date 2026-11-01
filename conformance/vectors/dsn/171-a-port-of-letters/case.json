@@ -1,0 +1,9 @@
+{
+ "name": "a port of letters",
+ "dsn": "orderbook://app:s3cret@ob1:x",
+ "refused": {
+  "match": "an orderbook DSN's port is a number from 1 to 65535",
+  "absent": "s3cret"
+ },
+ "why": "the refusal names the port and never repeats the DSN"
+}

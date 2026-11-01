@@ -169,17 +169,18 @@ const std::vector<Position> kSixUpdatesInKeyOrder = {
 // --- connecting --------------------------------------------------------------------------------------
 
 TEST(OrderbookAdapter, ASettingThatWouldDoNothingIsRefusedAndTheSecretIsNeverSaid) {
+  // The DSN's own words (format contract 7n; every rule is a `dsn/` vector).
   EXPECT_EQ(failure_of([] { sde::OrderbookEngine("orderbook://h:1?ca=/ca.pem"); }),
-            "EngineError: tls_ca_file without tls=True verifies nothing: the connection would be "
-            "plain text");
+            "EngineError: the orderbook DSN's ca needs tls=on: without TLS it verifies nothing");
   EXPECT_EQ(failure_of([] { sde::OrderbookEngine("orderbook://h:1?verify=off"); }),
-            "EngineError: tls_verify=False without tls=True: there is no certificate to decline to "
-            "check");
-  for (const char* dsn : {"orderbook://identity:@h:1", "orderbook://two%20words:secret@h:1"}) {
-    EXPECT_TRUE(contains(failure_of([&] { sde::OrderbookEngine{dsn}; }), "two non-empty strings"));
-  }
+            "EngineError: the orderbook DSN's verify=off needs tls=on: without TLS there is no "
+            "certificate to decline to check");
+  EXPECT_TRUE(contains(failure_of([] { sde::OrderbookEngine{"orderbook://identity:@h:1"}; }),
+                       "credentials are identity:secret"));
+  EXPECT_TRUE(contains(failure_of([] { sde::OrderbookEngine{"orderbook://two%20words:secret@h:1"}; }),
+                       "identity is 1 to 64 characters"));
   EXPECT_TRUE(contains(failure_of([] { sde::OrderbookEngine("orderbook://h:1?timeout=0"); }),
-                       "timeout is a positive number of seconds"));
+                       "seconds in decimal digits, from 0.001 to 2147483.647"));
   const std::string refused =
       failure_of([] { sde::OrderbookEngine("orderbook://app:TOPSECRET@h:1?mode=x"); });
   EXPECT_FALSE(contains(refused, "TOPSECRET"));

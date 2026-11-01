@@ -1,0 +1,8 @@
+{
+ "name": "an unknown parameter",
+ "dsn": "orderbook://ob1:9090?sslmode=require",
+ "refused": {
+  "match": "the orderbook DSN parameter 'sslmode' is unknown; it takes ca, timeout, tls and verify"
+ },
+ "why": "PostgreSQL's parameter in the orderbook's DSN"
+}

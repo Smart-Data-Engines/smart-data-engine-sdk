@@ -1,0 +1,15 @@
+{
+ "name": "a port with leading zeros",
+ "dsn": "orderbook://ob1:00080",
+ "says": {
+  "host": "ob1",
+  "port": 80,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 10.0
+ },
+ "why": "digits with a value from 1 to 65535, however many zeros lead"
+}

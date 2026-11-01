@@ -1,0 +1,9 @@
+{
+ "name": "a path",
+ "dsn": "orderbook://app:s3cret@ob1:9090/var/data?mode=x",
+ "refused": {
+  "match": "an orderbook DSN has no path; local mode takes a data directory",
+  "absent": "s3cret"
+ },
+ "why": "a data directory is local mode, which takes no DSN; the path is refused before the parameters"
+}

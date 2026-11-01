@@ -1,0 +1,8 @@
+{
+ "name": "a duplicate is refused before its value",
+ "dsn": "orderbook://ob1:9090?tls=on&tls=yes",
+ "refused": {
+  "match": "the orderbook DSN gives 'tls' twice"
+ },
+ "why": "a second tls is refused for being second"
+}

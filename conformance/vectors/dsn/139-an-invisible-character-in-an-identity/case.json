@@ -1,0 +1,9 @@
+{
+ "name": "an invisible character in an identity",
+ "dsn": "orderbook://app%E2%80%8B:s3cret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's identity is 1 to 64 characters of [A-Za-z0-9_.:-], as the server's --auth-secret-file takes them",
+  "absent": "s3cret"
+ },
+ "why": "U+200B is not whitespace to Python or to JavaScript, and it is not one of the server's characters"
+}

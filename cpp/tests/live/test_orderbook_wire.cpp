@@ -5,6 +5,7 @@
 /// engine's own Python client's, which the reference puts into its messages. Needs no DSN.
 
 #include <chrono>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -13,6 +14,7 @@
 
 #include "engines/orderbook/dsn.hpp"
 #include "engines/orderbook/wire.hpp"
+#include "sde/errors.hpp"
 #include "live/orderbook_fake.hpp"
 
 namespace {
@@ -35,6 +37,8 @@ std::string failure_of(const Body& body) {
     body();
   } catch (const ob::WireError& error) {
     return error.python_class() + ": " + error.what();
+  } catch (const sde::EngineError& error) {
+    return std::string("EngineError: ") + error.what();
   }
   return "accepted";
 }
@@ -302,16 +306,25 @@ TEST(OrderbookWire, AFailureToConnectIsSaidInPythonsWords) {
   EXPECT_TRUE(unknown.starts_with("gaierror: [Errno -")) << unknown;
 }
 
-TEST(OrderbookWire, ATimeoutCPythonCannotHoldIsRefusedBeforeAnySocket) {
+TEST(OrderbookWire, ATimeoutNoSocketWaitsIsRefusedBeforeAnySocket) {
+  // Finding 29: CPython's socket refused an infinity and anything past 2^63 nanoseconds at the
+  // first connect, and Node.js cuts a timer past 2^31 - 1 milliseconds. The DSN refuses both
+  // (format contract 7n), and so does a target built field by field.
   ProtocolServer server([](Peer& peer) { (void)peer.send(sde::live::kGreeting); });
-  for (const char* timeout : {"?timeout=inf", "?timeout=9223372036.854776", "?timeout=1e300"}) {
+  for (const char* timeout : {"?timeout=inf", "?timeout=9223372036.854776", "?timeout=1e300",
+                              "?timeout=2147483.648"}) {
     SCOPED_TRACE(timeout);
     EXPECT_EQ(failure_of([&] { ob::Connection(target(server.port(), timeout)); }),
-              "OverflowError: timestamp out of range for platform time_t");
+              "EngineError: the orderbook DSN parameter 'timeout' is seconds in decimal digits, "
+              "from 0.001 to 2147483.647");
   }
+  ob::Target forever = target(server.port());
+  forever.timeout = std::numeric_limits<double>::infinity();
+  EXPECT_EQ(failure_of([&] { ob::Connection{forever}; }),
+            "EngineError: timeout is a number of seconds from 0.001 to 2147483.647");
   EXPECT_EQ(server.accepted(), 0);
-  // The largest CPython keeps opens.
-  ob::Connection largest(target(server.port(), "?timeout=9223372036.854774"));
+  // The longest every library waits opens.
+  ob::Connection longest(target(server.port(), "?timeout=2147483.647"));
   EXPECT_EQ(server.accepted(), 1);
 }
 

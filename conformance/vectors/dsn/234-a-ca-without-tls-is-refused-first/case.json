@@ -1,0 +1,8 @@
+{
+ "name": "a ca without tls is refused first",
+ "dsn": "orderbook://ob1:9090?ca=/etc/ssl/ca.pem&verify=off",
+ "refused": {
+  "match": "the orderbook DSN's ca needs tls=on: without TLS it verifies nothing"
+ },
+ "why": "the three rules in their order"
+}

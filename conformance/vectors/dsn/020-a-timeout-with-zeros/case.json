@@ -1,0 +1,15 @@
+{
+ "name": "a timeout with zeros",
+ "dsn": "orderbook://ob1:9090?timeout=007.50",
+ "says": {
+  "host": "ob1",
+  "port": 9090,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 7.5
+ },
+ "why": "decimal digits, however many zeros lead or trail"
+}

@@ -1,0 +1,8 @@
+{
+ "name": "a ca with a nul",
+ "dsn": "orderbook://ob1:9090?tls=on&ca=/etc/ca%00.pem",
+ "refused": {
+  "match": "the orderbook DSN parameter 'ca' names a file: it is not empty and holds no NUL"
+ },
+ "why": "C++ would have opened /etc/ca, the path up to the NUL"
+}

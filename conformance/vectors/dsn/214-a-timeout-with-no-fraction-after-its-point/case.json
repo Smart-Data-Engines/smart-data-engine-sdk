@@ -1,0 +1,8 @@
+{
+ "name": "a timeout with no fraction after its point",
+ "dsn": "orderbook://ob1:9090?timeout=5.",
+ "refused": {
+  "match": "the orderbook DSN parameter 'timeout' is seconds in decimal digits, from 0.001 to 2147483.647"
+ },
+ "why": "a digit after the point"
+}
