@@ -11,11 +11,12 @@ it is checked over the keys the **parser reads**, from its syntax tree. The firs
 test walked the keys of a document written in this file, which asserted something about the test and
 nothing about the library: a date field added to the parser would not have moved it.
 
-**Nothing in this library reads the wall clock in order to decide anything.** There is exactly one
-wall-clock read in the whole package, and it stamps a verification report with when it ran. Every
-other time measurement is ``perf_counter_ns``, which is a monotonic counter of nanoseconds since an
-arbitrary start: it cannot be compared to a date, so it cannot gate on one. The test asserts the
-count, so a second wall-clock read has to be justified by whoever adds it.
+**Nothing in this library reads the wall clock in order to decide anything.** There are two
+wall-clock reads in the whole package, and each stamps something with when it happened: a
+verification report with when it ran, and a book stream's update given no time with its event time.
+Every other time measurement is ``perf_counter_ns`` or ``monotonic``, counters of nanoseconds or
+seconds since an arbitrary start: they cannot be compared to a date, so they cannot gate on one. The
+test names the reads, so a third has to be justified by whoever adds it.
 
 And then the behavioural half, which is the one that catches an expiry check regardless of where
 the date came from - embedded in the map, computed from the model version, fetched from anywhere:
@@ -188,6 +189,7 @@ WALL_CLOCK = (
     "utcnow",
     "today",
     "time",
+    "time_ns",
     "gmtime",
     "localtime",
     "fromtimestamp",
@@ -201,36 +203,48 @@ use it and why this list does not name it.
 
 
 def _wall_clock_reads() -> list[tuple[str, int]]:
-    """Every place in the library that asks what time it is now."""
+    """Every place in the library that asks what time it is now, or hands on the means to ask.
+
+    A clock passed rather than called - ``wall_clock_ns=time.time_ns`` - reads the time each time
+    its receiver calls it, as ``self._wall_clock_ns()``, a name this list cannot know. Counting
+    calls alone missed one: the C++ port's guard, which reads source text, found the same clock in
+    its own book stream on 1 November 2026, and this one had passed over it since #132. So the
+    reference to a wall-clock function counts, called or not, and so does a bare call of one
+    imported by name.
+    """
     found: list[tuple[str, int]] = []
     for path in sorted(SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = (
-                node.func.attr
-                if isinstance(node.func, ast.Attribute)
-                else getattr(node.func, "id", "")
+            referenced = isinstance(node, ast.Attribute) and node.attr in WALL_CLOCK
+            called = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in WALL_CLOCK
             )
-            if name in WALL_CLOCK:
+            if referenced or called:
                 found.append((str(path.relative_to(SRC)), node.lineno))
     return found
 
 
-def test_the_library_reads_the_wall_clock_exactly_once() -> None:
-    """And what it does with it is stamp a measurement, not compare anything.
+def test_the_library_reads_the_wall_clock_only_to_stamp_what_happened() -> None:
+    """And what it does with each read is stamp something, not compare it with anything.
 
-    Pinned as a count rather than as an absence, because one read is legitimate: a verification
-    report says when it ran, and a report with no timestamp is a report nobody can put in order.
-    Pinning the count means a second read has to be argued for by whoever adds it - which is the
+    Pinned as a list rather than as an absence, because two reads are legitimate:
+    - ``migration.py``: a verification report says when it ran, and a report with no timestamp is a
+      report nobody can put in order;
+    - ``books.py``: a book stream's update the application gives no time takes the machine's clock
+      as its event time (format contract 8c), and it meets nothing but that side's last time, so
+      that a side's times never go back.
+
+    Pinning the list means a third read has to be argued for by whoever adds it - which is the
     conversation this test exists to force, since "what time is it" is the first thing an expiry
     check needs.
     """
     reads = _wall_clock_reads()
-    assert len(reads) == 1, f"the library now reads the wall clock in {reads}"
-    where, _ = reads[0]
-    assert where == "migration.py", where
+    assert sorted(where for where, _ in reads) == ["books.py", "migration.py"], (
+        f"the library now reads the wall clock in {reads}"
+    )
 
 
 def test_no_wall_clock_read_is_ever_compared_to_anything() -> None:
@@ -281,6 +295,12 @@ def test_the_detector_detects() -> None:
         in WALL_CLOCK
     ]
     assert calls, "the wall-clock matcher does not match datetime.datetime.now()"
+    passed = ast.parse("import time\ndef f(clock=time.time_ns):\n    return clock()\n")
+    assert [
+        node
+        for node in ast.walk(passed)
+        if isinstance(node, ast.Attribute) and node.attr in WALL_CLOCK
+    ], "the wall-clock matcher does not see a clock passed rather than called"
     compares = [node for node in ast.walk(tree) if isinstance(node, ast.Compare)]
     assert compares, "the comparison matcher does not match a comparison"
 

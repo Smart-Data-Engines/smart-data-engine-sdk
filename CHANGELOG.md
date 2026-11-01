@@ -8,6 +8,16 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: the wall clock decides nothing in any library, and TypeScript holds it with a test too**
+(Python, TypeScript). The promise that the library has no expiry is checked by reading the code.
+Python and C++ held it with a test, and TypeScript did not. TypeScript's orderbook wire timed its waits by
+`Date.now()`, so a wait could end at once or not for an hour when the system's clock moved. It waits
+on the monotonic clock now. `typescript/tests/no-expiry.test.ts` reads the source as TypeScript and
+names every wall-clock read with what it stamps, and finds none compared with anything. Python's guard counted
+calls by name and passed over a clock passed rather than called: the book stream's
+`wall_clock_ns=time.time_ns`, which the C++ port's guard found in its own stream. It sees one now,
+and names both reads: a verification report's stamp, and a book stream's update given no time.
+
 **Added: book streams in the C++ library** (C++; [`docs/format-contract.md`](docs/format-contract.md)
 §8c). `sde/books.hpp` has `sde::BookStream`, `sde::book_diff` and `sde::ordered_changes`, the
 reference's rules for a stream's modes, resync, depth and times, and `books/` holds them to the
