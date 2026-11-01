@@ -8,6 +8,16 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: text holds no U+0000** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §8b). PostgreSQL's `text` cannot hold U+0000,
+and ClickHouse stores it. Measured from the reference: PostgreSQL's driver refused a save holding
+one, ClickHouse kept the text, and a copy of such a group from ClickHouse to PostgreSQL stopped at
+the chunk holding it, after 2 of 5 rows. A row is refused before any engine with
+`<Entity>.<field> is string and this row gives it text holding U+0000`, and a string filter with
+`QueryRefused`. **Breaking** for an application that stored U+0000 in text on ClickHouse or
+Elasticsearch: binary data with a zero byte is `bytes`. `errors/137`-`139` and `query/029` pin it.
+Decision 44 of the C++ port.
+
 **Fixed: a temporal column keeps its field's zone** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §7a). A scan reads a value by its field's type,
 and a read by key by its column's. A hand-written layout that gave a `timestamptz` field a column

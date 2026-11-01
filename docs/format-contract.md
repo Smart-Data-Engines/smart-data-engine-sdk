@@ -1547,12 +1547,19 @@ a refusal is logged, and the value is the client's.
 | `int32`, `int64` | an integer the type holds; where every number is binary floating point, a safe integer or the host's big integer | `a value that is not an integer`, `an integer outside int32` (`int64`) |
 | `float32`, `float64` | a number, NaN and the infinities included. `float32` refuses a finite number it rounds to an infinity, or one that is not zero and that it rounds to zero | `a value that is not a number`, `a number outside float32` (and `float64`, for an integer past it where integers are unbounded) |
 | `decimal(p,s)` | an exact decimal: an integer, decimal text, or the host's decimal type; finite; at most `s` fractional digits once trailing zeros are dropped, and at most `p-s` integer digits | `a value that is not an exact decimal`, `more than <s> fractional digits`, `more than <p-s> integer digits` |
-| `string` | text of Unicode scalar values | `a value that is not text` |
+| `string` | text of Unicode scalar values other than U+0000 | `a value that is not text`, `text holding U+0000` |
 | `bytes` | the host's bytes | `a value that is not bytes` |
 | `uuid` | UUID text, 8-4-4-4-12 hexadecimal digits in either case, or the host's UUID type | `a value that is not a UUID` |
 | `date` | `YYYY-MM-DD` text of a day that exists, or the host's date type | `a value that is not a date` |
 | `timestamp`, `timestamptz` | ISO 8601 text with at most six fractional digits and an optional offset, or the host's timestamp types; UTC years 0001 to 9999 | `a value that is not a timestamp` |
 | `json` | not checked | |
+
+**Text holds no U+0000.** It is a Unicode scalar value, and PostgreSQL's `text` cannot hold it, where
+ClickHouse stores it. Measured from the reference on 1 November 2026: PostgreSQL's driver refused a
+save holding one, ClickHouse kept the text, and a copy of such a group from ClickHouse to PostgreSQL
+stopped at the chunk holding it, after 2 of 5 rows. A filter on it was refused by one engine's driver
+and answered by the other. A string filter refuses it too (`query/029`), and `errors/137`-`139` pin
+the write's refusal. Binary data that holds a zero byte is `bytes`.
 
 Decimal text has one grammar: an optional sign, digits with an optional point and fraction (or a
 point and a fraction), an optional exponent, and white space around it ignored. A binary floating
