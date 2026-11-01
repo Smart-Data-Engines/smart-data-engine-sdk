@@ -22,7 +22,7 @@ Both are checked mechanically, in this repository, by tests you can run:
 | The library has no channel louder than one INFO event | `python/tests/test_no_account.py` |
 | The TypeScript library has no output channel at all | `typescript/tests/silence.test.ts` |
 | Importing the TypeScript library resolves no driver and reaches no socket module | `typescript/tests/boundary.test.ts` — over the import closure of `src/index.ts`, because ES modules offer no registry to read at runtime |
-| Nothing in the library knows when a map was issued | `python/tests/test_no_expiry.py` |
+| Nothing in the library knows when a map was issued | `python/tests/test_no_expiry.py`, `typescript/tests/no-expiry.test.ts` and `no-expiry.live.test.ts` |
 | The wall clock is read only to stamp what happened | `python/tests/test_no_expiry.py` and `typescript/tests/no-expiry.test.ts` name every read and find none compared with anything; `cpp/tests/unit/test_invariants.cpp` names every read |
 
 The TypeScript row above is the weaker of the two mechanisms and says so. Python runs a subprocess

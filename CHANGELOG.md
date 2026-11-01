@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: TypeScript holds the whole of the no-expiry promise with tests** (TypeScript). After #164 it
+named every wall-clock read. Now it also holds the other three halves the reference holds:
+- the map parser reads no key that could hold a date, read from `placement.ts`'s syntax tree;
+- a date written into a map by hand changes nothing it routes or lays out;
+- the full operation set runs against PostgreSQL with the clock a year forward, on a hand-written,
+  unsigned map (`no-expiry.live.test.ts`).
+
 **Fixed: the wall clock decides nothing in any library, and TypeScript holds it with a test too**
 (Python, TypeScript). The promise that the library has no expiry is checked by reading the code.
 Python and C++ held it with a test, and TypeScript did not. TypeScript's orderbook wire timed its waits by
