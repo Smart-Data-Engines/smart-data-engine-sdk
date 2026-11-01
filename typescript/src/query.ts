@@ -73,11 +73,17 @@ export function countEngine(engine: object): Pick<Queryable, 'countRows'> {
   return engine as Pick<Queryable, 'countRows'>
 }
 
+/** The refusal of text holding U+0000, which a row's admission reads as its own (section 8b). */
+export const NUL_REFUSAL = 'query strings must not contain U+0000'
+
 function text(value: string): string {
   for (const character of value) {
     const point = character.codePointAt(0)!
     if (point >= 0xd800 && point <= 0xdfff) throw new QueryRefused('query strings must contain Unicode scalar values')
   }
+  // PostgreSQL cannot hold U+0000 in text, and ClickHouse can: a group holding it never moved to
+  // PostgreSQL, and a filter on it was refused by one engine and answered by the other.
+  if (value.includes('\u0000')) throw new QueryRefused(NUL_REFUSAL)
   return value
 }
 

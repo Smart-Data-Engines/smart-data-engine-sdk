@@ -236,6 +236,9 @@ Value query_value(const ReadColumn& column, const Value& value) {
     if (!is_scalar_text(*text)) {
       throw QueryRefused("query strings must contain Unicode scalar values");
     }
+    // PostgreSQL cannot hold U+0000 in text, and ClickHouse can: a group holding it never moved to
+    // PostgreSQL, and a filter on it was refused by one engine and answered by the other.
+    if (text->find('\0') != std::string::npos) throw QueryRefused(std::string(detail::kNulRefusal));
     return value;
   }
   if (kind == "uuid") {

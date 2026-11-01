@@ -1,0 +1,38 @@
+{
+  "error": "BulkWriteRefused",
+  "stage": "write",
+  "match": "row 1: Thing.note is string and this row gives it text holding U+0000",
+  "write": {
+    "accepted": {
+      "operation": "save_many",
+      "entity": "Thing",
+      "rows": [
+        {
+          "amount": 1,
+          "id": "t-1",
+          "label": "first",
+          "note": null
+        }
+      ]
+    },
+    "refused": {
+      "operation": "save_many",
+      "entity": "Thing",
+      "rows": [
+        {
+          "amount": 1,
+          "id": "t-3",
+          "label": "first",
+          "note": null
+        },
+        {
+          "amount": 1,
+          "id": "t-4",
+          "label": "first",
+          "note": "\u0000"
+        }
+      ]
+    }
+  },
+  "why": "A nullable field holds null, and U+0000 is not null. The whole batch is refused, the row that fits included, and the row is named by its position."
+}

@@ -31,7 +31,10 @@ Check as_filter(const std::string& kind, const std::string& noun) {
   return [column = ReadColumn{"", kind}, refusal = "a value that is not " + noun](const Value& value) {
     try {
       return query_value(column, value);
-    } catch (const QueryRefused&) {
+    } catch (const QueryRefused& error) {
+      // Text, but not text every engine holds: PostgreSQL refuses U+0000, and ClickHouse stored
+      // it (format contract section 8b).
+      if (std::string_view(error.what()) == kNulRefusal) throw Misfit("text holding U+0000");
       throw Misfit(refusal);
     }
   };

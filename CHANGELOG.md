@@ -15,6 +15,17 @@ after 50 requests, measured, and Node warned of a leak after eleven: memory that
 of a long-lived application. A request's listeners now come off when it ends, and a live test counts
 them after thirty requests.
 
+**Changed: text holds no U+0000** (Python, TypeScript, C++;
+[`docs/format-contract.md`](docs/format-contract.md) §8b). PostgreSQL's `text` cannot hold U+0000,
+and ClickHouse stores it. Measured from the reference: PostgreSQL's driver refused a save holding
+one, ClickHouse kept the text, and a copy of such a group from ClickHouse to PostgreSQL stopped at
+the chunk holding it, after 2 of 5 rows. A row is refused before any engine with
+`<Entity>.<field> is string and this row gives it text holding U+0000`, and a string filter with
+`QueryRefused`. **Breaking** for an application that stored U+0000 in text on ClickHouse or
+Elasticsearch: binary data with a zero byte is `bytes`. `errors/137`-`139`, `errors/143` (a point
+read's key) and `query/029` pin it.
+Decision 44 of the C++ port.
+
 **Fixed: NaN is NaN when a copy is verified, and TypeScript reads it back from ClickHouse**
 (Python, TypeScript, C++; [`docs/format-contract.md`](docs/format-contract.md) §7e, "The same
 value"). Measured on PostgreSQL 15 and ClickHouse 24.8. The reference and C++ compared a copy with
