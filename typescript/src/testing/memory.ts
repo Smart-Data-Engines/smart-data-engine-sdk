@@ -22,6 +22,7 @@ import { EngineError } from '../errors.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import type { PhysicalLayout } from '../placement.js'
 import type { Row } from '../session.js'
+import { fromEngineText, type TemporalRange } from '../temporal-range.js'
 import { Timestamp } from '../timestamp.js'
 
 /**
@@ -84,6 +85,8 @@ export interface MemoryOptions {
   readonly failInserts?: Readonly<Record<string, number>>
   readonly name?: string
   readonly journal?: Recorded
+  /** The days and instants this engine holds, as a server reports its own; the whole range if absent. */
+  readonly temporalRange?: TemporalRange | null
 }
 
 /**
@@ -140,10 +143,17 @@ export class MemoryEngine {
   private readonly watermarks: number[] = []
   private readonly markers = new Map<string, number[]>()
   private readonly failInserts = new Map<string, number>()
+  private readonly range: TemporalRange | null
+
+  /** The range a case declares (format contract 8b); `null`, the contract's whole range, otherwise. */
+  async temporalRange(): Promise<TemporalRange | null> {
+    return this.range
+  }
 
   constructor(options: MemoryOptions = {}) {
     this.dialect = options.dialect ?? 'postgres'
     this.name = options.name ?? 'engine'
+    this.range = options.temporalRange ?? null
     this.recorded = options.journal ?? new Recorded()
     for (const [name, rows] of Object.entries(options.tables ?? {})) {
       this.tables[name] = rows.map((row) => ({ ...row }))
@@ -376,6 +386,12 @@ export interface EngineSpec {
   readonly watermark?: number | null
   readonly markers?: Readonly<Record<string, number>>
   readonly fail_inserts?: Readonly<Record<string, number>>
+  readonly temporal_range?: {
+    readonly first_day: string
+    readonly last_day: string
+    readonly first_instant: string
+    readonly last_instant: string
+  }
 }
 
 /**
@@ -402,6 +418,10 @@ export function enginesFrom(
       watermark: body.watermark ?? null,
       markers: body.markers ?? {},
       failInserts: body.fail_inserts ?? {},
+      temporalRange: body.temporal_range === undefined ? null : fromEngineText(
+        body.temporal_range.first_day, body.temporal_range.last_day,
+        body.temporal_range.first_instant, body.temporal_range.last_instant,
+      ),
     })
   }
   return built

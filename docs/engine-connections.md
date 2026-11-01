@@ -69,6 +69,17 @@ No request follows an HTTP redirect or automatically replays a transport-ambiguo
 including the first version/settings request. After a lost response, inspect the uncertain outcome;
 reconnecting does not mean that replaying the write is safe. See [failure semantics](failure-semantics.md).
 
+ClickHouse closes a kept-alive connection once the keep-alive timeout it announces has passed
+since its response: `Keep-Alive: timeout=10` by default, and measured on 24.8 at 10.006 to
+10.009 s. A request sent while that close is on its way is never read, and since nothing is
+replayed it is reported as an outcome nobody knows. So each Python client has a connection pool of
+its own, and a connection is not reused once half the announced timeout has passed since the last
+response. That is 5 s by default, and 5 s when the server announces nothing. The request then goes
+on a new connection. A pool for an environment proxy is the driver's own and stays as it is. C++
+opens a connection for every request. A transport failure names the classes of its causes and none
+of their text, which carries the URL: `ClickHouse transport failed (ProtocolError <-
+RemoteDisconnected); …`.
+
 A statement travels as the body of its request, never in its URL. A URL is what a proxy or a load
 balancer in between logs, and a read's statement holds the values it filters on: a point read's
 holds its key. The URL carries the database and the request's settings. An INSERT whose rows are

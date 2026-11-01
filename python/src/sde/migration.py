@@ -88,6 +88,7 @@ from .groups import Group, colocation_groups
 from .inspection import MigrationView
 from .logging import log
 from .placement import BACKFILL_TABLE, Materialization
+from .temporal_range import TEMPORAL_KINDS, kind_noun
 from .verification import VerificationRequest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -245,6 +246,8 @@ class _Copy:
     target_id: str
     target_table: str
     write_epoch: int | None = None
+    temporal: tuple[tuple[str, str], ...] = ()
+    """The entity's date and timestamp fields, which the target's range may not hold."""
 
 
 @dataclass(frozen=True)
@@ -546,10 +549,36 @@ def _plan(session: MigrationView, group: str) -> tuple[_Copy, ...]:
                     target_id=copy.id,
                     target_table=copy.layout.table_for(entity),
                     write_epoch=placement.write_epoch,
+                    temporal=tuple(
+                        (field.name, field.type)
+                        for field in session.model.entity(entity).fields
+                        if field.type in TEMPORAL_KINDS
+                    ),
                 )
             )
     return tuple(copies)
 
+
+def _held_by_target(copy: _Copy, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse a chunk the target cannot hold, before any of it is written (format contract 8b).
+
+    ClickHouse 24.8 holds a date and a timestamp from 1900-01-01 to 2299-12-31 and moved a value
+    outside to the nearer end without an error, so a copy onto it changed the value; verification
+    found the difference only after the whole group had been copied. The target's range is the
+    server's own (``temporal_range``), and a target without one holds every value.
+    """
+    span = getattr(copy.target, "temporal_range", None) if copy.temporal else None
+    if span is None:
+        return
+    for row in rows:
+        for field, kind in copy.temporal:
+            value = row.get(field)
+            if value is not None and not span.holds(kind, value):
+                raise MigrationRefused(
+                    f"{copy.target_engine} holds {kind_noun(kind)} {span.describe()}, and a row of "
+                    f"{copy.entity} gives {field} one outside it, so this chunk was not copied. "
+                    f"A copy onto it would change the value without an error."
+                )
 
 def _shapes_agree(
     group: str, entity: str, source: Materialization, target: Materialization
@@ -637,6 +666,7 @@ def _backfill_one(
         payload = rows if copy.write_epoch is None else [
             {**_logical_copy_row(copy, row), EPOCH_COLUMN: copy.write_epoch} for row in rows
         ]
+        _held_by_target(copy, rows)
         copy.target.copy_in(copy.target_table, payload)
         marker += len(rows)
         copy.target.record_backfill_marker(

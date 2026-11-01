@@ -215,7 +215,7 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
       {"text", std::string("Zürich, it's \"quoted\", a `tick`, a \\ back\tand\na line")},
       {"flag", true},
       {"uid", *sde::Uuid::parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")},
-      {"day", *sde::Date::parse("0001-01-01")},
+      {"day", *sde::Date::parse("1900-01-01")},
       {"wall", *sde::Timestamp::parse("2026-10-07T12:34:56.123456")},
       {"at", *sde::TimestampTz::parse("2026-10-07T12:34:56.654321+02:00")},
   };
@@ -231,15 +231,27 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
   session.save("Probe", empty);
   EXPECT_EQ(session.get("Probe", {{"id", std::int64_t{2}}}), empty);
 
-  // Dates and moments outside the range ClickHouse prints and parses as text, 1900 to 2299: in
-  // binary, as the reference's driver writes them, they are the values they were.
+  // The ends of the range the server holds (format contract 8b): ClickHouse 24.8 holds Date32 and
+  // DateTime64 from 1900-01-01 to 2299-12-31, 26.9 the contract's whole range. Outside 24.8's, a
+  // binary write kept the raw value and the server's own toString read it as another date, so
+  // the session refuses it there, and the ends the server does hold are the values they were.
+  const std::optional<sde::TemporalRange> span = ch->temporal_range();
   sde::Row edges = written;
   edges["id"] = std::int64_t{5};
-  edges["day"] = *sde::Date::parse("9999-12-31");
-  edges["wall"] = *sde::Timestamp::parse("0001-01-01T00:00:00.000001");
-  edges["at"] = *sde::TimestampTz::parse("9999-12-31T23:59:59.999999Z");
+  edges["day"] = *sde::Date::parse(span ? "2299-12-31" : "9999-12-31");
+  edges["wall"] =
+      *sde::Timestamp::parse(span ? "1900-01-01T00:00:00.000001" : "0001-01-01T00:00:00.000001");
+  edges["at"] =
+      *sde::TimestampTz::parse(span ? "2299-12-31T23:59:59.999999Z" : "9999-12-31T23:59:59.999999Z");
   session.save("Probe", edges);
   EXPECT_EQ(session.get("Probe", {{"id", std::int64_t{5}}}), edges);
+  if (span.has_value()) {
+    sde::Row outside = edges;
+    outside["id"] = std::int64_t{6};
+    outside["day"] = *sde::Date::parse("9999-12-31");
+    EXPECT_THROW(session.save("Probe", outside), sde::EngineError);
+    EXPECT_FALSE(session.get("Probe", {{"id", std::int64_t{6}}}).has_value());
+  }
 
   // NaN and the infinities, both ways.
   sde::Row floats{{"id", std::int64_t{3}},
@@ -267,6 +279,63 @@ TEST_F(ClickHouseLive, EveryNeutralTypeClickHouseHoldsRoundTripsThroughARealServ
   ASSERT_TRUE(widened.has_value());
   EXPECT_EQ(std::get<double>(widened->at("f32")), static_cast<double>(1.1F));
   EXPECT_NE(std::get<double>(widened->at("f32")), 1.1);
+}
+
+TEST_F(ClickHouseLive, TheServerSaysTheDaysItHoldsAndAValueOutsideThemNeverReachesIt) {
+  // Format contract 8b. ClickHouse 24.8 holds Date32 and DateTime64 from 1900-01-01 to 2299-12-31
+  // and moved 1800-01-01 to 1900-01-01 without an error; 26.9 holds the contract's whole range. What
+  // the test expects is the server's, and CI runs the live slices on both.
+  const ClickHouseScope scope(dsn_);
+  const sde::Model model = sde::load_neutral_model(R"json({"entities": [{"name": "Visit", "fields": [
+      {"name": "id", "type": "int32"}, {"name": "on", "type": "date"},
+      {"name": "at", "type": "timestamptz"}], "key": ["id"]}]})json");
+  const sde::PlacementMap map = auto_map(model);
+  const auto ch = engine(scope.dsn());
+  sde::Session session(model, map, {{"ch", ch.get()}});
+  session.ensure_schema();
+  const std::optional<sde::TemporalRange> span = ch->temporal_range();
+  // The adapter's report against the server's own answer, read on another connection. A binary
+  // write and read round-trip 1800-01-01 even on 24.8, so the rest of this test alone could not
+  // tell a range reported whole from one that is.
+  const std::vector<sde::Json> answer = scope.admin().rows(
+      "SELECT toString(toDate32('0001-01-01')) AS first_day, "
+      "toString(toDate32('9999-12-31')) AS last_day");
+  ASSERT_EQ(answer.size(), 1U);
+  EXPECT_EQ(span.has_value(), answer[0].find("first_day")->as_string() != "0001-01-01");
+  if (span.has_value()) {
+    EXPECT_EQ(span->describe(), "from " + answer[0].find("first_day")->as_string() + " to " +
+                                    answer[0].find("last_day")->as_string());
+  }
+  // Both ends of the narrower range are held wherever the server stands.
+  const sde::Row ends{{"id", std::int64_t{1}},
+                      {"on", sde::Date("1900-01-01")},
+                      {"at", sde::TimestampTz("2299-12-31T23:59:59.999999Z")}};
+  session.save("Visit", ends);
+  const std::optional<sde::Row> held = session.get("Visit", {{"id", std::int64_t{1}}});
+  ASSERT_TRUE(held.has_value());
+  EXPECT_EQ(held->at("on"), ends.at("on"));
+  EXPECT_EQ(held->at("at"), ends.at("at"));
+  const sde::Row before{{"id", std::int64_t{2}},
+                        {"on", sde::Date("1800-01-01")},
+                        {"at", sde::TimestampTz("2026-10-07T00:00:00Z")}};
+  if (!span.has_value()) {
+    session.save("Visit", before);
+    const std::optional<sde::Row> back = session.get("Visit", {{"id", std::int64_t{2}}});
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(back->at("on"), before.at("on"));
+  } else {
+    EXPECT_EQ(span->describe(), "from 1900-01-01 to 2299-12-31");
+    try {
+      session.save("Visit", before);
+      ADD_FAILURE() << "a date the server would have moved was sent";
+    } catch (const sde::EngineError& refused) {
+      EXPECT_EQ(std::string(refused.what()),
+                "ch holds a date from 1900-01-01 to 2299-12-31, and this row gives Visit.on one "
+                "outside it; nothing was sent");
+    }
+    EXPECT_FALSE(session.get("Visit", {{"id", std::int64_t{2}}}).has_value());
+  }
+  EXPECT_EQ(ch->temporal_range().has_value(), span.has_value()) << "read once per connection";
 }
 
 TEST_F(ClickHouseLive, AValueTheColumnCannotHoldIsRefusedNeverChanged) {

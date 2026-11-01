@@ -15,6 +15,33 @@ after 50 requests, measured, and Node warned of a leak after eleven: memory that
 of a long-lived application. A request's listeners now come off when it ends, and a live test counts
 them after thirty requests.
 
+**Fixed: a ClickHouse request is not sent on a connection the server is closing, and a transport
+failure names its causes** (Python). ClickHouse closes a kept-alive connection once the
+keep-alive timeout it announces has passed since its response: 10 s by default, and measured on
+24.8 at 10.006 to 10.009 s. A request sent while that close was on its way was never read, and
+since nothing is replayed it failed with
+`ClickHouse transport failed; the operation was not replayed and its outcome may be unknown`: 3 of
+360 requests sent within 30 ms of the edge did. Clients without a CA of their own shared the
+driver's default pool, so a client connecting after a pause took a connection another one had left
+idle. Each client has a pool of its own now, from the driver's factory. A connection is not reused
+once half the announced timeout has passed since the last response, or 5 s when none is announced:
+the request goes on a new connection, and nothing is replayed. A transport failure names the
+classes of its causes, outermost first, and none of their text, which carries the URL:
+`ClickHouse transport failed (ProtocolError <- RemoteDisconnected); …`. So does a connection the
+driver could not open.
+
+**Fixed: a day or an instant outside the server's range is refused before it is sent** (Python,
+TypeScript, C++; [`docs/format-contract.md`](docs/format-contract.md) §8b, "A day or an instant an
+engine holds"). ClickHouse 24.8 holds `Date32` and `DateTime64` from 1900-01-01 to 2299-12-31, and
+moved a value outside to the nearer end without an error: 1800-01-01 was stored as 1900-01-01, and
+2500-06-01 12:00 as 2299-12-31 12:00. ClickHouse 26.9 holds the contract's whole range. Each
+ClickHouse adapter reads its server's range once per connection (`temporal_range`,
+`temporalRange()`). A session refuses, with `EngineError`, a row outside the range of any engine its
+write goes to, the `also_write` copies included, before writing to any. A migration refuses a chunk
+its target cannot hold (`MigrationRefused`), where verification found the change only after the
+whole group had been copied. `errors/140`-`142` pin it, with an engine set that declares 24.8's
+range. Decision 43 of the C++ port.
+
 **Changed: text holds no U+0000** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8b). PostgreSQL's `text` cannot hold U+0000,
 and ClickHouse stores it. Measured from the reference: PostgreSQL's driver refused a save holding
