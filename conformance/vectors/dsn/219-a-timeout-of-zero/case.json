@@ -1,0 +1,8 @@
+{
+ "name": "a timeout of zero",
+ "dsn": "orderbook://ob1:9090?timeout=0",
+ "refused": {
+  "match": "the orderbook DSN parameter 'timeout' is seconds in decimal digits, from 0.001 to 2147483.647"
+ },
+ "why": "Node.js's socket.setTimeout(0) waits forever"
+}

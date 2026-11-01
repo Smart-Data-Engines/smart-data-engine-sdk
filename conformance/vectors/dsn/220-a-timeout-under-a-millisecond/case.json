@@ -1,0 +1,8 @@
+{
+ "name": "a timeout under a millisecond",
+ "dsn": "orderbook://ob1:9090?timeout=0.0009",
+ "refused": {
+  "match": "the orderbook DSN parameter 'timeout' is seconds in decimal digits, from 0.001 to 2147483.647"
+ },
+ "why": "TypeScript's socket would wait a millisecond rather than as asked"
+}

@@ -1,0 +1,8 @@
+{
+ "name": "a timeout past the longest",
+ "dsn": "orderbook://ob1:9090?timeout=2147483.648",
+ "refused": {
+  "match": "the orderbook DSN parameter 'timeout' is seconds in decimal digits, from 0.001 to 2147483.647"
+ },
+ "why": "Node.js cuts a longer timer to 2^31 - 1 milliseconds"
+}

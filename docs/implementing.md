@@ -668,18 +668,21 @@ speak the protocol at all - it calls the engine's Python client - so for this ad
 reference is two programs**: the adapter, whose decisions and words this one ports, and the client
 it calls, whose framing, timeouts and words the adapter puts into its own messages (`query failed:
 …: TCP recv timeout`). Both were read at the engine commit the CI job pins, and every expected text
-was captured from them: the DSN against the reference's parser on 280,000 generated DSNs, the
-answer and STATUS parsing against the client's own functions, the connection failures - TLS among
-them - against the reference connecting to the same servers. What whoever writes the next one
-needs:
+was captured from them: the answer and STATUS parsing against the client's own functions, the
+connection failures - TLS among them - against the reference connecting to the same servers. The DSN
+was too, on 280,000 generated DSNs against the reference's parser, until the contract gave it a
+grammar of its own (below). What whoever writes the next one needs:
 
-- **the DSN's numbers are Python's.** The timeout is `float()` of text and the client reads every
-  number of an answer with `int()`, so `1_0` is ten seconds, an Arabic-Indic three is three, `inf`
-  is accepted, and U+001C to U+001F - which `str.isspace()` calls whitespace - are not stripped,
-  because `float()` strips C's whitespace once Python's has become a space. A port that reads them
-  with its own parser agrees on every DSN a person writes and disagrees on the ones a generator
-  writes; this one disagreed twice before the differential found it, the second time on a
-  four-hundred-digit mantissa no corpus had;
+- **the DSN is the contract's grammar, not a URL parser's** (§7n, `dsn/`). Until 31 October 2026
+  it was Python's: the timeout was `float()` of text, so `1_0` was ten seconds, an Arabic-Indic
+  three was three and `inf` was accepted. TypeScript read it with WHATWG's URL parser and
+  `Number()`, which disagreed on all three and turned the host `0x7f.1` into `127.0.0.1`. A port
+  that emulated the reference agreed on every DSN a person writes and disagreed on the ones a
+  generator writes; this one did twice before a differential found it, the second time on a
+  four-hundred-digit mantissa no corpus had. Read the grammar rule by rule in the contract's
+  order, by byte, with ASCII's character classes and never a locale's;
+- **the numbers of an answer are Python's.** The client reads every one with `int()`, which this
+  library reproduces, checked against CPython;
 - **every wait is bounded by silence, not by the answer.** The client sets one socket timeout, so a
   slow answer that keeps arriving is waited for. TypeScript bounds each answer as a whole;
 - **an exchange that does not finish closes the connection, and the reason is kept.** The rest of
@@ -692,9 +695,9 @@ needs:
   was unknown. This library refuses it first, as TypeScript does, and as the reference does since
   #122;
 - **the client's limits are not the contract's.** It opens IPv4 sockets only, so a DSN with an IPv6
-  address that its parser accepts cannot connect, and a timeout its parser accepts can still be one
-  CPython cannot wait for, refused only at connect. This library connects to either family and
-  reproduces the second, which is a rule for the DSN in every library;
+  address cannot connect through it. This library connects to either family. A timeout that CPython
+  cannot wait for was the second limit, refused only at connect; the DSN refuses it now in every
+  library (§7n);
 - **TLS refusals are CPython's words without CPython's line.** `[SSL: CERTIFICATE_VERIFY_FAILED]
   certificate verify failed: Hostname mismatch, certificate is not valid for 'host'.`, an end of the
   stream inside the handshake as `EOF occurred in violation of protocol`, a reset as the socket's
@@ -765,3 +768,15 @@ value marked `{"$int": "..."}` is an integer past 2^53: carry it as one, not as 
 fails on its timestamp, its int64 and its decimal. Then `schema/019` and `020` hold the mapping you
 render. The adapter itself is the next step: one index per entity, writes that wait for a refresh,
 and reads that send no text predicate the engine would interpret.
+
+**16. The orderbook DSN (Tier 2, with the orderbook engine). Vectors: `dsn/`.**
+
+A function of one line of text, so no engine: read it by the ten rules of §7n, in their order,
+and compare what it says field by field, the timeout as a double. Write the rules yourself rather
+than handing the DSN to your language's URL parser: every parser we tried disagrees with the others
+on a DSN written by hand, which is why the grammar exists. Three cases carry most of the risk.
+`007` keeps the host `0x7f.1` as written, where a WHATWG parser makes it an address. `026` keeps a
+byte order mark that leads a secret, which some UTF-8 decoders drop by default. And `211`-`226` are
+timeouts your number parser would read, from `inf` to an underscore or a digit beyond ASCII: test
+the digits with your own pattern before any parser sees them. A refusal names the part that is
+wrong and never contains the secret; each case that has one says so.

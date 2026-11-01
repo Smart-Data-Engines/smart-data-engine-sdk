@@ -1,0 +1,8 @@
+{
+ "name": "a signed port",
+ "dsn": "orderbook://ob1:+1",
+ "refused": {
+  "match": "an orderbook DSN's port is a number from 1 to 65535"
+ },
+ "why": "digits only"
+}

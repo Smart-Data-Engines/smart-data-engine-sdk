@@ -1,0 +1,8 @@
+{
+ "name": "a name in another case",
+ "dsn": "orderbook://ob1:9090?Tls=on",
+ "refused": {
+  "match": "the orderbook DSN parameter 'Tls' is unknown; it takes ca, timeout, tls and verify"
+ },
+ "why": "names are exact"
+}
