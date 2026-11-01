@@ -170,6 +170,21 @@ TEST(OrderbookBooks, AStreamForABookWhoseNameAWriteWouldRefuseIsRefusedAtOnce) {
             "accepted");
 }
 
+TEST(OrderbookBooks, ABookIsPutInOrderHereWhateverOrderTheEngineAnswersIn) {
+  // The engine answers a composed book in an order no contract promises: each side is put best
+  // first here, by level, as the reference does.
+  Books rig;
+  rig.fake.book_at_answer(
+      "42\t101\t1\t1\t1\t1\t7\n"   // ask, level 1
+      "42\t100\t5\t1\t0\t0\t7\n"   // bid, level 0
+      "42\t98\t1\t1\t0\t2\t7\n"    // bid, level 2
+      "42\t100\t2\t1\t1\t0\t7\n"   // ask, level 0
+      "42\t99\t3\t1\t0\t1\t7\n");  // bid, level 1
+  const sde::Book read = rig.engine->book_at(kTable, "BTCUSDT", "binance", 42, {});
+  EXPECT_EQ(read.bid, (std::vector<BookLevel>{{100, 5, 1}, {99, 3, 1}, {98, 1, 1}}));
+  EXPECT_EQ(read.ask, (std::vector<BookLevel>{{100, 2, 1}, {101, 1, 1}}));
+}
+
 TEST(OrderbookBooks, ABookAsOfAMomentIsRecordedAsARangeReadOfTheEntitysTime) {
   // A book is its history up to an instant: a range read over `timestamp_ns`, filtered on the
   // symbol and the exchange, as the reference records it.

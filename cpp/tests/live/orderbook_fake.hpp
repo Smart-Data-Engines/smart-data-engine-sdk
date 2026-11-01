@@ -309,6 +309,12 @@ class FakeOrderbook {
     const std::lock_guard<std::mutex> lock(mutex_);
     capabilities_ = std::move(text);
   }
+  /// The answer to a book as of a moment (`WHERE AT`), which the fake does not compose: given here
+  /// as the engine's rows, in whatever order a test wants them. Without one, the book is not there.
+  void book_at_answer(std::string rows) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    at_answer_ = std::move(rows);
+  }
   /// Client authentication, as `--auth-secret-file` gives it.
   void require_auth(std::string identity, std::string secret) {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -542,6 +548,11 @@ class FakeOrderbook {
     static const std::regex at(R"(^SELECT \* FROM '([^']+)'\.'([^']+)' WHERE AT \d+(?: AND level < \d+)?$)");
     std::smatch book;
     if (std::regex_match(line, book, at)) {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      if (at_answer_) {
+        return "OK\ntimestamp_ns\tprice\tquantity\torder_count\tside\tlevel\tsequence_number\n" +
+               *at_answer_ + "\n";
+      }
       return "ERR OB_ERR_NOT_FOUND: symbol '" + book[1].str() + "' exchange '" + book[2].str() +
              "' not found\n";
     }
@@ -591,6 +602,7 @@ class FakeOrderbook {
 
   mutable std::mutex mutex_;
   std::string capabilities_ = "insert_event_time,strict_args,backup";
+  std::optional<std::string> at_answer_;
   std::optional<std::pair<std::string, std::string>> auth_;
   std::set<int> refuse_;
   int drop_on_ = -1;

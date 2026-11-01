@@ -1,0 +1,80 @@
+{
+ "kind": "stream",
+ "name": "more changes than one update carries send the side whole",
+ "mode": "incremental",
+ "resync": {
+  "updates": 0,
+  "seconds": 0
+ },
+ "max_levels": 2,
+ "steps": [
+  {
+   "at": 0,
+   "op": "update",
+   "side": "bid",
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ],
+   "ts": 10
+  },
+  {
+   "at": 1,
+   "op": "apply",
+   "side": "bid",
+   "levels": [
+    [98, 1, 1]
+   ],
+   "ts": 20
+  },
+  {
+   "at": 2,
+   "op": "apply",
+   "side": "bid",
+   "levels": [
+    [97, 1, 1],
+    [96, 1, 1],
+    [95, 1, 1]
+   ],
+   "ts": 30
+  }
+ ],
+ "sent": [
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 10,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  },
+  {
+   "kind": "changes",
+   "side": "bid",
+   "ts": 20,
+   "levels": [
+    [98, 1, 1]
+   ]
+  },
+  {
+   "kind": "whole",
+   "side": "bid",
+   "ts": 30,
+   "levels": [
+    [100, 5, 1],
+    [99, 3, 1]
+   ]
+  }
+ ],
+ "book": {
+  "bid": [
+   [100, 5, 1],
+   [99, 3, 1],
+   [98, 1, 1],
+   [97, 1, 1],
+   [96, 1, 1],
+   [95, 1, 1]
+  ]
+ }
+}
