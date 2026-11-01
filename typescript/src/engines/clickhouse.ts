@@ -229,8 +229,9 @@ export class ClickHouseEngine {
 
   async close(): Promise<void> {
     return this.usage.operation(async () => {
-      // Nothing to close: every request is its own HTTP exchange on an agent this adapter does not
-      // keep alive. Present so that the shape matches the other adapter - a caller writing
+      // Nothing to close: every request is its own HTTP exchange on Node's global agent, which this
+      // adapter does not own - the agent keeps its sockets alive from Node 19, and closes them as it
+      // closes any other. Present so that the shape matches the other adapter - a caller writing
       // `close()` in a `finally` should not have to know which engine they have.
       this.open = false
       // A server may be upgraded between two connections, and its range with it.
@@ -356,10 +357,19 @@ export class ClickHouseEngine {
           Math.ceil(this.target.connect_timeout * 1000))
         const connected = (): void => { clearTimeout(connecting) }
         req.on('socket', (socket) => {
+          const established = this.target.secure ? 'secureConnect' : 'connect'
           if ((!this.target.secure && !socket.connecting) ||
             (this.target.secure && (socket as TLSSocket).authorized === true)) connected()
-          else socket.once(this.target.secure ? 'secureConnect' : 'connect', connected)
+          else socket.once(established, connected)
           socket.once('error', connected)
+          // A keep-alive socket outlives the request - Node's global agent keeps sockets alive from
+          // Node 19 - so what this request put on it comes off with it. Left on, one listener per
+          // request piled up on the socket: 52 after 50 requests, measured on 31 October 2026, and
+          // Node warned of a leak after eleven.
+          req.once('close', () => {
+            socket.removeListener('error', connected)
+            socket.removeListener(established, connected)
+          })
         })
         req.once('close', connected)
         req.on('error', (error) => { connected(); reject(error) })
