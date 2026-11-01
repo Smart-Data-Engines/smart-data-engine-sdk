@@ -1,0 +1,8 @@
+{
+ "name": "a percent-encoded host",
+ "dsn": "orderbook://ob%2D1:9090",
+ "refused": {
+  "match": "an orderbook DSN's host is a name of letters, digits, '.', '-' and '_', or an IPv6 address in brackets"
+ },
+ "why": "a host is not decoded: it is written as the resolver reads it"
+}

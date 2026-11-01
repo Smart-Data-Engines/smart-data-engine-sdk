@@ -113,14 +113,6 @@ bool wait(int fd, short events, double seconds) {
   }
 }
 
-/// `sock.settimeout(timeout)`: CPython keeps a timeout as int64 nanoseconds, rounded up, and refuses
-/// one past them in these words before any socket connects.
-void check_timeout(double seconds) {
-  if (!(std::ceil(seconds * 1e9) < 9223372036854775808.0)) {
-    throw WireError("timestamp out of range for platform time_t", "OverflowError");
-  }
-}
-
 /// An IPv4 or IPv6 address as text, which `a2i_IPADDRESS` reads: no SNI for it, and its own check.
 bool ip_literal(const std::string& host) {
   in6_addr address{};
@@ -205,9 +197,7 @@ bool regular_file(const std::string& path) {
 Context tls_context(const Target& target) {
   if (!target.tls) return nullptr;
   const auto refused = [](const std::string& text) { return WireError(text, "OrderbookTlsError"); };
-  if (target.ca && !target.verify) {
-    throw refused("tls_ca_file is set with tls_verify=False: a trust anchor nothing consults");
-  }
+  // A CA file with verification declined never reaches here: `check_target` refuses it first.
   if (target.ca && !regular_file(*target.ca)) {
     throw refused("tls_ca_file " + python_repr(*target.ca) + " is not a readable file");
   }
@@ -638,9 +628,12 @@ std::string auth_digest(std::string_view identity, std::string_view secret, std:
 
 Connection::Connection(const Target& target)
     : target_(target), where_(target.host + ":" + std::to_string(target.port)) {
+  // A target is held to the DSN's rules before anything is read or opened, however it was built
+  // (contract 7n): a timeout no socket can wait was refused by the first socket until 31 October
+  // 2026, and a CA file with verification declined by the TLS context, in other words.
+  check_target(target_);
   const Context context = tls_context(target_);
   // The handshake: one exchange with no connection before it, so a failure leaves nothing open.
-  check_timeout(target_.timeout);
   stream_ = std::make_unique<Stream>(target_, context.get(), where_);
   read_greeting();
   if (target_.auth) authenticate();

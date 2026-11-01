@@ -1,0 +1,8 @@
+{
+ "name": "a switch in capitals",
+ "dsn": "orderbook://ob1:9090?tls=ON",
+ "refused": {
+  "match": "the orderbook DSN parameter 'tls' is on or off"
+ },
+ "why": "exactly on or off"
+}

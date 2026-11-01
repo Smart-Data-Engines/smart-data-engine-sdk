@@ -1,0 +1,15 @@
+{
+ "name": "the longest timeout",
+ "dsn": "orderbook://ob1:9090?timeout=2147483.647",
+ "says": {
+  "host": "ob1",
+  "port": 9090,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 2147483.647
+ },
+ "why": "2^31 - 1 milliseconds, the longest a Node.js timer waits as asked"
+}

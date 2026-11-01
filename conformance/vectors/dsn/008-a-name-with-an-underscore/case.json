@@ -1,0 +1,15 @@
+{
+ "name": "a name with an underscore",
+ "dsn": "orderbook://ob_primary:9090",
+ "says": {
+  "host": "ob_primary",
+  "port": 9090,
+  "identity": null,
+  "secret": null,
+  "tls": false,
+  "ca": null,
+  "verify": true,
+  "timeout": 10.0
+ },
+ "why": "a container's name may hold one, and the resolver takes it"
+}

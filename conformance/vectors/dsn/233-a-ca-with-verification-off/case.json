@@ -1,0 +1,8 @@
+{
+ "name": "a ca with verification off",
+ "dsn": "orderbook://ob1:9090?tls=on&verify=off&ca=/etc/ssl/ca.pem",
+ "refused": {
+  "match": "the orderbook DSN's ca with verify=off is a trust anchor nothing consults"
+ },
+ "why": "Python refused it at connect, in its engine client's words, and TypeScript at fromDsn: finding 32"
+}

@@ -1,0 +1,8 @@
+{
+ "name": "a surrogate in a secret",
+ "dsn": "orderbook://app:%ED%A0%80@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's secret is percent-encoded UTF-8"
+ },
+ "why": "an encoded surrogate is not UTF-8"
+}

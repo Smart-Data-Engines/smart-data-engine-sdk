@@ -1,0 +1,9 @@
+{
+ "name": "a timeout that is a word",
+ "dsn": "orderbook://app:s3cret@ob1:9090?timeout=soon",
+ "refused": {
+  "match": "the orderbook DSN parameter 'timeout' is seconds in decimal digits, from 0.001 to 2147483.647",
+  "absent": "s3cret"
+ },
+ "why": "the refusal quotes neither the value nor the secret"
+}

@@ -1,0 +1,9 @@
+{
+ "name": "another scheme",
+ "dsn": "postgresql://app:s3cret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN starts with orderbook://",
+  "absent": "s3cret"
+ },
+ "why": "a DSN for another engine in the orderbook's variable"
+}

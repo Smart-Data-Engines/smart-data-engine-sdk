@@ -1,0 +1,15 @@
+{
+ "name": "every part",
+ "dsn": "orderbook://trading-app:p+ss%20w%3Ard@ob1.internal:9443/?tls=on&ca=/etc/ssl/ca.pem&verify=on&timeout=2.5",
+ "says": {
+  "host": "ob1.internal",
+  "port": 9443,
+  "identity": "trading-app",
+  "secret": "p+ss w:rd",
+  "tls": true,
+  "ca": "/etc/ssl/ca.pem",
+  "verify": true,
+  "timeout": 2.5
+ },
+ "why": "the secret is percent-decoded and a + in it is itself: only a parameter is read as a form"
+}

@@ -1,0 +1,8 @@
+{
+ "name": "an ipv6 zone",
+ "dsn": "orderbook://[fe80::1%25eth0]:9090",
+ "refused": {
+  "match": "an orderbook DSN's host is a name of letters, digits, '.', '-' and '_', or an IPv6 address in brackets"
+ },
+ "why": "Python accepted a zone and connected nowhere; no library takes one"
+}

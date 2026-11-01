@@ -1,0 +1,8 @@
+{
+ "name": "an infinite timeout",
+ "dsn": "orderbook://ob1:9090?timeout=inf",
+ "refused": {
+  "match": "the orderbook DSN parameter 'timeout' is seconds in decimal digits, from 0.001 to 2147483.647"
+ },
+ "why": "Python's float() read it, and connect() failed on the first socket: finding 29"
+}

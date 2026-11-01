@@ -103,13 +103,13 @@ jobs:
 
       - name: lint
         working-directory: python
-        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/value_vectors.py ../conformance/tools/zone_vectors.py
+        run: ruff check --config pyproject.toml src tests ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/value_vectors.py ../conformance/tools/zone_vectors.py ../conformance/tools/dsn_vectors.py
 
       - name: types
         working-directory: python
         # Not decoration: several guarantees in this design are enforced by types rather than by
         # runtime checks, so a weakened annotation is a deleted guarantee.
-        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/value_vectors.py ../conformance/tools/zone_vectors.py
+        run: mypy src tests/qualification ../tools ../examples/trading/trading.py ../examples/book-stream/book_stream.py ../conformance/tools/verification_vectors.py ../conformance/tools/fencing_vectors.py ../conformance/tools/generation_vectors.py ../conformance/tools/frozen_vectors.py ../conformance/tools/nfc_map_vectors.py ../conformance/tools/cutover_vectors.py ../conformance/tools/staging_vectors.py ../conformance/tools/index_vectors.py ../conformance/tools/physical_vectors.py ../conformance/tools/physical_packet_vectors.py ../conformance/tools/telemetry_vectors.py ../conformance/tools/unfenced_vectors.py ../conformance/tools/write_vectors.py ../conformance/tools/search_vectors.py ../conformance/tools/elasticsearch_vectors.py ../conformance/tools/books_vectors.py ../conformance/tools/value_vectors.py ../conformance/tools/zone_vectors.py ../conformance/tools/dsn_vectors.py
 
       - name: start Elasticsearch
         # The engine behind Session.search's text index (format contract 7m). Started with its own
@@ -816,6 +816,12 @@ jobs:
         # the generator rather than computed by a library, and this fails on a vector that differs
         # from it, or a case directory it no longer writes.
         run: python3 -I conformance/tools/books_vectors.py --check
+
+      - name: the dsn vectors are what their generator writes
+        # dsn/: the orderbook engine's DSN (section 7n). Every expectation is written out by hand in
+        # the generator, from the contract, and this fails on a vector that differs from it or a
+        # case directory it no longer writes.
+        run: python3 -I conformance/tools/dsn_vectors.py --check
 
       - name: the search vectors are what the rule derives
         # The search/ family, and the routing and error cases it adds, are written by the reference

@@ -1,0 +1,8 @@
+{
+ "name": "verification off without tls",
+ "dsn": "orderbook://ob1:9090?verify=off",
+ "refused": {
+  "match": "the orderbook DSN's verify=off needs tls=on: without TLS there is no certificate to decline to check"
+ },
+ "why": "there is no certificate to decline to check"
+}

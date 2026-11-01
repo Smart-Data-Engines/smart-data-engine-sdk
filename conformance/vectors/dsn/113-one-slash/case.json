@@ -1,0 +1,8 @@
+{
+ "name": "one slash",
+ "dsn": "orderbook:/ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN starts with orderbook://"
+ },
+ "why": "the scheme is orderbook:// whole"
+}

@@ -58,8 +58,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
+from math import isfinite
 from typing import Any
-from urllib.parse import parse_qsl, unquote, urlsplit
 
 from ..errors import EngineError
 from ..explain import QueryPlan
@@ -68,6 +68,7 @@ from ..layout import ORDERBOOK_KEY, ORDERBOOK_NULLABLE, ORDERBOOK_SHAPE, ORDERBO
 from ..logging import log
 from ..placement import PhysicalLayout
 from ..query import QueryRefused, ReadPlan
+from ._orderbook_dsn import IDENTITY, LONGEST_TIMEOUT, SHORTEST_TIMEOUT, parse_dsn
 
 __all__ = ["OrderbookEngine"]
 
@@ -346,10 +347,6 @@ def _scan_of(plan: ReadPlan) -> _Scan | None:
     )
 
 
-_DSN_PARAMETERS = frozenset({"tls", "ca", "verify", "timeout"})
-_SWITCH = {"on": True, "off": False}
-
-
 class OrderbookEngine:
     """A thin adapter over the orderbook engine's Python client.
 
@@ -396,8 +393,13 @@ class OrderbookEngine:
                 "two are different deployments with different durability, and defaulting to one of "
                 "them would pick a durability guarantee on the client's behalf."
             )
-        if host is not None and port is None:
-            raise EngineError("a host needs a port; this engine has no default port worth guessing")
+        if host is not None and (
+            isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+        ):
+            raise EngineError(
+                "a host needs a port from 1 to 65535; this engine has no default port worth "
+                "guessing"
+            )
         if data_dir is not None and (
             auth is not None or tls or tls_ca_file is not None or tls_verify is not True
         ):
@@ -410,11 +412,14 @@ class OrderbookEngine:
             not isinstance(auth, tuple)
             or len(auth) != 2
             or not all(isinstance(part, str) and part for part in auth)
-            or any(character.isspace() for character in auth[0])
+            or IDENTITY.fullmatch(auth[0]) is None
         ):
+            # The server's identities (format contract 7n): one outside them can never authenticate,
+            # and the identity is sent on the wire, where a space would end it.
             raise EngineError(
-                "auth is (identity, secret): two non-empty strings, the identity without "
-                "whitespace, as in the server's --auth-secret-file"
+                "auth is (identity, secret): an identity of 1 to 64 characters of "
+                "[A-Za-z0-9_.:-], as the server's --auth-secret-file takes them, and a non-empty "
+                "secret"
             )
         if tls_ca_file is not None and not tls:
             raise EngineError("tls_ca_file without tls=True verifies nothing: the connection would "
@@ -422,8 +427,19 @@ class OrderbookEngine:
         if tls_verify is not True and not tls:
             raise EngineError("tls_verify=False without tls=True: there is no certificate to "
                               "decline to check")
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not timeout > 0:
-            raise EngineError("timeout is a positive number of seconds")
+        if tls_ca_file is not None and tls_verify is not True:
+            raise EngineError(
+                "tls_ca_file with tls_verify=False is a trust anchor nothing consults"
+            )
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not isfinite(timeout)
+            or not SHORTEST_TIMEOUT <= timeout <= LONGEST_TIMEOUT
+        ):
+            # The range in which every library's socket waits as long as it is asked (contract 7n):
+            # an infinity passed here and failed on the first socket (finding 29).
+            raise EngineError("timeout is a number of seconds from 0.001 to 2147483.647")
         self._data_dir = data_dir
         self._host = host
         self._port = port
@@ -438,57 +454,22 @@ class OrderbookEngine:
 
     @classmethod
     def from_dsn(cls, dsn: str) -> OrderbookEngine:
-        """A TCP connection from ``orderbook://[identity[:secret]@]host:port[?tls=on&ca=PATH&verify=off&timeout=S]``.
+        """A TCP connection from ``orderbook://[identity:secret@]host:port[?tls=on&ca=PATH&verify=off&timeout=S]``.
 
         The form a deployment keeps in an environment variable, like the PostgreSQL and ClickHouse
-        DSNs beside it. The identity and the secret are percent-decoded; ``verify=off`` is accepted
-        only together with ``tls=on`` and only when written out. Every refusal names the part of the
-        DSN that is wrong and never repeats the DSN, which carries the secret.
+        DSNs beside it, read by format contract 7n's grammar and by no URL parser, so every library
+        reads one DSN alike. Every refusal names the part of the DSN that is wrong and never repeats
+        the DSN, which carries the secret.
         """
-        if not isinstance(dsn, str):
-            raise EngineError("an orderbook DSN is a string")
-        try:
-            parts = urlsplit(dsn)
-            port = parts.port
-        except ValueError:
-            raise EngineError("the orderbook DSN's port is not a number") from None
-        if parts.scheme != "orderbook":
-            raise EngineError("an orderbook DSN starts with orderbook://")
-        if not parts.hostname or port is None:
-            raise EngineError("an orderbook DSN names a host and a port: orderbook://host:port")
-        if parts.path not in ("", "/") or parts.fragment:
-            raise EngineError("an orderbook DSN has no path or fragment; local mode takes data_dir")
-        identity = None if parts.username is None else unquote(parts.username)
-        secret = None if parts.password is None else unquote(parts.password)
-        if (identity is None) != (secret is None) or identity == "":
-            raise EngineError("an orderbook DSN's identity needs its secret: identity:secret@host")
-        options: dict[str, str] = {}
-        for key, value in parse_qsl(parts.query, keep_blank_values=True):
-            if key not in _DSN_PARAMETERS:
-                raise EngineError(
-                    f"the orderbook DSN parameter {key!r} is unknown; it takes "
-                    f"{sorted(_DSN_PARAMETERS)}"
-                )
-            if key in options:
-                raise EngineError(f"the orderbook DSN gives {key!r} twice")
-            options[key] = value
-        for key in ("tls", "verify"):
-            if key in options and options[key] not in _SWITCH:
-                raise EngineError(f"the orderbook DSN parameter {key!r} is on or off")
-        try:
-            timeout = float(options.get("timeout", "10"))
-        except ValueError:
-            raise EngineError(
-                "the orderbook DSN parameter 'timeout' is a number of seconds"
-            ) from None
+        parsed = parse_dsn(dsn)
         return cls(
-            host=parts.hostname,
-            port=port,
-            auth=None if identity is None or secret is None else (identity, secret),
-            tls=_SWITCH[options.get("tls", "off")],
-            tls_ca_file=options.get("ca"),
-            tls_verify=_SWITCH[options.get("verify", "on")],
-            timeout=timeout,
+            host=parsed.host,
+            port=parsed.port,
+            auth=parsed.auth,
+            tls=parsed.tls,
+            tls_ca_file=parsed.ca,
+            tls_verify=parsed.verify,
+            timeout=parsed.timeout,
         )
 
     @property
