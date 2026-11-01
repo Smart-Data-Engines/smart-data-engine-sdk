@@ -1,0 +1,8 @@
+{
+ "name": "an identity without its secret",
+ "dsn": "orderbook://app@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's credentials are identity:secret, and neither is empty"
+ },
+ "why": "the server asks for both"
+}

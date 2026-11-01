@@ -1,0 +1,8 @@
+{
+ "name": "an ipv6 address without a port",
+ "dsn": "orderbook://[::1]",
+ "refused": {
+  "match": "an orderbook DSN names a host and a port: orderbook://host:port"
+ },
+ "why": "the brackets end the host, and no port follows"
+}

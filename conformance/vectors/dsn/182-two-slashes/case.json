@@ -1,0 +1,8 @@
+{
+ "name": "two slashes",
+ "dsn": "orderbook://ob1:9090//",
+ "refused": {
+  "match": "an orderbook DSN has no path; local mode takes a data directory"
+ },
+ "why": "only / alone is no path"
+}

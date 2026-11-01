@@ -284,6 +284,10 @@ def _plan(**kwargs: Any) -> ReadPlan:
 # ── Construction and the DSN ─────────────────────────────────────────────────────────────────────
 
 
+_AUTH = r"auth is \(identity, secret\): an identity of 1 to 64 characters of \[A-Za-z0-9_\.:-\]"
+_TIMEOUT = "timeout is a number of seconds from 0.001 to 2147483.647"
+
+
 def test_credentials_and_tls_belong_to_a_connection_and_local_mode_has_none() -> None:
     settings: list[dict[str, Any]] = [
         {"auth": ("a", "s")}, {"tls": True}, {"tls_ca_file": "/x"}, {"tls_verify": False}
@@ -298,11 +302,19 @@ def test_credentials_and_tls_belong_to_a_connection_and_local_mode_has_none() ->
     [
         ({"tls_ca_file": "/ca.pem"}, "verifies nothing"),
         ({"tls_verify": False}, "no certificate to decline"),
-        ({"auth": ("identity", "")}, "two non-empty strings"),
-        ({"auth": ("two words", "secret")}, "two non-empty strings"),
-        ({"auth": ["identity", "secret"]}, "two non-empty strings"),
-        ({"timeout": 0}, "positive number"),
-        ({"timeout": True}, "positive number"),
+        ({"tls": True, "tls_ca_file": "/ca.pem", "tls_verify": False}, "trust anchor nothing"),
+        ({"auth": ("identity", "")}, _AUTH),
+        ({"auth": ("two words", "secret")}, _AUTH),
+        ({"auth": ("app@desk", "secret")}, _AUTH),
+        ({"auth": ("a" * 65, "secret")}, _AUTH),
+        ({"auth": ("app\u200b", "secret")}, _AUTH),
+        ({"auth": ["identity", "secret"]}, _AUTH),
+        ({"timeout": 0}, _TIMEOUT),
+        ({"timeout": True}, _TIMEOUT),
+        ({"timeout": float("inf")}, _TIMEOUT),
+        ({"timeout": float("nan")}, _TIMEOUT),
+        ({"timeout": 0.0009}, _TIMEOUT),
+        ({"timeout": 2147483.648}, _TIMEOUT),
     ],
 )
 def test_a_connection_setting_that_would_do_nothing_is_refused(
@@ -310,6 +322,19 @@ def test_a_connection_setting_that_would_do_nothing_is_refused(
 ) -> None:
     with pytest.raises(EngineError, match=message):
         OrderbookEngine(host="h", port=1, **kwargs)
+
+
+def test_fields_are_held_to_the_dsns_rules() -> None:
+    # Format contract 7n: a connection given field by field is held to the DSN's rules - the
+    # server's identities, the timeouts every library's socket waits as asked, a port that exists.
+    engine = OrderbookEngine(
+        host="h", port=65535, auth=("desk:1", "s"), timeout=2147483.647
+    )
+    assert (engine._port, engine._auth, engine._timeout) == (65535, ("desk:1", "s"), 2147483.647)
+    assert OrderbookEngine(host="h", port=1, timeout=0.001)._timeout == 0.001
+    for port in (0, 65536, -1, True, "9090", None):
+        with pytest.raises(EngineError, match="a port from 1 to 65535"):
+            OrderbookEngine(host="h", port=port)  # type: ignore[arg-type]
 
 
 def test_connect_hands_every_setting_to_the_engines_client(server: _Server) -> None:
@@ -344,11 +369,11 @@ def test_a_server_that_cannot_store_an_event_time_is_refused_before_any_write(
 
 def test_the_dsn_carries_host_port_credentials_and_tls() -> None:
     adapter = OrderbookEngine.from_dsn(
-        "orderbook://app%40desk:p%3Ass%20w@db.internal:9443?tls=on&ca=/etc/ca.pem&timeout=2.5"
+        "orderbook://app%3Adesk:p%3Ass%20w@db.internal:9443?tls=on&ca=/etc/ca.pem&timeout=2.5"
     )
     assert adapter.mode == "tcp"
     assert (adapter._host, adapter._port) == ("db.internal", 9443)
-    assert adapter._auth == ("app@desk", "p:ss w")
+    assert adapter._auth == ("app:desk", "p:ss w")
     assert (adapter._tls, adapter._tls_ca_file, adapter._tls_verify) == (True, "/etc/ca.pem", True)
     assert adapter._timeout == 2.5
     plain = OrderbookEngine.from_dsn("orderbook://127.0.0.1:9090")
@@ -360,14 +385,14 @@ def test_the_dsn_carries_host_port_credentials_and_tls() -> None:
     [
         ("postgresql://a:b@h:1", "starts with orderbook://"),
         ("orderbook://h", "names a host and a port"),
-        ("orderbook://h:notaport", "port is not a number"),
+        ("orderbook://h:notaport", "port is a number from 1 to 65535"),
         ("orderbook://h:1/var/data", "no path"),
-        ("orderbook://app@h:1", "identity needs its secret"),
+        ("orderbook://app@h:1", "credentials are identity:secret"),
         ("orderbook://h:1?sslmode=require", "'sslmode' is unknown"),
         ("orderbook://h:1?tls=on&tls=off", "gives 'tls' twice"),
         ("orderbook://h:1?tls=yes", "on or off"),
         ("orderbook://h:1?verify=off", "no certificate to decline"),
-        ("orderbook://h:1?timeout=soon", "number of seconds"),
+        ("orderbook://h:1?timeout=soon", "seconds in decimal digits"),
     ],
 )
 def test_a_malformed_dsn_is_refused_by_its_part(dsn: str, message: str) -> None:

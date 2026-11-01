@@ -1,0 +1,9 @@
+{
+ "name": "a broken escape in a secret",
+ "dsn": "orderbook://app:s3%zzcret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's secret is percent-encoded UTF-8",
+  "absent": "s3%zzcret"
+ },
+ "why": "a % without two hexadecimal digits"
+}

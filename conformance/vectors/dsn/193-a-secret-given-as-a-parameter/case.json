@@ -1,0 +1,9 @@
+{
+ "name": "a secret given as a parameter",
+ "dsn": "orderbook://ob1:9090?password=TOPSECRET",
+ "refused": {
+  "match": "the orderbook DSN parameter 'password' is unknown; it takes ca, timeout, tls and verify",
+  "absent": "TOPSECRET"
+ },
+ "why": "a refusal quotes a name, never a value"
+}

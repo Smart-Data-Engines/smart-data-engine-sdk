@@ -1,0 +1,8 @@
+{
+ "name": "a raw space in a parameter",
+ "dsn": "orderbook://ob1:9090?tls=on&ca=/etc/my ca.pem",
+ "refused": {
+  "match": "an orderbook DSN is printable ASCII: a space, a control character or a character beyond ASCII is written percent-encoded"
+ },
+ "why": "a space is written %20, or + in a parameter"
+}

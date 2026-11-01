@@ -1,0 +1,9 @@
+{
+ "name": "a secret that is not utf-8",
+ "dsn": "orderbook://app:s3%FFcret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's secret is percent-encoded UTF-8",
+  "absent": "s3%FFcret"
+ },
+ "why": "Python read the byte as U+FFFD and authenticated with another secret than the one written"
+}

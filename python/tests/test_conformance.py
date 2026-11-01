@@ -1252,3 +1252,37 @@ def test_document_vector(case: Path) -> None:
 
 def test_there_are_document_vectors() -> None:
     assert len(_cases("documents")) >= 8, "the documents family is missing or was cut short"
+
+
+# --- dsn vectors --------------------------------------------------------------------------------
+#
+# Contract 7n: the orderbook engine's DSN, read by one grammar rather than by each language's URL
+# parser, which disagree exactly where a DSN is written by hand. A refusal is compared by substring,
+# and a refusal of a DSN with a secret must not contain it.
+
+
+@pytest.mark.parametrize("case", _cases("dsn"), ids=_ident)
+def test_dsn_vector(case: Path) -> None:
+    from sde.engines._orderbook_dsn import parse_dsn
+
+    spec = _read_json(case / "case.json")
+    if "refused" in spec:
+        with pytest.raises(EngineError) as refused:
+            parse_dsn(spec["dsn"])
+        message = str(refused.value)
+        assert spec["refused"]["match"] in message, (message, spec["why"])
+        if "absent" in spec["refused"]:
+            assert spec["refused"]["absent"] not in message, spec["why"]
+        return
+    parsed = parse_dsn(spec["dsn"])
+    says = {name: getattr(parsed, name) for name in spec["says"]}
+    assert says == spec["says"], spec["why"]
+    # A timeout is compared as the double it is, never as text or within a tolerance.
+    assert type(parsed.timeout) is float and parsed.timeout == spec["says"]["timeout"]
+
+
+def test_there_are_dsn_vectors() -> None:
+    cases = _cases("dsn")
+    assert len(cases) >= 100, "the dsn family is missing or was cut short"
+    kinds = {"says" if "says" in _read_json(case / "case.json") else "refused" for case in cases}
+    assert kinds == {"says", "refused"}, "a family of refusals alone proves nothing is accepted"

@@ -1,0 +1,8 @@
+{
+ "name": "a switch without a value",
+ "dsn": "orderbook://ob1:9090?verify",
+ "refused": {
+  "match": "the orderbook DSN parameter 'verify' is on or off"
+ },
+ "why": "a piece without = has an empty value"
+}

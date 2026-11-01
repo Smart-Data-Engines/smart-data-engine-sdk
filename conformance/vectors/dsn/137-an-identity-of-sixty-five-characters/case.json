@@ -1,0 +1,9 @@
+{
+ "name": "an identity of sixty-five characters",
+ "dsn": "orderbook://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab:s3cret@ob1:9090",
+ "refused": {
+  "match": "an orderbook DSN's identity is 1 to 64 characters of [A-Za-z0-9_.:-], as the server's --auth-secret-file takes them",
+  "absent": "s3cret"
+ },
+ "why": "one longer than the server takes"
+}

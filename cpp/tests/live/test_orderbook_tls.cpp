@@ -30,6 +30,7 @@
 
 #include "engines/orderbook/dsn.hpp"
 #include "engines/orderbook/wire.hpp"
+#include "sde/errors.hpp"
 #include "live/live.hpp"
 #include "live/orderbook_fake.hpp"
 #include "live/tls.hpp"
@@ -49,6 +50,8 @@ std::string failure_of(const Body& body) {
     body();
   } catch (const ob::WireError& error) {
     return error.python_class() + ": " + error.what();
+  } catch (const sde::EngineError& error) {
+    return std::string("EngineError: ") + error.what();
   }
   return "accepted";
 }
@@ -186,9 +189,10 @@ TEST_F(OrderbookTls, TheCaIsCheckedBeforeAnySocketInTheClientsWords) {
   EXPECT_EQ(refused(base / "not.pem"), "OrderbookTlsError: tls_ca_file '" + (base / "not.pem").string() +
                                            "' rejected: [X509: NO_CERTIFICATE_OR_CRL_FOUND] no "
                                            "certificate or crl found");
+  // Refused by the DSN since 31 October 2026 (format contract 7n), where the client refused it at
+  // connect in its own words.
   EXPECT_EQ(refused(file("ca"), "&verify=off"),
-            "OrderbookTlsError: tls_ca_file is set with tls_verify=False: a trust anchor nothing "
-            "consults");
+            "EngineError: the orderbook DSN's ca with verify=off is a trust anchor nothing consults");
   if (::geteuid() != 0) {  // root reads a file whatever its mode
     std::filesystem::copy_file(file("ca"), base / "locked.pem");
     std::filesystem::permissions(base / "locked.pem", std::filesystem::perms::none);
