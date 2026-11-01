@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <future>
 #include <map>
 #include <memory>
@@ -213,6 +214,98 @@ TEST(Session, APointReadNeedsExactlyTheKey) {
             "a point read of Reading needs exactly its key ['id'], and was given ['id', "
             "'station']. A partial key is a range read, which is a different shape and may well "
             "be routed somewhere else.");
+  // The key is held to a written row's rules (format contract 8b, a point read's key), on the
+  // path that decides a model's own key once, before any engine is called.
+  const std::size_t before = pg.recorded().calls().size();
+  EXPECT_EQ(refusal([&] { (void)session.get("Reading", sde::Row{{"id", "7"}}); }),
+            "Reading.id is int64 and this key gives it a value that is not an integer");
+  EXPECT_EQ(refusal([&] { (void)session.get("Reading", sde::Row{{"id", sde::Null{}}}); }),
+            "Reading.id is required and this key gives it null");
+  EXPECT_EQ(pg.recorded().calls().size(), before) << "a refused key reached the engine";
+}
+
+TEST(Session, AKeyReachesTheEngineInTheFormAFilterGets) {
+  // Format contract 8b, a point read's key: a UUID written in upper case is the UUID a lower-case
+  // write stored. Given to the engine as written, it would be another value there, and the read
+  // would answer no row.
+  const sde::Model model = sde::load_neutral_model(R"({"entities": [
+    {"name": "Tag", "fields": [{"name": "id", "type": "uuid"},
+                               {"name": "label", "type": "string"}], "key": ["id"]}]})");
+  const std::string text = R"({"contract": 3, "model_version": ")" + model.version() +
+                           R"(", "map_version": 1, "groups": {"Tag": {"source": {"id": "Tag@pg",
+      "engine": "pg", "layout": {"auto": true}}}}})";
+  sde::LoadOptions load;
+  load.model = &model;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), load);
+  MemoryEngine pg;
+  sde::Session session(model, map, {{"pg", &pg}});
+  session.save("Tag", sde::Row{{"id", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"}, {"label", "a"}});
+  const auto row = session.get("Tag", sde::Row{{"id", "6BA7B810-9DAD-11D1-80B4-00C04FD430C8"}});
+  ASSERT_TRUE(row.has_value());
+  EXPECT_EQ(std::get<std::string>(row->at("label")), "a");
+}
+
+/// An engine that answers no row and keeps the last key a point read gave it.
+class KeyEngine final : public sde::Engine {
+ public:
+  [[nodiscard]] std::string_view dialect() const noexcept override { return "postgres"; }
+  std::vector<sde::PhysicalFinding> ensure_schema(const sde::PhysicalLayout&,
+                                                  const sde::Keys&) override {
+    return {};
+  }
+  void insert(const std::string&, const sde::Row&) override {}
+  std::optional<sde::Row> get(const std::string&, const sde::Row& key) override {
+    last = key;
+    return std::nullopt;
+  }
+  void transaction(const std::function<void()>& body) override { body(); }
+  sde::Row last;
+};
+
+TEST(Session, APointReadGivesTheEngineItsKeyInTheFormAFilterGets) {
+  // A decimal's form is its digits at the column's scale, which equality does not see: 1.230 and
+  // 1.23 are one number, and an engine given the first would receive it as written.
+  const sde::Model model = sde::load_neutral_model(R"json({"entities": [
+    {"name": "Ledger", "fields": [{"name": "code", "type": "decimal(12,2)"},
+                                  {"name": "id", "type": "int64"}], "key": ["code", "id"]}]})json");
+  const std::string text = R"({"contract": 3, "model_version": ")" + model.version() +
+                           R"(", "map_version": 1, "groups": {"Ledger": {"source": {
+      "id": "Ledger@pg", "engine": "pg", "layout": {"auto": true}}}}})";
+  sde::LoadOptions load;
+  load.model = &model;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), load);
+  KeyEngine engine;
+  sde::Session session(model, map, {{"pg", &engine}});
+  const auto code_given = [&](sde::Value code) {
+    (void)session.get("Ledger", sde::Row{{"code", std::move(code)}, {"id", std::int64_t{7}}});
+    return std::get<sde::Decimal>(engine.last.at("code")).to_string();
+  };
+  EXPECT_EQ(code_given(sde::Decimal("1.230")), "1.23");
+  EXPECT_EQ(code_given(std::string("1.2")), "1.20");
+  EXPECT_EQ(code_given(sde::Decimal("1.23")), "1.23");
+  EXPECT_EQ(std::get<std::int64_t>(engine.last.at("id")), 7);
+}
+
+TEST(Session, AHashedModelsKeyReachesTheEngineInTheFormAFilterGets) {
+  // The general path of a point read, which a hashed model takes: the key the engine receives is
+  // the checked one, under the field's digest, and a decimal at its column's scale.
+  const sde::Model model = sde::load_neutral_model(R"json({"entities": [
+    {"name": "Ledger", "fields": [{"name": "code", "type": "decimal(12,2)"},
+                                  {"name": "id", "type": "int64"}], "key": ["code", "id"]}]})json");
+  const auto [hashed, names] = sde::hash_identifiers(model, "a salt of sixteen bytes or more");
+  const std::string text = R"({"contract": 3, "model_version": ")" + hashed.version() +
+                           R"(", "map_version": 1, "groups": {")" + names.entity("Ledger") +
+                           R"(": {"source": {"id": "l", "engine": "pg", "layout": {"auto": true}}}}})";
+  sde::LoadOptions load;
+  load.model = &hashed;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), load);
+  KeyEngine engine;
+  sde::SessionOptions options;
+  options.names = &names;
+  sde::Session session(hashed, map, {{"pg", &engine}}, options);
+  (void)session.get("Ledger", sde::Row{{"code", sde::Decimal("1.230")}, {"id", std::int64_t{7}}});
+  EXPECT_EQ(std::get<sde::Decimal>(engine.last.at(names.field("Ledger", "code"))).to_string(), "1.23");
+  EXPECT_EQ(engine.last.count("code"), 0U) << "the engine sees digests only";
 }
 
 TEST(Session, ABatchIsCheckedWholeBeforeAnyEngine) {
@@ -295,6 +388,14 @@ TEST(Session, HashedNamesStayTheApplicationsOnBothSides) {
             "this model has no entity 'Ghost'");
   EXPECT_EQ(undeclared([&] { static_cast<void>(session.get("Ghost", sde::Row{{"id", 2}})); }),
             "this model has no entity 'Ghost'");
+  // A key is held to its field's type here too, on the path a hashed model takes, and the refusal
+  // names the application's field (format contract 8b, a point read's key).
+  EXPECT_EQ(undeclared([&] { static_cast<void>(session.get("Reading", sde::Row{{"id", true}})); }),
+            "Reading.id is int64 and this key gives it a value that is not an integer");
+  EXPECT_EQ(undeclared([&] {
+              static_cast<void>(session.get("Reading", sde::Row{{"id", sde::Null{}}}));
+            }),
+            "Reading.id is required and this key gives it null");
 }
 
 /// An engine that answers reads with canned rows and records the plan it was given.

@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Ledger.id is required and this key gives it null",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Ledger",
+      "values": {
+        "code": "1.23",
+        "id": 7,
+        "note": "x"
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Ledger",
+      "key": {
+        "code": "1.234",
+        "id": null
+      }
+    }
+  },
+  "why": "A null is refused before any value's type is checked, as a row's is (8b, points 3 and 4), so the null is named although code comes first in code-point order."
+}

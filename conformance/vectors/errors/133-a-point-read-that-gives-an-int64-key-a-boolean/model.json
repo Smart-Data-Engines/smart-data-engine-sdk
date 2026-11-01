@@ -1,0 +1,26 @@
+{
+  "entities": [
+    {
+      "name": "Ledger",
+      "fields": [
+        {
+          "name": "code",
+          "type": "decimal(12,2)"
+        },
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "note",
+          "type": "string",
+          "nullable": true
+        }
+      ],
+      "key": [
+        "code",
+        "id"
+      ]
+    }
+  ]
+}

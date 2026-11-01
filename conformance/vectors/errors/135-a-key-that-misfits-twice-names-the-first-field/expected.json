@@ -1,0 +1,25 @@
+{
+  "error": "ModelPlanningError",
+  "stage": "write",
+  "match": "Ledger.code is decimal(12,2) and this key gives it more than 2 fractional digits",
+  "write": {
+    "accepted": {
+      "operation": "save",
+      "entity": "Ledger",
+      "values": {
+        "code": "1.23",
+        "id": 7,
+        "note": "x"
+      }
+    },
+    "refused": {
+      "operation": "get",
+      "entity": "Ledger",
+      "key": {
+        "code": "1.234",
+        "id": "7"
+      }
+    }
+  },
+  "why": "Two fields misfit. The first in code-point order is named, as a row's refusal names it."
+}
