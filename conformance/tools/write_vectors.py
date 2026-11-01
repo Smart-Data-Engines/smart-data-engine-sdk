@@ -427,7 +427,8 @@ def main() -> None:
             ("expected.json", expected),
         ):
             dump(directory / filename, value)
-    print(f"Wrote {len(CASES) + len(TYPED_CASES) + len(NUL_CASES)} write-stage refusals without importing an SDK")
+    total = len(CASES) + len(TYPED_CASES) + len(NUL_CASES)
+    print(f"Wrote {total} write-stage refusals without importing an SDK")
 
 
 if __name__ == "__main__":
