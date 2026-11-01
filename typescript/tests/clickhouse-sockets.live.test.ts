@@ -1,8 +1,13 @@
 /**
  * A keep-alive socket outlives the request that used it: Node's global agent keeps sockets alive from
- * Node 19, and this adapter's requests go through it. Whatever a request puts on the socket has to
- * come off with the request. Before 31 October 2026 one `error` listener per request stayed - 52
- * after 50 requests on one engine, measured - and Node warned of a leak after eleven.
+ * Node 19, and this adapter's requests go through it - as they go through whatever agent an
+ * application installs there. Whatever a request puts on the socket has to come off with the
+ * request. Before 31 October 2026 one `error` listener per request stayed - 52 after 50 requests on
+ * one engine, measured - and Node warned of a leak after eleven.
+ *
+ * The test installs a keep-alive agent of its own as the global one, so that every Node the matrix
+ * runs reuses the socket. Node 18's default agent closes each socket after its request, and there
+ * nothing could pile up to be counted.
  */
 import http from 'node:http'
 
@@ -18,10 +23,13 @@ describe.skipIf(DSN === undefined)('a ClickHouse engine on a keep-alive socket',
     const record = (warning: Error): void => {
       warnings.push(warning.name)
     }
+    const previous = http.globalAgent
+    const agent = new http.Agent({ keepAlive: true })
+    Object.assign(http, { globalAgent: agent })
     process.on('warning', record)
     const engine = new ClickHouseEngine(DSN!)
     const listeners = (): number[] =>
-      Object.values(http.globalAgent.freeSockets)
+      Object.values(agent.freeSockets)
         .flat()
         .map((socket) => socket!.listenerCount('error'))
     try {
@@ -37,6 +45,8 @@ describe.skipIf(DSN === undefined)('a ClickHouse engine on a keep-alive socket',
     } finally {
       process.off('warning', record)
       await engine.close()
+      Object.assign(http, { globalAgent: previous })
+      agent.destroy()
     }
   })
 })
