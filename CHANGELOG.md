@@ -8,6 +8,14 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a ClickHouse transport failure names its causes** (Python). A reconnect failed in CI with
+`ClickHouse transport failed; the operation was not replayed and its outcome may be unknown` and
+nothing else, so its log could not tell a server that had closed the connection from one that
+refused it or timed out. The message names the classes of the failure's chain now, outermost first,
+and none of their text, which carries the URL:
+`ClickHouse transport failed (ProtocolError <- RemoteDisconnected); …`. A connection the driver
+could not open names its classes the same way.
+
 **Changed: text holds no U+0000** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8b). PostgreSQL's `text` cannot hold U+0000,
 and ClickHouse stores it. Measured from the reference: PostgreSQL's driver refused a save holding

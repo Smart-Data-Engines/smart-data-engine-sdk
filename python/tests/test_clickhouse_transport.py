@@ -48,6 +48,91 @@ def test_transport_error_cannot_enter_the_drivers_remote_close_retry_handler() -
     assert len(pool.calls) == 1
 
 
+SECRET_URL = "http://reader:hunter2@example.invalid:8123/?query=SELECT+secret"
+
+
+def test_a_transport_failure_names_its_causes_and_none_of_their_text() -> None:
+    """A reconnect failed in CI with "transport failed" and nothing else, so its log could not
+    tell a server that had closed the connection from one that refused it or timed out. The
+    message names the classes of the chain, outermost first; their text carries the URL."""
+    from http.client import RemoteDisconnected
+
+    from urllib3.exceptions import ProtocolError
+
+    class Closed(Pool):
+        def request(self, method: str, url: str, **options: Any) -> Any:
+            raise ProtocolError(
+                f"Connection aborted. {url}",
+                RemoteDisconnected("Remote end closed connection without response"),
+            )
+
+    with pytest.raises(EngineError) as closed:
+        _NoReplayTransport(Closed()).request("POST", SECRET_URL, body=b"insert")
+    message = str(closed.value)
+    assert "ClickHouse transport failed (ProtocolError <- RemoteDisconnected);" in message
+    assert "not replayed" in message
+    assert "outcome may be unknown" in message
+    for text in ("example.invalid", "hunter2", "secret", "Remote end", "aborted"):
+        assert text not in message, text
+
+
+def test_a_refused_connection_is_named_by_the_error_that_caused_it() -> None:
+    """urllib3 raises ``NewConnectionError`` from the socket's own error, so the chain is
+    ``__cause__``, not an argument, and a cause that is also the context is named once."""
+    import socket
+
+    import urllib3
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    transport = _NoReplayTransport(urllib3.PoolManager())
+    with pytest.raises(EngineError) as refused:
+        transport.request("GET", f"http://127.0.0.1:{port}/?query=SELECT+secret")
+    message = str(refused.value)
+    assert "ClickHouse transport failed (NewConnectionError <- ConnectionRefusedError);" in message
+    assert str(port) not in message
+    assert "secret" not in message
+
+
+def test_a_chain_that_loops_is_named_once_round() -> None:
+    from urllib3.exceptions import ProtocolError
+
+    outer = ProtocolError("outer")
+    inner = OSError("inner")
+    outer.__cause__ = inner
+    inner.__context__ = outer
+
+    class Looping(Pool):
+        def request(self, method: str, url: str, **options: Any) -> Any:
+            raise outer
+
+    with pytest.raises(EngineError, match=r"transport failed \(ProtocolError <- OSError\);"):
+        _NoReplayTransport(Looping()).request("GET", SECRET_URL)
+
+
+def test_a_connection_the_driver_could_not_open_names_its_classes_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sde.engines.clickhouse as adapter
+
+    def refused(_parameters: Any) -> Any:
+        try:
+            raise ConnectionResetError(f"reset by {SECRET_URL}")
+        except ConnectionResetError as exc:
+            raise RuntimeError(f"driver could not read {SECRET_URL}") from exc
+
+    monkeypatch.setattr(adapter, "_connect_client", refused)
+    engine = adapter.ClickHouseEngine("clickhouse://reader:hunter2@example.invalid:8123/default")
+    with pytest.raises(EngineError) as failed:
+        engine.connect()
+    message = str(failed.value)
+    assert message == (
+        "could not connect to ClickHouse with the configured transport "
+        "(RuntimeError <- ConnectionResetError)"
+    )
+
+
 @pytest.mark.parametrize("installed", ["0.7.0", "1.7.1", "1.7.2rc1", "1.8.0.dev1"])
 def test_unsupported_driver_refuses_before_opening_a_connection(
     installed: str,

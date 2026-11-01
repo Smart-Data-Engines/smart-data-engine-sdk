@@ -181,9 +181,35 @@ class _NoReplayTransport:
             return self.pool.request(method, url, **options)
         except HTTPError as exc:
             raise EngineError(
-                "ClickHouse transport failed; the operation was not replayed and its outcome "
-                "may be unknown"
+                f"ClickHouse transport failed ({_causes(exc)}); the operation was not replayed and "
+                f"its outcome may be unknown"
             ) from exc
+
+
+def _causes(error: BaseException) -> str:
+    """The classes of a transport failure and of what caused it, outermost first, and only them.
+
+    The messages stay out: urllib3's carry the URL, and a reader's error can carry what the server
+    sent. The classes are what tells a connection the server had already closed
+    (``RemoteDisconnected``) from one refused or timed out, and ``connect`` drops the chain itself:
+    a reconnect failed in CI with "transport failed" and nothing else, and its log could not say
+    why. urllib3 keeps the inner error in its arguments
+    (``ProtocolError("Connection aborted.", RemoteDisconnected(...))``), so a step looks there
+    before ``__cause__`` and ``__context__``.
+    """
+    names: list[str] = []
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen and len(names) < 6:
+        seen.add(id(cause))
+        names.append(type(cause).__name__)
+        nested = [part for part in cause.args if isinstance(part, BaseException)]
+        cause = next(
+            (step for step in (*nested, cause.__cause__, cause.__context__)
+             if step is not None and id(step) not in seen),
+            None,
+        )
+    return " <- ".join(names)
 
 
 MIN_CLICKHOUSE_CONNECT = "1.7.2"
@@ -332,11 +358,13 @@ class ClickHouseEngine:
                 self._client = _connect_client(self._connection)
             except EngineError as exc:
                 raise EngineError("could not connect to ClickHouse: " + str(exc)) from None
-            except Exception:
-                # Driver/parser exceptions may echo URL, credentials or server content. The
-                # connection error conveys no proof of rollback and never weakens TLS to retry.
+            except Exception as exc:
+                # Driver/parser exceptions may echo URL, credentials or server content, so only
+                # their classes are named. The connection error conveys no proof of rollback and
+                # never weakens TLS to retry.
                 raise EngineError(
-                    "could not connect to ClickHouse with the configured transport"
+                    "could not connect to ClickHouse with the configured transport "
+                    f"({_causes(exc)})"
                 ) from None
 
     @guarded
