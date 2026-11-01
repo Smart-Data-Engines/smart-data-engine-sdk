@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -559,6 +560,44 @@ TEST(Verify, ARowPresentWithAnotherValueNamesTheColumn) {
   EXPECT_FALSE(report.matched());
   EXPECT_EQ(report.differences.at(0).columns, std::vector<std::string>{"station"});
   EXPECT_FALSE(report.differences[0].absent());
+}
+
+TEST(Verify, ACopyHoldsAFloatAsTheContractComparesIt) {
+  // NaN is NaN, and a zero is a zero of either sign (format contract section 7e). `==` made a copy
+  // that held every NaN of its source differ on each of them, so such a group never verified. The
+  // stores hold whatever they are given, and the comparison does not read a field's type, so the
+  // values sit in the one column of this model that is not the key.
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  struct Case {
+    std::string name;
+    double held;
+    sde::Value copied;
+    bool same;
+  };
+  const std::vector<Case> cases = {
+      {"nan", nan, nan, true},
+      {"an infinity", inf, inf, true},
+      {"a negative zero", -0.0, 0.0, true},
+      {"a zero", 0.0, -0.0, true},
+      {"a number", 1.5, 1.5, true},
+      {"nan, then a number", nan, 1.5, false},
+      {"a number, then nan", 1.5, nan, false},
+      {"nan, then null", nan, sde::Null{}, false},
+      {"both infinities", inf, -inf, false},
+  };
+  for (const Case& each : cases) {
+    Fixture fixture;
+    fixture.source.insert("reading", sde::Row{{"id", std::int64_t{1}}, {"station", each.held}});
+    (void)fixture.backfill(2);
+    for (sde::Row& row : fixture.target.tables["reading_copy"]) row["station"] = each.copied;
+    const sde::VerifyReport report = fixture.verify(2);
+    EXPECT_EQ(report.matched(), each.same) << each.name;
+    if (!each.same) {
+      ASSERT_FALSE(report.differences.empty()) << each.name;
+      EXPECT_EQ(report.differences[0].columns, std::vector<std::string>{"station"}) << each.name;
+    }
+  }
 }
 
 TEST(Verify, ReadsTheSourceWindowBeforeTheTargetWindowAndBoundsBoth) {

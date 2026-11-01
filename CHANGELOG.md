@@ -20,6 +20,21 @@ its target cannot hold (`MigrationRefused`), where verification found the change
 whole group had been copied. `errors/140`-`142` pin it, with an engine set that declares 24.8's
 range. Decision 43 of the C++ port.
 
+**Fixed: NaN is NaN when a copy is verified, and TypeScript reads it back from ClickHouse**
+(Python, TypeScript, C++; [`docs/format-contract.md`](docs/format-contract.md) §7e, "The same
+value"). Measured on PostgreSQL 15 and ClickHouse 24.8. The reference and C++ compared a copy with
+`==`, under which NaN equals nothing, so a group with a NaN in a float column never verified in any
+direction, from copies that held every NaN. TypeScript read a point read and a key range from
+ClickHouse as JSON, which writes NaN and the infinities as `null`: `get` returned null, a copy from
+PostgreSQL never verified, and a copy from ClickHouse to PostgreSQL stored NULL for each of them and
+verified as matched. Verification now takes NaN as NaN, and a zero as a zero of either sign, in
+every library: ClickHouse reads a negative zero back as zero from a part it wrote sparsely, so no
+copy can be held to the sign of a zero. TypeScript pins `output_format_json_quote_denormals` on
+every JSON exchange, as C++ does, and refuses a null in a float column that cannot hold one.
+**Breaking** for a ClickHouse account whose `readonly=1` profile fixes the three output settings
+TypeScript already pinned: it has to set the fourth too
+([`docs/engine-connections.md`](docs/engine-connections.md)). Decision 41 of the C++ port.
+
 **Changed: a point read's key is held to a written row's rules** (Python, TypeScript, C++;
 [`docs/format-contract.md`](docs/format-contract.md) §8b, "A point read's key"). `Session.get`
 refuses a key value that is null, or one its field's type does not hold, with `ModelPlanningError`

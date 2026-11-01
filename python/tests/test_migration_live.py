@@ -23,6 +23,7 @@ mistake in the SQL is easiest to see.
 
 from __future__ import annotations
 
+import math
 import os
 import uuid
 from collections.abc import Iterator
@@ -197,6 +198,66 @@ def _fill(session: sde.Session, rows: int) -> None:
     engine = session.engines[placement.source.engine]
     for n in range(1, rows + 1):
         engine.insert(SOURCE_TABLE, {"tenant": 1 + n % 3, "seq": n, "station": f"s{n}"})
+
+
+def test_a_copy_holding_nan_and_the_infinities_verifies(pair: tuple[Any, Any]) -> None:
+    """NaN is NaN, and a zero is a zero of either sign (format contract section 7e).
+
+    Before 1 November 2026 ``verify`` compared with ``==``, and ``nan != nan``: a group with a NaN
+    in a float column never verified, in any of these four directions, from copies that held every
+    NaN. A negative zero is here for the second half of the rule: ClickHouse writes a part whose
+    column is mostly zeros sparsely and reads a negative zero back as zero, so no copy can be held
+    to its sign - and with ``Object.is`` TypeScript held it.
+    """
+    source, target = pair
+
+    @sde.entity
+    class Gauge:
+        seq: sde.Int32
+        wide: float
+        narrow: sde.Float32
+
+        class Meta:
+            key = ["seq"]
+
+    model = sde.build_model(Gauge)
+    group = sde.colocation_groups(model)[0].name
+
+    def layout(engine: Any, table: str) -> dict[str, Any]:
+        types = (("integer", "double precision", "real") if engine.dialect == "postgres"
+                 else ("Int32", "Float64", "Float32"))
+        return {"tables": {"Gauge": table},
+                "columns": {"Gauge": dict(zip(("seq", "wide", "narrow"), types, strict=True))}}
+
+    session = sde.Session(
+        model,
+        sde.load_map({
+            "contract": 3, "model_version": model.version, "map_version": 1,
+            "groups": {group: {
+                "source": {"id": "src", "engine": "source",
+                           "layout": layout(source, SOURCE_TABLE)},
+                "derived": [{"id": "dst", "engine": "target",
+                             "layout": layout(target, TARGET_TABLE), "lag_budget_ms": 30_000}],
+                "also_write": ["dst"],
+            }},
+        }, model=model),
+        {"source": source, "target": target},
+    )
+    session.ensure_schema()
+    values = [math.nan, math.inf, -math.inf, -0.0, 1.5]
+    for seq, value in enumerate(values, start=1):
+        source.insert(SOURCE_TABLE, {"seq": seq, "wide": value, "narrow": value})
+
+    assert sde.backfill(session, group, chunk_rows=10).complete
+    report = sde.verify(session, group, chunk_rows=10)
+    assert report.matched, report.for_a_human()
+    # And the copy holds the values, which is what makes the match worth having.
+    copied = [target.get(TARGET_TABLE, {"seq": seq}) for seq in range(1, len(values) + 1)]
+    assert all(row is not None and math.isnan(row["wide"]) and math.isnan(row["narrow"])
+               for row in copied[:1])
+    assert [(row["wide"], row["narrow"]) for row in copied[1:] if row is not None] == [
+        (math.inf, math.inf), (-math.inf, -math.inf), (0.0, 0.0), (1.5, 1.5)
+    ]
 
 
 def test_a_group_is_copied_in_chunks_and_the_copy_verifies(pair: tuple[Any, Any]) -> None:

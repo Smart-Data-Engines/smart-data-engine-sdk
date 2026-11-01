@@ -845,6 +845,13 @@ function sameValue(left: unknown, right: unknown): boolean {
     // column. Comparing those with `Object.is` reports every row as differing.
     return String(left) === String(right)
   }
+  if (typeof left === 'number' && typeof right === 'number') {
+    // NaN is NaN, and a zero is a zero of either sign (format contract section 7e, "The same
+    // value"). `Object.is` held a copy to the sign of a zero, which no copy on ClickHouse can keep:
+    // a part whose column is mostly zeros is written sparsely, and a negative zero comes back as
+    // zero (24.8).
+    return left === right || (Number.isNaN(left) && Number.isNaN(right))
+  }
   return Object.is(left, right)
 }
 

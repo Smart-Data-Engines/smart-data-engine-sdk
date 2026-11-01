@@ -77,6 +77,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import isnan
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ._usage import session_function
@@ -877,9 +878,25 @@ def _differing_columns(
         sorted(
             column
             for column in source
-            if source[column] != target.get(column, _ABSENT)
+            if not _same_value(source[column], target.get(column, _ABSENT))
         )
     )
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    """Whether the copy holds the value the source holds: ``==``, except that NaN is NaN.
+
+    NaN is a value the contract admits (section 8b), and every engine here stores it and reads it
+    back as itself. Yet ``nan != nan``, so each row holding one differed: measured on 1 November
+    2026 on PostgreSQL 15 and ClickHouse 24.8, a group with a NaN in a float column never verified,
+    in any of the four directions, from copies that held every NaN. A zero is a zero of either sign,
+    as ``==`` says, and has to be: ClickHouse writes a part whose column is mostly zeros sparsely,
+    and reads a negative zero back as zero (24.8), so no copy can be held to the sign of a zero.
+    Format contract section 7e, "The same value".
+    """
+    if isinstance(left, float) and isinstance(right, float) and isnan(left) and isnan(right):
+        return True
+    return bool(left == right)
 
 
 def _logical_copy_row(copy: _Copy, row: Mapping[str, Any]) -> Mapping[str, Any]:
