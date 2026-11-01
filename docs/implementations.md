@@ -88,10 +88,11 @@ the comparison under write barriers, and the signed cutover, staging and index b
 passes every `query/` and `migration/` vector and every `schema/` case of the dialects it renders,
 against an engine interface whose capabilities are data, and the library's own in-memory engine.
 The Elasticsearch cases of `schema/` (`019` and `020`) are the other two libraries', and its runner
-leaves them out by name. It offers no `Session.search`, no book streams and no Elasticsearch
-adapter, so `search/`, `books/` and `documents/` are not its claim: those three go with a
-capability as well as the tier (format contract §9), and its `SEARCH`, `BOOK_STREAMS` and
-`ADAPTERS` constants say so. It has the orderbook adapter, so it runs `dsn/`, the fourth. **The tier is the vectors, and the engines cell is separate:** an engine enters the cell when its adapter round-trips against a real
+leaves them out by name. It offers book streams (§8c), so it runs `books/`, and it has the
+orderbook adapter, so it runs `dsn/`. It offers no `Session.search` and no Elasticsearch adapter,
+so `search/` and `documents/` are not its claim: those four families go with a capability as well
+as the tier (format contract §9), and its `SEARCH`, `BOOK_STREAMS` and `ADAPTERS` constants say
+which. **The tier is the vectors, and the engines cell is separate:** an engine enters the cell when its adapter round-trips against a real
 server. The first is PostgreSQL, over libpq, in a target of its own (`sde::postgres`), so an
 application that places nothing there links no libpq and the core links no network library at all.
 Its live tests are the reference's PostgreSQL slice, ported, with every expected message captured

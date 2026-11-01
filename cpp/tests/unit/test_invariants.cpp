@@ -62,6 +62,9 @@ std::vector<fs::path> sources() {
       out.push_back(entry.path());
     }
   }
+  // In path order, not the directory's: the order a file system lists entries in differs between
+  // machines, and a list of findings compared whole would differ with it.
+  std::sort(out.begin(), out.end());
   return out;
 }
 
@@ -98,7 +101,7 @@ TEST(Invariants, AMapCarriesNoDateBecauseItsParserReadsNone) {
   }
 }
 
-TEST(Invariants, TheWallClockIsReadOnceToStampAReport) {
+TEST(Invariants, TheWallClockIsReadOnlyToStampWhatHappened) {
   // Every way C++ and POSIX read the calendar. A monotonic clock cannot be compared with a date,
   // so it cannot gate on one; these can.
   const std::regex wall(
@@ -110,10 +113,16 @@ TEST(Invariants, TheWallClockIsReadOnceToStampAReport) {
       reads.push_back(path.filename().string() + ": " + (*it)[0].str());
     }
   }
-  EXPECT_EQ(reads, (std::vector<std::string>{"migration.cpp: system_clock::now"}))
-      << "the one read stamps a verification report with when it ran (`now_iso`); a second has to "
-      << "say what it decides, because a clock read that decides something is where an expiry "
-      << "check would live";
+  // Two reads, each a stamp and neither a gate:
+  // - migration.cpp stamps a verification report with when it ran (`now_iso`);
+  // - books.cpp is a book stream's default machine clock: an update the application gives no
+  //   time takes it as its event time (format contract 8c), and it meets nothing but that side's
+  //   last time, so that a side's times never go back. The reference injects the same clock
+  //   (`wall_clock_ns=time.time_ns`).
+  EXPECT_EQ(reads, (std::vector<std::string>{"books.cpp: system_clock::now",
+                                             "migration.cpp: system_clock::now"}))
+      << "each read stamps something with when it happened; another has to say what it decides, "
+      << "because a clock read that decides something is where an expiry check would live";
 }
 
 // --- 6.3: no value ------------------------------------------------------------------------------

@@ -309,6 +309,12 @@ class FakeOrderbook {
     const std::lock_guard<std::mutex> lock(mutex_);
     capabilities_ = std::move(text);
   }
+  /// The answer to a book as of a moment (`WHERE AT`), which the fake does not compose: given here
+  /// as the engine's rows, in whatever order a test wants them. Without one, the book is not there.
+  void book_at_answer(std::string rows) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    at_answer_ = std::move(rows);
+  }
   /// Client authentication, as `--auth-secret-file` gives it.
   void require_auth(std::string identity, std::string secret) {
     const std::lock_guard<std::mutex> lock(mutex_);
@@ -345,7 +351,10 @@ class FakeOrderbook {
   [[nodiscard]] std::vector<std::string> writes() const {
     std::vector<std::string> out;
     for (const std::string& command : commands()) {
-      if (command.starts_with("INSERT ") || command.starts_with("MINSERT ")) out.push_back(command);
+      if (command.starts_with("INSERT ") || command.starts_with("MINSERT ") ||
+          command.starts_with("MREPLACE ")) {
+        out.push_back(command);
+      }
     }
     return out;
   }
@@ -418,7 +427,7 @@ class FakeOrderbook {
       if (!line) return;
       std::string command = *line;
       std::vector<std::string> body;
-      if (command.starts_with("MINSERT ")) {
+      if (command.starts_with("MINSERT ") || command.starts_with("MREPLACE ")) {
         const std::vector<std::string> parts = words(command);
         const std::size_t count = parts.size() > 4 ? std::stoul(parts[4]) : 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -502,6 +511,12 @@ class FakeOrderbook {
         if (!peer.send("OK\n\n")) return;
         continue;
       }
+      // A side replacement is recorded, not applied: the fake composes no book by price. The live
+      // slice holds what the engine does with one.
+      if (line->starts_with("MREPLACE ")) {
+        if (!peer.send("OK\n\n")) return;
+        continue;
+      }
       if (*line == "STATUS") {
         std::string capabilities;
         {
@@ -529,6 +544,18 @@ class FakeOrderbook {
   }
 
   std::string select(const std::string& line) {
+    // A book as of a moment, which the fake does not compose: the book is not there.
+    static const std::regex at(R"(^SELECT \* FROM '([^']+)'\.'([^']+)' WHERE AT \d+(?: AND level < \d+)?$)");
+    std::smatch book;
+    if (std::regex_match(line, book, at)) {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      if (at_answer_) {
+        return "OK\ntimestamp_ns\tprice\tquantity\torder_count\tside\tlevel\tsequence_number\n" +
+               *at_answer_ + "\n";
+      }
+      return "ERR OB_ERR_NOT_FOUND: symbol '" + book[1].str() + "' exchange '" + book[2].str() +
+             "' not found\n";
+    }
     static const std::regex grammar(
         R"(^SELECT \* FROM '([^']+)'\.'([^']+)'(?: WHERE timestamp BETWEEN (\d+) AND (\d+)(?: AND price BETWEEN (-?\d+) AND (-?\d+))?)? LIMIT (\d+)$)");
     std::smatch match;
@@ -575,6 +602,7 @@ class FakeOrderbook {
 
   mutable std::mutex mutex_;
   std::string capabilities_ = "insert_event_time,strict_args,backup";
+  std::optional<std::string> at_answer_;
   std::optional<std::pair<std::string, std::string>> auth_;
   std::set<int> refuse_;
   int drop_on_ = -1;

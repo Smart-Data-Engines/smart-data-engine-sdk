@@ -266,6 +266,19 @@ def stream_cases() -> list[dict[str, Any]]:
                      _sent("whole", "bid", 40, [[99, 3, 1], [98, 1, 1]])],
             "book": {"bid": [[99, 3, 1], [98, 1, 1], [97, 1, 1]]},
         },
+        {
+            # One update carries at most `max_levels` levels, which a deeper side's changes can
+            # pass: three changes when two fit go as the side whole, its best two.
+            "name": "more changes than one update carries send the side whole",
+            "mode": "incremental", "resync": {"updates": 0, "seconds": 0}, "max_levels": 2,
+            "steps": [_step(0, "update", "bid", a, 10),
+                      _step(1, "apply", "bid", [[98, 1, 1]], 20),
+                      _step(2, "apply", "bid", [[97, 1, 1], [96, 1, 1], [95, 1, 1]], 30)],
+            "sent": [_sent("whole", "bid", 10, a), _sent("changes", "bid", 20, [[98, 1, 1]]),
+                     _sent("whole", "bid", 30, a)],
+            "book": {"bid": [[100, 5, 1], [99, 3, 1], [98, 1, 1], [97, 1, 1], [96, 1, 1],
+                             [95, 1, 1]]},
+        },
     ]
 
 

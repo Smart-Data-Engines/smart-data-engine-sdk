@@ -33,6 +33,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -72,7 +73,8 @@ struct OrderbookLevel {
 class OrderbookEngine final : public Engine,
                               public Queryable,
                               public BulkWritable,
-                              public SchemaValidator {
+                              public SchemaValidator,
+                              public BookWritable {
  public:
   /// The deepest level an update may have: the engine stores at most 1000 levels per side.
   static constexpr std::int64_t MAX_LEVEL = 999;
@@ -134,6 +136,23 @@ class OrderbookEngine final : public Engine,
   // server may refuse some updates and store others, and the refusal names both.
   void insert_many(const std::string& table, const std::vector<Row>& rows) override;
 
+  // BookWritable: a book by price, as a book stream writes it and `Session::book_at` reads it (the
+  // engine's #233). `MREPLACE` replaces a side whole; changes go as an ordinary update, which the
+  // engine applies by price.
+  /// From the server's `STATUS`, read when the engine connects.
+  [[nodiscard]] bool supports_replace_side() override;
+  void check_book(const std::string& symbol, const std::string& exchange) override;
+  void apply_levels(const std::string& table, const std::string& symbol,
+                    const std::string& exchange, BookSide side, std::int64_t timestamp_ns,
+                    const std::vector<BookLevel>& levels) override;
+  void replace_levels(const std::string& table, const std::string& symbol,
+                      const std::string& exchange, BookSide side, std::int64_t timestamp_ns,
+                      const std::vector<BookLevel>& levels) override;
+  /// Refused by a server without `replace_side`: it composes a book by position, and would read a
+  /// book written by price wrongly with nothing in the answer to say so.
+  [[nodiscard]] Book book_at(const std::string& table, const std::string& symbol,
+                             const std::string& exchange, std::int64_t at_ns,
+                             std::optional<std::int64_t> depth) override;
   // SchemaValidator: the same check as `ensure_schema`.
   std::vector<PhysicalFinding> validate_schema(const PhysicalLayout& layout,
                                                const Keys& keys) override;
@@ -162,6 +181,9 @@ class OrderbookEngine final : public Engine,
   std::vector<std::vector<std::string>> query(const std::string& statement);
   std::vector<Update> updates(const std::vector<Row>& rows) const;
   void write_failed(const std::string& table, const std::string& error) const;
+  void book_write(const std::string& table, const std::string& symbol, const std::string& exchange,
+                  BookSide side, std::int64_t timestamp_ns, const std::vector<BookLevel>& levels,
+                  bool replace);
   std::vector<Row> book(const std::string& symbol, const std::string& exchange,
                         std::optional<std::uint64_t> start_ns, std::optional<std::uint64_t> end_ns,
                         std::optional<std::int64_t> limit);
@@ -170,6 +192,8 @@ class OrderbookEngine final : public Engine,
   OrderbookOptions options_;
   std::unique_ptr<detail::orderbook::Connection> connection_;
   std::int64_t unflushed_ = 0;
+  /// What the server announced in `STATUS` when the connection opened.
+  std::set<std::string> server_capabilities_;
   detail::orderbook::ScanLimits limits_;
   std::atomic<std::thread::id> owner_{};
   int depth_ = 0;

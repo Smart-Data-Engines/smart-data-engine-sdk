@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: book streams in the C++ library** (C++; [`docs/format-contract.md`](docs/format-contract.md)
+§8c). `sde/books.hpp` has `sde::BookStream`, `sde::book_diff` and `sde::ordered_changes`, the
+reference's rules for a stream's modes, resync, depth and times, and `books/` holds them to the
+same sends as Python and TypeScript. `Session::book_stream` and `Session::book_at` work over the
+orderbook adapter, which replaces a side whole (`MREPLACE`), sends changes as an update by price, and
+reads a book as of a moment. A server without `replace_side` is refused before anything is sent or
+read. The library declares `BOOK_STREAMS`, and a live test walks a book in both modes and reads it
+back after every step.
+
 **Fixed: TypeScript's ClickHouse adapter left a listener on its socket after every request**
 (TypeScript). Node's global agent keeps sockets alive from Node 19, so one socket serves request after
 request, and each request added an `error` listener to it that stayed. One engine's socket held 52

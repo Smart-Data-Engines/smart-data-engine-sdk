@@ -47,8 +47,9 @@ bool capable(const std::string& family) {
 /// The families this suite has a runner for, each in its own file.
 const std::set<std::string>& run_here() {
   static const std::set<std::string> families = [] {
-    std::set<std::string> out = {"canonical", "model",     "routing", "errors",   "signature",
-                                 "hashing",   "telemetry", "schema",  "query",    "migration"};
+    std::set<std::string> out = {"canonical", "model",     "routing", "errors",    "signature",
+                                 "hashing",   "telemetry", "schema",  "query",     "migration",
+                                 "books"};
     // Built with the orderbook adapter, whose DSN the family reads (tests/CMakeLists.txt).
 #ifdef SDE_CONFORMANCE_DSN
     out.insert("dsn");

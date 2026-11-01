@@ -91,6 +91,7 @@ add_library(sde
   src/watermark.cpp
   src/migration.cpp
   src/temporal_range.cpp
+  src/books.cpp
   src/generation.cpp
   src/session.cpp
   src/verification.cpp

@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "sde/books.hpp"
 #include "sde/physical.hpp"
 #include "sde/query.hpp"
 #include "sde/value.hpp"
@@ -167,6 +168,34 @@ struct TemporalRange {
   [[nodiscard]] static std::string_view range_sql() noexcept;
 };
 
+/// An engine that takes a book by price and composes one (the orderbook engine's #233): a book
+/// stream writes through it, and `Session::book_at` reads through it.
+class BookWritable {
+ public:
+  virtual ~BookWritable() = default;
+  /// Whether the server replaces a side of a book whole (`MREPLACE`, capability `replace_side`),
+  /// which came with reads by price.
+  [[nodiscard]] virtual bool supports_replace_side() = 0;
+  /// Refuses the names of a book that a write to it would refuse, for a caller that holds them
+  /// across many writes and should hear it before the first one.
+  virtual void check_book(const std::string& symbol, const std::string& exchange) = 0;
+  /// One update by price: each level sets its price's quantity, a quantity of 0 removes the price,
+  /// and a price it does not name stays. The levels go in the order given. No levels is no update.
+  virtual void apply_levels(const std::string& table, const std::string& symbol,
+                            const std::string& exchange, BookSide side, std::int64_t timestamp_ns,
+                            const std::vector<BookLevel>& levels) = 0;
+  /// The whole side: the engine removes every price the side holds and these levels do not name.
+  /// No levels empties the side.
+  virtual void replace_levels(const std::string& table, const std::string& symbol,
+                              const std::string& exchange, BookSide side, std::int64_t timestamp_ns,
+                              const std::vector<BookLevel>& levels) = 0;
+  /// The book as of `at_ns`, as the engine composes it from every update up to it, in time order:
+  /// each side best first, at most `depth` levels a side.
+  [[nodiscard]] virtual Book book_at(const std::string& table, const std::string& symbol,
+                                     const std::string& exchange, std::int64_t at_ns,
+                                     std::optional<std::int64_t> depth) = 0;
+};
+
 /// `a date` or `a timestamp`, for a field of `kind`.
 [[nodiscard]] std::string_view temporal_noun(std::string_view kind) noexcept;
 
@@ -191,6 +220,7 @@ struct Capabilities {
   SchemaValidator* schema = nullptr;
   StorageMeasurable* storage = nullptr;
   TemporalBounded* temporal = nullptr;
+  BookWritable* books = nullptr;
 };
 
 /// One engine, as a session uses it. Not shared between threads unless the adapter says it may be.

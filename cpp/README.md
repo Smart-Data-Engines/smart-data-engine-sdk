@@ -205,9 +205,10 @@ row of the reference's, and its telemetry window of the traffic is the reference
   searches all three for values put in on purpose. What an engine says back is passed on in the
   engine's words, and can quote what the engine holds - that text is the engine's, to its own
   client, and stays in your process. The same file holds the other invariants: a map's parser reads
-  no date, the wall clock is read once, to stamp a verification report, and an unsigned map costs no
-  table and no query; and CTest reads the core's archive for a network symbol and finds none
-  (`invariant.*`).
+  no date; the wall clock is read only to stamp what happened - a verification report with when it
+  ran, and a book stream's update given no time with its event time - and decides nothing; and an
+  unsigned map costs no table and no query. CTest reads the core's archive for a network symbol and
+  finds none (`invariant.*`).
 - **A `Model` and a `PlacementMap` are immutable once built.** Share them between threads freely.
   Only `load_map` makes a `PlacementMap`, so holding one means every rule of §7 was checked.
 - **`sde::Recorder` takes no lock on an operation's path.** A window is a block of per-shape
