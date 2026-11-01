@@ -16,6 +16,9 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadMap } from '../src/index.js'
+import { modelFromNeutral } from '../src/testing/loader.js'
+
 const SOURCE = fileURLToPath(new URL('../src/', import.meta.url))
 
 function sources(directory: string): string[] {
@@ -107,5 +110,56 @@ describe('no expiry', () => {
       'Date()',
       'Date.now compared',
     ])
+  })
+
+  /** Words a key that could hold a date would carry: the reference's `DATE_ISH`. */
+  const DATE_ISH = ['date', 'expir', 'valid', 'until', 'issued', 'not_after', 'not_before', 'ttl', 'lease',
+    'renew', 'licen', 'grace', 'deadline']
+
+  /**
+   * Every key `placement.ts` reads from a map document: `document['key']` and `'key' in document`,
+   * read from the parser's syntax tree rather than from a document a test wrote, which would assert
+   * something about the test and nothing about the library.
+   */
+  function keysTheParserReads(): Set<string> {
+    const path = join(SOURCE, 'placement.ts')
+    const tree = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
+    const keys = new Set<string>()
+    const visit = (node: ts.Node): void => {
+      if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)) {
+        keys.add(node.argumentExpression.text)
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.InKeyword && ts.isStringLiteral(node.left)) {
+        keys.add(node.left.text)
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(tree)
+    return keys
+  }
+
+  it('reads no key of a map that could hold a date', () => {
+    // A library that has never been told when a map was issued cannot decide that it is too old,
+    // whatever a later reader calls the field.
+    const keys = keysTheParserReads()
+    expect(keys.size, 'the parser reads no key at all, so this test measures nothing').toBeGreaterThan(10)
+    expect([...keys].filter((key) => DATE_ISH.some((word) => key.toLowerCase().includes(word)))).toEqual([])
+  })
+
+  it('changes nothing for a date written into a map by hand', () => {
+    // The behavioural half, the one a suspicious client would run: the parsed map routes and lays
+    // out exactly as the map without the dates does.
+    const vector = fileURLToPath(new URL('../../conformance/vectors/routing/001-derived-materialisation/', import.meta.url))
+    const model = modelFromNeutral(JSON.parse(readFileSync(join(vector, 'model.json'), 'utf8')))
+    const raw = JSON.parse(readFileSync(join(vector, 'map.json'), 'utf8')) as Record<string, unknown>
+    const plain = loadMap(raw, { model })
+    const dated = loadMap({ ...raw, valid_through: '2020-01-01', expires_at: '2020-01-01T00:00:00Z' }, { model })
+    expect(dated.mapVersion).toBe(plain.mapVersion)
+    expect(dated.modelVersion).toBe(plain.modelVersion)
+    expect(Object.keys(dated.groups).sort()).toEqual(Object.keys(plain.groups).sort())
+    for (const [name, placed] of Object.entries(dated.groups)) {
+      expect(placed.source.engine).toBe(plain.groups[name]!.source.engine)
+      expect(placed.source.layout.tables).toEqual(plain.groups[name]!.source.layout.tables)
+    }
   })
 })
