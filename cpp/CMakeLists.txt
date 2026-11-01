@@ -90,6 +90,7 @@ add_library(sde
   src/write_fence.cpp
   src/watermark.cpp
   src/migration.cpp
+  src/temporal_range.cpp
   src/generation.cpp
   src/session.cpp
   src/verification.cpp

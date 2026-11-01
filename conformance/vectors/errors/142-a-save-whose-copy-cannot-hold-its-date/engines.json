@@ -1,0 +1,14 @@
+{
+  "pg-main": {
+    "dialect": "postgres"
+  },
+  "ch-copy": {
+    "dialect": "clickhouse",
+    "temporal_range": {
+      "first_day": "1900-01-01",
+      "last_day": "2299-12-31",
+      "first_instant": "1900-01-01 00:00:00.000000",
+      "last_instant": "2299-12-31 23:59:59.999999"
+    }
+  }
+}

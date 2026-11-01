@@ -53,8 +53,19 @@ import { checkProjectId } from './verification.js'
 import { EPOCH_COLUMN, GENERATIONS_SINCE, logicalRow, stampValues, validateGenerations } from './generation.js'
 import type { PhysicalFinding } from './physical.js'
 import { enforceForwardOnly } from './watermark.js'
+import { kindNoun, TEMPORAL_KINDS, type TemporalRange } from './temporal-range.js'
 
 export type Row = Record<string, unknown>
+
+/** One row as it is now, for a single save; deep nesting is refused as a model error there. */
+function snapshotOne(row: Readonly<Row>): Row {
+  try {
+    return snapshotRows([row])[0]!
+  } catch (error) {
+    if (error instanceof BulkWriteRefused) throw new ModelPlanningError('values are nested too deeply')
+    throw error
+  }
+}
 
 /** What a row of one entity must and may carry, computed once per session. */
 interface Admission {
@@ -63,11 +74,18 @@ interface Admission {
   readonly required: readonly string[]
   /** Each typed field, its neutral type and its check, in code-point order. */
   readonly checks: readonly (readonly [string, string, Check])[]
+  /** The date and timestamp fields, which an engine's range may not hold (section 8b). */
+  readonly temporal: readonly (readonly [string, string])[]
 }
 
 /** What an adapter has to offer for a session to route to it. */
 export interface Engine {
   readonly dialect: string
+  /**
+   * The days and instants this engine holds, read from its server, or `null` for the contract's
+   * whole range (section 8b). Absent, as `null`: PostgreSQL holds the whole range.
+   */
+  temporalRange?(): Promise<TemporalRange | null>
   /**
    * Create what is missing and return how existing tables differ from the declared physical
    * design. `void` remains acceptable from an adapter written before findings existed.
@@ -215,7 +233,8 @@ export class Session {
           const check = checkFor(kind)
           if (check !== undefined) checks.push([name, kind, check])
         }
-        this.admission.set(entity, { declared: new Set([...Object.keys(columns[entity] ?? {}), ...reserved]), required, checks })
+        const temporal = checks.filter(([, kind]) => TEMPORAL_KINDS.has(kind)).map(([name, kind]) => [name, kind] as const)
+        this.admission.set(entity, { declared: new Set([...Object.keys(columns[entity] ?? {}), ...reserved]), required, checks, temporal })
       }
     }
     for (const shape of enumerateShapes(model)) {
@@ -626,8 +645,12 @@ export class Session {
       const target = this.entityName(entity)
       const given = this.fieldsIn(entity, values)
       const shape = this.shapeFor(target, 'write')
-      const body = this.admit(entity, target, given)
+      const admitted = this.admit(entity, target, given)
       const [engine, materialization] = this.target(shape, false)
+      // The row as it is now, before the first await: asking an engine for its range is the first,
+      // and a caller may change its own row while it waits (as a batch's rows, bulk.test.ts).
+      const body = snapshotOne(admitted)
+      await this.held(entity, target, shape.group, materialization.engine, [body], false)
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()
       let failed = false
@@ -754,6 +777,8 @@ export class Session {
       const writer = bulkWriter(engine)
       for (const copy of spot.alsoWrite) bulkWriter(this.engines[copy.engine] as Engine)
       const snapshot = snapshotRows(typed)
+      // After the snapshot: asking an engine for its range is the first await (bulk.test.ts).
+      await this.held(entity, target, shape.group, materialization.engine, snapshot, true)
       const stamped = snapshot.map((row) => stampValues(this.placement, shape.group, row))
       const table = tableFor(materialization.layout, target)
       const started = this.recorder === undefined ? 0 : now()
@@ -944,6 +969,39 @@ export class Session {
    * for a quieter reason: those rows are above the backfill marker, so nothing else copies them,
    * and `verify`'s tail check would refuse the migration of every group that uses a transaction.
    */
+  /**
+   * Refuse a row an engine its write goes to cannot hold, before any engine is written to.
+   *
+   * Format contract section 8b. ClickHouse 24.8 holds a date and a timestamp from 1900-01-01 to
+   * 2299-12-31 and moved a value outside to the nearer end without an error (measured on 1 November
+   * 2026: 1800-01-01 stored as 1900-01-01); 26.9 holds the contract's whole range. The range is the
+   * server's (`temporalRange`), and every engine the row goes to is asked: the one the write is
+   * routed to and each `alsoWrite` copy, so that no copy is written before another refuses. An
+   * engine without a range holds them all.
+   */
+  private async held(
+    entity: string, target: string, group: string, engine: string, rows: readonly Readonly<Row>[], batch: boolean,
+  ): Promise<void> {
+    const fields = this.admission.get(target)!.temporal
+    if (fields.length === 0) return
+    const spot = placementOf(this.placement, group)
+    for (const name of [engine, ...spot.alsoWrite.map((copy) => copy.engine)]) {
+      const span = await (this.engines[name] as Engine).temporalRange?.()
+      if (span === undefined || span === null) continue
+      for (const [index, row] of rows.entries()) {
+        for (const [field, kind] of fields) {
+          const value = row[field]
+          if (value === null || value === undefined || span.holds(kind, value)) continue
+          const client = this.clientNames(entity, [field])[0]
+          throw new EngineError(
+            `${batch ? `row ${index}: ` : ''}${name} holds ${kindNoun(kind)} ${span.describe()}, and this row gives ` +
+              `${entity}.${client} one outside it; nothing was sent`,
+          )
+        }
+      }
+    }
+  }
+
   private async fanOut(entity: string, group: string, values: Row | readonly Row[]): Promise<void> {
     const body = placementOf(this.placement, group)
     if (body.alsoWrite.length === 0) return

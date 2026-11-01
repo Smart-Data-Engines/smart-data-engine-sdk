@@ -59,7 +59,7 @@ import stat
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from importlib.metadata import version
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from .._usage import UsageGate, guarded
 from ..bulk import batch_columns
@@ -82,6 +82,7 @@ from ..physical import (
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
+from ..temporal_range import RANGE_SQL, TemporalRange, from_engine_text
 from ..write_fence import WriteFence
 from ._clickhouse_connection import (
     CONNECT_TIMEOUT_SECONDS as CONNECT_TIMEOUT_SECONDS,
@@ -362,6 +363,10 @@ def _connect_client(parameters: ConnectionParameters) -> Any:
     )
 
 
+_UNREAD: Final = object()
+"""A connection whose server range has not been read yet; ``None`` is a range read as whole."""
+
+
 class ClickHouseEngine:
     """A thin adapter over clickhouse-connect. Executes decisions, makes none."""
 
@@ -381,6 +386,7 @@ class ClickHouseEngine:
         _require_driver_version(version("clickhouse-connect"))
         self._dsn = dsn
         self._client: Any = None
+        self._range: TemporalRange | object | None = _UNREAD
         self._usage = UsageGate()
 
     # --- connection ------------------------------------------------------------------------
@@ -418,6 +424,8 @@ class ClickHouseEngine:
         if self._client is not None:
             self._client.close()
             self._client = None
+        # A server may be upgraded between two connections, and its range with it.
+        self._range = _UNREAD
 
     def __enter__(self) -> ClickHouseEngine:
         self.connect()
@@ -431,6 +439,26 @@ class ClickHouseEngine:
         if self._client is None:
             raise EngineError("not connected; call connect() first")
         return self._client
+
+    @property
+    @guarded
+    def temporal_range(self) -> TemporalRange | None:
+        """The days and instants this server holds, or ``None`` for the contract's whole range.
+
+        Read from the server once per connection (:data:`sde.temporal_range.RANGE_SQL`): ClickHouse
+        24.8 holds ``Date32`` and ``DateTime64`` from 1900-01-01 to 2299-12-31 and moves a value
+        outside to the nearer end without an error, and 26.9 holds the whole range. A session
+        refuses a row outside it before writing (format contract section 8b).
+        """
+        if self._range is _UNREAD:
+            try:
+                answer = self._cx.query(RANGE_SQL).result_rows[0]
+            except EngineError:
+                raise
+            except Exception as exc:
+                raise EngineError(f"could not read this server's date range: {exc}") from exc
+            self._range = from_engine_text(*(str(part) for part in answer))
+        return cast("TemporalRange | None", self._range)
 
     def write_fence(self, table: str, *, project_id: str) -> WriteFence:
         """DDL capability; use a dedicated connection separate from application traffic."""

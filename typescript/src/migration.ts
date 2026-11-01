@@ -42,6 +42,7 @@ import type { Materialization } from './placement.js'
 import { placementOf } from './placement.js'
 import type { Row, Session } from './session.js'
 import { tableFor } from './session.js'
+import { kindNoun, TEMPORAL_KINDS, type TemporalRange } from './temporal-range.js'
 
 /**
  * Rows per chunk, by default.
@@ -166,6 +167,8 @@ interface Copy {
   readonly targetId: string
   readonly targetTable: string
   readonly writeEpoch?: number | undefined
+  /** The entity's date and timestamp fields, which the target's range may not hold. */
+  readonly temporal: readonly (readonly [string, string])[]
 }
 
 /** How far one entity's copy into one target has got. */
@@ -484,10 +487,39 @@ function plan(session: MigrationView, group: string): readonly Copy[] {
         targetId: copy.id,
         targetTable: tableFor(copy.layout, entity),
         writeEpoch: body.writeEpoch,
+        temporal: (spec?.fields ?? [])
+          .filter((field) => TEMPORAL_KINDS.has(field.type))
+          .map((field) => [field.name, field.type] as const),
       })
     }
   }
   return copies
+}
+
+/**
+ * Refuse a chunk the target cannot hold, before any of it is written (format contract 8b).
+ *
+ * ClickHouse 24.8 holds a date and a timestamp from 1900-01-01 to 2299-12-31 and moved a value
+ * outside to the nearer end without an error, so a copy onto it changed the value; verification
+ * found the difference only after the whole group had been copied. The target's range is the
+ * server's own (`temporalRange`), and a target without one holds every value.
+ */
+async function heldByTarget(copy: Copy, rows: readonly Row[]): Promise<void> {
+  if (copy.temporal.length === 0) return
+  const target = copy.target as Migratable & { temporalRange?(): Promise<TemporalRange | null> }
+  const span = await target.temporalRange?.()
+  if (span === undefined || span === null) return
+  for (const row of rows) {
+    for (const [field, kind] of copy.temporal) {
+      const value = row[field]
+      if (value === null || value === undefined || span.holds(kind, value)) continue
+      throw new MigrationRefused(
+        `${copy.targetEngine} holds ${kindNoun(kind)} ${span.describe()}, and a row of ${copy.entity} ` +
+          `gives ${field} one outside it, so this chunk was not copied. A copy onto it would change ` +
+          `the value without an error.`,
+      )
+    }
+  }
 }
 
 export interface BackfillOptions {
@@ -557,6 +589,7 @@ async function backfillOne(
     // semantics absorb; the other order costs the chunk, permanently.
     const payload = copy.writeEpoch === undefined ? rows : rows.map((row) =>
       ({ ...logicalCopyRow(copy, row), [EPOCH_COLUMN]: copy.writeEpoch }))
+    await heldByTarget(copy, rows)
     await copy.target.copyIn(copy.targetTable, payload)
     marker += rows.length
     await copy.target.recordBackfillMarker({

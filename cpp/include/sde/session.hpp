@@ -152,6 +152,8 @@ class Session {
     std::vector<std::string> required;  ///< code point order: the order a refusal names
     /// Each typed field, its neutral type and its check, in code point order (section 8b point 4).
     std::vector<std::tuple<std::string, std::string, std::function<Value(const Value&)>>> checks;
+    /// The date and timestamp fields and their types, which an engine's range may not hold.
+    std::vector<std::pair<std::string, std::string>> temporal;
   };
   struct Deferred {
     std::string engine;
@@ -189,6 +191,9 @@ class Session {
                               const std::string& table, const Row& given);
   void fan_out(const std::string& entity, const std::string& group, const std::vector<Row>& rows,
                bool batch);
+  /// Refuses a row an engine its write goes to cannot hold, before any engine is written to.
+  void held(std::string_view entity, const std::string& target, const std::string& group,
+            const std::string& engine, const std::vector<Row>& rows, bool batch) const;
   void replay_one(const Deferred& write);
   void observe(const OperationShape& shape, std::int64_t started, std::uint64_t rows, bool failed,
                const ReadPlan* plan = nullptr);
