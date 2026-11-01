@@ -1558,8 +1558,9 @@ a refusal is logged, and the value is the client's.
 ClickHouse stores it. Measured from the reference on 1 November 2026: PostgreSQL's driver refused a
 save holding one, ClickHouse kept the text, and a copy of such a group from ClickHouse to PostgreSQL
 stopped at the chunk holding it, after 2 of 5 rows. A filter on it was refused by one engine's driver
-and answered by the other. A string filter refuses it too (`query/029`), and `errors/137`-`139` pin
-the write's refusal. Binary data that holds a zero byte is `bytes`.
+and answered by the other. A string filter refuses it too (`query/029`), `errors/137`-`139` pin
+the write's refusal, and `errors/143` a point read's key. Binary data that holds a zero byte is
+`bytes`.
 
 Decimal text has one grammar: an optional sign, digits with an optional point and fraction (or a
 point and a fraction), an optional exponent, and white space around it ignored. A binary floating

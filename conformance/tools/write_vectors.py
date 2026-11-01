@@ -491,6 +491,16 @@ NUL_CASES: list[tuple[str, str, dict[str, Any], dict[str, Any], str, list[dict[s
         "A key's text is held to the same rule: the row it addresses is the row one engine refuses "
         "and another keeps.",
     ),
+    (
+        "143-a-point-read-whose-key-holds-u0000",
+        "ModelPlanningError",
+        save(FULL),
+        get({"id": "t\u00001"}, "Thing"),
+        "Thing.id is string and this key gives it text holding U+0000",
+        ACCEPTED_ONE,
+        "A point read's key is held to a written row's rules (section 8b, \"A point read's key\"), "
+        "so a key holding U+0000 is refused in a key's words, before any engine is called.",
+    ),
 ]
 
 

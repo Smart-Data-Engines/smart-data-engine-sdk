@@ -15,7 +15,8 @@ one, ClickHouse kept the text, and a copy of such a group from ClickHouse to Pos
 the chunk holding it, after 2 of 5 rows. A row is refused before any engine with
 `<Entity>.<field> is string and this row gives it text holding U+0000`, and a string filter with
 `QueryRefused`. **Breaking** for an application that stored U+0000 in text on ClickHouse or
-Elasticsearch: binary data with a zero byte is `bytes`. `errors/137`-`139` and `query/029` pin it.
+Elasticsearch: binary data with a zero byte is `bytes`. `errors/137`-`139`, `errors/143` (a point
+read's key) and `query/029` pin it.
 Decision 44 of the C++ port.
 
 **Changed: a point read's key is held to a written row's rules** (Python, TypeScript, C++;
