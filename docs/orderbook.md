@@ -180,7 +180,8 @@ remove the prices that dropped out of its top levels, and a writer may send only
 library does both.
 
 **`Session.book_stream(entity, symbol=..., exchange=..., mode=...)`** - in TypeScript
-`session.bookStream(entity, { symbol, exchange, mode })` - is one book, sent one side at a time:
+`session.bookStream(entity, { symbol, exchange, mode })`, in C++
+`session.book_stream(entity, symbol, exchange, mode, resync)` - is one book, sent one side at a time:
 - `mode="full"` sends every side whole, as `MREPLACE`, and the engine removes every price the update
   does not name;
 - `mode="incremental"`, the default, sends what changed. `update(side, levels)` takes the whole
@@ -197,14 +198,16 @@ Two refusals come before anything is sent:
 - a time earlier than the last one sent for that side. The engine's history applies updates in time
   order and its live book in arrival order, so the two would disagree.
 
-Without a time, an update takes this machine's clock. A stream is one writer of one book: TypeScript
-refuses a second update while one is in flight (`ResourceBusy`), and in Python a stream is not shared
+Without a time, an update takes this machine's clock. A stream is one writer of one book. TypeScript
+refuses a second update while one is in flight (`ResourceBusy`), and C++ a second call while one is
+in progress, from another thread or from the sink (`ResourceBusy`). In Python a stream is not shared
 between threads. The rules are [format-contract.md §8c](format-contract.md#8c-a-book-stream), and
-`conformance/vectors/books/` holds both libraries to the same sends.
+`conformance/vectors/books/` holds the three libraries to the same sends.
 
-**`Session.book_at(entity, symbol=..., exchange=..., at_ns=...)`** - `session.bookAt(...)` - reads the
-book as the engine composes it at that instant: `{"bid": [...], "ask": [...]}`, each side best first
-as (price, quantity, order count). A stream that sends only changes stores only changes, and this is
+**`Session.book_at(entity, symbol=..., exchange=..., at_ns=...)`** - `session.bookAt(...)` in
+TypeScript, `session.book_at(entity, symbol, exchange, at_ns, depth)` in C++, which returns an
+`sde::Book` - reads the book as the engine composes it at that instant: `{"bid": [...], "ask": [...]}`,
+each side best first as (price, quantity, order count). A stream that sends only changes stores only changes, and this is
 the book they make.
 
 A server without the capability `replace_side` composes a book by position and cannot replace a

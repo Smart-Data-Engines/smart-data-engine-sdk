@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: book streams in the C++ library** (C++; [`docs/format-contract.md`](docs/format-contract.md)
+§8c). `sde/books.hpp` has `sde::BookStream`, `sde::book_diff` and `sde::ordered_changes`, the
+reference's rules for a stream's modes, resync, depth and times, and `books/` holds them to the
+same sends as Python and TypeScript. `Session::book_stream` and `Session::book_at` work over the
+orderbook adapter, which replaces a side whole (`MREPLACE`), sends changes as an update by price, and
+reads a book as of a moment. A server without `replace_side` is refused before anything is sent or
+read. The library declares `BOOK_STREAMS`, and a live test walks a book in both modes and reads it
+back after every step.
+
 **Fixed: a day or an instant outside the server's range is refused before it is sent** (Python,
 TypeScript, C++; [`docs/format-contract.md`](docs/format-contract.md) §8b, "A day or an instant an
 engine holds"). ClickHouse 24.8 holds `Date32` and `DateTime64` from 1900-01-01 to 2299-12-31, and

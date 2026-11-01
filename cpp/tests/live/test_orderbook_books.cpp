@@ -170,6 +170,19 @@ TEST(OrderbookBooks, AStreamForABookWhoseNameAWriteWouldRefuseIsRefusedAtOnce) {
             "accepted");
 }
 
+TEST(OrderbookBooks, ABookAsOfAMomentIsRecordedAsARangeReadOfTheEntitysTime) {
+  // A book is its history up to an instant: a range read over `timestamp_ns`, filtered on the
+  // symbol and the exchange, as the reference records it.
+  Books rig;
+  (void)rig.session->book_at("DepthLevel", "BTCUSDT", "binance", 42);
+  const auto window = rig.recorder.roll();
+  ASSERT_TRUE(window.has_value());
+  const std::string records = sde::dump_json(window->shape_records(rig.declared, "DepthLevel"));
+  EXPECT_NE(records.find(R"("filtered_on":[{"equal":["exchange","symbol"],"range":"timestamp_ns","calls":1}])"),
+            std::string::npos)
+      << records;
+}
+
 TEST(OrderbookBooks, TheSessionReadsTheBookAsOfAMoment) {
   Books rig;
   const sde::Book none = rig.session->book_at("DepthLevel", "BTCUSDT", "binance", 42);
