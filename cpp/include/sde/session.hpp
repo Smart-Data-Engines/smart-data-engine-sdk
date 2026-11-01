@@ -135,6 +135,25 @@ class Session {
   /// could not answer: that group's size stays unknown, and says why.
   StorageMeasurement measure_storage();
 
+  /// A stream of one book of `entity` - one symbol on one exchange - to the orderbook engine, sent
+  /// whole or as its changes (`sde/books.hpp`, format contract section 8c). The entity's group must
+  /// be placed on the orderbook engine, and its server must replace a side whole (capability
+  /// `replace_side`): refused otherwise (`EngineError`), before anything is sent. Each update the
+  /// stream sends is one write of the entity, under this session's rules and timed as
+  /// `save_many`'s. The session outlives the stream.
+  [[nodiscard]] BookStream book_stream(std::string_view entity, const std::string& symbol,
+                                       const std::string& exchange,
+                                       BookStreamMode mode = BookStreamMode::incremental,
+                                       Resync resync = Resync());
+
+  /// The book of `entity` for one symbol on one exchange as of `at_ns`, composed by the orderbook
+  /// engine from what was written - by price, in time order - each side best first, at most `depth`
+  /// levels a side. The read side of `book_stream`: a stream that sends only changes stores only
+  /// changes, and this answers the book they make. Recorded as a range read of the entity's time.
+  [[nodiscard]] Book book_at(std::string_view entity, const std::string& symbol,
+                             const std::string& exchange, std::int64_t at_ns,
+                             std::optional<std::int64_t> depth = std::nullopt, bool fresh = false);
+
   /// Runs `body` in one transaction of the engine holding the entities' group. Entities of two
   /// groups are refused before anything is opened (`ModelPlanningError`). Empty means the whole
   /// model, which must then be one group.
@@ -165,6 +184,13 @@ class Session {
     bool batch;
   };
   class Use;
+  /// A book stream's sink: each update one write of the entity, through this session.
+  class StreamSink;
+
+  /// One update of a book stream: a whole side, or changes by price.
+  void book_write(const std::string& target, const OperationShape& shape, const std::string& symbol,
+                  const std::string& exchange, BookSide side, const std::vector<BookLevel>& levels,
+                  std::int64_t timestamp_ns, bool whole);
 
   // The hashing boundary: names in, names out.
   [[nodiscard]] std::string target_of(std::string_view entity) const;
