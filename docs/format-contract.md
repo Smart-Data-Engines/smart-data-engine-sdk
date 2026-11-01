@@ -1590,8 +1590,10 @@ The contract admits a date and a timestamp from year 0001 to 9999 in UTC, and an
 fewer. ClickHouse 24.8 holds `Date32` and `DateTime64` from 1900-01-01 to 2299-12-31, and moves a
 value outside to the nearer end without an error. Measured on 1 November 2026, through `VALUES` and
 `JSONEachRow` alike: 1800-01-01 was stored as 1900-01-01, and 2500-06-01 12:00 as 2299-12-31 12:00.
-The server's `date_time_overflow_behavior='throw'` did not apply to an insert. ClickHouse 26.9 holds
-the whole range.
+The server's `date_time_overflow_behavior='throw'` did not apply to an insert. A binary insert, as
+the reference's driver and the C++ library's RowBinary write, kept the raw value instead: read back
+in binary it was 1800-01-01, and the server's own `toString` read the same row as 2299-12-31. One
+stored value, two readings by reader. ClickHouse 26.9 holds the whole range.
 
 So the range is the server's, and an adapter reads it from the server once per connection: a
 conversion moves a value as an insert does, so converting the contract's ends gives the server's.

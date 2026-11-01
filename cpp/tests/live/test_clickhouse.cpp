@@ -282,6 +282,18 @@ TEST_F(ClickHouseLive, TheServerSaysTheDaysItHoldsAndAValueOutsideThemNeverReach
   sde::Session session(model, map, {{"ch", ch.get()}});
   session.ensure_schema();
   const std::optional<sde::TemporalRange> span = ch->temporal_range();
+  // The adapter's report against the server's own answer, read on another connection. A binary
+  // write and read round-trip 1800-01-01 even on 24.8, so the rest of this test alone could not
+  // tell a range reported whole from one that is.
+  const std::vector<sde::Json> answer = scope.admin().rows(
+      "SELECT toString(toDate32('0001-01-01')) AS first_day, "
+      "toString(toDate32('9999-12-31')) AS last_day");
+  ASSERT_EQ(answer.size(), 1U);
+  EXPECT_EQ(span.has_value(), answer[0].find("first_day")->as_string() != "0001-01-01");
+  if (span.has_value()) {
+    EXPECT_EQ(span->describe(), "from " + answer[0].find("first_day")->as_string() + " to " +
+                                    answer[0].find("last_day")->as_string());
+  }
   // Both ends of the narrower range are held wherever the server stands.
   const sde::Row ends{{"id", std::int64_t{1}},
                       {"on", sde::Date("1900-01-01")},

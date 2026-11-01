@@ -72,6 +72,15 @@ def test_the_server_says_its_range_and_a_value_outside_it_never_reaches_the_serv
     try:
         session = _session(engine, table)
         span = engine.temporal_range
+        # The adapter's report against the server's own answer. A binary write and read
+        # round-trip 1800-01-01 even on 24.8, so the rest of this test alone could not tell a range
+        # reported whole from one that is.
+        first, last = engine._cx.query(
+            "SELECT toString(toDate32('0001-01-01')), toString(toDate32('9999-12-31'))"
+        ).result_rows[0]
+        assert (span is None) == (first == "0001-01-01")
+        if span is not None:
+            assert (span.first_day.isoformat(), span.last_day.isoformat()) == (first, last)
         # Both ends of the narrower range are held wherever the server stands.
         ends = {"id": 1, "on": date(1900, 1, 1), "at": datetime(2299, 12, 31, 23, 59, 59, 999999,
                                                                  tzinfo=UTC)}

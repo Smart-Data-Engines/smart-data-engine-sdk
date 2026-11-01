@@ -37,6 +37,16 @@ describe.skipIf(!dsn)('a ClickHouse server says the days it holds', () => {
       const session = await Session.open(model, map, { ch: engine })
       await session.ensureSchema()
       const span = await engine.temporalRange()
+      // The adapter's report against the server's own answer, read as text over plain HTTP.
+      const url = new URL(dsn!)
+      const answer = await (await fetch(`http://${url.host}/?default_format=TSV`, {
+        method: 'POST',
+        body: "SELECT toString(toDate32('0001-01-01')), toString(toDate32('9999-12-31'))",
+        headers: { Authorization: `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString('base64')}` },
+      })).text()
+      const [first, last] = answer.trim().split('\t')
+      expect(span === null).toBe(first === '0001-01-01')
+      if (span !== null) expect([span.firstDay, span.lastDay]).toEqual([first, last])
       // Both ends of the narrower range are held wherever the server stands.
       await session.save('Visit', { id: 1, on: '1900-01-01', at: Timestamp.from('2299-12-31T23:59:59.999999Z') })
       const ends = await session.get('Visit', { id: 1 })
