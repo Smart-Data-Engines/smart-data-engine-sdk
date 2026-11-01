@@ -200,15 +200,12 @@ def _causes(error: BaseException) -> str:
     names: list[str] = []
     seen: set[int] = set()
     cause: BaseException | None = error
-    while cause is not None and id(cause) not in seen and len(names) < 6:
+    while cause is not None and id(cause) not in seen:
         seen.add(id(cause))
         names.append(type(cause).__name__)
         nested = [part for part in cause.args if isinstance(part, BaseException)]
-        cause = next(
-            (step for step in (*nested, cause.__cause__, cause.__context__)
-             if step is not None and id(step) not in seen),
-            None,
-        )
+        steps = (*nested, cause.__cause__, cause.__context__)
+        cause = next((step for step in steps if step is not None), None)
     return " <- ".join(names)
 
 

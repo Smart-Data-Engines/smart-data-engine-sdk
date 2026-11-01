@@ -117,10 +117,12 @@ def test_a_connection_the_driver_could_not_open_names_its_classes_only(
     import sde.engines.clickhouse as adapter
 
     def refused(_parameters: Any) -> Any:
+        # Raised while handling the reset, without ``from``, as a driver may: the chain is then
+        # ``__context__`` alone.
         try:
             raise ConnectionResetError(f"reset by {SECRET_URL}")
-        except ConnectionResetError as exc:
-            raise RuntimeError(f"driver could not read {SECRET_URL}") from exc
+        except ConnectionResetError:
+            raise RuntimeError(f"driver could not read {SECRET_URL}")  # noqa: B904
 
     monkeypatch.setattr(adapter, "_connect_client", refused)
     engine = adapter.ClickHouseEngine("clickhouse://reader:hunter2@example.invalid:8123/default")
