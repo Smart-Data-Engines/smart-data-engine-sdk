@@ -72,6 +72,9 @@
             "context": "contract"
           },
           {
+            "context": "supply-chain"
+          },
+          {
             "context": "orderbook"
           },
           {
