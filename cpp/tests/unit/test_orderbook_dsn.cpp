@@ -12,6 +12,7 @@
 
 #include "engines/orderbook/dsn.hpp"
 #include "sde/errors.hpp"
+#include "sde/orderbook.hpp"
 
 namespace {
 
@@ -94,6 +95,43 @@ TEST(OrderbookDsn, ATargetGivenFieldByFieldIsHeldToTheDsnsRules) {
     EXPECT_EQ(refusal_of(target), "timeout is a number of seconds from 0.001 to 2147483.647")
         << timeout;
   }
+}
+
+}  // namespace
+
+// specs/secure-connections: plaintext to a host other than the loopback only when the DSN says so,
+// case for case as the reference's test_plaintext_only_when_said.py. The rule is the engine's, run
+// after the grammar: the shared vectors read remote hosts without `tls`, and still do.
+namespace {
+
+std::string construction_refusal(const std::string& dsn) {
+  try {
+    const sde::OrderbookEngine engine(dsn);
+  } catch (const sde::EngineError& error) {
+    return error.what();
+  }
+  return "";
+}
+
+TEST(PlaintextOnlyWhenSaid, TheOrderbookEngineRefusesARemoteHostThatStatesNoTls) {
+  for (const char* dsn : {"orderbook://ob.example.com:9090", "orderbook://app:secret@10.0.0.5:9090",
+                          "orderbook://[2001:db8::1]:9090?timeout=5"}) {
+    const std::string refusal = construction_refusal(dsn);
+    EXPECT_NE(refusal.find("needs its TLS stated"), std::string::npos) << dsn;
+    EXPECT_EQ(refusal.find("secret"), std::string::npos) << dsn;
+  }
+  for (const char* dsn : {"orderbook://127.0.0.1:9090", "orderbook://localhost:9090",
+                          "orderbook://[::1]:9090", "orderbook://ob.example.com:9090?tls=on",
+                          "orderbook://app:secret@ob.example.com:9090?tls=off"}) {
+    EXPECT_EQ(construction_refusal(dsn), "") << dsn;
+  }
+}
+
+TEST(PlaintextOnlyWhenSaid, TheGrammarStillReadsWhatADsnSays) {
+  const Target unstated = parse_dsn("orderbook://ob.example.com:9090");
+  EXPECT_FALSE(unstated.tls);
+  EXPECT_FALSE(unstated.tls_given);
+  EXPECT_TRUE(parse_dsn("orderbook://ob.example.com:9090?tls=off").tls_given);
 }
 
 }  // namespace

@@ -2338,7 +2338,10 @@ quote a parameter's name as written, never a value.
     without `tls=on`, and `ca` with `verify=off`, a trust anchor nothing consults.
 
 What the DSN leaves out is the default: no credentials, `tls=off`, `verify=on`, no CA file, and 10
-seconds.
+seconds. Whether an engine may then connect in plaintext is not the grammar's question: every
+library's adapter refuses, when it is constructed, a DSN to a host other than the loopback that does
+not say `tls` at all ([engine connections](engine-connections.md#plaintext-only-when-the-dsn-says-so)).
+The vectors below read what a DSN says, remote hosts without `tls` included, and they still do.
 
 A library that also takes a connection field by field holds the fields to the same rules: an
 identity of the server's characters, a timeout in the same range, and the same three settings that

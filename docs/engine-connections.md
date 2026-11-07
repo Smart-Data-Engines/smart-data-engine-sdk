@@ -190,9 +190,10 @@ text before it connects, and it does not resolve names.
 | PostgreSQL | the DSN has `sslmode` (any value, `disable` included), or `PGSSLMODE` is set; with several hosts, every one outside the loopback needs it | refused: use `sslmode=verify-full`, or state `sslmode=disable` |
 | ClickHouse | the DSN says `secure=false` | refused: use `https`, `clickhouses` or `secure=true`, or state `secure=false` |
 | Elasticsearch | never | refused: use `elasticsearch+https` |
+| the orderbook engine | the DSN says `tls=off` (or, given field by field, `tls` is `False`) | refused: use `tls=on`, with `ca` for a private CA, or state `tls=off` |
 
 The loopback is `localhost` in any case, 127.0.0.0/8, `::1`, and 127.0.0.0/8 mapped into IPv6
-(`::ffff:127.0.0.1`). A PostgreSQL Unix socket also counts. `PGHOST` and `PGHOSTADDR` are read as
+(`::ffff:127.0.0.1`), never an address with a zone. A PostgreSQL Unix socket also counts. `PGHOST` and `PGHOSTADDR` are read as
 the driver reads them when the DSN names no host. The three libraries share the rule:
 `test_plaintext_only_when_said.py`, `plaintext-only-when-said.test.ts`, and the
 `PlaintextOnlyWhenSaid` cases in C++.

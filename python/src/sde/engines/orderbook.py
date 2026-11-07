@@ -69,6 +69,7 @@ from ..logging import log
 from ..placement import PhysicalLayout
 from ..query import QueryRefused, ReadPlan
 from ._orderbook_dsn import IDENTITY, LONGEST_TIMEOUT, SHORTEST_TIMEOUT, parse_dsn
+from ._transport import loopback
 
 __all__ = ["OrderbookEngine"]
 
@@ -347,6 +348,12 @@ def _scan_of(plan: ReadPlan) -> _Scan | None:
     )
 
 
+PLAINTEXT = (
+    "an orderbook connection to a host other than the loopback needs its TLS stated: tls=on (with "
+    "ca for a private CA), or tls=off if plaintext is intended"
+)
+
+
 class OrderbookEngine:
     """A thin adapter over the orderbook engine's Python client.
 
@@ -381,7 +388,7 @@ class OrderbookEngine:
         host: str | None = None,
         port: int | None = None,
         auth: tuple[str, str] | None = None,
-        tls: bool = False,
+        tls: bool | None = None,
         tls_ca_file: str | None = None,
         tls_verify: bool = True,
         timeout: float = 10.0,
@@ -440,6 +447,12 @@ class OrderbookEngine:
             # The range in which every library's socket waits as long as it is asked (contract 7n):
             # an infinity passed here and failed on the first socket (finding 29).
             raise EngineError("timeout is a number of seconds from 0.001 to 2147483.647")
+        # Last, after every rule about a value, as the ClickHouse DSN's rule runs last.
+        if host is not None and tls is None and not loopback(host):
+            # specs/secure-connections: a default is nobody's decision, and plain TCP to another
+            # host carries the challenge's answer and every book across a network we know nothing
+            # about. The loopback is decided on the text, as for every other engine.
+            raise EngineError(PLAINTEXT)
         self._data_dir = data_dir
         self._host = host
         self._port = port
@@ -466,7 +479,7 @@ class OrderbookEngine:
             host=parsed.host,
             port=parsed.port,
             auth=parsed.auth,
-            tls=parsed.tls,
+            tls=parsed.tls if parsed.tls_given else None,
             tls_ca_file=parsed.ca,
             tls_verify=parsed.verify,
             timeout=parsed.timeout,
