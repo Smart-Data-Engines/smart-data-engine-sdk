@@ -143,7 +143,9 @@ PostgresEngine::PostgresEngine(std::string dsn, PostgresOptions options)
     : dsn_(std::move(dsn)),
       options_(std::move(options)),
       fences_(std::make_unique<detail::postgres::Fences>(*this)),
-      process_(static_cast<long>(getpid())) {}
+      process_(static_cast<long>(getpid())) {
+  detail::postgres::refuse_plaintext_elsewhere(dsn_);
+}
 
 PostgresEngine::~PostgresEngine() = default;
 

@@ -3,7 +3,9 @@
 /// checks it - the reference's adapter runs `sde.bulk.batch_columns` too - and a chunk to copy is
 /// refused in the reference's words when its rows disagree.
 
+#include <cstdlib>
 #include <functional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -53,6 +55,59 @@ TEST(PostgresOffline, AChunkToCopyWhoseRowsDisagreeIsRefusedInTheReferencesWords
             }),
             "copy_in into event was given rows with different columns (['a b', 'c'] and ['a', "
             "'b c']). A chunk comes from one table, so this is a caller assembling it from two.");
+}
+
+}  // namespace
+
+// specs/secure-connections: a DSN reaching a host other than the loopback or a Unix socket needs a
+// TLS policy, in the string or as PGSSLMODE, before anything connects.
+namespace {
+
+class Environment {
+ public:
+  explicit Environment(std::vector<std::pair<const char*, const char*>> values) {
+    for (const char* name : {"PGSSLMODE", "PGHOST", "PGHOSTADDR"}) {
+      if (const char* old = std::getenv(name)) saved_.emplace_back(name, old);
+      ::unsetenv(name);
+    }
+    for (const auto& [name, value] : values) ::setenv(name, value, 1);
+  }
+  ~Environment() {
+    for (const char* name : {"PGSSLMODE", "PGHOST", "PGHOSTADDR"}) ::unsetenv(name);
+    for (const auto& [name, value] : saved_) ::setenv(name.c_str(), value.c_str(), 1);
+  }
+
+ private:
+  std::vector<std::pair<std::string, std::string>> saved_;
+};
+
+TEST(PlaintextOnlyWhenSaid, PostgresRefusesARemoteHostWithNoTlsPolicy) {
+  const Environment clean({});
+  for (const char* dsn : {"postgresql://app:secret@db.example.com:5432/sde",
+                          "postgresql://app:secret@10.0.0.5/sde", "host=db.example.com dbname=sde",
+                          "host=127.0.0.1,db.example.com dbname=sde", "hostaddr=10.0.0.5 dbname=sde"}) {
+    const std::string refused = refusal_of([&] { sde::PostgresEngine engine(dsn); });
+    EXPECT_NE(refused.find("sslmode=verify-full"), std::string::npos) << dsn << ": " << refused;
+    EXPECT_EQ(refused.find("secret@"), std::string::npos) << refused;
+  }
+  for (const char* dsn : {"postgresql://app:secret@127.0.0.1:55432/sde",
+                          "postgresql://app:secret@localhost/sde", "postgresql://app:secret@[::1]/sde",
+                          "host=/var/run/postgresql dbname=sde", "dbname=sde",
+                          "postgresql://app:secret@db.example.com/sde?sslmode=verify-full",
+                          "postgresql://app:secret@db.example.com/sde?sslmode=disable",
+                          "host=db.example.com dbname=sde sslmode=require"}) {
+    EXPECT_EQ(refusal_of([&] { sde::PostgresEngine engine(dsn); }), "") << dsn;
+  }
+}
+
+TEST(PlaintextOnlyWhenSaid, PostgresReadsTheEnvironmentAsLibpqDoes) {
+  {
+    const Environment remote({{"PGHOST", "db.example.com"}});
+    EXPECT_NE(refusal_of([] { sde::PostgresEngine engine("dbname=sde"); }).find("TLS policy"),
+              std::string::npos);
+  }
+  const Environment stated({{"PGHOST", "db.example.com"}, {"PGSSLMODE", "verify-full"}});
+  EXPECT_EQ(refusal_of([] { sde::PostgresEngine engine("dbname=sde"); }), "");
 }
 
 }  // namespace

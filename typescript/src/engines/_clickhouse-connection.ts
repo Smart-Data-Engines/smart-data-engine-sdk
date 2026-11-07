@@ -106,15 +106,18 @@ export function parseDsn(dsn: string): ConnectionParameters {
     if (!Number.isInteger(port) || port < 1 || port > 65535) return refuse('port')
   } else port = scheme === 'http' ? 80 : scheme === 'https' ? 443 : secure ? 8443 : 8123
   if (scheme === 'clickhouse' && requested === undefined && (port === 443 || port === 8443)) return refuse('ambiguous TLS port; use an explicit secure scheme or option')
-  if (!secure && requested !== 'false' && !loopback(host)) {
-    return refuse('transport: plain HTTP to a host other than the loopback needs an explicit secure=false; use https, clickhouses or secure=true for TLS')
-  }
   if (options.has('verify') && (options.get('verify') !== 'true' || !secure)) return refuse('verify option')
   const ca = options.get('ca_cert') ?? null
   if (ca !== null && (!secure || !isAbsolute(ca))) return refuse('CA option')
+  const connectTimeout = seconds(options.get('connect_timeout'), 10)
+  const sendReceiveTimeout = seconds(options.get('send_receive_timeout'), 15)
+  // Last, so that a DSN with any other defect is refused for that defect, as in the reference.
+  if (!secure && requested !== 'false' && !loopback(host)) {
+    return refuse('transport: plain HTTP to a host other than the loopback needs an explicit secure=false; use https, clickhouses or secure=true for TLS')
+  }
   return Object.freeze({ host, port, username, password, database, secure, ca_cert: ca,
-    connect_timeout: seconds(options.get('connect_timeout'), 10),
-    send_receive_timeout: seconds(options.get('send_receive_timeout'), 15),
+    connect_timeout: connectTimeout,
+    send_receive_timeout: sendReceiveTimeout,
     receive_timeout_supplied: options.has('send_receive_timeout'),
     protocol: secure ? 'https:' : 'http:',
   })

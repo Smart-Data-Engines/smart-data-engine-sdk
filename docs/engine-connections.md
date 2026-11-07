@@ -25,8 +25,8 @@ segment is required. Spaces in that name must be percent-encoded; encode non-ASC
 |---|---:|---|
 | `https` | 443 | TLS with certificate chain and host/IP verification |
 | `clickhouses` | 8443 | TLS with certificate chain and host/IP verification |
-| `http` | 80 | Plain HTTP |
-| `clickhouse` | 8123 | Plain HTTP; `secure=true` selects TLS and default port 8443 |
+| `http` | 80 | Plain HTTP: to a host other than the loopback only with an explicit `secure=false` |
+| `clickhouse` | 8123 | Plain HTTP, as `http`; `secure=true` selects TLS and default port 8443 |
 
 An explicit port is preserved, including 80 and 443. Plain `clickhouse` on 443/8443 without an
 explicit `secure` choice is refused: an older Python driver inferred encryption from those ports,
@@ -155,8 +155,9 @@ postgresql://USER:PASSWORD@db.example.com:5432/DATABASE?sslmode=verify-full&sslr
 ```
 
 `verify-full` means both certificate-chain validation and server identity validation. Configure
-`sslrootcert` for a private CA. A DSN without an explicit TLS policy is retained for existing local
-development; the SDK does not label that as a verified production connection. PostgreSQL driver
+`sslrootcert` for a private CA. A DSN without an explicit TLS policy is accepted only to the loopback
+or a Unix socket, for local development; the SDK does not label that as a verified production
+connection. PostgreSQL driver
 options outside the qualified profile retain their native interpretation. In particular, encryption
 without server identity verification is a weaker property. Do not infer it from a successful
 connection or from a `require` / `prefer` spelling across different drivers.
@@ -176,6 +177,25 @@ The [PostgreSQL TLS documentation](https://www.postgresql.org/docs/current/libpq
 explains libpq's modes. The [Node driver documentation](https://node-postgres.com/features/ssl)
 also warns that SSL URI options can replace a separately supplied SSL object. Qualify the exact
 installed runtime/driver and credential policy before using a customer endpoint.
+
+## Plaintext only when the DSN says so
+
+A connection to a host other than the loopback carries credentials and rows across a network the
+library knows nothing about, so plain transport there is accepted only when the connection string
+says so. That is an explicit decision a person wrote, never a default. The adapter decides on the
+text before it connects, and it does not resolve names.
+
+| Engine | Plain transport to a host other than the loopback is accepted when | Otherwise |
+|---|---|---|
+| PostgreSQL | the DSN has `sslmode` (any value, `disable` included), or `PGSSLMODE` is set; with several hosts, every one outside the loopback needs it | refused: use `sslmode=verify-full`, or state `sslmode=disable` |
+| ClickHouse | the DSN says `secure=false` | refused: use `https`, `clickhouses` or `secure=true`, or state `secure=false` |
+| Elasticsearch | never | refused: use `elasticsearch+https` |
+
+The loopback is `localhost` in any case, 127.0.0.0/8, `::1`, and 127.0.0.0/8 mapped into IPv6
+(`::ffff:127.0.0.1`). A PostgreSQL Unix socket also counts. `PGHOST` and `PGHOSTADDR` are read as
+the driver reads them when the DSN names no host. The three libraries share the rule:
+`test_plaintext_only_when_said.py`, `plaintext-only-when-said.test.ts`, and the
+`PlaintextOnlyWhenSaid` cases in C++.
 
 ## Compatibility and evidence
 

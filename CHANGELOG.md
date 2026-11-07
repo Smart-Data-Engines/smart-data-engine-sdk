@@ -8,6 +8,22 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed, and it may break a configuration: plaintext to a host other than the loopback only when
+the DSN says so** (Python, TypeScript, C++). Until now, a PostgreSQL DSN with no `sslmode` used the
+driver's default. For libpq that is `prefer`, which verifies nobody; for `pg` in Node it is no TLS
+at all. A plain `clickhouse://` or `http://` DSN went unencrypted to any host. Now a connection to a
+host other than the loopback or a Unix socket needs the decision written down, and the adapter
+refuses before it connects. The table is in
+[`docs/engine-connections.md`](docs/engine-connections.md#plaintext-only-when-the-dsn-says-so). To
+keep a plaintext connection on a network you trust, say so:
+- PostgreSQL: `sslmode=disable`, or `PGSSLMODE=disable`;
+- ClickHouse: `?secure=false`.
+
+Better, use TLS: `sslmode=verify-full`, or `https`/`clickhouses`. Elasticsearch already refused
+plaintext outside the loopback. Its rule is now the one all three libraries share, which also reads
+an IPv4-mapped loopback address by its IPv4 part on every runtime. The orderbook engine's DSN follows
+in its own change, with the shared vectors of section 7n.
+
 **Added: leaving - `sde.departure` and `sde-operator depart`** (Python). A table of a group that
 carries a write generation refuses a write without one, and a client's own code writes none. So a
 client who stopped using the library had its own INSERTs refused until somebody dropped constraints

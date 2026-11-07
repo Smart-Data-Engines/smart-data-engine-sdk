@@ -14,6 +14,7 @@
 #include "sde/errors.hpp"
 #include "sde/unicode.hpp"
 #include "python_url.hpp"
+#include "transport.hpp"
 #include "unicode_internal.hpp"
 
 namespace sde::detail::clickhouse {
@@ -270,6 +271,10 @@ Target parse(std::string_view dsn) {
   out.ca_cert = ca_cert;
   out.connect_timeout = seconds(option("connect_timeout"), kConnectTimeoutSeconds);
   out.send_receive_timeout = seconds(option("send_receive_timeout"), kHandshakeTimeoutSeconds);
+  // Last, so that a DSN with any other defect is refused for that defect, as in the reference.
+  require(secure || requested == "false" || detail::loopback(out.host),
+          "ClickHouse plain HTTP to a host other than the loopback needs an explicit "
+          "secure=false; use https, clickhouses or secure=true for TLS");
   return out;
 }
 
