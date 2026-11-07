@@ -8,6 +8,19 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: leaving - `sde.departure` and `sde-operator depart`** (Python). A table of a group that
+carries a write generation refuses a write without one, and a client's own code writes none. So a
+client who stopped using the library had its own INSERTs refused until somebody dropped constraints
+that no document listed. `sde.departure` reads PostgreSQL, ClickHouse and Elasticsearch through the
+operator's login and lists everything the library and its operator left there: fences, the
+generation column, bookkeeping and tables a drain left detached. It renders the statements that
+remove them as plain text: `release` lets an ordinary write in, and `cleanup` drops the column and
+the bookkeeping. `sde-operator depart` prints them, `--execute` runs the release and `--cleanup` the
+rest. It never releases or drops a table outside the map in force or of another project, and it
+refuses while an operation holds a table. `sde.departure_script` renders the same release from a map
+alone. The live tests write on the raw connection without a generation: refused under the fence,
+which is the control, then accepted after the listed text has run ([`docs/departure.md`](docs/departure.md)).
+
 **Changed: the C++ library holds the no-account mode's silence with a test** (C++). Every event the
 no-account mode emits, the account mode emits too. The test runs the same work on a hand-written
 unsigned map and on the same document signed: the unsigned run says `sde.map.loaded` and
