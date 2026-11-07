@@ -497,10 +497,11 @@ class ElasticsearchFences:
                                   "constraints": dict(sorted(after.items()))}},
                 "processors": [fence_processor(after)],
             }
-            path = f"/_ingest/pipeline/{fence_pipeline(table)}"
-            if document is not None:
-                path += f"?if_version={version if version is not None else 0}"
-            status, answer = self._call("PUT", path, body)
+            # Conditional on the version read: a second executor is refused, not overwritten.
+            check = "" if document is None else f"?if_version={version or 0}"
+            status, answer = self._call(
+                "PUT", f"/_ingest/pipeline/{fence_pipeline(table)}{check}", body
+            )
             if status == 409 or _version_conflict(status, answer):
                 raise MigrationRefused(
                     f"the write fence of {table} changed while this command ran: another executor "
