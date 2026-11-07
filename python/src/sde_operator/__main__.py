@@ -69,6 +69,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     stage.add_argument("--plan", type=Path, required=True)
     index = commands.add_parser("index")
     index.add_argument("--plan", type=Path, required=True)
+    depart = commands.add_parser(
+        "depart",
+        help="list what this library left in the engines and the statements that remove it",
+    )
+    depart.add_argument(
+        "--execute", action="store_true", help="run the release the listing shows"
+    )
+    depart.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="with --execute, also drop the generation column and the bookkeeping tables",
+    )
     args = parser.parse_args(argv)
     adapters: list[Any] = []
     try:
@@ -104,6 +116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         from sde.cutover import load_cutover_plan
 
+        if args.command == "depart" and args.cleanup and not args.execute:
+            raise MigrationRefused("--cleanup runs only with --execute; list first, then run")
         if not isinstance(config["engines"], dict) or not config["engines"]:
             raise MigrationRefused("operator configuration needs local engine bindings")
         operators: dict[str, Any] = {}
@@ -127,11 +141,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             adapters.append(operators[name])
             operators[name].connect()
             runtime[name] = []
+            if args.command == "depart":
+                # Leaving reads and changes what the operator's own login changes; an application
+                # that has stopped using the library need not keep its runtime logins configured.
+                continue
             for variable in probes:
                 engine = kind(environment(variable))
                 adapters.append(engine)
                 engine.connect()
                 runtime[name].append(engine)
+        if args.command == "depart":
+            from sde.departure import departure
+
+            current = load_map(
+                read(args.project_dir / "active-map.json"),
+                model=model,
+                public_key=keys,
+                require_signature=True,
+            )
+            listed = departure(current, operators, project_id=project)
+            if not args.execute:
+                print(json.dumps(listed.as_record()))
+                return 0
+            after = listed.execute(operators, cleanup=args.cleanup)
+            executed = {
+                engine.engine: [*engine.release, *(engine.cleanup if args.cleanup else ())]
+                for engine in listed.engines
+            }
+            print(json.dumps({"executed": executed, "after": after.as_record()}))
+            return 0
         executor = LocalCutover(
             args.project_dir,
             model=model,
