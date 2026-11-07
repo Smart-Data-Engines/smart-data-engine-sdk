@@ -14,6 +14,7 @@ from typing import Any
 from sde.errors import EngineError, MigrationRefused, SdeError
 from sde.generation import check_map_project
 from sde.local_cutover import CutoverRecoveryRequired, LocalCutover, _local_status
+from sde.migration import CHUNK_ROWS
 from sde.placement import load_map
 from sde.testing.loader import model_from_neutral
 
@@ -50,6 +51,11 @@ def environment(name: Any) -> str:
     if not isinstance(name, str) or not name or not os.environ.get(name):
         raise MigrationRefused("a configured local connection environment variable is missing")
     return os.environ[name]
+
+
+MAX_CHUNK_ROWS = 20000
+"""The largest chunk measured (docs/qualification/cutover-limits). A chunk is held in memory three
+times over while it is copied, so its bound is a bound on the operator's memory for wide rows."""
 
 
 def _erasure_keys(args: argparse.Namespace) -> list[Any]:
@@ -118,11 +124,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = read(args.config)
         if (
-            set(config) != {"protocol", "project_id", "model", "public_keys", "engines"}
+            set(config) - {"chunk_rows"}
+            != {"protocol", "project_id", "model", "public_keys", "engines"}
             or type(config["protocol"]) is not int
             or config["protocol"] != 1
         ):
             raise MigrationRefused("unsupported or incomplete local operator configuration")
+        chunk_rows = config.get("chunk_rows", CHUNK_ROWS)
+        if type(chunk_rows) is not int or not 1 <= chunk_rows <= MAX_CHUNK_ROWS:
+            raise MigrationRefused(
+                f"chunk_rows is a whole number of rows from 1 to {MAX_CHUNK_ROWS}: the rows a "
+                f"cutover's repair and comparison move at once"
+            )
         model = model_from_neutral(config["model"])
         project = config["project_id"]
         if not isinstance(config["public_keys"], dict) or not config["public_keys"]:
@@ -209,6 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             public_key=keys,
             operators=operators,
             runtime=runtime,
+            chunk_rows=chunk_rows,
         )
         if args.command == "enroll":
             executor.enroll(read(args.map))
