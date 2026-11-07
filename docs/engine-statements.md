@@ -21,6 +21,9 @@ Who sends it:
 - **operator**: `sde-operator`, when you run it on a signed instruction, with the operator's login;
 - **departure**: `sde-operator depart --execute`, or you running the text it lists
   ([leaving](departure.md)).
+- **erasure**: `sde-operator erase --execute`, with the operator's login, in the tables of the map
+  in force ([erasing a person's data](erasure.md)). The deletion it lists for a table outside the
+  map is text for you to run or not; it sends none.
 
 ## PostgreSQL
 
@@ -46,6 +49,7 @@ Who sends it:
 | `DROP TABLE …` | operator | an abandoned staging drops its own marked copy |
 | `CREATE INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY IF EXISTS …` | operator | an index change in place |
 | `ALTER TABLE … DROP COLUMN IF EXISTS …`, `DROP TABLE IF EXISTS …` | departure | leaving, with `--cleanup`: the generation column and the bookkeeping tables |
+| `WITH gone AS (DELETE FROM … WHERE … RETURNING 1) SELECT count(*) FROM gone` | erasure | the rows of the keys named, in each table of the entity, copies first |
 | `SET TRANSACTION READ ONLY` | application | explaining a query's plan, in a transaction that is rolled back |
 | `SET DateStyle TO ISO` | application, C++ | on connecting, so that dates are read in one format |
 
@@ -70,6 +74,7 @@ Who sends it:
 | `ALTER TABLE … DROP INDEX … SETTINGS alter_sync = 0` | operator | an index change removes one |
 | `KILL MUTATION WHERE database = currentDatabase() AND table = '…' AND mutation_id = '…'` | operator | an index change stops its own materialization of an index it removes |
 | `ALTER TABLE … DROP COLUMN IF EXISTS …`, `DROP TABLE IF EXISTS …` | departure | leaving, with `--cleanup`; the tables with `SYNC` |
+| `ALTER TABLE … DELETE WHERE …` | erasure | the rows of the keys named, as a mutation with `mutations_sync = 2`, which rewrites the parts that held them |
 
 ## Elasticsearch
 
@@ -86,7 +91,7 @@ Requests, in console syntax:
 | `PUT /…/_settings` | provisioning; operator; departure | the index's final pipeline set to its fence or unset when leaving, a write block lifted |
 | `PUT /…/_block/write`, `POST /…/_refresh` | provisioning; operator | a barrier waits for the writes in flight |
 | `PUT /…/_block/read` | operator | a cutover retires a source |
-| `POST /…/_delete_by_query?refresh=true&conflicts=abort` | operator | a cutover empties the copy it refills, after checking its identity |
+| `POST /…/_delete_by_query?refresh=true&conflicts=abort` | operator; erasure | a cutover empties the copy it refills, after checking its identity; an erasure deletes the documents of the keys named, by `_id` |
 | `DELETE /…` | operator | an abandoned staging deletes its own marked copy |
 | `DELETE /…?ignore_unavailable=true` | departure | leaving, with `--cleanup`: the bookkeeping indexes |
 | `DELETE /_ingest/pipeline/…` | operator; departure | an abandoned staging's copy, and leaving: the fence pipeline `__sde_f_<index>` |

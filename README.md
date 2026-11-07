@@ -108,6 +108,9 @@ through a copy.
 [Leaving](docs/departure.md) needs no export: `sde-operator depart` lists what the library and its
 operator left in your engines - write fences, which refuse your own code's writes, and bookkeeping -
 and removes it, never a row.
+[Erasing a person's data](docs/erasure.md) - a request under Article 17 of the GDPR - is
+`sde-operator erase`: it finds every table of the map in force that holds the entity, deletes the
+keys' rows from the copies and then the source, counts again, and keeps a receipt that names no key.
 [Every statement the libraries and the operator can send to your engines](docs/engine-statements.md)
 is listed by engine, with who sends it and when, and a test holds the list to the source.
 The opt-in [workload qualification](docs/cutover-qualification.md) runs installed Python and npm

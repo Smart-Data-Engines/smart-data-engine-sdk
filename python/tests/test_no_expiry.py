@@ -230,19 +230,21 @@ def _wall_clock_reads() -> list[tuple[str, int]]:
 def test_the_library_reads_the_wall_clock_only_to_stamp_what_happened() -> None:
     """And what it does with each read is stamp something, not compare it with anything.
 
-    Pinned as a list rather than as an absence, because two reads are legitimate:
+    Pinned as a list rather than as an absence, because three reads are legitimate:
     - ``migration.py``: a verification report says when it ran, and a report with no timestamp is a
       report nobody can put in order;
     - ``books.py``: a book stream's update the application gives no time takes the machine's clock
       as its event time (format contract 8c), and it meets nothing but that side's last time, so
-      that a side's times never go back.
+      that a side's times never go back;
+    - ``erasure.py``: an erasure's receipt says when the rows went, because it is proof that a
+      request to erase a person's data was honoured, and proof without a time does not say when.
 
     Pinning the list means a third read has to be argued for by whoever adds it - which is the
     conversation this test exists to force, since "what time is it" is the first thing an expiry
     check needs.
     """
     reads = _wall_clock_reads()
-    assert sorted(where for where, _ in reads) == ["books.py", "migration.py"], (
+    assert sorted(where for where, _ in reads) == ["books.py", "erasure.py", "migration.py"], (
         f"the library now reads the wall clock in {reads}"
     )
 

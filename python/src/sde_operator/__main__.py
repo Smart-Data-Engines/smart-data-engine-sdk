@@ -52,6 +52,26 @@ def environment(name: Any) -> str:
     return os.environ[name]
 
 
+def _erasure_keys(args: argparse.Namespace) -> list[Any]:
+    """The keys of an erasure, from --key and --keys, refused by name when one is not JSON.
+
+    The message says which key, never what it held: a key is the person's own data.
+    """
+    texts = [("--key", index, text) for index, text in enumerate(args.key)]
+    if args.keys is not None:
+        lines = args.keys.read_text(encoding="utf-8").splitlines()
+        texts.extend(
+            ("--keys line", index + 1, line) for index, line in enumerate(lines) if line.strip()
+        )
+    keys = []
+    for where, index, text in texts:
+        try:
+            keys.append(json.loads(text))
+        except ValueError:
+            raise MigrationRefused(f"{where} {index} is not a JSON object") from None
+    return keys
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-dir", type=Path, required=True)
@@ -80,6 +100,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--cleanup",
         action="store_true",
         help="with --execute, also drop the generation column and the bookkeeping tables",
+    )
+    erase = commands.add_parser(
+        "erase",
+        help="list, and with --execute delete, one entity's rows by key in every table of the map",
+    )
+    erase.add_argument("--entity", required=True)
+    erase.add_argument(
+        "--key", action="append", default=[], help="one key as a JSON object; repeatable"
+    )
+    erase.add_argument("--keys", type=Path, help="a file of keys, one JSON object a line")
+    erase.add_argument(
+        "--execute", action="store_true", help="delete; without it nothing is changed"
     )
     args = parser.parse_args(argv)
     adapters: list[Any] = []
@@ -197,6 +229,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(executor.index(build).as_record()))
         elif args.command == "abandon":
             print(json.dumps(executor.abandon().as_record()))
+        elif args.command == "erase":
+            from sde.erasure import ErasureReceipt, ErasureRequest
+
+            request = ErasureRequest.build(model, args.entity, _erasure_keys(args))
+            result = executor.erase(request, execute=args.execute)
+            print(json.dumps(result.as_record()))
+            if isinstance(result, ErasureReceipt) and result.outcome != "erased":
+                return 1
         elif args.command == "execute":
             plan = load_cutover_plan(
                 read(args.plan), model=model, project_id=project, public_key=keys

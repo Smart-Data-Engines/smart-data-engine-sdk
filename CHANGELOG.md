@@ -8,6 +8,21 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: erasing a person's data - `sde.erasure` and `sde-operator erase`** (Python). The library
+never deletes a row, so a client honouring a request to erase a person's data ran SQL by hand and
+had to know where the copies were. `sde-operator erase --entity E --key '{...}'` lists every table of
+the map in force that holds the entity - the source and each copy, the one a migration is filling
+included - with the rows of the keys in each, and changes nothing. With `--execute` it deletes them,
+copies first, then counts every table again: `erased`, or `incomplete` with exit code 1 when
+something wrote a key again meanwhile. ClickHouse deletes by a mutation with `mutations_sync = 2`,
+which removes the rows from the parts rather than masking them; Elasticsearch by `_id`. It takes no
+write barrier and runs under the project lock, refused beside an unfinished staging, cutover or index
+build. A table outside the map - a source a move retired - is listed with its matching rows and the
+statement that would delete them, and left alone. The receipt, also kept as `erasures/<id>.json`,
+names no key: each is an HMAC-SHA-256 under a secret that stays in the project directory
+([`docs/erasure.md`](docs/erasure.md)). The statement guard now also reads a statement that writes
+inside `WITH`, which it took for a read.
+
 **Changed: a move into PostgreSQL pauses writes for about half as long** (Python). The operator's
 repair - refilling the copy from the frozen source inside a cutover's pause - wrote each chunk with
 `INSERT ... ON CONFLICT DO NOTHING`, whose speculative insertion cost about 24 µs a row more than a
