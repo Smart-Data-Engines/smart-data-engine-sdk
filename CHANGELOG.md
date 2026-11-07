@@ -8,6 +8,19 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: every statement sent to your engines, on one page** (Python, TypeScript, C++).
+[`docs/engine-statements.md`](docs/engine-statements.md) lists, by engine, every statement the
+libraries and the local operator can send that changes something, with who sends it and when. The
+test `test_engine_statements.py` reads the Python source as a syntax tree and renders each statement
+with `…` for the parts the code fills in. It fails on a form the page does not list, and on a listed
+form the source no longer sends. For TypeScript and C++, which assemble statements in pieces, it
+reads how each statement begins, and it accepts only openings from the rows the application and
+provisioning send. Some Python call sites now write their statements out where they send them, so
+that they can be read there: a cutover's grants, a copy's refresh and delete-by-query, the fence
+pipeline's requests, and the requests that write an index, a map version and a backfill marker.
+Nothing they send changed. `SECURITY.md` gains the operator's scope and a statement of supported
+versions.
+
 **Added: leaving - `sde.departure` and `sde-operator depart`** (Python). A table of a group that
 carries a write generation refuses a write without one, and a client's own code writes none. So a
 client who stopped using the library had its own INSERTs refused until somebody dropped constraints

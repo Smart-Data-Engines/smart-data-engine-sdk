@@ -749,8 +749,9 @@ class ElasticsearchEngine:
         statements = schema_statements(layout, keys=keys, dialect=self.dialect)
         for statement in statements:
             document = json.loads(statement)
-            path = self._path(document["index"])
-            status, body = self._request("PUT", path, {"mappings": document["mappings"]})
+            status, body = self._request(
+                "PUT", self._path(document["index"]), {"mappings": document["mappings"]}
+            )
             exists = (
                 status == 400
                 and isinstance(body, Mapping)
@@ -1335,8 +1336,9 @@ class ElasticsearchEngine:
             "entity": str(entity),
             "rows_copied": int(rows),
         }
-        path = self._path(BACKFILL_TABLE, "_doc") + "?refresh=true"
-        status, body = self._request("POST", path, source)
+        status, body = self._request(
+            "POST", self._path(BACKFILL_TABLE, "_doc") + "?refresh=true", source
+        )
         if status != 201:
             raise EngineError(
                 f"recording backfill progress in {BACKFILL_TABLE} failed: "
@@ -1398,8 +1400,11 @@ class ElasticsearchEngine:
     def record_map_version(self, version: int, *, model_version: str) -> None:
         self._watermark_index()
         source = {"map_version": int(version), "model_version": str(model_version)}
-        path = self._path(WATERMARK_TABLE, "_doc", str(int(version))) + "?refresh=wait_for"
-        status, body = self._request("PUT", path, source)
+        status, body = self._request(
+            "PUT",
+            self._path(WATERMARK_TABLE, "_doc", str(int(version))) + "?refresh=wait_for",
+            source,
+        )
         if status not in (200, 201):
             raise EngineError(f"recording map version failed: {self._error(status, body)}")
 
