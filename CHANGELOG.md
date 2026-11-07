@@ -8,6 +8,32 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: every statement sent to your engines, on one page** (Python, TypeScript, C++).
+[`docs/engine-statements.md`](docs/engine-statements.md) lists, by engine, every statement the
+libraries and the local operator can send that changes something, with who sends it and when. The
+test `test_engine_statements.py` reads the Python source as a syntax tree and renders each statement
+with `…` for the parts the code fills in. It fails on a form the page does not list, and on a listed
+form the source no longer sends. For TypeScript and C++, which assemble statements in pieces, it
+reads how each statement begins, and it accepts only openings from the rows the application and
+provisioning send. Some Python call sites now write their statements out where they send them, so
+that they can be read there: a cutover's grants, a copy's refresh and delete-by-query, the fence
+pipeline's requests, and the requests that write an index, a map version and a backfill marker.
+Nothing they send changed. `SECURITY.md` gains the operator's scope and a statement of supported
+versions.
+
+**Added: leaving - `sde.departure` and `sde-operator depart`** (Python). A table of a group that
+carries a write generation refuses a write without one, and a client's own code writes none. So a
+client who stopped using the library had its own INSERTs refused until somebody dropped constraints
+that no document listed. `sde.departure` reads PostgreSQL, ClickHouse and Elasticsearch through the
+operator's login and lists everything the library and its operator left there: fences, the
+generation column, bookkeeping and tables a drain left detached. It renders the statements that
+remove them as plain text: `release` lets an ordinary write in, and `cleanup` drops the column and
+the bookkeeping. `sde-operator depart` prints them, `--execute` runs the release and `--cleanup` the
+rest. It never releases or drops a table outside the map in force or of another project, and it
+refuses while an operation holds a table. `sde.departure_script` renders the same release from a map
+alone. The live tests write on the raw connection without a generation: refused under the fence,
+which is the control, then accepted after the listed text has run ([`docs/departure.md`](docs/departure.md)).
+
 **Changed: the C++ library holds the no-account mode's silence with a test** (C++). Every event the
 no-account mode emits, the account mode emits too. The test runs the same work on a hand-written
 unsigned map and on the same document signed: the unsigned run says `sde.map.loaded` and

@@ -38,6 +38,7 @@ from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
 from .capabilities import members_of, satisfies
 from .cutover import CUTOVER_PROTOCOL, CUTOVER_RELAYOUT_PROTOCOL, CutoverPlan, load_cutover_plan
+from .departure import Departure, DepartureScript, EngineDeparture, departure, departure_script
 from .entity import Ref, clear_registry, entity, registry
 from .errors import (
     BulkWriteRefused,
@@ -209,9 +210,12 @@ __all__ = [
     "CutoverReceipt",
     "CutoverRecoveryRequired",
     "DeclarationError",
+    "Departure",
+    "DepartureScript",
     "DerivedLayout",
     "Difference",
     "Engine",
+    "EngineDeparture",
     "EngineError",
     "EntityProgress",
     "Explains",
@@ -289,6 +293,8 @@ __all__ = [
     "compatibility_views",
     "default_layout",
     "denormalized_layout",
+    "departure",
+    "departure_script",
     "digest16",
     "enforce_forward_only",
     "engine_facts",

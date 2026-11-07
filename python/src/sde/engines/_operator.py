@@ -485,9 +485,12 @@ class NativeOperator:
                 raise MigrationRefused("physical table identity changed before access transition")
             qualified = self.quote(table.namespace) + "." + self.quote(table.name)
             for name in self.principals:
-                action, direction = ("GRANT", "TO") if enabled else ("REVOKE", "FROM")
+                # Written out in full, both of them, so that the statement is readable where it is
+                # sent - docs/engine-statements.md lists it, and its test reads it from here.
                 self.command(
-                    f"{action} SELECT, INSERT ON {qualified} {direction} {self.quote(name)}"
+                    f"GRANT SELECT, INSERT ON {qualified} TO {self.quote(name)}"
+                    if enabled
+                    else f"REVOKE SELECT, INSERT ON {qualified} FROM {self.quote(name)}"
                 )
         for table in tables:
             qualified = self.quote(table.namespace) + "." + self.quote(table.name)

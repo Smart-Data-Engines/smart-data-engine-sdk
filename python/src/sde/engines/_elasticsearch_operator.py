@@ -388,13 +388,15 @@ class ElasticsearchOperator:
         """
         self._same(tables, "repair")
         for table in tables:
-            path = self.engine._path(table.name, "_refresh")
-            status, _ = self._call(self.engine, "POST", path)
+            status, _ = self._call(self.engine, "POST", self.engine._path(table.name, "_refresh"))
             if status != 200:
                 raise EngineError(f"refreshing {table.name} before repair failed ({status})")
-            path = self.engine._path(table.name, "_delete_by_query") + \
-                "?refresh=true&conflicts=abort"
-            status, body = self._call(self.engine, "POST", path, {"query": {"match_all": {}}})
+            status, body = self._call(
+                self.engine,
+                "POST",
+                self.engine._path(table.name, "_delete_by_query") + "?refresh=true&conflicts=abort",
+                {"query": {"match_all": {}}},
+            )
             if (
                 status != 200
                 or not isinstance(body, Mapping)
@@ -499,7 +501,9 @@ class ElasticsearchStaging:
         if status != 200 or not isinstance(meta, Mapping):
             raise EngineError(f"the write fence of {table.name} could not be read ({status})")
         if meta.get("index") == table.name and meta.get("uuid") == table.object:
-            status, _ = self.native._call(self.engine, "DELETE", path)
+            status, _ = self.native._call(
+                self.engine, "DELETE", f"/_ingest/pipeline/{fence_pipeline(table.name)}"
+            )
             if status not in (200, 404):
                 raise EngineError(f"deleting the write fence of {table.name} failed ({status})")
 
