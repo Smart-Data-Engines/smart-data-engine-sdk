@@ -29,6 +29,18 @@ their databases, so the interesting questions are about what it does with what i
   and are always quoted — but if you find a path where they are not, that is in scope.
 - **Credential handling.** Connection details stay in the client's process. The control plane holds
   no credentials for a client's engines at all.
+- **Anything that would make the local operator do more than a signed instruction says.** Every
+  statement the libraries and the operator can send to an engine is listed in
+  [`docs/engine-statements.md`](docs/engine-statements.md), and a test holds that list to the source.
+  A statement outside that list, one aimed at a table the instruction does not name, or one run
+  without a signature the client's configured keys verify is in scope. So is anything that makes
+  [leaving](docs/departure.md) remove a row, or release a table that is not in the map in force.
+
+## Supported versions
+
+Security fixes go into the latest release of each library and into `main`. A fix ships as a patch
+release of the affected library, and it is announced as a GitHub Security Advisory once that release
+is on the registry, with a CVE where one applies.
 
 ## What is deliberately not a vulnerability
 

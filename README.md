@@ -108,6 +108,8 @@ through a copy.
 [Leaving](docs/departure.md) needs no export: `sde-operator depart` lists what the library and its
 operator left in your engines - write fences, which refuse your own code's writes, and bookkeeping -
 and removes it, never a row.
+[Every statement the libraries and the operator can send to your engines](docs/engine-statements.md)
+is listed by engine, with who sends it and when, and a test holds the list to the source.
 The opt-in [workload qualification](docs/cutover-qualification.md) runs installed Python and npm
 artifacts under mixed traffic and checks scheduled latency, native recovery and acknowledged values.
 [Session lifetime](docs/session-lifecycle.md) defines borrowed/owned connections and transaction
