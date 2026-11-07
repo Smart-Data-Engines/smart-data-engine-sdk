@@ -842,3 +842,63 @@ jobs:
             echo "If that was deliberate, bump conformance/contract-version.txt and this check."
             exit 1
           }
+
+  supply-chain:
+    # What the libraries bring with them, checked on every change: the advisory databases against
+    # each library's resolved dependencies, and a CycloneDX bill of materials for each, built here
+    # so that a release's can never be the first one anybody generated.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: the Python library's dependencies have no known vulnerability
+        # Installed with every extra a client may choose, so that what is audited is what any
+        # client could be running. The audit tool lives in the same environment and is audited too.
+        run: |
+          python -m venv /tmp/sde-env
+          /tmp/sde-env/bin/pip install -q --upgrade pip
+          /tmp/sde-env/bin/pip install -q "./python[signed,postgres,clickhouse]" pip-audit cyclonedx-bom
+          /tmp/sde-env/bin/pip-audit --progress-spinner off --skip-editable
+          /tmp/sde-env/bin/cyclonedx-py environment /tmp/sde-env/bin/python \
+            --output-format JSON --output-file sbom-python.cdx.json
+          python -I - <<'PY'
+          import json
+          bom = json.load(open("sbom-python.cdx.json"))
+          names = {component["name"] for component in bom.get("components", ())}
+          assert bom.get("bomFormat") == "CycloneDX", bom.get("bomFormat")
+          assert "smart-data-engine-sdk" in names, sorted(names)[:20]
+          print(f"sbom-python.cdx.json: {len(names)} components")
+          PY
+
+      - name: the TypeScript library's dependencies have no known high or critical vulnerability
+        # Production dependencies only: what a client installs. Development tooling runs here and
+        # in CI, not in anybody's application.
+        working-directory: typescript
+        run: |
+          npm ci --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
+          npm sbom --sbom-format cyclonedx --omit dev > ../sbom-npm.cdx.json
+          # The package has no runtime dependencies - pg is a peer the application brings - so the
+          # bill names the package itself and, today, nothing else. The purl is what identifies it:
+          # npm fills the component's name from the directory.
+          node -e '
+            const bom = require("../sbom-npm.cdx.json")
+            if (bom.bomFormat !== "CycloneDX") throw new Error(`not CycloneDX: ${bom.bomFormat}`)
+            const purl = bom.metadata?.component?.purl ?? ""
+            if (!purl.startsWith("pkg:npm/%40smart-data-engines/sde@")) throw new Error(purl)
+            console.log(`sbom-npm.cdx.json: ${purl}, ${(bom.components ?? []).length} components`)
+          '
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sbom
+          path: |
+            sbom-python.cdx.json
+            sbom-npm.cdx.json
