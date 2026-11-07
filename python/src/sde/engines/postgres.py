@@ -982,6 +982,18 @@ class PostgresEngine:
         Returns nothing on purpose. PostgreSQL can say how many rows it actually wrote and
         ClickHouse cannot, so a count here would mean different things in different engines - and
         the caller needs "how much of the source have I consumed", which it already knows.
+
+        The chunk goes in by ``COPY`` first, and by the conflict form only when that is refused for
+        a key already there. The conflict form is a speculative insertion for every row: measured
+        on PostgreSQL 15, about 24 us a row against 7-8 us for ``COPY``, and most of a cutover's
+        pause when a group moved into PostgreSQL (``docs/qualification/cutover-limits``). A
+        ``COPY`` is one statement, so a conflict anywhere in the chunk writes none of it, and the
+        conflict form then writes exactly what it always wrote. The first attempt is a transaction
+        of its own, or a savepoint inside the caller's, so a refusal leaves the caller's open.
+
+        A ``dict`` or ``list`` is a ``json`` value and goes as one, as ``insert_many`` sends it.
+        Until 7 November 2026 it did not: psycopg adapts neither by default, so a group with a
+        ``json`` field could not be copied from PostgreSQL into PostgreSQL.
         """
         if not rows:
             return
@@ -993,17 +1005,32 @@ class PostgresEngine:
                     f"({cols} and {sorted(row)}). A chunk comes from one table, so this is a "
                     f"caller assembling it from two."
                 )
+        from psycopg.types.json import Jsonb
+
+        values = [
+            [Jsonb(row[c]) if isinstance(row[c], (dict, list)) else row[c] for c in cols]
+            for row in rows
+        ]
+        columns = ", ".join(_quote(c) for c in cols)
+        errors = self._psycopg.errors
+        try:
+            statement = f"COPY {_quote(table)} ({columns}) FROM STDIN"
+            with self._cx.transaction(), self._cx.cursor() as cur, cur.copy(statement) as copy:
+                for value in values:
+                    copy.write_row(value)
+            return
+        except (errors.UniqueViolation, errors.ExclusionViolation):
+            pass  # A key is there already: the conflict form below skips it and writes the rest.
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
         placeholders = ", ".join(f"({', '.join(['%s'] * len(cols))})" for _ in rows)
         sql = (
-            f"INSERT INTO {_quote(table)} ({', '.join(_quote(c) for c in cols)}) "
-            f"VALUES {placeholders} ON CONFLICT DO NOTHING"
+            f"INSERT INTO {_quote(table)} ({columns}) VALUES {placeholders} ON CONFLICT DO NOTHING"
         )
-        params: list[Any] = []
-        for row in rows:
-            params.extend(row[c] for c in cols)
         try:
             with self._cx.cursor() as cur:
-                cur.execute(sql, params)
+                cur.execute(sql, [value for row in values for value in row])
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc

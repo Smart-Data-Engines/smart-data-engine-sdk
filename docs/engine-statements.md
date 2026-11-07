@@ -33,7 +33,8 @@ Who sends it:
 | `INSERT INTO … (…) VALUES (…)`, `INSERT INTO … (…) VALUES …` | application | `save`, `save_many` |
 | `INSERT INTO … (…, …) VALUES (%s, %s)` | application | a newer signed map is loaded: its version, into `sde_map_state` |
 | `INSERT INTO … (…, …, …) VALUES (%s, %s, %s)` | `sde.backfill` | its progress, into `sde_backfill_state` |
-| `INSERT INTO … (…) VALUES … ON CONFLICT DO NOTHING` | `sde.backfill`; operator | a backfill, or a cutover refilling the copy |
+| `COPY … (…) FROM STDIN` | `sde.backfill`; operator | a backfill, or a cutover refilling the copy: each chunk first goes this way |
+| `INSERT INTO … (…) VALUES … ON CONFLICT DO NOTHING` | `sde.backfill`; operator | the same chunk again, only when the `COPY` was refused for a key already there |
 | `ALTER TABLE … ADD COLUMN IF NOT EXISTS … bigint NOT NULL DEFAULT 0` | provisioning | fence setup: `__sde_write_epoch` |
 | `ALTER TABLE … ADD CONSTRAINT … CHECK (…) NOT VALID` | provisioning; operator | fence setup, a barrier, a generation change: `__sde_f_*` only |
 | `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only |

@@ -1,0 +1,173 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "results": [
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 100000,
+      "stage_ms": 434,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 5075,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 4922,
+      "recovery": null,
+      "run": 1,
+      "load_before": [
+        1.93,
+        2.33,
+        2.17
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 100000,
+      "stage_ms": 564,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 4744,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 4590,
+      "recovery": null,
+      "run": 2,
+      "load_before": [
+        1.79,
+        2.28,
+        2.15
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 300000,
+      "stage_ms": 457,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 16592,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 16445,
+      "recovery": null,
+      "run": 1,
+      "load_before": [
+        1.88,
+        2.3,
+        2.16
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 300000,
+      "stage_ms": 424,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 16573,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 16427,
+      "recovery": null,
+      "run": 2,
+      "load_before": [
+        1.92,
+        2.28,
+        2.15
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 450000,
+      "stage_ms": 480,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 25778,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 25601,
+      "recovery": null,
+      "run": 1,
+      "load_before": [
+        2.13,
+        2.3,
+        2.16
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 450000,
+      "stage_ms": 431,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 26259,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 26111,
+      "recovery": null,
+      "run": 2,
+      "load_before": [
+        2.14,
+        2.29,
+        2.16
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 600000,
+      "stage_ms": 445,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 30690,
+      "cutover_outcome": "recovery_required",
+      "cutover_reason": "CutoverRecoveryRequired",
+      "pause_ms": null,
+      "recovery": {
+        "interrupted_after_ms": 30182,
+        "resume_ms": 433,
+        "resumed_outcome": "abort",
+        "resumed_reason": "recovered_before_decision"
+      },
+      "run": 1,
+      "load_before": [
+        2.69,
+        2.43,
+        2.22
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 600000,
+      "stage_ms": 412,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 30664,
+      "cutover_outcome": "recovery_required",
+      "cutover_reason": "CutoverRecoveryRequired",
+      "pause_ms": null,
+      "recovery": {
+        "interrupted_after_ms": 30156,
+        "resume_ms": 444,
+        "resumed_outcome": "abort",
+        "resumed_reason": "recovered_before_decision"
+      },
+      "run": 2,
+      "load_before": [
+        3.07,
+        2.53,
+        2.26
+      ]
+    }
+  ]
+}

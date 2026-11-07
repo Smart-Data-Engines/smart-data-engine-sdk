@@ -1,0 +1,29 @@
+{"path": "move", "source": "clickhouse", "target": "postgres", "rows": 100000, "stage_ms": 430, "stage_outcome": "prepared", "cutover_wall_ms": 5224, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 5051, "run": 1, "load_before": [1.51, 2.35, 2.09]}
+{"path": "move", "source": "clickhouse", "target": "postgres", "rows": 100000, "stage_ms": 435, "stage_outcome": "prepared", "cutover_wall_ms": 5025, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 4874, "run": 2, "load_before": [1.55, 2.34, 2.08]}
+{"path": "move", "source": "clickhouse", "target": "postgres", "rows": 300000, "stage_ms": 418, "stage_outcome": "prepared", "cutover_wall_ms": 16600, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 16449, "run": 1, "load_before": [1.82, 2.39, 2.1]}
+{"path": "move", "source": "clickhouse", "target": "postgres", "rows": 300000, "stage_ms": 412, "stage_outcome": "prepared", "cutover_wall_ms": 16531, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 16382, "run": 2, "load_before": [2.4, 2.48, 2.14]}
+Traceback (most recent call last):
+  File "<worktree>/docs/qualification/cutover-limits/measure_moves.py", line 108, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "<worktree>/docs/qualification/cutover-limits/measure_moves.py", line 92, in main
+    result = move(source, rows)
+  File "<worktree>/docs/qualification/cutover-limits/measure_moves.py", line 53, in move
+    with TemporaryDirectory() as tmp, initial(source, Path(tmp), target=target) as (
+                                      ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "<worktree>/python/tests/test_staging_operator_live.py", line 42, in initial
+    runtime_roles("postgres") as pg,
+    ~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/usr/lib/python3.14/contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "<worktree>/python/tests/test_runtime_privileges_live.py", line 124, in runtime_roles
+    operator._cx.execute(
+    ^^^^^^^^^^^^
+  File "<worktree>/python/src/sde/engines/postgres.py", line 164, in _cx
+    raise EngineError("not connected; call connect() first")
+sde.errors.EngineError: not connected; call connect() first
+exit 1

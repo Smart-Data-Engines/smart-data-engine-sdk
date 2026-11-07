@@ -1,0 +1,127 @@
+{
+  "server_version": "15.19",
+  "psycopg": "3.3.8",
+  "psycopg_impl": "binary",
+  "results": [
+    {
+      "path": "values_conflict",
+      "run": 1,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 2197,
+      "us_per_row": 43.9,
+      "count": 50000,
+      "load_before": 2.77587890625
+    },
+    {
+      "path": "values_plain",
+      "run": 1,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 1184,
+      "us_per_row": 23.7,
+      "count": 50000,
+      "load_before": 2.77587890625
+    },
+    {
+      "path": "unnest_conflict",
+      "run": 1,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 2298,
+      "us_per_row": 46.0,
+      "count": 50000,
+      "load_before": 2.8740234375
+    },
+    {
+      "path": "unnest_plain",
+      "run": 1,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 889,
+      "us_per_row": 17.8,
+      "count": 50000,
+      "load_before": 2.8740234375
+    },
+    {
+      "path": "copy_then_conflict",
+      "run": 1,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 1823,
+      "us_per_row": 36.5,
+      "count": 50000,
+      "load_before": 2.8740234375
+    },
+    {
+      "path": "copy",
+      "run": 1,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 359,
+      "us_per_row": 7.2,
+      "count": 50000,
+      "load_before": 2.8740234375
+    },
+    {
+      "path": "values_conflict",
+      "run": 2,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 2047,
+      "us_per_row": 40.9,
+      "count": 50000,
+      "load_before": 2.8037109375
+    },
+    {
+      "path": "values_plain",
+      "run": 2,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 781,
+      "us_per_row": 15.6,
+      "count": 50000,
+      "load_before": 2.8037109375
+    },
+    {
+      "path": "unnest_conflict",
+      "run": 2,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 1758,
+      "us_per_row": 35.2,
+      "count": 50000,
+      "load_before": 2.8037109375
+    },
+    {
+      "path": "unnest_plain",
+      "run": 2,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 708,
+      "us_per_row": 14.2,
+      "count": 50000,
+      "load_before": 2.89990234375
+    },
+    {
+      "path": "copy_then_conflict",
+      "run": 2,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 2008,
+      "us_per_row": 40.2,
+      "count": 50000,
+      "load_before": 2.89990234375
+    },
+    {
+      "path": "copy",
+      "run": 2,
+      "rows": 50000,
+      "chunk_rows": 1000,
+      "ms": 363,
+      "us_per_row": 7.3,
+      "count": 50000,
+      "load_before": 2.89990234375
+    }
+  ]
+}
