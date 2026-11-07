@@ -98,6 +98,19 @@ it.skipIf(!process.env['SDE_POSTGRES_DSN'])('writes nested JSON documents withou
   })
 }, 20000)
 
+it.skipIf(!process.env['SDE_POSTGRES_DSN'])('a session saves a JSON document that is an array, one row and a batch', async () => {
+  // pg sends a JavaScript array as a PostgreSQL array literal, which jsonb refuses; this failed
+  // until 7 November 2026 (postgres-json-arrays.live.test.ts has each adapter method on its own).
+  await withRoles('postgres', async role => {
+    const session = await native(role, 'postgres', true)
+    await session.save('Event', { id: 1n, value: ['zażółć', { n: 7 }] })
+    await session.saveMany('Event', [{ id: 2n, value: [] }, { id: 3n, value: [[1], null] }])
+    expect(await session.get('Event', { id: 1n })).toEqual({ id: 1n, value: ['zażółć', { n: 7 }] })
+    expect((await role.operator.get('bulk_events', { id: 2n }))!['value']).toEqual([])
+    expect((await role.operator.get('bulk_events', { id: 3n }))!['value']).toEqual([[1], null])
+  })
+}, 20000)
+
 for (const [sourceDialect, targetDialect] of [['postgres', 'clickhouse'], ['clickhouse', 'postgres']] as const) {
   it.skipIf(!process.env['SDE_POSTGRES_DSN'] || !process.env['SDE_CLICKHOUSE_DSN'])(`native bulk fan-out ${sourceDialect} -> ${targetDialect} respects source commit`, async () => {
     await withRoles(sourceDialect, async source => withRoles(targetDialect, async target => {
