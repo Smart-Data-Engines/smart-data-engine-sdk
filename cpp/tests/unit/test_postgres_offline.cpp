@@ -63,9 +63,14 @@ TEST(PostgresOffline, AChunkToCopyWhoseRowsDisagreeIsRefusedInTheReferencesWords
 // TLS policy, in the string or as PGSSLMODE, before anything connects.
 namespace {
 
+using Variables = std::vector<std::pair<const char*, const char*>>;
+
+// Values are passed as a named Variables{...}: a bare braced list is ambiguous to GCC 12, which
+// can also read two string literals as an iterator range for the vector.
 class Environment {
  public:
-  explicit Environment(std::vector<std::pair<const char*, const char*>> values) {
+  Environment() : Environment(Variables{}) {}
+  explicit Environment(Variables values) {
     for (const char* name : {"PGSSLMODE", "PGHOST", "PGHOSTADDR"}) {
       if (const char* old = std::getenv(name)) saved_.emplace_back(name, old);
       ::unsetenv(name);
@@ -82,7 +87,7 @@ class Environment {
 };
 
 TEST(PlaintextOnlyWhenSaid, PostgresRefusesARemoteHostWithNoTlsPolicy) {
-  const Environment clean({});
+  const Environment clean;
   for (const char* dsn : {"postgresql://app:secret@db.example.com:5432/sde",
                           "postgresql://app:secret@10.0.0.5/sde", "host=db.example.com dbname=sde",
                           "host=127.0.0.1,db.example.com dbname=sde", "hostaddr=10.0.0.5 dbname=sde"}) {
@@ -102,11 +107,11 @@ TEST(PlaintextOnlyWhenSaid, PostgresRefusesARemoteHostWithNoTlsPolicy) {
 
 TEST(PlaintextOnlyWhenSaid, PostgresReadsTheEnvironmentAsLibpqDoes) {
   {
-    const Environment remote({{"PGHOST", "db.example.com"}});
+    const Environment remote(Variables{{"PGHOST", "db.example.com"}});
     EXPECT_NE(refusal_of([] { sde::PostgresEngine engine("dbname=sde"); }).find("TLS policy"),
               std::string::npos);
   }
-  const Environment stated({{"PGHOST", "db.example.com"}, {"PGSSLMODE", "verify-full"}});
+  const Environment stated(Variables{{"PGHOST", "db.example.com"}, {"PGSSLMODE", "verify-full"}});
   EXPECT_EQ(refusal_of([] { sde::PostgresEngine engine("dbname=sde"); }), "");
 }
 
