@@ -41,6 +41,7 @@ from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
 from ..schema import QUOTE, schema_statements
 from ..write_fence import WriteFence
+from ._transport import loopback
 from ._write_fences import PostgresFences
 
 __all__ = ["PostgresEngine"]
@@ -88,6 +89,40 @@ def _float32_loader() -> type:
     return Float32Loader
 
 
+def _refuse_plaintext_elsewhere(psycopg: Any, dsn: str) -> None:
+    """Refuse a connection that may leave the machine with no stated TLS policy.
+
+    libpq's default, ``sslmode=prefer``, encrypts only when the server offers it and verifies
+    nobody, and the Node driver's default is no TLS at all: neither is anybody's decision. So a DSN
+    reaching a host other than the loopback or a Unix socket must say ``sslmode`` - in the string or
+    as ``PGSSLMODE`` - and any value counts, ``disable`` included, because then a person said it
+    (specs/secure-connections). ``PGHOST`` and ``PGHOSTADDR`` are read as libpq reads them when the
+    string names no host. A string psycopg cannot parse is left to ``connect``, which reports it as
+    before.
+    """
+    import os
+
+    try:
+        params = psycopg.conninfo.conninfo_to_dict(dsn)
+    except Exception:
+        return
+    if params.get("sslmode") or os.environ.get("PGSSLMODE"):
+        return
+    hosts = str(params.get("host") or os.environ.get("PGHOST") or "").split(",")
+    addresses = str(params.get("hostaddr") or os.environ.get("PGHOSTADDR") or "").split(",")
+    remote = [
+        name
+        for name in (*hosts, *addresses)
+        if name and not name.startswith(("/", "@")) and not loopback(name)
+    ]
+    if remote:
+        raise EngineError(
+            "a PostgreSQL connection to a host other than the loopback needs a TLS policy in the "
+            "DSN: sslmode=verify-full (with sslrootcert for a private CA), or sslmode=disable if "
+            "plaintext is intended"
+        )
+
+
 class PostgresEngine:
     """A thin adapter over psycopg. Deliberately thin: it executes decisions, it makes none."""
 
@@ -104,6 +139,7 @@ class PostgresEngine:
                 "every dependency here would be one you inherit."
             ) from exc
         self._psycopg = psycopg
+        _refuse_plaintext_elsewhere(psycopg, dsn)
         self._dsn = dsn
         self._conn: Any = None
         self._usage = UsageGate()

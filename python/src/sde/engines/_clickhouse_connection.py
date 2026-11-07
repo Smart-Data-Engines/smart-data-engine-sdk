@@ -15,6 +15,7 @@ from typing import Literal
 from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 
 from ..errors import EngineError
+from ._transport import loopback
 
 CONNECT_TIMEOUT_SECONDS = 10
 HANDSHAKE_TIMEOUT_SECONDS = 15
@@ -188,6 +189,11 @@ def parse_dsn(dsn: str) -> ConnectionParameters:
             _require(
                 (requested == "true") == secure, "ClickHouse scheme and secure setting disagree"
             )
+        _require(
+            secure or requested == "false" or loopback(host),
+            "ClickHouse plain HTTP to a host other than the loopback needs an explicit "
+            "secure=false; use https, clickhouses or secure=true for TLS",
+        )
         _require(
             "verify" not in options or options["verify"] == "true",
             "ClickHouse verification must remain enabled; use literal true or omit verify",
