@@ -18,6 +18,8 @@ describe('the loopback, decided on the text', () => {
     ['::1', true], ['[::1]', true], ['0:0:0:0:0:0:0:1', true], ['::ffff:127.0.0.1', true],
     ['::ffff:7f00:1', true], ['::ffff:10.0.0.5', false], ['db.example.com', false],
     ['10.0.0.5', false], ['localhost.example.com', false], ['0.0.0.0', false],
+    ['0:0:0:0:0:ffff:127.0.0.1', true], ['::FFFF:127.1.2.3', true], ['::127.0.0.1', false],
+    ['0000:0000:0000:0000:0000:0000:0000:0001', true], ['::1%lo', false], ['[::1%lo]', false],
   ])('%s is %s', (host, expected) => {
     expect(loopback(host)).toBe(expected)
   })

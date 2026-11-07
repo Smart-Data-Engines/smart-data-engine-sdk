@@ -193,11 +193,12 @@ namespace {
 
 TEST(PlaintextOnlyWhenSaid, TheLoopbackIsDecidedOnTheText) {
   for (const char* host : {"localhost", "LOCALHOST", "127.0.0.1", "127.8.9.10", "::1", "[::1]",
-                           "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"}) {
+                           "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "0:0:0:0:0:ffff:127.0.0.1",
+                           "::FFFF:127.1.2.3", "0000:0000:0000:0000:0000:0000:0000:0001"}) {
     EXPECT_TRUE(sde::detail::loopback(host)) << host;
   }
   for (const char* host : {"db.example.com", "10.0.0.5", "::ffff:10.0.0.5", "localhost.example.com",
-                           "0.0.0.0"}) {
+                           "0.0.0.0", "::127.0.0.1", "::1%lo", "[::1%lo]"}) {
     EXPECT_FALSE(sde::detail::loopback(host)) << host;
   }
 }

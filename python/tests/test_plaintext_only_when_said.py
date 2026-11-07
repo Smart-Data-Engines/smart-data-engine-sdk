@@ -21,7 +21,9 @@ from sde.engines._transport import loopback
         ("localhost", True), ("LOCALHOST", True), ("127.0.0.1", True), ("127.8.9.10", True),
         ("::1", True), ("[::1]", True), ("db.example.com", False), ("10.0.0.5", False),
         ("::ffff:127.0.0.1", True), ("::ffff:10.0.0.5", False), ("localhost.example.com", False),
-        ("0.0.0.0", False),
+        ("0.0.0.0", False), ("0:0:0:0:0:ffff:127.0.0.1", True), ("::FFFF:127.1.2.3", True),
+        ("::127.0.0.1", False), ("0000:0000:0000:0000:0000:0000:0000:0001", True),
+        ("::1%lo", False), ("[::1%lo]", False),
     ],
 )
 def test_the_loopback_is_decided_on_the_text(host: str, expected: bool) -> None:

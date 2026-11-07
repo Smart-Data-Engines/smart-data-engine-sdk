@@ -25,6 +25,10 @@ def loopback(host: str) -> bool:
     """
     if host.lower() == "localhost":
         return True
+    if "%" in host:
+        # A zone (``::1%lo``) is not the loopback here. C's inet_pton refuses one, so the C++
+        # library cannot accept it, and a rule the libraries answered differently is not one rule.
+        return False
     try:
         address = ip_address(host.strip("[]"))
     except ValueError:

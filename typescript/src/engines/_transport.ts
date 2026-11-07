@@ -16,6 +16,9 @@ import { isIP } from 'node:net'
 export function loopback(host: string): boolean {
   const name = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
   if (name.toLowerCase() === 'localhost') return true
+  // A zone (`::1%lo`) is not the loopback here. C's inet_pton refuses one, so the C++ library
+  // cannot accept it, and a rule the three libraries answered differently would not be one rule.
+  if (name.includes('%')) return false
   const kind = isIP(name)
   if (kind === 4) return name.split('.')[0] === '127'
   if (kind !== 6) return false
@@ -27,10 +30,14 @@ export function loopback(host: string): boolean {
 /** The eight 16-bit groups of an address `isIP` has already accepted as IPv6. */
 function ipv6Groups(address: string): number[] {
   let text = address.toLowerCase()
-  const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text)
-  if (dotted !== null) {
-    const [a, b, c, d] = dotted.slice(1).map(Number) as [number, number, number, number]
-    text = `${text.slice(0, dotted.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
+  // An IPv4 tail (`::ffff:127.0.0.1`) is the last two groups in dotted decimal, and in an address
+  // `isIP` accepted a dot can only be after the last colon. Split there rather than match a
+  // pattern: a backtracking pattern over a host is a cost the caller's input decides.
+  const colon = text.lastIndexOf(':')
+  const last = text.slice(colon + 1)
+  if (last.includes('.')) {
+    const [a, b, c, d] = last.split('.').map(Number) as [number, number, number, number]
+    text = `${text.slice(0, colon + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
   }
   const [head, tail] = text.split('::') as [string, string | undefined]
   const front = head === '' ? [] : head.split(':')
