@@ -26,6 +26,7 @@ import { UsageGate } from '../_usage.js'
 import { canonicalString, compareCodePoints } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError } from '../errors.js'
+import { loopback } from './_transport.js'
 import type { PhysicalLayout } from '../placement.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import { readRow, type ReadFilter, type ReadPlan } from '../query.js'
@@ -79,11 +80,6 @@ export interface ElasticsearchConnection {
 
 function refuse(reason: string): never {
   throw new EngineError(`${reason}; no connection was opened`)
-}
-
-function loopback(host: string): boolean {
-  if (host === 'localhost' || host === '::1') return true
-  return isIP(host) === 4 && host.startsWith('127.')
 }
 
 function seconds(name: string, text: string | undefined, fallback: number): number {
