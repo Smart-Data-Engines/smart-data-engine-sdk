@@ -46,7 +46,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from ipaddress import ip_address
 from typing import Any, Final
 from uuid import UUID
 
@@ -69,6 +68,7 @@ from ..search import tokens as text_tokens
 from ..watermark import WATERMARK_TABLE
 from ..write_fence import EPOCH_COLUMN, WriteFence
 from ._staging import CREATION_MARKER
+from ._transport import loopback
 from ._write_fences import ElasticsearchFences
 
 __all__ = ["KEYWORD_BYTES", "ElasticsearchEngine", "document", "document_id", "parse_dsn"]
@@ -142,15 +142,6 @@ class Connection:
         return f"Connection(host={self.host!r}, port={self.port}, tls={self.tls})"
 
 
-def _loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 def _unquoted(text: str) -> str:
     """Percent-decoding as the TypeScript profile reads it: a malformed escape, or bytes that are
     not UTF-8, are refused - not kept as they stand, nor replaced by U+FFFD."""
@@ -200,7 +191,7 @@ def parse_dsn(dsn: str) -> Connection:
         raise EngineError("the port of an Elasticsearch DSN is a number up to 65535") from None
     if not host or "%" in host:
         raise EngineError("an Elasticsearch DSN names a host, without an IPv6 zone")
-    if not tls and not _loopback(host):
+    if not tls and not loopback(host):
         raise EngineError(
             "elasticsearch+http is accepted only to a loopback address; use elasticsearch+https"
         )

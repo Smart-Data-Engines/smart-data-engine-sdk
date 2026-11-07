@@ -49,6 +49,12 @@ class Result {
 /// DETAIL, CONTEXT and LINE parts the server sent, and no trailing newline.
 [[nodiscard]] std::string server_message(std::string_view libpq_text);
 
+// Refuse a DSN that may leave the machine with no stated TLS policy (specs/secure-connections), as
+// the reference does: a host other than the loopback or a Unix socket needs sslmode, in the string
+// or as PGSSLMODE, and any value counts. PGHOST and PGHOSTADDR are read as libpq reads them. A
+// string libpq cannot parse is left to the connection, which reports it as before.
+void refuse_plaintext_elsewhere(const std::string& dsn);
+
 class Connection {
  public:
   /// Opens a connection. The DSN is expanded after a default `connect_timeout`, so a timeout the

@@ -15,6 +15,7 @@ from typing import Literal
 from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 
 from ..errors import EngineError
+from ._transport import loopback
 
 CONNECT_TIMEOUT_SECONDS = 10
 HANDSHAKE_TIMEOUT_SECONDS = 15
@@ -203,6 +204,17 @@ def parse_dsn(dsn: str) -> ConnectionParameters:
         )
         if port is None:
             port = {"http": 80, "https": 443}.get(scheme, 8443 if secure else 8123)
+        connect_timeout = _seconds(options.get("connect_timeout"), CONNECT_TIMEOUT_SECONDS)
+        send_receive_timeout = _seconds(
+            options.get("send_receive_timeout"), HANDSHAKE_TIMEOUT_SECONDS
+        )
+        # Last, so that a DSN with any other defect is refused for that defect, in the same words in
+        # every library; only an otherwise valid DSN reaches the transport rule.
+        _require(
+            secure or requested == "false" or loopback(host),
+            "ClickHouse plain HTTP to a host other than the loopback needs an explicit "
+            "secure=false; use https, clickhouses or secure=true for TLS",
+        )
         return ConnectionParameters(
             host=host,
             port=port,
@@ -211,10 +223,8 @@ def parse_dsn(dsn: str) -> ConnectionParameters:
             database=database,
             secure=secure,
             ca_cert=ca_cert,
-            connect_timeout=_seconds(options.get("connect_timeout"), CONNECT_TIMEOUT_SECONDS),
-            send_receive_timeout=_seconds(
-                options.get("send_receive_timeout"), HANDSHAKE_TIMEOUT_SECONDS
-            ),
+            connect_timeout=connect_timeout,
+            send_receive_timeout=send_receive_timeout,
         )
     except EngineError:
         raise

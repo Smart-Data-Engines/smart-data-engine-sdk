@@ -126,7 +126,9 @@ def test_a_connection_the_driver_could_not_open_names_its_classes_only(
             raise RuntimeError(f"driver could not read {SECRET_URL}")  # noqa: B904
 
     monkeypatch.setattr(adapter, "_connect_client", refused)
-    engine = adapter.ClickHouseEngine("clickhouse://reader:hunter2@example.invalid:8123/default")
+    engine = adapter.ClickHouseEngine(
+        "clickhouse://reader:hunter2@example.invalid:8123/default?secure=false"
+    )
     with pytest.raises(EngineError) as failed:
         engine.connect()
     message = str(failed.value)

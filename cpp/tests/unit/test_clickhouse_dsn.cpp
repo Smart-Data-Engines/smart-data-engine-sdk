@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "engines/clickhouse/dsn.hpp"
+#include "transport.hpp"
 #include "sde/errors.hpp"
 #include "sde/json.hpp"
 
@@ -140,11 +141,13 @@ TEST(ClickHouseDsn, EachRuleIsRefusedInTheReferencesWords) {
 }
 
 TEST(ClickHouseDsn, AHostIsWrittenAsTheReferenceWritesIt) {
+  // Over TLS, so that the transport rule (plain HTTP only to the loopback) has nothing to say about
+  // hosts this test is only writing.
   // Python's full lowercase: the Kelvin sign is a k to it, and so this is the host `k`.
-  EXPECT_EQ(parse_dsn("clickhouse://\xe2\x84\xaa/db").host, "k");
-  EXPECT_EQ(parse_dsn("clickhouse://Example.COM./db").host, "example.com.");
-  EXPECT_EQ(parse_dsn("clickhouse://[FE80::A]:9000/db").host, "fe80::a");
-  EXPECT_EQ(parse_dsn("clickhouse://[v1.x]/db").host, "v1.x");
+  EXPECT_EQ(parse_dsn("clickhouses://\xe2\x84\xaa/db").host, "k");
+  EXPECT_EQ(parse_dsn("clickhouses://Example.COM./db").host, "example.com.");
+  EXPECT_EQ(parse_dsn("clickhouses://[FE80::A]:9000/db").host, "fe80::a");
+  EXPECT_EQ(parse_dsn("clickhouses://[v1.x]/db").host, "v1.x");
   const std::vector<std::pair<std::string, std::string>> addresses = {
       {"::ffff:1.2.3.4", "::ffff:102:304"}, {"::1.2.3.4", "::102:304"},
       {"0:0:0:0:0:0:0:1", "::1"},           {"1:0:0:2:0:0:0:3", "1:0:0:2::3"},
@@ -180,6 +183,42 @@ TEST(ClickHouseDsn, TheDefaultsAndTheOptions) {
   EXPECT_EQ(chosen.ca_cert, "/etc/ca.pem");
   EXPECT_DOUBLE_EQ(chosen.connect_timeout, 0.5);
   EXPECT_DOUBLE_EQ(chosen.send_receive_timeout, 20.0);
+}
+
+}  // namespace
+
+// specs/secure-connections: plain HTTP to a host other than the loopback only when the DSN says
+// secure=false, case for case as the reference's test_plaintext_only_when_said.py.
+namespace {
+
+TEST(PlaintextOnlyWhenSaid, TheLoopbackIsDecidedOnTheText) {
+  for (const char* host : {"localhost", "LOCALHOST", "127.0.0.1", "127.8.9.10", "::1", "[::1]",
+                           "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "0:0:0:0:0:ffff:127.0.0.1",
+                           "::FFFF:127.1.2.3", "0000:0000:0000:0000:0000:0000:0000:0001"}) {
+    EXPECT_TRUE(sde::detail::loopback(host)) << host;
+  }
+  for (const char* host : {"db.example.com", "10.0.0.5", "::ffff:10.0.0.5", "localhost.example.com",
+                           "0.0.0.0", "::127.0.0.1", "::1%lo", "[::1%lo]"}) {
+    EXPECT_FALSE(sde::detail::loopback(host)) << host;
+  }
+}
+
+TEST(PlaintextOnlyWhenSaid, ClickHouseRefusesPlainHttpToARemoteHostUnlessItIsStated) {
+  for (const std::string dsn : {"clickhouse://app:secret@ch.example.com:8123/sde",
+                                "http://app:secret@ch.example.com/sde",
+                                "clickhouse://app:secret@10.0.0.5/sde"}) {
+    const std::string refused = refusal(dsn);
+    EXPECT_NE(refused.find("explicit secure=false"), std::string::npos) << dsn << ": " << refused;
+    EXPECT_EQ(refused.find("secret@"), std::string::npos) << refused;
+    EXPECT_FALSE(parse_dsn(dsn + "?secure=false").secure) << dsn;
+  }
+  for (const char* dsn : {"clickhouse://default:sde@127.0.0.1:58123/sde",
+                          "http://default@localhost:8123/sde", "clickhouse://default@[::1]:8123/sde",
+                          "https://app:secret@ch.example.com/sde",
+                          "clickhouses://app:secret@ch.example.com/sde",
+                          "clickhouse://app:secret@ch.example.com/sde?secure=true"}) {
+    EXPECT_EQ(refusal(dsn), "accepted") << dsn;
+  }
 }
 
 }  // namespace

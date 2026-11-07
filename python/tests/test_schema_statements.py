@@ -140,7 +140,7 @@ def test_the_rendered_statements_are_the_statements_that_run(
 
     monkeypatch.setattr(adapter, "schema_statements", fake)
 
-    engine = adapter.PostgresEngine("postgresql://fixture/unused")
+    engine = adapter.PostgresEngine("postgresql://fixture/unused?sslmode=disable")
 
     class Cursor:
         def __enter__(self) -> Cursor:

@@ -1,11 +1,13 @@
 #include "engines/postgres/connection.hpp"
 
 #include <array>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "sde/errors.hpp"
+#include "transport.hpp"
 
 namespace sde::detail::postgres {
 
@@ -32,6 +34,48 @@ std::string server_message(std::string_view libpq_text) {
     }
   }
   return trimmed(libpq_text);
+}
+
+void refuse_plaintext_elsewhere(const std::string& dsn) {
+  char* error = nullptr;
+  PQconninfoOption* parsed = PQconninfoParse(dsn.c_str(), &error);
+  if (parsed == nullptr) {
+    if (error != nullptr) PQfreemem(error);
+    return;
+  }
+  std::string sslmode, host, hostaddr;
+  for (const PQconninfoOption* option = parsed; option->keyword != nullptr; ++option) {
+    if (option->val == nullptr) continue;
+    const std::string_view keyword = option->keyword;
+    if (keyword == "sslmode") sslmode = option->val;
+    if (keyword == "host") host = option->val;
+    if (keyword == "hostaddr") hostaddr = option->val;
+  }
+  PQconninfoFree(parsed);
+  const char* stated = std::getenv("PGSSLMODE");
+  if (!sslmode.empty() || (stated != nullptr && *stated != '\0')) return;
+  if (host.empty()) {
+    if (const char* from_environment = std::getenv("PGHOST")) host = from_environment;
+  }
+  if (hostaddr.empty()) {
+    if (const char* from_environment = std::getenv("PGHOSTADDR")) hostaddr = from_environment;
+  }
+  for (const std::string& list : {host, hostaddr}) {
+    std::string::size_type start = 0;
+    while (start <= list.size()) {
+      const std::string::size_type comma = list.find(',', start);
+      const std::string name =
+          list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+      if (!name.empty() && name.front() != '/' && name.front() != '@' && !loopback(name)) {
+        throw EngineError(
+            "a PostgreSQL connection to a host other than the loopback needs a TLS policy in the "
+            "DSN: sslmode=verify-full (with sslrootcert for a private CA), or sslmode=disable if "
+            "plaintext is intended");
+      }
+      if (comma == std::string::npos) break;
+      start = comma + 1;
+    }
+  }
 }
 
 Connection::Connection(const std::string& dsn) {

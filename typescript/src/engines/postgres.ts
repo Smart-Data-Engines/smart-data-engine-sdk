@@ -36,6 +36,7 @@ import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError } from '../errors.js'
+import { loopback } from './_transport.js'
 import { exactBytes } from '../telemetry.js'
 import type { PhysicalFinding } from '../physical.js'
 import { declaredTables } from '../physical.js'
@@ -257,7 +258,9 @@ export class PostgresEngine {
   constructor(
     private readonly dsn: string,
     private readonly options: PostgresOptions = {},
-  ) {}
+  ) {
+    refusePlaintextElsewhere(dsn)
+  }
 
   /**
    * Open the connection, with a bound on how long that may take.
@@ -1089,6 +1092,35 @@ export class PostgresEngine {
  * So the parameter is translated rather than deferred to. The caller's decision is honoured and a
  * bound always exists, which are the two properties that were meant to hold in the first place.
  */
+/**
+ * Refuse a connection that may leave the machine with no stated TLS policy
+ * (`specs/secure-connections`), as the reference does.
+ *
+ * `pg`'s default for a connection string that says nothing is no TLS at all, which is nobody's
+ * decision. So a URI reaching a host other than the loopback or a Unix socket must say `sslmode`
+ * or `ssl` - in the string or as `PGSSLMODE` - and any value counts, because then a person said it.
+ * A string that is not a URL is a socket path to `pg`, and stays on the machine. `PGHOST` is read
+ * as `pg` reads it when the URI names no host.
+ */
+export function refusePlaintextElsewhere(dsn: string, environment: NodeJS.ProcessEnv = process.env): void {
+  if (environment['PGSSLMODE']) return
+  let url: URL
+  try {
+    url = new URL(dsn)
+  } catch {
+    return
+  }
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') return
+  if (url.searchParams.has('sslmode') || url.searchParams.has('ssl')) return
+  const hosts = [decodeURIComponent(url.hostname) || environment['PGHOST'] || '', url.searchParams.get('host') ?? '']
+  if (hosts.some((host) => host !== '' && !host.startsWith('/') && !loopback(host))) {
+    throw new EngineError(
+      'a PostgreSQL connection to a host other than the loopback needs a TLS policy in the DSN: ' +
+        'sslmode=verify-full (with sslrootcert for a private CA), or sslmode=disable if plaintext is intended',
+    )
+  }
+}
+
 export function connectBound(dsn: string): number {
   const declared = /[?&]connect_timeout=(\d+)/.exec(dsn)
   if (declared === null) return CONNECT_TIMEOUT_MS
