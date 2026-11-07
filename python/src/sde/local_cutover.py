@@ -37,6 +37,7 @@ from .watermark import newer_map
 if TYPE_CHECKING:
     from ._cutover_project import ProjectState
     from .engines._operator import NativeOperations, NativeOperator, TableIdentity
+    from .erasure import ErasurePlan, ErasureReceipt, ErasureRequest
 
 
 class CutoverRecoveryRequired(EngineError):
@@ -175,6 +176,32 @@ class LocalCutover:
         return load_local_map(
             self.store.root, model=self.model, project_id=self.project_id, public_key=self.keys
         )
+
+    def erase(
+        self, request: ErasureRequest, *, execute: bool = False, at: str | None = None
+    ) -> ErasurePlan | ErasureReceipt:
+        """Plan the erasure of one entity's keys and, with ``execute``, run it (``sde.erasure``).
+
+        Under the project lock, so beside no staging, cutover or index build of this project: an
+        unfinished one is refused, not waited for. The receipt is also kept in the project
+        directory as ``erasures/<id>.json``.
+        """
+        from .erasure import erasure_secret, execute_erasure, plan_erasure, write_receipt
+
+        self._owner()
+        with self.store.lock():
+            state = self.store.read()
+            if state["execution"] is not None:
+                raise MigrationRefused(
+                    "an unfinished operation of this project holds its tables; resume or abandon "
+                    "it before an erasure"
+                )
+            plan = plan_erasure(self, request)
+            if not execute:
+                return plan
+            receipt = execute_erasure(self, plan, erasure_secret(self.store.root), at=at)
+            write_receipt(self.store.root, receipt)
+            return receipt
 
     def status(self) -> dict[str, Any]:
         return _local_status(

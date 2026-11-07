@@ -33,6 +33,8 @@ SQL = re.compile(
     r"UPDATE|OPTIMIZE|RENAME|EXCHANGE|SET|SYSTEM|COPY) [A-Z…({]"
 )
 REQUEST = re.compile(r"(PUT|POST|DELETE) /")
+WRITING_WITH = re.compile(r"WITH [^(]*\((DELETE|INSERT|UPDATE) ")
+"""A statement that begins as a read and writes inside: ``WITH x AS (DELETE ...) SELECT ...``."""
 CHANGING_METHODS = frozenset({"PUT", "POST", "DELETE"})
 READING_ENDPOINTS = ("/_count", "/_search", "/_has_privileges", "/_mget")
 """Requests sent with POST that read and change nothing, so the page does not list them."""
@@ -44,6 +46,10 @@ STRING_METHODS = frozenset(
 NOT_SENT = {
     ("schema.py", "compatibility_views"): (
         "renders views for the client's administrator to create; the library sends none of them"
+    ),
+    ("erasure.py", "rendered_deletion"): (
+        "renders the deletion of a table outside the map for the client to run or not; the "
+        "operator sends none of them"
     ),
 }
 """Functions whose statements are text handed to a person, not statements this library sends."""
@@ -153,7 +159,7 @@ def _python_forms() -> dict[str, set[str]]:
                         and text
                         and not _excluded(node, parents)
                         and not PROSE.search(text)
-                        and (SQL.match(text) or REQUEST.match(text))
+                        and (SQL.match(text) or REQUEST.match(text) or WRITING_WITH.match(text))
                     )
                     if statement and text:
                         form = _normal(text)
