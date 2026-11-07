@@ -156,6 +156,19 @@ function outbound(value: unknown): unknown {
   return value
 }
 
+/**
+ * One value of a row on the way into its column, before `outbound`.
+ *
+ * The neutral vocabulary has no array type, so an array in a row is a `json` value, and `pg` sends
+ * a JavaScript array as a PostgreSQL array literal, which a `jsonb` column refuses. It goes as the
+ * JSON text an object already goes as. Until 7 November 2026 it did not, and an entity whose `json`
+ * field held an array could not be saved here at all, while the reference implementation wrote it.
+ * Query parameters keep their arrays: `ANY($1)` and `unnest($1::text[])` ask for one.
+ */
+function datum(value: unknown): unknown {
+  return Array.isArray(value) ? JSON.stringify(value) : value
+}
+
 interface QueryResultLike {
   readonly rows: readonly Record<string, unknown>[]
   readonly fields: readonly { readonly name: string; readonly dataTypeID: number }[]
@@ -641,7 +654,7 @@ export class PostgresEngine {
       try {
         await this.run(
           sql,
-          columns.map((column) => values[column]),
+          columns.map((column) => datum(values[column])),
         )
       } catch (error) {
         // Surfaced, not swallowed and not rerouted. See the module docstring.
@@ -658,7 +671,7 @@ export class PostgresEngine {
       if (columns.length === 0) return
       const values: unknown[] = []
       const tuples = rows.map((row) => `(${columns.map((column) => {
-        values.push(row[column])
+        values.push(datum(row[column]))
         return `$${values.length}`
       }).join(', ')})`)
       try {
@@ -946,7 +959,7 @@ export class PostgresEngine {
       const values: unknown[] = []
       const tuples = rows.map((row) => {
         const placeholders = columns.map((column) => {
-          values.push(row[column])
+          values.push(datum(row[column]))
           return `$${values.length}`
         })
         return `(${placeholders.join(', ')})`

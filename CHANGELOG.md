@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a `json` value that is an array is saved on PostgreSQL** (TypeScript). `pg` sends a
+JavaScript array as a PostgreSQL array literal, which a `jsonb` column refuses, so an entity whose
+`json` field held an array, `[]` included, could not be saved on PostgreSQL at all: `save`,
+`saveMany` and a backfill's copy each failed with `invalid input syntax for type json`. An object
+was saved, and the Python library saved both. A row's array now goes as the JSON text an object
+already goes as. Query parameters keep their arrays. Nothing that was saved before changes. The
+live tests write arrays through `insert`, `insertMany`, `copyIn` and a session, and read them back
+as arrays.
+
 **Changed, and it may break a configuration: plaintext to a host other than the loopback only when
 the DSN says so** (Python, TypeScript, C++). Until now, a PostgreSQL DSN with no `sslmode` used the
 driver's default. For libpq that is `prefer`, which verifies nobody; for `pg` in Node it is no TLS
