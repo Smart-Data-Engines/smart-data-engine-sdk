@@ -8,6 +8,14 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: the operator's chunk, in its configuration** (Python). `chunk_rows`, optional in
+`local-operator.json`, is how many rows a cutover's repair and frozen comparison move at once: 1000
+when absent, as before, and at most 20 000. A larger chunk makes fewer round trips inside the pause,
+and at 5000 the measured pause of a 200 000-row move was a third to a half shorter, so a larger group
+fits the same budget. It also holds more rows in memory at once, so a group of wide rows keeps the
+default ([`docs/local-cutover.md`](docs/local-cutover.md)). A value outside the bounds is refused
+before anything connects.
+
 **Added: erasing a person's data - `sde.erasure` and `sde-operator erase`** (Python). The library
 never deletes a row, so a client honouring a request to erase a person's data ran SQL by hand and
 had to know where the copies were. `sde-operator erase --entity E --key '{...}'` lists every table of

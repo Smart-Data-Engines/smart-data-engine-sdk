@@ -148,6 +148,12 @@ The neutral model must describe the model used to issue the maps. For example:
 }
 ```
 
+`chunk_rows`, optional, is the number of rows a cutover's repair and its frozen comparison move at
+once: 1000 when it is absent, at most 20 000. A larger chunk makes fewer round trips inside the
+pause - at 5000 the measured pause of a 200 000-row move was a third to a half shorter
+([qualification/cutover-limits](qualification/cutover-limits/README.md)) - and holds more rows in the
+operator's memory at once, a few copies of each, so a group of wide rows keeps the default.
+
 Obtain the project id and public keys through the authenticated enrollment channel, independently
 of the supplied packet. Populate the named variables locally. For PostgreSQL, operator and runtime
 connections must resolve the same schema/search path. Engine binding names must match the map and
@@ -263,7 +269,7 @@ rows of three integer columns and the 30 s budget of the live tests
 | ClickHouse → PostgreSQL | about 450 000 | 46-58 µs |
 
 The budget is signed for each cutover, so a larger one moves a larger group in a longer write
-pause. A wider row costs more than these. Qualify the intended group on the intended engines with
+pause, and a larger `chunk_rows` moves a larger group in the same one. A wider row costs more than these. Qualify the intended group on the intended engines with
 the scripts in that record before signing a budget for it; an index change needs no move at all
 ([in-place index builds](in-place-index.md)).
 
