@@ -1,0 +1,5 @@
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 600000, "stage_ms": 556, "stage_outcome": "prepared", "cutover_wall_ms": 19328, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 19173, "run": 1, "load_before": [2.43, 1.77, 1.73]}
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 600000, "stage_ms": 661, "stage_outcome": "prepared", "cutover_wall_ms": 20478, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 20259, "run": 2, "load_before": [2.05, 1.78, 1.74]}
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 900000, "stage_ms": 554, "stage_outcome": "prepared", "cutover_wall_ms": 28539, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 28368, "run": 1, "load_before": [2.42, 1.9, 1.77]}
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 900000, "stage_ms": 557, "stage_outcome": "prepared", "cutover_wall_ms": 28727, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 28577, "run": 2, "load_before": [1.55, 1.74, 1.73]}
+exit 0

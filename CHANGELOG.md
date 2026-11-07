@@ -8,6 +8,26 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: a move into PostgreSQL pauses writes for about half as long** (Python). The operator's
+repair - refilling the copy from the frozen source inside a cutover's pause - wrote each chunk with
+`INSERT ... ON CONFLICT DO NOTHING`, whose speculative insertion cost about 24 µs a row more than a
+`COPY`. `copy_in` now sends a chunk by `COPY` and uses the conflict form only when a key is already
+there, so a resumed backfill still recopies its last chunk harmlessly. On the record's laptop a move
+from ClickHouse to PostgreSQL went from 87-97 to 46-58 µs a row: about 450 000 rows of a narrow group
+fit a 30 s budget instead of 300 000. A move out of PostgreSQL is unchanged. The record measures both
+directions, where the pause goes and what a group that does not fit does
+([`docs/qualification/cutover-limits/`](docs/qualification/cutover-limits/README.md)), and
+[`docs/local-cutover.md`](docs/local-cutover.md) has the numbers. `COPY … (…) FROM STDIN` is on
+[the statement page](docs/engine-statements.md), and its guard now reads a `COPY`, which it did
+not.
+
+**Fixed: a group with a `json` field is copied from PostgreSQL into PostgreSQL** (Python).
+`copy_in` passed a `json` value read from PostgreSQL to psycopg as the `dict` or `list` it is, and
+psycopg adapts neither by default, so a relayout of such a group within PostgreSQL failed at its
+first chunk. It is sent as JSON now, as `insert_many` sends it. `test_postgres_copy_in_live.py`
+writes every neutral type through `copy_in` and through `insert_many` and compares the two as the
+server prints them.
+
 **Fixed: a `json` value that is an array is saved on PostgreSQL** (TypeScript). `pg` sends a
 JavaScript array as a PostgreSQL array literal, which a `jsonb` column refuses, so an entity whose
 `json` field held an array, `[]` included, could not be saved on PostgreSQL at all: `save`,

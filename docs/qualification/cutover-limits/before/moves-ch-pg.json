@@ -1,0 +1,119 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "results": [
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "stage_ms": 430,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 17595,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 17334,
+      "run": 1,
+      "load_before": [
+        0.7,
+        1.29,
+        1.6
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "stage_ms": 433,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 16987,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 16828,
+      "run": 2,
+      "load_before": [
+        0.98,
+        1.32,
+        1.6
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "stage_ms": 488,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 16450,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 16275,
+      "run": 3,
+      "load_before": [
+        1.36,
+        1.39,
+        1.62
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 300000,
+      "stage_ms": 413,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 26236,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 26088,
+      "run": 1,
+      "load_before": [
+        1.56,
+        1.43,
+        1.63
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 300000,
+      "stage_ms": 404,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 26279,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 26129,
+      "run": 2,
+      "load_before": [
+        1.95,
+        1.52,
+        1.65
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 300000,
+      "stage_ms": 423,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 26581,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 26431,
+      "run": 3,
+      "load_before": [
+        2.27,
+        1.65,
+        1.69
+      ]
+    }
+  ]
+}

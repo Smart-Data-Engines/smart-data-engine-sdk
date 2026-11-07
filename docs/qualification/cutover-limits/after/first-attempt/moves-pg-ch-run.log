@@ -1,0 +1,27 @@
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 300000, "stage_ms": 599, "stage_outcome": "prepared", "cutover_wall_ms": 10102, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 9944, "run": 1, "load_before": [2.56, 2.53, 2.17]}
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 300000, "stage_ms": 561, "stage_outcome": "prepared", "cutover_wall_ms": 10565, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 10414, "run": 2, "load_before": [2.21, 2.46, 2.16]}
+{"path": "move", "source": "postgres", "target": "clickhouse", "rows": 900000, "stage_ms": 851, "stage_outcome": "prepared", "cutover_wall_ms": 29643, "cutover_outcome": "success", "cutover_reason": "matched", "pause_ms": 29466, "run": 1, "load_before": [2.18, 2.44, 2.15]}
+Traceback (most recent call last):
+  File "<worktree>/docs/qualification/cutover-limits/measure_moves.py", line 108, in <module>
+  File "<worktree>/docs/qualification/cutover-limits/measure_moves.py", line 92, in main
+    "resumed_reason": recovered["reason"],
+             ^^^^^^^^^^^^^^^^^^
+  File "<worktree>/docs/qualification/cutover-limits/measure_moves.py", line 53, in move
+    target = OTHER[source]
+    
+  File "/usr/lib/python3.14/contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "<worktree>/python/tests/test_staging_operator_live.py", line 42, in initial
+    runtime_roles("postgres") as pg,
+    ~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/usr/lib/python3.14/contextlib.py", line 148, in __exit__
+    next(self.gen)
+    ~~~~^^^^^^^^^^
+  File "<worktree>/python/tests/test_runtime_privileges_live.py", line 124, in runtime_roles
+    operator._cx.execute(
+    ^^^^^^^^^^^^
+  File "<worktree>/python/src/sde/engines/postgres.py", line 164, in _cx
+    raise EngineError("not connected; call connect() first")
+sde.errors.EngineError: not connected; call connect() first
+exit 1

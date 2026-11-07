@@ -1,0 +1,113 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "results": [
+    {
+      "path": "move",
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 10000,
+      "stage_ms": 677,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 1122,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 964,
+      "load_before": [
+        1.44,
+        1.91,
+        1.83
+      ]
+    },
+    {
+      "path": "move",
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 100000,
+      "stage_ms": 662,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 3973,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 3787,
+      "load_before": [
+        1.48,
+        1.92,
+        1.83
+      ]
+    },
+    {
+      "path": "move",
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 300000,
+      "stage_ms": 620,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 10126,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 9975,
+      "load_before": [
+        1.48,
+        1.9,
+        1.83
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 10000,
+      "stage_ms": 517,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 1533,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 1378,
+      "load_before": [
+        1.45,
+        1.86,
+        1.82
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 100000,
+      "stage_ms": 455,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 8491,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 8337,
+      "load_before": [
+        1.45,
+        1.86,
+        1.82
+      ]
+    },
+    {
+      "path": "move",
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 300000,
+      "stage_ms": 439,
+      "stage_outcome": "prepared",
+      "cutover_wall_ms": 29246,
+      "cutover_outcome": "success",
+      "cutover_reason": "matched",
+      "pause_ms": 29096,
+      "load_before": [
+        1.38,
+        1.83,
+        1.81
+      ]
+    }
+  ]
+}

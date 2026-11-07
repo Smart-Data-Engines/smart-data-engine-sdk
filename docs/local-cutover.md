@@ -248,6 +248,25 @@ CLI exit codes: 0 is a result, 2 a refused/invalid input, and 3 an operation or 
 requiring inspection. A successful abort returns 0 with `outcome: "abort"`; consumers must read the
 outcome. Driver error details are omitted from the JSON output to avoid including local credentials.
 
+## How large a group a move fits
+
+The pause covers refilling the copy from the frozen source and comparing every value, so it grows
+with the group, and a group that does not fit its budget is not moved: the watchdog stops the
+pause at the budget and recovery aborts the cutover, with the source as it was. Measured on a
+laptop (i3-7100U, 4 threads) with PostgreSQL 15.19 and ClickHouse 24.8.14.39 on the same machine,
+rows of three integer columns and the 30 s budget of the live tests
+([qualification/cutover-limits](qualification/cutover-limits/README.md)):
+
+| move | rows within 30 s | pause a row |
+|---|---|---|
+| PostgreSQL → ClickHouse | about 900 000, at the edge | about 32 µs |
+| ClickHouse → PostgreSQL | about 450 000 | 46-58 µs |
+
+The budget is signed for each cutover, so a larger one moves a larger group in a longer write
+pause. A wider row costs more than these. Qualify the intended group on the intended engines with
+the scripts in that record before signing a budget for it; an index change needs no move at all
+([in-place index builds](in-place-index.md)).
+
 ## Evidence
 
 `test_local_cutover_live.py` exercises both directions, missing fan-out, mismatching repair,
