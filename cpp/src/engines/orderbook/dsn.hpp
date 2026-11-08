@@ -27,7 +27,15 @@ struct Target {
   std::optional<std::string> ca;  ///< a CA file, read when the connection opens
   bool verify = true;
   double timeout = kDefaultTimeoutSeconds;  ///< seconds for the connection and for each answer
+  /// Whether the DSN says `tls` at all: `tls` is off either way when it does not, and only a DSN
+  /// that says so may connect in plaintext to a host other than the loopback.
+  bool tls_given = false;
 };
+
+/// The engine's refusal of a DSN to another host that states no TLS (specs/secure-connections).
+inline constexpr std::string_view kPlaintext =
+    "an orderbook connection to a host other than the loopback needs its TLS stated: tls=on (with "
+    "ca for a private CA), or tls=off if plaintext is intended";
 
 /// Reads the DSN by contract 7n and refuses (`EngineError`) it at the first rule it breaks.
 [[nodiscard]] Target parse_dsn(std::string_view dsn);

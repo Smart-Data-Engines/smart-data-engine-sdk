@@ -14,6 +14,7 @@
 #include "python_url.hpp"
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
+#include "transport.hpp"
 #include "unicode_internal.hpp"
 
 namespace sde {
@@ -410,7 +411,13 @@ class OrderbookEngine::Use {
 OrderbookEngine::OrderbookEngine(std::string_view dsn, OrderbookOptions options)
     : target_(std::make_unique<detail::orderbook::Target>(detail::orderbook::parse_dsn(dsn))),
       options_(std::move(options)),
-      process_(static_cast<long>(getpid())) {}
+      process_(static_cast<long>(getpid())) {
+  // After every rule of the grammar, as the reference's adapter runs it: a default is nobody's
+  // decision, and the loopback is decided on the text, as for every other engine.
+  if (!target_->tls_given && !detail::loopback(target_->host)) {
+    throw EngineError(std::string(detail::orderbook::kPlaintext));
+  }
+}
 
 OrderbookEngine::~OrderbookEngine() { close(); }
 

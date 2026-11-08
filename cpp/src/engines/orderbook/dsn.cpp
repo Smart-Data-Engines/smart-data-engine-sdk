@@ -340,6 +340,7 @@ Target parse_dsn(std::string_view dsn) {
     return found == options.end() ? nullptr : &found->second;
   };
   out.tls = option("tls") != nullptr && *switch_of(*option("tls"));
+  out.tls_given = option("tls") != nullptr;
   out.verify = option("verify") == nullptr || *switch_of(*option("verify"));
   if (const std::string* ca = option("ca")) out.ca = *ca;
   if (out.ca && !out.tls) throw EngineError(kCaWithoutTls);

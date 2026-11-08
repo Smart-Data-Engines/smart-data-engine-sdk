@@ -36,6 +36,11 @@ export interface OrderbookDsn {
   readonly verify: boolean
   /** Seconds, from `SHORTEST_TIMEOUT_SECONDS` to `LONGEST_TIMEOUT_SECONDS`. */
   readonly timeout: number
+  /**
+   * Whether the DSN says `tls` at all: `tls` is off either way when it does not, and only a DSN that
+   * says so may connect in plaintext to a host other than the loopback.
+   */
+  readonly tlsGiven: boolean
 }
 
 const PREFIX = 'orderbook://'
@@ -154,7 +159,7 @@ export function parseOrderbookDsn(dsn: unknown): OrderbookDsn {
   if (ca !== null && !verify) throw new EngineError(CA_WITHOUT_VERIFY)
   const written = options.get('timeout')
   const timeout = written === undefined ? DEFAULT_TIMEOUT_SECONDS : secondsOf(written)!
-  return { host, port, identity, secret, tls, ca, verify, timeout }
+  return { host, port, identity, secret, tls, ca, verify, timeout, tlsGiven: options.has('tls') }
 }
 
 /** A timeout's seconds in decimal digits, or null: its nearest double, within the range. */

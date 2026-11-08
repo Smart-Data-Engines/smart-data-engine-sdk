@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed, and it may break a configuration: the orderbook engine's connection states its TLS too**
+(Python, TypeScript, C++). An `orderbook://` DSN to a host other than the loopback that does not say
+`tls` at all is refused when the engine is constructed, as PostgreSQL's and ClickHouse's already
+are: `tls=on`, with `ca` for a private CA, or `tls=off` if plaintext is intended. Given field by
+field, leaving `tls` out is the same unstated default. The grammar is unchanged and its shared
+vectors still read remote hosts without `tls`: the rule is the adapter's, run after the grammar and
+after every rule about a value, so a setting that would do nothing is still named first
+([`docs/engine-connections.md`](docs/engine-connections.md#plaintext-only-when-the-dsn-says-so)).
+
 **Added: the operator's chunk, in its configuration** (Python). `chunk_rows`, optional in
 `local-operator.json`, is how many rows a cutover's repair and frozen comparison move at once: 1000
 when absent, as before, and at most 20 000. A larger chunk makes fewer round trips inside the pause,
@@ -73,8 +82,7 @@ keep a plaintext connection on a network you trust, say so:
 
 Better, use TLS: `sslmode=verify-full`, or `https`/`clickhouses`. Elasticsearch already refused
 plaintext outside the loopback. Its rule is now the one all three libraries share, which also reads
-an IPv4-mapped loopback address by its IPv4 part on every runtime. The orderbook engine's DSN follows
-in its own change, with the shared vectors of section 7n.
+an IPv4-mapped loopback address by its IPv4 part on every runtime. The orderbook engine's DSN follows the same rule: see the entry above.
 
 **Added: every statement sent to your engines, on one page** (Python, TypeScript, C++).
 [`docs/engine-statements.md`](docs/engine-statements.md) lists, by engine, every statement the

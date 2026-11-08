@@ -11,6 +11,8 @@ import { EngineError } from '../src/errors.js'
 import { parseDsn as clickhouseDsn } from '../src/engines/_clickhouse-connection.js'
 import { PostgresEngine, refusePlaintextElsewhere } from '../src/engines/postgres.js'
 import { loopback } from '../src/engines/_transport.js'
+import { OrderbookEngine } from '../src/engines/orderbook.js'
+import { parseOrderbookDsn } from '../src/engines/_orderbook-dsn.js'
 
 describe('the loopback, decided on the text', () => {
   it.each([
@@ -88,5 +90,43 @@ describe('ClickHouse', () => {
     'clickhouse://app:secret@ch.example.com/sde?secure=true',
   ])('accepts %s', (dsn) => {
     expect(() => clickhouseDsn(dsn)).not.toThrow()
+  })
+})
+
+describe('the orderbook engine, whose rule is its adapter\'s and not its grammar\'s', () => {
+  it.each([
+    'orderbook://ob.example.com:9090',
+    'orderbook://app:secret@10.0.0.5:9090',
+    'orderbook://[2001:db8::1]:9090?timeout=5',
+  ])('refuses %s, which states no TLS', (dsn) => {
+    let message = ''
+    try {
+      OrderbookEngine.fromDsn(dsn)
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).toContain('needs its TLS stated')
+    expect(message).not.toContain('secret')
+  })
+
+  it.each([
+    'orderbook://127.0.0.1:9090',
+    'orderbook://localhost:9090',
+    'orderbook://[::1]:9090',
+    'orderbook://ob.example.com:9090?tls=on',
+    'orderbook://app:secret@ob.example.com:9090?tls=off',
+  ])('accepts %s', (dsn) => {
+    expect(() => OrderbookEngine.fromDsn(dsn)).not.toThrow()
+  })
+
+  it('holds fields to the same rule: tls left out is the unstated default', () => {
+    expect(() => new OrderbookEngine({ host: 'ob.example.com', port: 9090 })).toThrow('needs its TLS stated')
+    expect(() => new OrderbookEngine({ host: 'ob.example.com', port: 9090, tls: false })).not.toThrow()
+    expect(() => new OrderbookEngine({ host: '127.0.0.1', port: 9090 })).not.toThrow()
+  })
+
+  it('leaves the grammar reading what a DSN says', () => {
+    expect(parseOrderbookDsn('orderbook://ob.example.com:9090')).toMatchObject({ tls: false, tlsGiven: false })
+    expect(parseOrderbookDsn('orderbook://ob.example.com:9090?tls=off').tlsGiven).toBe(true)
   })
 })

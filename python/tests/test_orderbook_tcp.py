@@ -328,10 +328,10 @@ def test_fields_are_held_to_the_dsns_rules() -> None:
     # Format contract 7n: a connection given field by field is held to the DSN's rules - the
     # server's identities, the timeouts every library's socket waits as asked, a port that exists.
     engine = OrderbookEngine(
-        host="h", port=65535, auth=("desk:1", "s"), timeout=2147483.647
+        host="h", port=65535, auth=("desk:1", "s"), timeout=2147483.647, tls=False
     )
     assert (engine._port, engine._auth, engine._timeout) == (65535, ("desk:1", "s"), 2147483.647)
-    assert OrderbookEngine(host="h", port=1, timeout=0.001)._timeout == 0.001
+    assert OrderbookEngine(host="h", port=1, timeout=0.001, tls=False)._timeout == 0.001
     for port in (0, 65536, -1, True, "9090", None):
         with pytest.raises(EngineError, match="a port from 1 to 65535"):
             OrderbookEngine(host="h", port=port)  # type: ignore[arg-type]
@@ -359,7 +359,7 @@ def test_a_server_that_cannot_store_an_event_time_is_refused_before_any_write(
     server: _Server,
 ) -> None:
     server.capabilities = {"strict_args"}
-    adapter = OrderbookEngine(host="h", port=1)
+    adapter = OrderbookEngine(host="h", port=1, tls=False)
     with pytest.raises(EngineError, match="cannot store a write's event time"):
         adapter.connect()
     assert server.closed == 1, "the connection it opened to ask is closed again"

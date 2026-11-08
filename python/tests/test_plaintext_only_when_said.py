@@ -118,3 +118,52 @@ def test_clickhouse_refuses_plain_http_to_a_remote_host_unless_it_is_stated(dsn:
 )
 def test_clickhouse_accepts_the_loopback_and_tls(dsn: str) -> None:
     clickhouse_dsn(dsn)
+
+
+REFUSED_ORDERBOOK = [
+    "orderbook://ob.example.com:9090",
+    "orderbook://app:secret@10.0.0.5:9090",
+    "orderbook://[2001:db8::1]:9090?timeout=5",
+]
+ACCEPTED_ORDERBOOK = [
+    "orderbook://127.0.0.1:9090",
+    "orderbook://localhost:9090",
+    "orderbook://[::1]:9090",
+    "orderbook://ob.example.com:9090?tls=on",
+    "orderbook://app:secret@ob.example.com:9090?tls=off",
+]
+
+
+@pytest.mark.parametrize("dsn", REFUSED_ORDERBOOK)
+def test_orderbook_refuses_a_remote_host_unless_the_dsn_states_tls(dsn: str) -> None:
+    from sde.engines.orderbook import OrderbookEngine
+
+    with pytest.raises(sde.EngineError, match="needs its TLS stated") as refused:
+        OrderbookEngine.from_dsn(dsn)
+    assert "secret" not in str(refused.value)
+
+
+@pytest.mark.parametrize("dsn", ACCEPTED_ORDERBOOK)
+def test_orderbook_accepts_the_loopback_and_any_stated_tls(dsn: str) -> None:
+    from sde.engines.orderbook import OrderbookEngine
+
+    OrderbookEngine.from_dsn(dsn)  # constructed, never connected
+
+
+def test_orderbook_fields_follow_the_same_rule() -> None:
+    """Field by field, ``tls`` left out is the unstated default; given either way, a decision."""
+    from sde.engines.orderbook import OrderbookEngine
+
+    with pytest.raises(sde.EngineError, match="needs its TLS stated"):
+        OrderbookEngine(host="ob.example.com", port=9090)
+    OrderbookEngine(host="ob.example.com", port=9090, tls=False)
+    OrderbookEngine(host="127.0.0.1", port=9090)
+
+
+def test_the_dsn_grammar_still_reads_what_a_dsn_says() -> None:
+    """The rule is the adapter's, not the grammar's: contract 7n's vectors read remote hosts."""
+    from sde.engines._orderbook_dsn import parse_dsn
+
+    said = parse_dsn("orderbook://ob.example.com:9090")
+    assert (said.tls, said.tls_given) == (False, False)
+    assert parse_dsn("orderbook://ob.example.com:9090?tls=off").tls_given is True

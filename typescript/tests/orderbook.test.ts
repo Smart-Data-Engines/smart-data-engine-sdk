@@ -240,7 +240,7 @@ const BOOK = { symbol: 'BTCUSDT', exchange: 'binance' }
 
 describe('connecting', () => {
   it('refuses a setting that would do nothing', () => {
-    const base = { host: 'h', port: 1 }
+    const base = { host: 'h', port: 1, tls: false }
     expect(() => new OrderbookEngine({ ...base, port: 0 })).toThrow('needs a port')
     expect(() => new OrderbookEngine({ ...base, tlsVerify: false })).toThrow('no certificate to decline')
     expect(() => new OrderbookEngine({ ...base, tlsCaFile: '/nope' })).toThrow('verifies nothing')

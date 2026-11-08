@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs'
 
 import { UsageGate } from '../_usage.js'
 import { IDENTITY, parseOrderbookDsn } from './_orderbook-dsn.js'
+import { loopback } from './_transport.js'
 import type { BookUpdate, ComposedBook } from '../books.js'
 import { EngineError } from '../errors.js'
 import type { PhysicalLayout } from '../placement.js'
@@ -299,6 +300,10 @@ function minOf(left: bigint, right: bigint): bigint {
 }
 
 
+const PLAINTEXT =
+  'an orderbook connection to a host other than the loopback needs its TLS stated: tls=on (with ' +
+  'ca for a private CA), or tls=off if plaintext is intended'
+
 export class OrderbookEngine {
   readonly dialect = 'orderbook'
 
@@ -366,6 +371,9 @@ export class OrderbookEngine {
     if (typeof timeoutMs !== 'number' || !(timeoutMs >= 1 && timeoutMs <= 2147483647)) {
       throw new EngineError('timeoutMs is a number of milliseconds from 1 to 2147483647')
     }
+    // Last, after every rule about a value (specs/secure-connections): a default is nobody's
+    // decision, and the loopback is decided on the text, as for every other engine.
+    if (options.tls === undefined && !loopback(host)) throw new EngineError(PLAINTEXT)
     this.wire = {
       host,
       port,
@@ -398,7 +406,7 @@ export class OrderbookEngine {
       ...(parsed.identity === null || parsed.secret === null
         ? {}
         : { auth: { identity: parsed.identity, secret: parsed.secret } }),
-      tls: parsed.tls,
+      ...(parsed.tlsGiven ? { tls: parsed.tls } : {}),
       ...(parsed.ca === null ? {} : { tlsCaFile: parsed.ca }),
       tlsVerify: parsed.verify,
       // Monotonic: the range in seconds maps into the range in milliseconds, 0.001 to 1 and

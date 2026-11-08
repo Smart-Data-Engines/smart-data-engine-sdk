@@ -83,6 +83,9 @@ class OrderbookDsn:
     verify: bool
     timeout: float
     """Seconds, from ``SHORTEST_TIMEOUT`` to ``LONGEST_TIMEOUT``."""
+    tls_given: bool = False
+    """Whether the DSN says ``tls`` at all: ``tls`` above is ``off`` either way when it does not,
+    and only a DSN that says so may connect in plaintext to a host other than the loopback."""
 
     @property
     def auth(self) -> tuple[str, str] | None:
@@ -180,6 +183,7 @@ def parse_dsn(dsn: object) -> OrderbookDsn:
         ca=ca,
         verify=verify,
         timeout=timeout,
+        tls_given="tls" in options,
     )
 
 
