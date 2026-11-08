@@ -8,6 +8,14 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed, and it may break an installation: Node 18 and 20 are no longer supported** (TypeScript).
+Both are past their upstream end of life - Node 18 on 30 April 2025, Node 20 on 30 April 2026 - and
+a library that is run on an unmaintained runtime inherits every vulnerability found in it from then
+on. `engines` is now `>=22 <27`, CI tests 22, 24 and 26, and the ruleset requires those jobs.
+[`docs/platforms.md`](docs/platforms.md) states the rule that decided it, for every line from now
+on: a Python or Node line leaves in the first minor release after its end of life, with the dates
+listed. 0.2.0 on npm still installs on Node 18 and 20.
+
 **Changed, and it may break a configuration: the orderbook engine's connection states its TLS too**
 (Python, TypeScript, C++). An `orderbook://` DSN to a host other than the loopback that does not say
 `tls` at all is refused when the engine is constructed, as PostgreSQL's and ClickHouse's already
