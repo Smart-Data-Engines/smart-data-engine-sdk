@@ -238,6 +238,33 @@ the certificate chain before the identity callback. Explicit PostgreSQL callback
 meaning. Missing or malformed peer certificate bytes cause refusal.
 
 
+## ClickHouse: an answer is whole, or an error
+
+Every statement the three libraries send to ClickHouse says that a limit is an error and that no
+limit or filter of the login's profile applies: eleven overflow modes set to `throw`, `limit` and
+`offset` set to `0`, and `additional_table_filters` and `additional_result_filter` empty
+([format contract](format-contract.md) §7o has the list). ClickHouse otherwise ends an answer early
+and raises nothing for a login whose settings say `break` at a limit: measured on 24.8 and 26.9, a
+login with `max_result_rows = 1000` and `result_overflow_mode = 'break'` was answered 48 193 and
+20 000 rows of 200 000, one with a time cap nothing at all, and one with `limit = 10` in its
+profile ten rows ([qualification/whole-answers](qualification/whole-answers/README.md)). The library
+would have returned each as the whole answer.
+
+What this asks of an account:
+- **Nothing, where nobody configured it.** The values are the server's own defaults.
+- **Nothing of a `readonly=1` account whose values are these.** A setting sent with the value the
+  account already has is accepted from an account that may change none.
+- **A change, where the account's own value is another and it may not change it** (`readonly=1`,
+  or a `CONST` constraint on the setting). The server refuses the first statement, and the library
+  says which setting: `this ClickHouse login's result_overflow_mode is not 'throw' and the login may
+  not change it`. Set the value for the account, or let it change the setting (`readonly=2` keeps
+  its queries read-only).
+- **An account whose limits the work reaches now gets the server's error** - `Limit for result
+  exceeded`, `Timeout exceeded` - where it got the first part of an answer. Raise the limit for the
+  account, or read less at once.
+
+The settings ride on each request and change nothing on the server or for another client.
+
 ## Exact TypeScript numbers over ClickHouse JSON
 
 Every TypeScript JSON request explicitly selects quoted wide integers, quoted decimals,

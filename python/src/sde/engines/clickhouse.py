@@ -59,7 +59,9 @@ import stat
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from importlib.metadata import version
+from types import MappingProxyType
 from typing import Any, Final, cast
+from urllib.parse import parse_qsl, urlencode
 
 from .._usage import UsageGate, guarded
 from ..bulk import batch_columns
@@ -161,6 +163,71 @@ timeout: half of ClickHouse's default of 10 s."""
 
 _KEEP_ALIVE_TIMEOUT = re.compile(r"(?:^|[\s,;])timeout\s*=\s*(\d+)", re.IGNORECASE)
 
+WHOLE_ANSWERS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        **{
+            f"{limit}_overflow_mode": "throw"
+            for limit in (
+                "distinct", "group_by", "join", "read", "result", "set", "sort", "timeout",
+                "transfer",
+            )
+        },
+        "read_overflow_mode_leaf": "throw",
+        "timeout_overflow_mode_leaf": "throw",
+        "limit": "0",
+        "offset": "0",
+        "additional_table_filters": "{}",
+        "additional_result_filter": "",
+    }
+)
+"""What every statement of this adapter says with it, whatever its login's settings say.
+
+ClickHouse ends an answer early and raises nothing when a limit is reached under an overflow mode
+of ``break``: measured on 24.8 and 26.9, a login with ``max_result_rows`` and
+``result_overflow_mode = 'break'`` was answered 48 193 and 20 000 rows of 200 000, and one with a
+small ``max_execution_time`` and ``timeout_overflow_mode = 'break'`` nothing at all, a count
+included. A profile's ``limit``, ``offset`` and ``additional_result_filter`` shorten an answer the
+same way. This library takes an answer without an error for the whole answer - a count, a page of
+a scan, a comparison of two copies - so it says ``throw``, and no limit and no filter of the
+profile's, with every statement. A limit is then an error, as it is for a login nobody configured.
+
+A login that is read-only, or whose setting is constrained, cannot say so: where its own value is
+the one here the server accepts the statement as it is (measured, ``readonly = 1`` included), and
+where it is not the server refuses the first statement by the setting's name.
+``docs/qualification/whole-answers`` has the measurements.
+"""
+
+_WHOLE_ANSWERS_QUERY: Final = urlencode(WHOLE_ANSWERS)
+
+
+def _saying_whole_answers(url: str) -> str:
+    """A request's URL with ``WHOLE_ANSWERS`` after whatever it carried.
+
+    Here and not in the driver's settings: the driver drops or refuses a setting by a process-wide
+    option of its own, and reads which ones a login may send from an answer that is itself one the
+    login's settings can cut. A statement that already says one of them with the value here keeps
+    it, once; one that says another value is refused - which of two values the server would take
+    is not something to find out in production.
+    """
+    head, _, query = url.partition("?")
+    if head.endswith("/ping"):
+        return url
+    said = _WHOLE_ANSWERS_QUERY
+    carried = "&" + query
+    if any(f"&{name}=" in carried for name in WHOLE_ANSWERS):
+        already = dict(parse_qsl(query, keep_blank_values=True))
+        for name, value in WHOLE_ANSWERS.items():
+            if already.get(name, value) != value:
+                raise EngineError(
+                    f"a ClickHouse statement cannot set {name} to {already[name]!r}: this adapter "
+                    f"sends it as {value!r} with every statement, so that a limit of the login's "
+                    f"is an error and not a shorter answer"
+                )
+        said = urlencode({n: v for n, v in WHOLE_ANSWERS.items() if n not in already})
+        if not said:
+            return url
+    return f"{head}?{query}&{said}" if query else f"{head}?{said}"
+
 _now = time.monotonic
 
 
@@ -212,6 +279,7 @@ class _NoReplayTransport:
 
         options["retries"] = False
         options["redirect"] = False
+        url = _saying_whole_answers(url)
         answered_at = self._answered_at
         if self._owned and answered_at is not None and _now() - answered_at >= self._idle_limit:
             self.pool.clear()
@@ -248,6 +316,46 @@ def _causes(error: BaseException) -> str:
         steps = (*nested, cause.__cause__, cause.__context__)
         cause = next((step for step in steps if step is not None), None)
     return " <- ".join(names)
+
+
+_SETTING_REFUSED = re.compile(
+    r"Code: (?:164|452)\b.*?(?:Cannot modify '(\w+)' setting|Setting (\w+) should not be changed)",
+    re.DOTALL,
+)
+
+
+def _server_code(error: BaseException) -> int | None:
+    """The ClickHouse error code in a driver's failure, if the server sent one. A number, so it
+    can be said where the server's text cannot: 516 is a wrong password, 396 a limit on a result
+    that this login's first statements reach."""
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        found = re.search(r"\bCode: (\d{1,5})\b", str(cause))
+        if found is not None:
+            return int(found.group(1))
+        cause = cause.__cause__ or cause.__context__
+    return None
+
+
+def _setting_the_login_cannot_send(error: BaseException) -> str | None:
+    """Which of ``WHOLE_ANSWERS`` the server refused to take from this login, if that is the error.
+
+    The server names the setting (codes 164 ``READONLY`` and 452 ``SETTING_CONSTRAINT_VIOLATION``,
+    the same text on 24.8 and 26.9). Only a name this adapter itself sends comes back, so nothing
+    of the server's text or the URL reaches the message built from it.
+    """
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        found = _SETTING_REFUSED.search(str(cause))
+        if found is not None:
+            name = found.group(1) or found.group(2)
+            return name if name in WHOLE_ANSWERS else None
+        cause = cause.__cause__ or cause.__context__
+    return None
 
 
 MIN_CLICKHOUSE_CONNECT = "1.7.2"
@@ -415,12 +523,22 @@ class ClickHouseEngine:
             except EngineError as exc:
                 raise EngineError("could not connect to ClickHouse: " + str(exc)) from None
             except Exception as exc:
+                fixed = _setting_the_login_cannot_send(exc)
+                if fixed is not None:
+                    raise EngineError(
+                        f"this ClickHouse login's {fixed} is not {WHOLE_ANSWERS[fixed]!r} and the "
+                        f"login may not change it, so the server could end its answers early "
+                        f"without an error. This library sends {fixed}={WHOLE_ANSWERS[fixed]!r} "
+                        f"with every statement and the server refused that: set it so for the "
+                        f"login, or let the login change it"
+                    ) from None
                 # Driver/parser exceptions may echo URL, credentials or server content, so only
-                # their classes are named. The connection error conveys no proof of rollback and
-                # never weakens TLS to retry.
+                # their classes are named, and the server's error code, which is a number. The
+                # connection error conveys no proof of rollback and never weakens TLS to retry.
+                code = _server_code(exc)
                 raise EngineError(
                     "could not connect to ClickHouse with the configured transport "
-                    f"({_causes(exc)})"
+                    f"({_causes(exc)}{'' if code is None else f'; ClickHouse error code {code}'})"
                 ) from None
 
     @guarded
@@ -430,6 +548,14 @@ class ClickHouseEngine:
             self._client = None
         # A server may be upgraded between two connections, and its range with it.
         self._range = _UNREAD
+
+    def whole_answers(self) -> None:
+        """What the local operator asks of each adapter it is given, and here there is nothing to
+        switch on: every statement of this adapter, an application's too, already says that a
+        limit is an error and that no limit or filter of the profile's applies
+        (``WHOLE_ANSWERS``). A row policy is another matter, which no setting turns into an error:
+        the operator refuses a table that has one (``NativeOperator.identity``).
+        """
 
     def __enter__(self) -> ClickHouseEngine:
         self.connect()
@@ -1049,7 +1175,12 @@ class ClickHouseEngine:
             result = self._cx.query(f"SELECT count() FROM {_quote(table)} FINAL")
         except Exception as exc:
             raise EngineError(f"count on {table} failed: {exc}") from exc
-        return int(result.result_rows[0][0]) if result.result_rows else 0
+        if not result.result_rows:
+            # An empty table counts as one row holding 0. No row at all was measured twice, and
+            # both times the table held rows: a statement cut off by time under ``break``, and a
+            # profile's ``offset``. It was read as 0 until 14 November 2026.
+            raise EngineError(f"count on {table} was answered no row at all")
+        return int(result.result_rows[0][0])
 
     # --- migration ------------------------------------------------------------------------------
     #
@@ -1123,11 +1254,13 @@ class ClickHouseEngine:
         statement at one moment, which for a frozen table is the table.
 
         **The end of the stream is not proof of the end of the table.** A login whose settings cap
-        a result and say ``break`` is answered the first part and no error: measured on 24.8,
+        a result and say ``break`` was answered the first part and no error: measured on 24.8,
         106 497 rows of 200 000 under ``max_result_rows = 50000``
-        (``docs/qualification/cutover-repair``). A read by chunks continues from the last key it
-        was given and loses nothing to that; this has nothing to continue from. A caller that
-        needs every row holds what it read to ``count``, as a cutover's pass does.
+        (``docs/qualification/cutover-repair``). Every statement of this adapter says ``throw``
+        since (``WHOLE_ANSWERS``), so that login is answered the server's error. A read by chunks
+        continues from the last key it was given; this has nothing to continue from, whatever
+        ends it early, so a caller that needs every row still holds what it read to ``count``, as
+        a cutover's pass does.
         """
         cols = key_columns(order, table)
         if chunk_rows < 1:

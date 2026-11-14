@@ -148,6 +148,7 @@ class PostgresEngine:
         self._conn: Any = None
         self._usage = UsageGate()
         self._unusable = False
+        self._whole_answers = False
 
     # --- connection ------------------------------------------------------------------------
 
@@ -180,6 +181,35 @@ class PostgresEngine:
                 self._unusable = False
             except Exception as exc:
                 raise EngineError(f"could not connect to PostgreSQL: {exc}") from exc
+            if self._whole_answers:
+                self._row_security_off()
+
+    def whole_answers(self) -> None:
+        """Make a read that a row-level security policy would narrow an error, on this adapter.
+
+        For an operator's adapter, and called by the local operator on each one it is given. A
+        policy that applies to the operator's login - a table with ``FORCE ROW LEVEL SECURITY``
+        owned by it, or one it only has grants on - answers it some of the table's rows and no
+        error: measured on PostgreSQL 15, 10 rows of 100. An operator that copies and compares a
+        table would move the rows it was shown and call the copy complete. With
+        ``row_security = off`` PostgreSQL refuses such a statement instead (``query would be
+        affected by row-level security policy``), a read and a write alike.
+
+        It holds for this adapter's connection now and for every connection it opens later. A
+        session of the application never calls this: a policy on a runtime login is the client's
+        own decision about what that login sees.
+        """
+        self._whole_answers = True
+        if self._conn is not None:
+            self._row_security_off()
+
+    def _row_security_off(self) -> None:
+        try:
+            self._conn.execute("SET row_security = off")
+        except Exception as exc:
+            raise EngineError(
+                f"could not turn row_security off for the operator's connection: {exc}"
+            ) from exc
 
     @guarded
     def close(self) -> None:

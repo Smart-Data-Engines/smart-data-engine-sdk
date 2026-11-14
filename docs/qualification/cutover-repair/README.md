@@ -158,8 +158,9 @@ record says `"partial": true`.
 
 That is a cap on a result. The same mode on what a statement may read, or on how long it may run
 (`read_overflow_mode`, `timeout_overflow_mode`), shortens every answer of the login, a count
-included, and no comparison in this library is written to survive a login like that. The operator
-does not check a login for it today.
+included. Since the change that followed this one, every statement the libraries send says that a
+limit is an error, so none of these answers comes back short
+([whole-answers](../whole-answers/README.md)); the pass's own check stays.
 
 ## What this does not show
 

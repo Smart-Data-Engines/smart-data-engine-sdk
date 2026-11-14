@@ -171,6 +171,8 @@ std::string Http::post(std::string_view sql, std::optional<std::string_view> for
                       "&wait_end_of_query=1&send_progress_in_http_headers=1"
                       "&http_headers_progress_interval_ms=" + std::to_string(interval) +
                       "&cancel_http_readonly_queries_on_client_close=1";
+  // A limit of the login's is an error and not a shorter answer, a write's statement too.
+  query += kWholeAnswers;
   if (format && format->starts_with("JSON")) {
     // A JSON number is a double to most readers, so every exact one comes quoted, and so do the
     // floats JSON has no number for.

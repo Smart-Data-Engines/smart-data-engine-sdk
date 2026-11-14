@@ -8,6 +8,41 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: an answer ClickHouse cut short is an error, in every library** (Python, TypeScript, C++;
+[`docs/engine-connections.md`](docs/engine-connections.md#clickhouse-an-answer-is-whole-or-an-error),
+format contract §7o). ClickHouse ends an answer early and raises nothing for a login whose
+settings say `break` at a limit, or carry a `limit`, an `offset` or an `additional_result_filter`
+of their own, and the libraries returned what came back as the whole answer: a scan, a count, the
+comparison a cutover decides by. Measured on 24.8 and 26.9
+([`docs/qualification/whole-answers/`](docs/qualification/whole-answers/README.md)): 48 193 and
+20 000 rows of 200 000 under `max_result_rows` with `result_overflow_mode = 'break'`, a count of
+120 000 under a cap on rows read, and nothing at all, a count included, under a time cap.
+- **Every statement now says so**: eleven overflow modes set to `throw`, `limit` and `offset` to
+  `0`, and the two filters empty. A limit is the server's error.
+- **A login that may not say so and whose own value is another is refused when it connects**, by
+  the setting's name. One whose own values are these is accepted, a `readonly=1` login included.
+- **A `count()` answered no row at all is an error.** It was read as 0.
+- **Breaking** for a ClickHouse account whose profile fixes one of these settings to another value,
+  which is now refused, and for one whose limits the application reaches under `break`, which now
+  gets the server's error where it got the first part of an answer.
+
+**Fixed: TypeScript took the first rows of a ClickHouse answer for the answer when the statement
+failed after it began** (TypeScript). A statement can fail once the status has been sent: a limit
+under the server's own mode, a timeout, a cancelled query. ClickHouse 24.8 then answers HTTP 200
+with a valid JSON document, the rows so far in `data` and an `exception` member beside them, and
+the adapter read `data`: measured, 5000 rows of 20 000 returned with no error. ClickHouse 26.9 cuts
+the body instead, and the read never ended, nothing listening for an answer that stops. An answer
+that carries an exception, or ends in the server's error as text, is that error now, and an answer
+the server stops sending fails the read. The Python library's driver and the C++ library ask the
+server to hold an answer until the statement ends, and were not affected.
+
+**Changed: the operator does not read through a row policy** (Python). A table with a ClickHouse
+row policy or with PostgreSQL row-level security was already refused where a cutover, a staging,
+an index build or an erasure takes its identity; a backfill takes it too now, and tests hold the
+refusals, which none did. The operator's PostgreSQL connections are opened with
+`row_security = off`, so a policy that appears later makes a read PostgreSQL's error and not some
+of the table. New on [the statement page](docs/engine-statements.md): `SET row_security = off`.
+
 **Changed: a cutover's pause no longer copies the group** (Python;
 [`docs/local-cutover.md`](docs/local-cutover.md#filling-the-copy-before-the-pause)). A staging
 creates a copy and copies nothing, so the cutover that followed copied the whole group inside its

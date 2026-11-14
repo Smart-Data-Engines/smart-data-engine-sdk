@@ -2355,3 +2355,43 @@ refusal must not contain. A timeout is compared as the double it is.
 
 **Which number moves: neither.** No IR and no map carries a DSN. `dsn/` is new, and no other vector
 changed.
+
+## 7o. An answer without an error is the whole answer
+
+A count, a page of a scan, a row read back and the comparison of two copies all take an engine's
+answer without an error for the whole answer. Where an engine can hand back part of one and say
+nothing, a library makes that an error, in every implementation.
+
+**ClickHouse.** A login's settings can end an answer early without an error: a limit reached under
+an overflow mode of `break`, and a profile's own `limit`, `offset` or `additional_result_filter`.
+Every statement a library sends, a write's too, carries these settings:
+
+| Setting | Value |
+|---|---|
+| `distinct_overflow_mode`, `group_by_overflow_mode`, `join_overflow_mode`, `read_overflow_mode`, `read_overflow_mode_leaf`, `result_overflow_mode`, `set_overflow_mode`, `sort_overflow_mode`, `timeout_overflow_mode`, `timeout_overflow_mode_leaf`, `transfer_overflow_mode` | `throw` |
+| `limit`, `offset` | `0` |
+| `additional_table_filters` | `{}` |
+| `additional_result_filter` | empty |
+
+A limit is then the server's error. A login that may not send a setting and whose own value is
+another is refused by the server, by the setting's name (codes 164 and 452), and the library says
+so when it connects; one whose own value is the one above is accepted, a read-only login included.
+The eleven modes are every `*overflow_mode*` setting of ClickHouse 24.8 and 26.9, which a test of
+each library holds to the server it runs against.
+
+Three more answers are errors:
+- **A `count()` answered no row at all.** An empty table counts as one row holding 0.
+- **An answer that carries the server's error after its first rows.** A statement can fail once
+  the status has been sent. Under `FORMAT JSON` ClickHouse 24.8 then answers HTTP 200 with a valid
+  document, its rows so far in `data` and an `exception` member beside them; a library that reads
+  JSON refuses a document with that member, and one that ends in the error's text instead.
+- **An answer the server stops sending.** ClickHouse 26.9 cuts the body in the same case. The read
+  fails; what had arrived is not returned.
+
+**Elasticsearch** has its part of this rule in §7m: `allow_partial_search_results=false`, and a
+timed-out answer or a failed shard refused. **PostgreSQL** ends a statement it cannot finish with an
+error. What narrows a read there without one is a row-level security policy, which is a property
+of a login and of an operator's choice of tables, and outside this contract
+([`local-cutover.md`](local-cutover.md)).
+
+Measured in [`qualification/whole-answers`](qualification/whole-answers/README.md).

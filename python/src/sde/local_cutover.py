@@ -231,6 +231,20 @@ class LocalCutover:
                     "the map in force names no copy to fill: a backfill follows a staging and "
                     "precedes its cutover"
                 )
+            for group in groups:
+                # What a backfill copies is what its login is shown of the source: a table with a
+                # row policy is refused here as a cutover refuses it, and not a copy later.
+                spot = current.groups[group]
+                for material in (spot.source, *spot.derived):
+                    native = self.native.get(material.engine)
+                    if native is None:
+                        raise MigrationRefused(
+                            f"{group} has a copy in {material.engine}, which this operator is "
+                            f"not bound to: a backfill needs the binding of every engine it "
+                            f"reads or fills"
+                        )
+                    for table in sorted(material.layout.tables.values()):
+                        native.identity(table)
             context = InspectionContext(self.model, current, self.engines, self.project_id)
             return [
                 backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)

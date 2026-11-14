@@ -297,9 +297,10 @@ way or not possible**, and its local record says which it did:
 - the copy holds a key the source lacks, which only emptying removes;
 - a row the repair wrote could not be read back as written;
 - the repair's pass read another number of rows than the source counts: an answer that ended
-  before the table did, which ClickHouse gives without an error to a login whose settings cap a
+  before the table did. ClickHouse gave one, without an error, to a login whose settings cap a
   result and say `break`
-  ([measured](qualification/cutover-repair/README.md#an-answer-that-ends-before-the-table-does)).
+  ([measured](qualification/cutover-repair/README.md#an-answer-that-ends-before-the-table-does)),
+  until every statement said `throw`; the check stays for whatever else ends an answer early.
   What the pass did not read, it did not compare.
 
 **Why comparing the rows the repair wrote is the whole comparison.** While the copy is repaired it
@@ -323,10 +324,13 @@ it was the comparison under the final barriers: earlier in the same pause, by th
 the two.
 
 It assumes too, as every comparison of this library does, that an answer without an error is the
-whole answer. For the one statement that reads a table whole, the repair's pass checks that
-itself, by the source's count. A ClickHouse login set to break its reads short, or its statements
-off by time (`read_overflow_mode`, `timeout_overflow_mode` = `break`), is answered short counts as
-well; the operator does not check a login for that today.
+whole answer, and the library makes that so where an engine would not: every statement it sends to
+ClickHouse says that a limit is an error ([engine connections](engine-connections.md#clickhouse-an-answer-is-whole-or-an-error)),
+so a login set to break its reads short, or its statements off by time, is answered the server's
+error instead of a short count. The repair's pass still holds the one statement that reads a table
+whole to the source's count. The operator's PostgreSQL connections refuse a read a row-level
+security policy would narrow (`row_security = off`), and a table with a policy is refused where
+its identity is taken, on either engine, by a backfill as by a cutover.
 
 The receipt does not change: its comparison carries the same counts, taken the same way. Which way
 the copy was repaired, and how many rows that compared and wrote, is in the completed plan's

@@ -53,6 +53,7 @@ Who sends it:
 | `WITH gone AS (DELETE FROM … WHERE … RETURNING 1) SELECT count(*) FROM gone` | erasure | the rows of the keys named, in each table of the entity, copies first |
 | `SET TRANSACTION READ ONLY` | application | explaining a query's plan, in a transaction that is rolled back |
 | `SET DateStyle TO ISO` | application, C++ | on connecting, so that dates are read in one format |
+| `SET row_security = off` | operator | on connecting: a statement a row-level security policy would narrow is refused instead of answered in part |
 
 ## ClickHouse
 

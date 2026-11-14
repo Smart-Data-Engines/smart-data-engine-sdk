@@ -117,6 +117,10 @@ class NativeOperator:
         self.principal_ids: dict[str, str] = {}
         if self.dialect == "postgres" and int(engine._cx.info.transaction_status) != 0:
             raise MigrationRefused("operator connection must not have an open transaction")
+        # A read the engine would narrow or cut without an error is an error for an operator: on
+        # this connection and on every one the adapter opens later. `identity` already refuses a
+        # table with a row policy; this is what holds if one appears after it was asked.
+        engine.whole_answers()
         if self.dialect == "clickhouse":
             # Every acknowledged repair/metadata INSERT must have reached the engine.
             engine._cx.set_client_setting("async_insert", 0)

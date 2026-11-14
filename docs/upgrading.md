@@ -69,6 +69,21 @@ three it already pinned, and a profile that fixes them has to fix the fourth to 
 
 Changelog: *Fixed: NaN is NaN when a copy is verified, and TypeScript reads it back from ClickHouse*.
 
+**A ClickHouse account with a limit under `break`, or with a `limit`, an `offset` or a result
+filter in its profile,** was answered part of a result and no error, and the library returned it as
+the whole. Every statement now says that a limit is an error and that none of those applies
+([`engine-connections.md`](engine-connections.md#clickhouse-an-answer-is-whole-or-an-error)). An
+account nobody configured notices nothing, and neither does a `readonly=1` account with the
+server's own values. Two accounts do:
+- one whose profile fixes a setting to another value - a `CONST` constraint, or `readonly=1` beside
+  `result_overflow_mode = 'break'` - is refused when it connects, by the setting's name. Set the
+  value for the account, or let it change the setting;
+- one whose limits the application reaches gets the server's error (`Limit for result exceeded`,
+  `Timeout exceeded`) where it got the first part of an answer. Raise the limit, or read less at
+  once.
+
+Changelog: *Fixed: an answer ClickHouse cut short is an error, in every library*.
+
 **TypeScript sends a ClickHouse statement as the request's body, not in the URL.** Nothing to do in
 the application. A proxy or a firewall rule that read the `query` parameter of the URL now sees none
 for a read: the statement, with the values it filters on, is in the body.

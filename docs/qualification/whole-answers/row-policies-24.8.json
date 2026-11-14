@@ -1,0 +1,67 @@
+{
+ "version": "24.8.14.39",
+ "no policy": {
+  "count": "100",
+  "catalog": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(name, select_filter, is_restrictive, apply_to_all, apply_to_list, apply_to_except, database, `table`) ON system.",
+  "show": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(short_name, database, `table`) ON system.row_policies. (ACCESS_DENIED) (version 24.8.14.39 (official build))",
+  "explain_mentions": [],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ },
+ "a policy that hides 90 rows from the operator's login": {
+  "count": "10",
+  "catalog": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(name, select_filter, is_restrictive, apply_to_all, apply_to_list, apply_to_except, database, `table`) ON system.",
+  "show": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(short_name, database, `table`) ON system.row_policies. (ACCESS_DENIED) (version 24.8.14.39 (official build))",
+  "explain_mentions": [
+   "Filter (Row-level security filter)"
+  ],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ },
+ "a policy for another login only": {
+  "count": "100",
+  "catalog": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(name, select_filter, is_restrictive, apply_to_all, apply_to_list, apply_to_except, database, `table`) ON system.",
+  "show": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(short_name, database, `table`) ON system.row_policies. (ACCESS_DENIED) (version 24.8.14.39 (official build))",
+  "explain_mentions": [],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ },
+ "a policy for another login and USING 1 for the operator's": {
+  "count": "100",
+  "catalog": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(name, select_filter, is_restrictive, apply_to_all, apply_to_list, apply_to_except, database, `table`) ON system.",
+  "show": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(short_name, database, `table`) ON system.row_policies. (ACCESS_DENIED) (version 24.8.14.39 (official build))",
+  "explain_mentions": [],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ },
+ "a policy on a role the operator's login holds": {
+  "count": "10",
+  "catalog": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(name, select_filter, is_restrictive, apply_to_all, apply_to_list, apply_to_except, database, `table`) ON system.",
+  "show": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(short_name, database, `table`) ON system.row_policies. (ACCESS_DENIED) (version 24.8.14.39 (official build))",
+  "explain_mentions": [
+   "Filter (Row-level security filter)"
+  ],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ },
+ "a policy for all except another login": {
+  "count": "10",
+  "catalog": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(name, select_filter, is_restrictive, apply_to_all, apply_to_list, apply_to_except, database, `table`) ON system.",
+  "show": "ERROR Code: 497. DB::Exception: p_op: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(short_name, database, `table`) ON system.row_policies. (ACCESS_DENIED) (version 24.8.14.39 (official build))",
+  "explain_mentions": [
+   "Filter (Row-level security filter)"
+  ],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ },
+ "the same, and the operator's login may show row policies": {
+  "count": "10",
+  "catalog": "[\"hide ON probe.p\", \"id < 10\", 0, 1, [], [\"p_other\"]]",
+  "show": "hide",
+  "explain_mentions": [
+   "Filter (Row-level security filter)"
+  ],
+  "explain_error": "",
+  "insert_hidden_row": "ok"
+ }
+}
