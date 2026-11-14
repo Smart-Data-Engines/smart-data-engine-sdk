@@ -1,0 +1,26 @@
+{
+ "label": "stream",
+ "commit": "f43ada6f26dd331164a539a0eeca8a8f3953be4c",
+ "python_src_modified": false,
+ "runs": [
+  {
+   "source": "postgres",
+   "target": "clickhouse",
+   "rows": 900000,
+   "chunk_rows": 1000,
+   "backfill_s": 22.61,
+   "us_a_row": 25.1,
+   "complete": true,
+   "rows_copied": 900000,
+   "chunks": 900,
+   "rows_in_the_copy": 900000,
+   "load_before": 4.2
+  }
+ ],
+ "machine": {
+  "node": "km-ThinkPad-E570",
+  "processor": "",
+  "cpus": 4,
+  "python": "3.14.4"
+ }
+}

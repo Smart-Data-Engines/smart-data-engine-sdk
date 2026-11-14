@@ -620,6 +620,146 @@ def test_a_run_that_stops_early_resumes_from_the_marker_and_copies_each_row_once
     assert sorted(row["id"] for row in target.tables["reading_copy"]) == list(range(1, 26))
 
 
+class StreamingStore(Store):
+    """A source that also answers its rows in key order as one stream from a key, as ClickHouse
+    does: the table as the statement saw it when it began."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.started: list[tuple[Any, ...] | None] = []
+        self.closed = 0
+        self.streams: list[Iterator[list[dict[str, Any]]]] = []
+
+    def key_stream(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        chunk_rows: int,
+        after: Sequence[Any] | None = None,
+    ) -> Iterator[list[dict[str, Any]]]:
+        # Kept, as a driver keeps its response: a stream nobody closes stays open.
+        self.streams.append(self._stream(table, order, chunk_rows, after))
+        return self.streams[-1]
+
+    def _stream(
+        self, table: str, order: Sequence[str], chunk_rows: int, after: Sequence[Any] | None
+    ) -> Iterator[list[dict[str, Any]]]:
+        self.started.append(None if after is None else tuple(after))
+        seen = [
+            dict(row)
+            for row in self._sorted(table, order)
+            if after is None or tuple(row[c] for c in order) > tuple(after)
+        ]
+        try:
+            for start in range(0, len(seen), chunk_rows):
+                yield seen[start : start + chunk_rows]
+        finally:
+            self.closed += 1
+
+
+def _streaming(rows: int) -> tuple[sde.Session, StreamingStore, Store]:
+    session, plain, target, calls = _session(rows=rows)
+    source = StreamingStore("pg", keys={"reading": ("id",)}, calls=calls)
+    source.tables = plain.tables
+    return (
+        sde.Session(session.model, session.placement, {"pg": source, "ch": target}),
+        source,
+        target,
+    )
+
+
+def test_a_source_that_streams_is_read_by_one_statement_and_copied_the_same() -> None:
+    """A read by chunks from a starting key costs ClickHouse the rest of the table every time,
+    under `FINAL`. One statement costs it the table once."""
+    session, source, target = _streaming(25)
+    progress = sde.backfill(session, _group(session), chunk_rows=10)
+    assert progress.complete and progress.rows_this_run == 25
+    assert progress.entities[0].chunks == 3
+    assert sorted(row["id"] for row in target.tables["reading_copy"]) == list(range(1, 26))
+    assert target.backfill_marker(materialization="copy@ch", entity="Reading") == 25
+    # One stream from the table's beginning, read to its end and closed, and no read by range.
+    assert (source.started, source.closed, source.range_sizes) == ([None], 1, [])
+
+
+def test_a_stream_is_closed_where_a_run_stops_and_the_next_begins_after_the_marker() -> None:
+    session, source, target = _streaming(25)
+    group = _group(session)
+    first = sde.backfill(session, group, chunk_rows=10, stop_after=1)
+    assert not first.complete and first.rows_this_run == 10
+    assert (source.started, source.closed) == ([None], 1), "a stream left open holds its engine"
+
+    second = sde.backfill(session, group, chunk_rows=10)
+    assert second.complete and second.rows_this_run == 15
+    # The second statement begins strictly after the tenth row's key: nothing is read twice.
+    assert (source.started, source.closed) == ([None, (10,)], 2)
+    assert sorted(row["id"] for row in target.tables["reading_copy"]) == list(range(1, 26))
+    # And a run after the end opens a stream that has nothing in it, and says it is complete.
+    third = sde.backfill(session, group, chunk_rows=10)
+    assert third.complete and third.rows_this_run == 0
+    assert (source.started[-1], source.closed) == ((25,), 3)
+
+
+def test_a_stream_is_closed_when_the_copy_fails_under_it() -> None:
+    session, source, target = _streaming(25)
+
+    def refused(_table: str, _rows: Any) -> None:
+        raise sde.EngineError("the copy's engine went away")
+
+    target.copy_in = refused  # type: ignore[method-assign]
+    with pytest.raises(sde.EngineError, match="went away") as caught:
+        sde.backfill(session, _group(session), chunk_rows=10)
+    # While the error is held, as a caller that logs it or raises another from it holds it: its
+    # traceback keeps the backfill's frame, and with it a walk nobody closed. Dropped, the
+    # interpreter would close the walk by itself and a missing close would not show.
+    assert (source.started, source.closed) == ([None], 1)
+    assert caught.value is not None
+
+
+def test_a_row_written_while_a_stream_is_read_is_not_in_it_and_the_next_run_has_it() -> None:
+    """The stream is the table as its statement saw it. A row that arrives while it is read is
+    the fan-out's, as a row above the marker always was; the marker counts what was copied, and a
+    run that begins later reads from it and finds the row."""
+    session, source, target = _streaming(20)
+    group = _group(session)
+    copied = target.copy_in
+
+    def copy_and_then_a_late_write(table: str, rows: Any) -> None:
+        copied(table, rows)
+        if not any(row["id"] == 26 for row in source.tables["reading"]):
+            source.insert("reading", {"id": 26, "station": "late"})
+
+    target.copy_in = copy_and_then_a_late_write  # type: ignore[method-assign]
+    first = sde.backfill(session, group, chunk_rows=10)
+    assert first.complete and first.rows_this_run == 20
+    assert 26 not in {row["id"] for row in target.tables["reading_copy"]}
+    assert target.backfill_marker(materialization="copy@ch", entity="Reading") == 20
+
+    second = sde.backfill(session, group, chunk_rows=10)
+    assert second.complete and second.rows_this_run == 1
+    assert source.started == [None, (20,)]
+    assert 26 in {row["id"] for row in target.tables["reading_copy"]}
+
+
+@pytest.mark.parametrize("streams", [False, True], ids=["by chunks", "by one statement"])
+def test_a_run_bounded_to_exactly_the_chunks_the_table_has_says_it_reached_the_end(
+    streams: bool,
+) -> None:
+    """The last chunk came back short, so the table's end was seen, though the bound on chunks is
+    what stopped the run. A table that ends on a full chunk cannot say so until it is asked
+    again."""
+    session, _, target = _streaming(25) if streams else _session(rows=25)[:3]
+    group = _group(session)
+    progress = sde.backfill(session, group, chunk_rows=10, stop_after=3)
+    assert progress.complete and progress.rows_this_run == 25
+    assert target.count("reading_copy") == 25
+    sde.clear_registry()
+    session, _, target = _streaming(20) if streams else _session(rows=20)[:3]
+    progress = sde.backfill(session, _group(session), chunk_rows=10, stop_after=2)
+    assert not progress.complete and progress.rows_this_run == 20
+    assert sde.backfill(session, _group(session), chunk_rows=10).complete
+
+
 def test_a_backfill_that_has_finished_does_nothing_when_called_again() -> None:
     session, _, target, _ = _session(rows=7)
     group = _group(session)

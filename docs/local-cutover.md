@@ -278,6 +278,9 @@ nothing. A cutover that follows it directly therefore copies the whole group ins
 - It fills every copy the map in force names, from its source, with the operator's logins: the
   library's own `sde.backfill`, chunk first and marker after. A run that stops - a signal, a lost
   connection - is continued by the next one from its marker, and a run after the end copies nothing.
+  A ClickHouse source is read by one statement from the marker, which costs the same a row whatever
+  the table's size: measured, 4 million rows into PostgreSQL in 61 s where reading a statement a
+  chunk took 248 s ([qualification/backfill-by-a-stream](qualification/backfill-by-a-stream/README.md)).
 - It takes no barrier and pauses nothing. It runs under the project lock, so beside no staging,
   cutover or index build, and is refused while one is unfinished.
 - It prints one record a group: the rows copied and whether the end of each table was reached.

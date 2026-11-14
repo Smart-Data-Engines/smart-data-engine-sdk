@@ -126,8 +126,10 @@ takes the next 1000 rows merges the table's parts again from that key to find th
 bounded at both ends: the more rows after the starting key, the longer. So a table read whole by
 chunks costs more than in proportion to its size - this one took 22.2 s by chunks and 1.6 s by
 one statement - which is also why the first measurement of the day did not fit 900 000 rows into
-30 s. The adapter's `key_stream` is that one statement; `key_range` is unchanged, and a backfill
-still reads by chunks, since it has to be able to stop and continue.
+30 s. The adapter's `key_stream` is that one statement; `key_range` is unchanged. A backfill read
+by chunks when this was measured, so as to stop and continue; it reads by one statement from where
+it stopped since ([backfill-by-a-stream](../backfill-by-a-stream/README.md)), and the "backfill
+before" columns above are the earlier way.
 
 A copy in ClickHouse was read by a bounded range a chunk, which is the cheaper statement, and still
 200 of them a pass. Read by one statement beside the source, forward, it is the last column. A row
