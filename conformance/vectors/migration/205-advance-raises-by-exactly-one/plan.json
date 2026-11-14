@@ -91,7 +91,7 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "9fhcpcr2tOK47ZaW+2C3mUJcFy5KNNB2qfOjpYjBBxHRSQrhqcD6uYQ1mYHzL9IjWIu63PEKph7raaJkNCB0Cg=="
+      "value": "e8znIh5/EOB4WkgzKFpKRMyXWQtoZNCv4ZOqD1X9jAAazDOAb/v20oY30VByUMK0nQEuYxBrycYvOVNYQVcoDQ=="
     }
   },
   "after": {
@@ -180,12 +180,12 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "d0/hhTxrgszm7pJ4HheKGpeY+ofSkcM06p7NNW33FifvELxL5u2ohqadG5PfQNPxlTxhmVExSG7yEC5GEoPyAw=="
+      "value": "YdZIlmim8XbzFiKUJ8Nc6PAGJDGUeCR7K66a94xUTq0CoU+IWfJHCMGKPh/v1hBKIyP1SKiCkFrZp1I8hO60Ag=="
     }
   },
   "signature": {
     "alg": "ed25519",
     "key_id": "advance",
-    "value": "I430mQ26CxUfF/ap0ujAMaeZgoMnd8bdbGgzyYV6JhYSUdU03tYcZMTKAzcsCUe1kX/ygkqNzIQxvtTGnK+1Cw=="
+    "value": "TVFAT08NbJRTOOitzCWwfUZwISIe5jwH0fUekvVbCyeib8vcERfTFl4sCPWl1Igy70qWtvA4e46wBua2WznwAA=="
   }
 }

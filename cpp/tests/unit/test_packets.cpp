@@ -5,6 +5,7 @@
 /// reaches the rule it is about rather than stopping at a signature that no longer verifies.
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -453,6 +454,259 @@ TEST_F(CutoverPacket, ATerminalSourceIsNamed) {
   at(packet, {"success", "groups", "Event", "source"}).set("id", "");
   EXPECT_EQ(refusal([&] { (void)load(resigned(packet)); }),
             "cutover terminal source must have a nonempty string id");
+}
+
+// ── Generation advance ──────────────────────────────────────────────────────────────────────────
+
+class AdvancePacket : public ::testing::Test {
+ protected:
+  Signer signer{"the packets' unit tests"};
+  Case base = vector_case("201-advance-raises-one-group-by-one-generation");
+
+  [[nodiscard]] sde::Json resigned(sde::Json packet) const {
+    return signer.resigned(std::move(packet), {"before", "after"});
+  }
+  [[nodiscard]] sde::AdvancePlan load(const sde::Json& packet) const {
+    return sde::load_advance_plan(packet, base.model, std::string(kProject), signer.keys());
+  }
+  /// What the loader says to the vector's packet after an edit, its maps and itself signed again.
+  [[nodiscard]] std::string refused(const std::function<void(sde::Json&)>& edit) const {
+    sde::Json packet = base.packet;
+    edit(packet);
+    return refusal([&] { (void)load(resigned(packet)); });
+  }
+  /// The same for an edit that leaves a map something nobody can sign: only the envelope is.
+  [[nodiscard]] std::string refused_envelope(const std::function<void(sde::Json&)>& edit) const {
+    sde::Json packet = resigned(base.packet);
+    edit(packet);
+    return refusal([&] { (void)load(signer.signed_document(packet)); });
+  }
+  static void in_both_maps(sde::Json& packet, const std::function<void(sde::Json&)>& edit) {
+    for (const char* name : {"before", "after"}) edit(*packet.find(name));
+  }
+};
+
+TEST_F(AdvancePacket, LoadsWhatTheControlPlaneSigned) {
+  const sde::AdvancePlan plan = load(resigned(base.packet));
+  EXPECT_EQ(plan.verified_with(), "k");
+  EXPECT_EQ(plan.advance_id(), std::string(32, '7'));
+  EXPECT_EQ(plan.project_id(), kProject);
+  EXPECT_EQ(plan.group(), "Event");
+  EXPECT_EQ(plan.pause_budget_ms(), 30000);
+  EXPECT_EQ(plan.source_epoch(), 1);
+  EXPECT_EQ(plan.next_epoch(), 2);
+  EXPECT_EQ(plan.before().placement_of("Event").write_epoch, plan.source_epoch());
+  EXPECT_EQ(plan.after().placement_of("Event").write_epoch, plan.next_epoch());
+  // Nothing else in the group moved, and the other group moved not at all.
+  EXPECT_EQ(plan.before().placement_of("Event").source.layout.tables,
+            plan.after().placement_of("Event").source.layout.tables);
+  EXPECT_EQ(plan.before().placement_of("Order").write_epoch,
+            plan.after().placement_of("Order").write_epoch);
+  EXPECT_EQ(plan.after_payload(), sde::canonical_bytes(at(plan.as_record(), {"after"})));
+}
+
+TEST_F(AdvancePacket, ItsFingerprintCoversItsMapsAsTheyWereSigned) {
+  // The vector's packet under the vector's key and the same packet signed again here: the maps'
+  // fingerprints leave their signatures out, and the packet's holds the maps whole.
+  sde::PublicKeys vector_keys = [] {
+    const auto directory =
+        vectors_root() / "migration" / "201-advance-raises-one-group-by-one-generation";
+    std::map<std::string, std::string> keys;
+    for (const auto& [name, value] : read_json(directory / "keys.json").as_object()) {
+      keys.emplace(name, *sde::detail::base64_decode(value.as_string()));
+    }
+    return sde::PublicKeys::named(std::move(keys));
+  }();
+  const sde::AdvancePlan signed_by_the_vector =
+      sde::load_advance_plan(base.packet, base.model, std::string(kProject), vector_keys);
+  const sde::AdvancePlan signed_here = load(resigned(base.packet));
+  EXPECT_EQ(signed_here.before().fingerprint(), signed_by_the_vector.before().fingerprint());
+  EXPECT_EQ(signed_here.after().fingerprint(), signed_by_the_vector.after().fingerprint());
+  EXPECT_NE(signed_here.fingerprint(), signed_by_the_vector.fingerprint());
+}
+
+TEST_F(AdvancePacket, StartsOnlyFromTheSignedMapItNames) {
+  const sde::AdvancePlan plan = load(resigned(base.packet));
+  plan.check_current(plan.before());
+  EXPECT_EQ(refusal([&] { plan.check_current(plan.after()); }),
+            "advance authorization does not name the signed current map");
+  const sde::PlacementMap bare = unsigned_copy(at(plan.as_record(), {"before"}), base.model);
+  ASSERT_EQ(bare.fingerprint(), plan.before().fingerprint());
+  EXPECT_EQ(refusal([&] { plan.check_current(bare); }),
+            "advance authorization does not name the signed current map");
+}
+
+TEST_F(AdvancePacket, AnIntegralNumberIsAnIntegerHoweverItIsWritten) {
+  const sde::Json packet = resigned(base.packet);
+  sde::Json spelled = packet;
+  spelled.set("pause_budget_ms", sde::Json::from_lexeme("30000.0"));
+  spelled.set("protocol", sde::Json::from_lexeme("1.0"));
+  const sde::AdvancePlan plan = load(spelled);
+  EXPECT_EQ(plan.fingerprint(), load(packet).fingerprint());
+  EXPECT_TRUE(plan.as_record().find("pause_budget_ms")->as_number().integer);
+  EXPECT_EQ(plan.as_record(), load(packet).as_record());
+}
+
+TEST_F(AdvancePacket, ItsRefusalsNameAnAdvance) {
+  // The reference's helpers shared with the cutover packet say "cutover" unless told otherwise.
+  sde::Json packet = resigned(base.packet);
+  packet.set("advance_id", "ADVANCE");
+  EXPECT_EQ(refusal([&] { (void)load(packet); }),
+            "advance advance_id must be 32 lowercase hexadecimal digits");
+  packet = resigned(base.packet);
+  packet.set("project_id", 7);
+  EXPECT_EQ(refusal([&] { (void)load(packet); }),
+            "advance project_id must be 32 lowercase hexadecimal digits");
+  packet = resigned(base.packet);
+  (void)at(packet, {"before"}).erase("signature");
+  EXPECT_EQ(refusal([&] { (void)load(signer.signed_document(packet)); }),
+            "advance signature must be an object");
+  EXPECT_EQ(refusal([&] { (void)load(sde::Json::array()); }),
+            "advance authorization must be an object");
+  packet = resigned(base.packet);
+  packet.find("signature")->set("note", "added after signing");
+  EXPECT_EQ(refusal([&] { (void)load(packet); }),
+            "advance signatures have missing or unknown fields");
+  packet = resigned(base.packet);
+  packet.find("signature")->set("alg", "rsa");
+  EXPECT_EQ(refusal([&] { (void)load(packet); }),
+            "advance signatures must use ed25519 and canonical base64");
+  packet = resigned(base.packet);
+  packet.find("signature")->set("key_id", 5);
+  EXPECT_EQ(refusal([&] { (void)load(packet); }), "advance signature key_id must be a string");
+}
+
+TEST_F(AdvancePacket, ItsOwnRulesRefuseBeforeAnyKeyIsTried) {
+  // Rules no vector pins by a second spelling. Nothing is signed again: each of these is refused
+  // before a signature is looked at, so the packet's stale one is not what refuses.
+  const auto unsigned_refusal = [&](const std::function<void(sde::Json&)>& edit) {
+    sde::Json packet = resigned(base.packet);
+    edit(packet);
+    return refusal([&] { (void)load(packet); });
+  };
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("group", ""); }),
+            "advance group must be a nonempty string");
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("group", 7); }),
+            "advance group must be a nonempty string");
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { (void)p.erase("pause_budget_ms"); }),
+            "advance authorization has missing or unknown fields");
+  const std::string budget = "advance pause_budget_ms must be a positive safe integer";
+  for (const char* lexeme : {"0", "-1", "1.5", "9007199254740992", "99999999999999999999"}) {
+    EXPECT_EQ(unsigned_refusal([&](sde::Json& p) {
+                p.set("pause_budget_ms", sde::Json::from_lexeme(lexeme));
+              }),
+              budget)
+        << lexeme;
+  }
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("pause_budget_ms", true); }), budget);
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("pause_budget_ms", "30000"); }), budget);
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("pause_budget_ms", nullptr); }), budget);
+  const std::string protocol = "unsupported advance authorization kind or protocol";
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("protocol", 0); }), protocol);
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("protocol", true); }), protocol);
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("protocol", "1"); }), protocol);
+  EXPECT_EQ(unsigned_refusal([](sde::Json& p) { p.set("kind", 1); }), protocol);
+}
+
+TEST_F(AdvancePacket, TheLongestPauseBudgetANumberHoldsIsTaken) {
+  sde::Json packet = base.packet;
+  packet.set("pause_budget_ms", sde::Json::from_lexeme("9007199254740991"));
+  EXPECT_EQ(load(resigned(packet)).pause_budget_ms(), 9007199254740991);
+}
+
+TEST_F(AdvancePacket, ItsMapsCarryGenerations) {
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) { map = as_contract_3(map); });
+            }),
+            "an advance requires map contract 4 or later: it changes a write generation, and an "
+            "earlier map has none");
+}
+
+TEST_F(AdvancePacket, ItsMapsAreObjectsAllTheWayDown) {
+  EXPECT_EQ(refused_envelope([](sde::Json& p) { p.set("before", sde::Json::array()); }),
+            "advance before must be an object");
+  EXPECT_EQ(refused_envelope([](sde::Json& p) { p.set("after", "map"); }),
+            "advance after must be an object");
+  EXPECT_EQ(refused([](sde::Json& p) { at(p, {"after"}).set("groups", sde::Json::array()); }),
+            "advance groups must be an object");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              at(p, {"after", "groups"}).set("Event", sde::Json::array());
+            }),
+            "advance group must be an object");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) {
+                at(map, {"groups", "Event"}).set("derived", "Event@ch");
+              });
+            }),
+            "advance derived copies must be an array");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) {
+                at(map, {"groups", "Event"}).set("source", sde::Json::array());
+              });
+            }),
+            "advance materialization must be an object");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) {
+                at(map, {"groups", "Event", "derived"}).as_array().emplace_back("Event@ch");
+              });
+            }),
+            "advance materialization must be an object");
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) {
+                at(map, {"groups", "Event", "source"}).set("layout", sde::Json::array());
+              });
+            }),
+            "advance layout must be an object");
+}
+
+TEST_F(AdvancePacket, ALayoutIsWrittenOut) {
+  // With no column in it, it is not one anybody can fence a table by.
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) {
+                at(map, {"groups", "Event", "source", "layout"}).set("columns",
+                                                                     sde::Json::object());
+              });
+            }),
+            "advance maps need explicit physical layouts");
+  // Of a copy as of the source, and of any value the reference reads as present.
+  EXPECT_EQ(refused([](sde::Json& p) {
+              in_both_maps(p, [](sde::Json& map) {
+                sde::Json layout = sde::Json::object();
+                layout.set("auto", 1);
+                at(map, {"groups", "Event", "derived"}).as_array().front().set("layout", layout);
+              });
+            }),
+            "advance maps need explicit physical layouts");
+}
+
+TEST_F(AdvancePacket, AMapOrEncodingRefusalInsideItIsTheAdvances) {
+  EXPECT_EQ(refused([](sde::Json& p) {
+              at(p, {"after", "groups", "Event"}).set("write_epoch", true);
+            }).rfind("advance authorization refused: group 'Event'", 0),
+            0U);
+  // A group the model has and the next map does not place: the map loader's rule, so neither map
+  // of a packet can hold another set of groups than the model's.
+  EXPECT_EQ(refused([](sde::Json& p) { (void)at(p, {"after", "groups"}).erase("Order"); })
+                .rfind("advance authorization refused: the map does not place these groups", 0),
+            0U);
+  sde::Json packet = resigned(base.packet);
+  at(packet, {"after", "groups", "Event"}).set("write_epoch", sde::Json::from_lexeme("2.5"));
+  EXPECT_EQ(refusal([&] { (void)load(packet); }).rfind("advance authorization refused: ", 0), 0U);
+}
+
+TEST_F(AdvancePacket, TheEnvelopeIsVerifiedBeforeTheMapsAreRead) {
+  // An envelope nobody signed says nothing about its maps: the refusal is the signature's.
+  sde::Json packet = resigned(base.packet);
+  packet.set("before", "not a map");
+  const std::string said = refusal([&] { (void)load(packet); });
+  EXPECT_EQ(said.rfind("advance authorization refused: ", 0), 0U) << said;
+  EXPECT_EQ(said.find("must be an object"), std::string::npos) << said;
+}
+
+TEST_F(AdvancePacket, AKeyTheCallerDidNotConfigureVerifiesNothing) {
+  const Signer stranger{"somebody else"};
+  const sde::Json packet = stranger.resigned(base.packet, {"before", "after"});
+  EXPECT_EQ(refusal([&] { (void)load(packet); }).rfind("advance authorization refused: ", 0), 0U);
 }
 
 }  // namespace

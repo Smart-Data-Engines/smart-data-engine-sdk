@@ -20,6 +20,7 @@ from typing import Any
 
 from cutover_vectors import before_map
 from nfc_map_vectors import openssl, payload
+from unfenced_vectors import unfenced_order
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = ROOT / "conformance/vectors"
@@ -60,6 +61,14 @@ ADVANCE_MATCHES: dict[str, str] = {
     "221-advance-id-is-32-hex-digits": "advance advance_id must be 32 lowercase hexadecimal digits",
     "222-advance-needs-explicit-layouts": "advance maps need explicit physical layouts",
     "223-advance-needs-every-layout-explicit": "advance maps need explicit physical layouts",
+    "225-advance-reads-any-present-auto-as-a-request": (
+        "advance maps need explicit physical layouts"
+    ),
+    "227-advance-refuses-a-group-without-a-generation": (
+        "carries no write generation, so there is none to advance"
+    ),
+    "228-advance-cannot-give-a-group-a-generation": "an advance cannot change an unaffected group",
+    "229-advance-cannot-go-back-a-map": "an advance must allocate a newer map",
 }
 
 
@@ -169,6 +178,43 @@ def main() -> None:
             p[name]["groups"]["Order"]["source"]["layout"]["auto"] = {}
 
     case("224-advance-reads-an-empty-auto-as-absent", auto_that_asks_for_nothing, False)
+
+    # And a value the reference reads as present asks for one, whether or not it is `true`.
+    def auto_that_is_not_true(p: dict[str, Any]) -> None:
+        for name in ("before", "after"):
+            p[name]["groups"]["Event"]["source"]["layout"]["auto"] = 1
+
+    case("225-advance-reads-any-present-auto-as-a-request", auto_that_is_not_true)
+
+    # Contract 6: a group whose engine cannot fence writes carries no generation (section 7k). An
+    # advance of another group carries it byte for byte, and there is nothing to advance in it.
+    def beside_a_group_without_a_generation(p: dict[str, Any]) -> None:
+        for name in ("before", "after"):
+            unfenced_order(p[name])
+
+    case(
+        "226-advance-carries-a-group-without-a-generation",
+        beside_a_group_without_a_generation,
+        False,
+    )
+
+    def of_a_group_without_a_generation(p: dict[str, Any]) -> None:
+        beside_a_group_without_a_generation(p)
+        p["group"] = "Order"
+
+    case("227-advance-refuses-a-group-without-a-generation", of_a_group_without_a_generation)
+
+    def gives_a_generation(p: dict[str, Any]) -> None:
+        beside_a_group_without_a_generation(p)
+        p["after"]["groups"]["Order"]["write_epoch"] = 1
+
+    case("228-advance-cannot-give-a-group-a-generation", gives_a_generation)
+
+    def goes_back(p: dict[str, Any]) -> None:
+        p["before"]["map_version"] = 5
+        p["after"]["map_version"] = 3
+
+    case("229-advance-cannot-go-back-a-map", goes_back)
     with tempfile.TemporaryDirectory(prefix="sde-advance-vectors-", dir=scratch) as tmp:
         work = Path(tmp)
         private, public = work / "key.pem", work / "public.pem"
