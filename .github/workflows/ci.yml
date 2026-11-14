@@ -362,12 +362,14 @@ jobs:
           done
 
   orderbook:
-    # Our own engine, which no package index serves: its Python client lives in its repository and
-    # its shared library is built from C++. So this job builds the server and the library from the
-    # commit `.github/orderbook-engine.txt` pins, starts two servers - one plain, one with client
-    # authentication and TLS - and runs every orderbook slice in-process and over TCP. Until this
-    # job existed those slices skipped everywhere but one laptop, and the TCP path shipped broken
-    # for the engine of its own day: the adapter sent a sequence number the server refuses.
+    # Our own engine, at a commit newer than its release: the index serves its Python client, and
+    # its server and the shared library local mode loads are built from C++. So this job builds the
+    # server and the library from the commit `.github/orderbook-engine.txt` pins, takes the client
+    # of that commit, starts two servers - one plain, one with client authentication and TLS - and
+    # runs every orderbook slice in-process and over TCP. One step then runs the client the index
+    # serves against those servers. Until this job existed those slices skipped everywhere but one
+    # laptop, and the TCP path shipped broken for the engine of its own day: the adapter sent a
+    # sequence number the server refuses.
     #
     # Moving the pin is an ordinary pull request, and this job is what says the adapter still
     # describes the engine it names.
@@ -521,6 +523,30 @@ jobs:
             tests/test_orderbook_books.py tests/test_orderbook_book_stream_example.py \
             -q --junitxml="$RUNNER_TEMP/sde-orderbook.xml"
           python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook.xml"
+
+      # `smart-data-engine-sdk[orderbook]` resolves to the engine's client on PyPI, and the oldest
+      # version that extra admits predates the server pinned here: it has no replace_side. In an
+      # environment of its own, with nothing of the engine's checkout on its path, so the client is
+      # the index's. It runs the TCP cases of both slices, credentials and TLS included, and
+      # `test_orderbook_released_client.py`: a book stream refused by name, and what that client
+      # can still do. That file's first test fails on any other client, and nothing may skip.
+      - name: the engine's released Python client, the floor of the extra, against these servers
+        working-directory: python
+        env:
+          SDE_ORDERBOOK: "1"
+          SDE_ORDERBOOK_TCP: 127.0.0.1:59090
+          SDE_ORDERBOOK_RELEASED_CLIENT: "1"
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/released"
+          "$RUNNER_TEMP/released/bin/python" -m pip install -q --upgrade pip
+          "$RUNNER_TEMP/released/bin/python" -m pip install -q '.[orderbook,signed]' \
+            'orderbook-dbengine==0.1.0' pytest
+          env -u PYTHONPATH -u OB_LIB_PATH "$RUNNER_TEMP/released/bin/python" -m pytest \
+            tests/test_orderbook_released_client.py tests/test_orderbook_slice.py \
+            tests/test_orderbook_session_slice.py -k "not local" \
+            -q --junitxml="$RUNNER_TEMP/sde-orderbook-released.xml"
+          python ../tools/check_junit.py "$RUNNER_TEMP/sde-orderbook-released.xml"
 
       # The C++ adapter against the same two servers, under both sanitizers - its TLS runs over
       # OpenSSL calls of its own - and a book written by it and read by the reference, and the
@@ -864,7 +890,7 @@ jobs:
         run: |
           python -m venv /tmp/sde-env
           /tmp/sde-env/bin/pip install -q --upgrade pip
-          /tmp/sde-env/bin/pip install -q "./python[signed,postgres,clickhouse]" pip-audit cyclonedx-bom
+          /tmp/sde-env/bin/pip install -q "./python[signed,postgres,clickhouse,orderbook]" pip-audit cyclonedx-bom
           /tmp/sde-env/bin/pip-audit --progress-spinner off --skip-editable
           /tmp/sde-env/bin/cyclonedx-py environment /tmp/sde-env/bin/python \
             --output-format JSON --output-file sbom-python.cdx.json

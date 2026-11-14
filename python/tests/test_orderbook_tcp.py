@@ -1046,6 +1046,58 @@ def test_no_changes_are_no_update_and_no_levels_empty_a_side(
     assert [(r["side"], r["prices"]) for r in server.replacements] == [("ask", [])]
 
 
+class _ReleasedClient(_Client):
+    """The engine's 0.1.0 client, the one on PyPI: this fake without ``replace_side``."""
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "replace_side":
+            raise AttributeError(f"'OrderbookEngine' object has no attribute {name!r}")
+        return super().__getattribute__(name)
+
+
+@pytest.fixture
+def released(server: _Server, monkeypatch: pytest.MonkeyPatch) -> OrderbookEngine:
+    """An adapter over the 0.1.0 client, connected to a server newer than that client."""
+    module = types.ModuleType("orderbook_engine")
+    module.OrderbookEngine = lambda *args, **kwargs: _ReleasedClient(  # type: ignore[attr-defined]
+        server, args=args, **kwargs
+    )
+    module.BookUpdate = _BookUpdate  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "orderbook_engine", module)
+    server.capabilities.add("replace_side")
+    adapter = OrderbookEngine(host="127.0.0.1", port=9090)
+    adapter.connect()
+    return adapter
+
+
+def test_a_client_older_than_its_server_is_named_before_a_stream_sends_anything(
+    released: OrderbookEngine, server: _Server
+) -> None:
+    """Measured on 14 November 2026 with the client from PyPI against the pinned server: the
+    server announces ``replace_side``, the client has no such method, and a book stream's first
+    update was an ``AttributeError``."""
+    assert released.supports_replace_side()
+    session = _session_on(released)
+    with pytest.raises(EngineError, match="Python client installed here cannot replace a side"):
+        session.book_stream("DepthLevel", symbol="BTCUSDT", exchange="binance")
+    book = {"symbol": "BTCUSDT", "exchange": "binance"}
+    with pytest.raises(EngineError, match="Install the client of the engine you run"):
+        released.replace_levels(TABLE, **book, side="ask", timestamp_ns=1, levels=[(200, 1, 1)])
+    assert server.inserts == [] and server.replacements == []
+
+
+def test_a_client_older_than_its_server_still_updates_and_reads_a_book(
+    released: OrderbookEngine, server: _Server
+) -> None:
+    """What such a client can do stays open to it: an update by price is an ordinary write, and a
+    book as of a moment is a query. Only the replacement of a side needs the newer client."""
+    book = {"symbol": "BTCUSDT", "exchange": "binance"}
+    released.apply_levels(TABLE, **book, side="bid", timestamp_ns=1, levels=[(100, 2, 1)])
+    assert [(i["prices"], i["qtys"]) for i in server.inserts] == [([100], [2])]
+    server.book_answer = [_Row("BTCUSDT", "binance", 1, "bid", 0, 100, 2, 1, 1)]
+    assert released.book_at(TABLE, **book, at_ns=5) == {"bid": [(100, 2, 1)], "ask": []}
+
+
 def test_whether_a_side_can_be_replaced_is_the_servers_answer_or_the_librarys(
     tcp: OrderbookEngine, local: OrderbookEngine, server: _Server
 ) -> None:

@@ -1,0 +1,254 @@
+.......................FFFF                                              [100%]
+=================================== FAILURES ===================================
+_______ test_the_engine_composes_the_book_the_application_gave[tcp-full] _______
+
+engine = OrderbookEngine(tcp 127.0.0.1:59190, tls=off), mode = 'full'
+
+    @pytest.mark.parametrize("mode", ["full", "incremental"])
+    def test_the_engine_composes_the_book_the_application_gave(
+        engine: OrderbookEngine, mode: str
+    ) -> None:
+        session = _session(engine)
+        symbol = fresh_book()
+>       stream = session.book_stream(
+            "DepthLevel", symbol=symbol, exchange=EXCHANGE, mode=mode,
+            resync=sde.Resync(updates=9, seconds=0),
+        )
+
+tests/test_orderbook_books.py:128: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<work>/released/lib/python3.14/site-packages/sde/_usage.py:279: in call
+    return method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sde.session.Session object at 0x7e3f91ae7250>, entity = 'DepthLevel'
+symbol = 'T6217C110CEFF', exchange = 'binance', mode = 'full'
+resync = Resync(updates=9, seconds=0)
+
+    @session_call
+    def book_stream(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        mode: str = "incremental",
+        resync: Resync | None = None,
+    ) -> BookStream:
+        """A stream of one book of ``entity`` - one symbol on one exchange - to the orderbook
+        engine, sent whole or as its changes (:mod:`sde.books`).
+    
+        The entity's group must be placed on the orderbook engine, which reads an update by price
+        and replaces a side whole (``MREPLACE``): refused otherwise, and refused for a server that
+        does not announce ``replace_side``, before anything is sent. Each update the stream sends
+        is one write of the entity, under this session's rules and timed like ``save_many``'s.
+        """
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, _ = self._target(shape, fresh=False)
+        supports = getattr(engine, "supports_replace_side", None)
+        if supports is None:
+            raise EngineError(
+                f"{entity} is placed on an engine that does not take a book by price: a book "
+                f"stream writes to the orderbook engine, which applies an update by price and "
+                f"replaces a side whole"
+            )
+        if not supports():
+>           raise EngineError(
+                "this orderbook server does not replace a side of a book (capability "
+                "replace_side), which a book stream needs: in full mode for every update, in "
+                "incremental mode for each resync. Upgrade the server; nothing was sent."
+            )
+E           sde.errors.EngineError: this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+
+<work>/released/lib/python3.14/site-packages/sde/session.py:797: EngineError
+___ test_the_engine_composes_the_book_the_application_gave[tcp-incremental] ____
+
+engine = OrderbookEngine(tcp 127.0.0.1:59190, tls=off), mode = 'incremental'
+
+    @pytest.mark.parametrize("mode", ["full", "incremental"])
+    def test_the_engine_composes_the_book_the_application_gave(
+        engine: OrderbookEngine, mode: str
+    ) -> None:
+        session = _session(engine)
+        symbol = fresh_book()
+>       stream = session.book_stream(
+            "DepthLevel", symbol=symbol, exchange=EXCHANGE, mode=mode,
+            resync=sde.Resync(updates=9, seconds=0),
+        )
+
+tests/test_orderbook_books.py:128: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<work>/released/lib/python3.14/site-packages/sde/_usage.py:279: in call
+    return method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sde.session.Session object at 0x7e3f92359d50>, entity = 'DepthLevel'
+symbol = 'T76EDBA256C54', exchange = 'binance', mode = 'incremental'
+resync = Resync(updates=9, seconds=0)
+
+    @session_call
+    def book_stream(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        mode: str = "incremental",
+        resync: Resync | None = None,
+    ) -> BookStream:
+        """A stream of one book of ``entity`` - one symbol on one exchange - to the orderbook
+        engine, sent whole or as its changes (:mod:`sde.books`).
+    
+        The entity's group must be placed on the orderbook engine, which reads an update by price
+        and replaces a side whole (``MREPLACE``): refused otherwise, and refused for a server that
+        does not announce ``replace_side``, before anything is sent. Each update the stream sends
+        is one write of the entity, under this session's rules and timed like ``save_many``'s.
+        """
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, _ = self._target(shape, fresh=False)
+        supports = getattr(engine, "supports_replace_side", None)
+        if supports is None:
+            raise EngineError(
+                f"{entity} is placed on an engine that does not take a book by price: a book "
+                f"stream writes to the orderbook engine, which applies an update by price and "
+                f"replaces a side whole"
+            )
+        if not supports():
+>           raise EngineError(
+                "this orderbook server does not replace a side of a book (capability "
+                "replace_side), which a book stream needs: in full mode for every update, in "
+                "incremental mode for each resync. Upgrade the server; nothing was sent."
+            )
+E           sde.errors.EngineError: this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+
+<work>/released/lib/python3.14/site-packages/sde/session.py:797: EngineError
+___________ test_a_full_side_moved_by_a_tick_keeps_every_price[tcp] ____________
+
+engine = OrderbookEngine(tcp 127.0.0.1:59190, tls=off)
+
+    def test_a_full_side_moved_by_a_tick_keeps_every_price(engine: OrderbookEngine) -> None:
+        """Each step removes the best bid and adds a new worst one, to a side of the engine's 1000.
+        Applied in the other order, the new price would find the side full and be dropped."""
+        session = _session(engine)
+        symbol = fresh_book()
+>       stream = session.book_stream(
+            "DepthLevel", symbol=symbol, exchange=EXCHANGE, resync=sde.Resync(updates=0, seconds=0)
+        )
+
+tests/test_orderbook_books.py:165: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<work>/released/lib/python3.14/site-packages/sde/_usage.py:279: in call
+    return method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sde.session.Session object at 0x7e3f91ae6750>, entity = 'DepthLevel'
+symbol = 'T6B570E490923', exchange = 'binance', mode = 'incremental'
+resync = Resync(updates=0, seconds=0)
+
+    @session_call
+    def book_stream(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        mode: str = "incremental",
+        resync: Resync | None = None,
+    ) -> BookStream:
+        """A stream of one book of ``entity`` - one symbol on one exchange - to the orderbook
+        engine, sent whole or as its changes (:mod:`sde.books`).
+    
+        The entity's group must be placed on the orderbook engine, which reads an update by price
+        and replaces a side whole (``MREPLACE``): refused otherwise, and refused for a server that
+        does not announce ``replace_side``, before anything is sent. Each update the stream sends
+        is one write of the entity, under this session's rules and timed like ``save_many``'s.
+        """
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, _ = self._target(shape, fresh=False)
+        supports = getattr(engine, "supports_replace_side", None)
+        if supports is None:
+            raise EngineError(
+                f"{entity} is placed on an engine that does not take a book by price: a book "
+                f"stream writes to the orderbook engine, which applies an update by price and "
+                f"replaces a side whole"
+            )
+        if not supports():
+>           raise EngineError(
+                "this orderbook server does not replace a side of a book (capability "
+                "replace_side), which a book stream needs: in full mode for every update, in "
+                "incremental mode for each resync. Upgrade the server; nothing was sent."
+            )
+E           sde.errors.EngineError: this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+
+<work>/released/lib/python3.14/site-packages/sde/session.py:797: EngineError
+_________________ test_an_earlier_book_is_read_as_it_was[tcp] __________________
+
+engine = OrderbookEngine(tcp 127.0.0.1:59190, tls=off)
+
+    def test_an_earlier_book_is_read_as_it_was(engine: OrderbookEngine) -> None:
+        """The changes a stream stores answer every instant, not only the last one."""
+        session = _session(engine)
+        symbol = fresh_book()
+>       stream = session.book_stream("DepthLevel", symbol=symbol, exchange=EXCHANGE)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_orderbook_books.py:185: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+<work>/released/lib/python3.14/site-packages/sde/_usage.py:279: in call
+    return method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <sde.session.Session object at 0x7e3f91ae5c50>, entity = 'DepthLevel'
+symbol = 'TB82F99F568B9', exchange = 'binance', mode = 'incremental'
+resync = None
+
+    @session_call
+    def book_stream(
+        self,
+        entity: str,
+        *,
+        symbol: str,
+        exchange: str,
+        mode: str = "incremental",
+        resync: Resync | None = None,
+    ) -> BookStream:
+        """A stream of one book of ``entity`` - one symbol on one exchange - to the orderbook
+        engine, sent whole or as its changes (:mod:`sde.books`).
+    
+        The entity's group must be placed on the orderbook engine, which reads an update by price
+        and replaces a side whole (``MREPLACE``): refused otherwise, and refused for a server that
+        does not announce ``replace_side``, before anything is sent. Each update the stream sends
+        is one write of the entity, under this session's rules and timed like ``save_many``'s.
+        """
+        target = self._entity(entity)
+        shape = self._shape(target, "bulk_write")
+        engine, _ = self._target(shape, fresh=False)
+        supports = getattr(engine, "supports_replace_side", None)
+        if supports is None:
+            raise EngineError(
+                f"{entity} is placed on an engine that does not take a book by price: a book "
+                f"stream writes to the orderbook engine, which applies an update by price and "
+                f"replaces a side whole"
+            )
+        if not supports():
+>           raise EngineError(
+                "this orderbook server does not replace a side of a book (capability "
+                "replace_side), which a book stream needs: in full mode for every update, in "
+                "incremental mode for each resync. Upgrade the server; nothing was sent."
+            )
+E           sde.errors.EngineError: this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+
+<work>/released/lib/python3.14/site-packages/sde/session.py:797: EngineError
+=========================== short test summary info ============================
+FAILED tests/test_orderbook_books.py::test_the_engine_composes_the_book_the_application_gave[tcp-full]
+FAILED tests/test_orderbook_books.py::test_the_engine_composes_the_book_the_application_gave[tcp-incremental]
+FAILED tests/test_orderbook_books.py::test_a_full_side_moved_by_a_tick_keeps_every_price[tcp]
+FAILED tests/test_orderbook_books.py::test_an_earlier_book_is_read_as_it_was[tcp]
+4 failed, 23 passed, 23 deselected in 3.46s
