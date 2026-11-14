@@ -127,7 +127,10 @@ def _load(
         document = _record(body[name], name, ADVANCE)
         _signature(document, ADVANCE)
         # The operator fences the tables these maps name. A layout left to be derived would be
-        # derived by whichever library loads the map, so nobody signed the tables it names.
+        # derived by whichever library loads the map, so nobody signed the tables it names. The
+        # member is refused whatever it says: whether a value asks for it is each language's own
+        # notion of a true value (an empty list is one in JavaScript and not here), and no signed
+        # map has a reason to carry it.
         for raw_group in _record(document.get("groups"), "groups", ADVANCE).values():
             value = _record(raw_group, "group", ADVANCE)
             copies = value.get("derived", [])
@@ -139,7 +142,7 @@ def _load(
                     "layout",
                     ADVANCE,
                 )
-                if raw_layout.get("auto"):
+                if "auto" in raw_layout:
                     raise MigrationRefused(_NEEDS_LAYOUTS)
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
         if parsed.contract < GENERATIONS_SINCE:

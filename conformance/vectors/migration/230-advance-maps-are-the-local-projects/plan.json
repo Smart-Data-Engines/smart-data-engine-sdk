@@ -7,7 +7,7 @@
   "pause_budget_ms": 30000,
   "before": {
     "contract": 4,
-    "project_id": "11111111111111111111111111111111",
+    "project_id": "99999999999999999999999999999999",
     "model_version": "59a263d15793fb78",
     "map_version": 1,
     "groups": {
@@ -26,8 +26,7 @@
                 "id": "uuid",
                 "name": "text"
               }
-            },
-            "auto": []
+            }
           }
         },
         "derived": [
@@ -80,8 +79,7 @@
                 "email": "text",
                 "id": "uuid"
               }
-            },
-            "auto": {}
+            }
           }
         }
       }
@@ -93,12 +91,12 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "NinEWZ5h/qi3UmVKG2KIcFfFNKfYGnFYKNEwnhU/tQBvnPJ6NzcsxUPf9v2UX1V9yGahOjtTL8mt7oNr9n4xAA=="
+      "value": "nhfv8aow0XU9xN6frdSd9tL8jnvb7iyJ+A2/oe8AwUJ3nZWzo58VqfjdAFLk+T6OGkPoq0uter327xeMWq9XCQ=="
     }
   },
   "after": {
     "contract": 4,
-    "project_id": "11111111111111111111111111111111",
+    "project_id": "99999999999999999999999999999999",
     "model_version": "59a263d15793fb78",
     "map_version": 2,
     "groups": {
@@ -117,8 +115,7 @@
                 "id": "uuid",
                 "name": "text"
               }
-            },
-            "auto": []
+            }
           }
         },
         "derived": [
@@ -171,8 +168,7 @@
                 "email": "text",
                 "id": "uuid"
               }
-            },
-            "auto": {}
+            }
           }
         }
       }
@@ -184,12 +180,12 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "P+y1djIIZigi0+G9gpeNFKWpxL17ANlLywIpAyet43CQb0orBwgQ+2ekxfdCw9XCAxnv2NFpYL8OXvfkaq+ZAw=="
+      "value": "d2lfi4c1e29nNANqEH4ELVi20ZXmNyVT9EFSJtbH1QAi3GvcMJ8Ec09d1tPMU9YmtVsfyaVMtv7HanrdH1fgAQ=="
     }
   },
   "signature": {
     "alg": "ed25519",
     "key_id": "advance",
-    "value": "TxnML+A4NpZVXQ9E3UFn8q3MSQZmKHvNqX+Yb7NiJ03RCldmt9MGTpMyBGUBW30PK/hUwGkrb6pX90W9aFd4CQ=="
+    "value": "Chzowr1u6ubkxYdoUBSvk3jfalBWDjrDVOmls75LAnYhr2YgFe8FzJfOSYWQRIwmvXfyMa3dRsZpjtfg4hZqCg=="
   }
 }

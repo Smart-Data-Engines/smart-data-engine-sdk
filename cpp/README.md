@@ -253,9 +253,10 @@ row of the reference's, and its telemetry window of the traffic is the reference
   to the control plane's request, the locally configured project, the map's fingerprint and the
   group, and `sde::verify_frozen` compares under named write barriers it checks before and after.
 - **Signed packets are decoded and authorised, never executed** (`sde/packets.hpp`).
-  `sde::load_cutover_plan`, `sde::load_staging_plan` and `sde::load_index_plan` check every rule of
-  §7g, §7h and §7j against the model, the project and the keys, and give an operator the maps and
-  index definitions it acts on and the exact bytes it publishes. A plan exists only as loaded.
+  `sde::load_cutover_plan`, `sde::load_staging_plan`, `sde::load_index_plan` and
+  `sde::load_advance_plan` check every rule of §7g, §7h, §7j and §7p against the model, the project
+  and the keys, and give an operator the maps and index definitions it acts on and the exact bytes
+  it publishes. A plan exists only as loaded.
 - **An in-memory engine for tests** (`sde/testing/memory.hpp`, target `sde::testing`): the engine
   the `migration/` vectors run against, which records every call in one sequence across engines.
   Link it in your adapter's tests, never in production.

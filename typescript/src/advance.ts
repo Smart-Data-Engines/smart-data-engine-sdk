@@ -12,14 +12,7 @@ import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.j
 import { MapError, MigrationRefused } from './errors.js'
 import { checkMapProject, GENERATIONS_SINCE, MAX_EPOCH } from './generation.js'
 import type { LogicalModel } from './model.js'
-import {
-  fingerprintOf,
-  loadMap,
-  pythonTruthy,
-  verifyMapSignature,
-  type LoadOptions,
-  type PlacementMap,
-} from './placement.js'
+import { fingerprintOf, loadMap, verifyMapSignature, type LoadOptions, type PlacementMap } from './placement.js'
 
 export const ADVANCE_PROTOCOL = 1
 const NEEDS_LAYOUTS = 'advance maps need explicit physical layouts'
@@ -116,14 +109,15 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
     const document = record(body[name], name)
     signature(document)
     // The operator fences the tables these maps name. A layout left to be derived would be derived
-    // by whichever library loads the map, so nobody signed the tables it names. Whether `auto` says
-    // so is the reference's reading of the value, which is not JavaScript's for `[]` and `{}`.
+    // by whichever library loads the map, so nobody signed the tables it names. The member is
+    // refused whatever it says: whether a value asks for it is each language's own notion of a true
+    // value (`[]` is one here and not in Python), and no signed map has a reason to carry it.
     for (const rawGroup of Object.values(record(document['groups'], 'groups'))) {
       const value = record(rawGroup, 'group'), copies = value['derived'] === undefined ? [] : value['derived']
       if (!Array.isArray(copies)) throw new MigrationRefused('advance derived copies must be an array')
       for (const rawMaterial of [value['source'], ...copies]) {
         const layout = record(record(rawMaterial, 'materialization')['layout'], 'layout')
-        if (pythonTruthy(layout['auto'])) throw new MigrationRefused(NEEDS_LAYOUTS)
+        if (Object.hasOwn(layout, 'auto')) throw new MigrationRefused(NEEDS_LAYOUTS)
       }
     }
     const parsed = loadMap(document, { model, publicKey, requireSignature: true })

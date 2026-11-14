@@ -138,11 +138,16 @@ std::optional<std::string> verify_packet(const Json& body, const PublicKeys& pub
                                 [&] { return canonical_bytes(without(body, {"signature"})); });
 }
 
+/// Whether a layout's `auto` member asks for a derived layout: as the reference reads its value,
+/// or - for the packets that refuse the member itself - whatever it says.
+enum class Auto { as_the_reference_reads_it, whatever_it_says };
+
 /// Before a candidate map is loaded, in document order: every layout is written out. A layout
 /// derived with `{"auto": true}` would be derived by whichever library loads the map, so it is not
 /// a physical design anybody signed.
 void refuse_derived_layouts(const Json& document, std::string_view subject,
-                            const std::string& needs_layouts) {
+                            const std::string& needs_layouts,
+                            Auto read = Auto::as_the_reference_reads_it) {
   for (const auto& member : record(document.find("groups"), "groups", subject).as_object()) {
     const Json& spot = record(&member.second, "group", subject);
     const Json* derived = spot.find("derived");
@@ -157,7 +162,8 @@ void refuse_derived_layouts(const Json& document, std::string_view subject,
       const Json& layout =
           record(record(raw, "materialization", subject).find("layout"), "layout", subject);
       if (const Json* automatic = layout.find("auto");
-          automatic != nullptr && detail::python_truthy(*automatic)) {
+          automatic != nullptr &&
+          (read == Auto::whatever_it_says || detail::python_truthy(*automatic))) {
         refuse(needs_layouts);
       }
     }
@@ -781,12 +787,13 @@ CheckedAdvance check_advance(const Json& raw, const Model& model, const std::str
   signature_block(body, kAdvance);
   out.verified_with = verify_packet(body, public_keys);
   // The operator fences the tables these maps name. A layout left to be derived would be derived
-  // by whichever library loads the map, so nobody signed the tables it names.
+  // by whichever library loads the map, so nobody signed the tables it names. The member is refused
+  // whatever it says: no signed map has a reason to carry it.
   const std::string needs_layouts = "advance maps need explicit physical layouts";
   for (std::string_view name : {std::string_view("before"), std::string_view("after")}) {
     const Json& document = record(body.find(name), name, kAdvance);
     signature_block(document, kAdvance);
-    refuse_derived_layouts(document, kAdvance, needs_layouts);
+    refuse_derived_layouts(document, kAdvance, needs_layouts, Auto::whatever_it_says);
     PlacementMap parsed = load_candidate(document, model, public_keys);
     if (parsed.contract() < GENERATIONS_SINCE) {
       refuse(cat({"an advance requires map contract ", std::to_string(GENERATIONS_SINCE),

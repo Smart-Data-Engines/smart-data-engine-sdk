@@ -96,14 +96,15 @@ repository reads are constants in its source, and the table on
 | cutover packet | 1 and 2 | [`cutover-packets.md`](cutover-packets.md) |
 | staging packet | 1 and 2 | [`staging.md`](staging.md) |
 | index build packet | 1 and 2 | [`in-place-index.md`](in-place-index.md) |
+| generation advance packet | 1 | [`generation-advance.md`](generation-advance.md) |
 
 By release, for the two libraries on a registry:
 
-| Release | Placement map | Cutover, staging and index build packets |
-|---|---|---|
-| 0.1.0, 0.1.1 | 1 to 5 | 1 and 2 |
-| 0.2.0 | 1 to 6 | 1 and 2 |
-| `main` | 1 to 6 | 1 and 2 |
+| Release | Placement map | Cutover, staging and index build packets | Generation advance packet |
+|---|---|---|---|
+| 0.1.0, 0.1.1 | 1 to 5 | 1 and 2 | not read |
+| 0.2.0 | 1 to 6 | 1 and 2 | not read |
+| `main` | 1 to 6 | 1 and 2 | 1 |
 
 **Backwards compatible, forwards strict.** A library reads every earlier map contract with its
 meaning unchanged, and refuses a later one by its number: what came after it cannot be known, so it

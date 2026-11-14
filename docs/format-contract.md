@@ -2074,8 +2074,10 @@ A signed contract-6 map reports write generations only for the groups that carry
 
 **Packets.** No staging, cutover or in-place index build can act on such a group or raise a map to
 contract 6, since no such group can appear through one. Each carries the group byte for byte when it
-acts on another (`migration/192`-`199`). The Python local operator needs no binding for an engine
-that hosts only such groups, refuses one offered for it, and reads none of its tables.
+acts on another (`migration/192`-`199`). A generation advance (§7p) has nothing to advance in such
+a group, carries it the same way and cannot give it a generation (`migration/226`-`228`). The
+Python local operator needs no binding for an engine that hosts only such groups, refuses one
+offered for it, and reads none of its tables.
 
 ## 7l. Search
 
@@ -2395,3 +2397,27 @@ of a login and of an operator's choice of tables, and outside this contract
 ([`local-cutover.md`](local-cutover.md)).
 
 Measured in [`qualification/whole-answers`](qualification/whole-answers/README.md).
+
+## 7p. Signed generation-advance packet
+
+[A generation advance](generation-advance.md) authorizes one change of one number: the exact signed
+map in force and a next map that is the first with a newer version and one group's write generation
+raised by exactly one. The group's source, maintained copies and `also_write`, every other group,
+routing and every other top-level attribute are the same bytes in both. From then on a row of the
+group that still carries an earlier generation has not been written through a library since, which
+is the mark a later comparison can start from.
+
+The envelope is `kind: "sde-advance"`, `protocol` 1, `advance_id`, `project_id`, `group`,
+`pause_budget_ms`, `before`, `after` and `signature`, signed and fingerprinted as the other packets
+are. Both maps are contract 4 or later with every layout written out, and here a layout that
+carries `auto` is refused whatever the member says: whether a value asks for a derived layout is
+read differently by different languages, and no signed map has a reason to carry it. A group
+without a write generation (§7k) cannot be advanced.
+
+The three libraries load and validate the packet; `migration/201`-`230` pin three acceptances and a
+refusal for each rule, each with the fragment of the message every library gives. Loading one
+executes nothing, publishes no map and advances no watermark, and no operator in this repository
+executes it yet.
+
+**Which number moves: neither.** The packet has a protocol of its own and no IR or map changed: a
+library that predates it has no loader for it and reads every map as before.

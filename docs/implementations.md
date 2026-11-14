@@ -84,7 +84,8 @@ counters, swapped at a roll - which is a claim about memory ordering, so CI runs
 ThreadSanitizer. Its Tier 2 is values, the DDL of §7a, the read plans and exact summaries of the
 `query/` vectors, the session - writes, fan-out, transactions, write generations, write fences and
 the forward-only check - and taking part in a migration: backfill, verification and its requests,
-the comparison under write barriers, and the signed cutover, staging and index build packets. It
+the comparison under write barriers, and the signed cutover, staging, index build and generation
+advance packets. It
 passes every `query/` and `migration/` vector and every `schema/` case of the dialects it renders,
 against an engine interface whose capabilities are data, and the library's own in-memory engine.
 The Elasticsearch cases of `schema/` (`019` and `020`) are the other two libraries', and its runner

@@ -219,7 +219,7 @@ function asRecord(value: unknown, where: string): Record<string, unknown> {
  * array or object are not. JavaScript's truthiness differs on `[]` and `{}`, and `?? {}` differs on
  * `false` and `0`, which is how one document meant two things in two libraries more than once.
  */
-export function pythonTruthy(value: unknown): boolean {
+function pythonTruthy(value: unknown): boolean {
   if (value === undefined || value === null) return false
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0

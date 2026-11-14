@@ -26,8 +26,7 @@
                 "id": "uuid",
                 "name": "text"
               }
-            },
-            "auto": 1
+            }
           }
         },
         "derived": [
@@ -80,7 +79,8 @@
                 "email": "text",
                 "id": "uuid"
               }
-            }
+            },
+            "auto": false
           }
         }
       }
@@ -92,7 +92,7 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "F0BHcp8fhlSj7dAyeXX3iSz0hztfdDP34hCHKVJ8IJVpBTSGgf1f0HaMQ0mu5O6tFYxz2SqIHk/hXvYwO0MUCw=="
+      "value": "c3KCUA79zlDV4NpT9/a2tfaWvAHx7Q8vSQ03eBE+893ABWBm17gm77y0BlnnWO+lcWZ1FURbzic3wEDFy8yQAg=="
     }
   },
   "after": {
@@ -116,8 +116,7 @@
                 "id": "uuid",
                 "name": "text"
               }
-            },
-            "auto": 1
+            }
           }
         },
         "derived": [
@@ -170,7 +169,8 @@
                 "email": "text",
                 "id": "uuid"
               }
-            }
+            },
+            "auto": false
           }
         }
       }
@@ -182,12 +182,12 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "r5NMCNFLMd3DE0JMe4x7cFC+X8ns44u1k3UY7J6sS5HF9GBlkoq/Iv1tm/weOoYsgiiPGQ1sw1bdpy1YpRgZAA=="
+      "value": "KZcWCwmUHSha3eEpKlPAu8w1DRsLuM5FYoR5iaZhLaZtD9nKzkFZLLXylJm5CfqEb2BBbv5GAU2ZSiynXCAZCQ=="
     }
   },
   "signature": {
     "alg": "ed25519",
     "key_id": "advance",
-    "value": "L4AIfSeHb8p9sXvE0s7p/tXA4zxp/P/32t/dniBm6EQVH3UjBzTmPkZUJ82/aHIqkAp7nSzxEbNmWSomTSEvDw=="
+    "value": "OPTBGnd2WO9bM4uwi2mqZkdK3alOeraefDwZT0zjZz5yB12dbB/CT5+wvoc8AFfcWn/l+pD9TyIdQYBhP3FdAQ=="
   }
 }

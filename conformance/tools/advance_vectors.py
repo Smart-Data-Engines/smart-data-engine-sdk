@@ -61,14 +61,16 @@ ADVANCE_MATCHES: dict[str, str] = {
     "221-advance-id-is-32-hex-digits": "advance advance_id must be 32 lowercase hexadecimal digits",
     "222-advance-needs-explicit-layouts": "advance maps need explicit physical layouts",
     "223-advance-needs-every-layout-explicit": "advance maps need explicit physical layouts",
-    "225-advance-reads-any-present-auto-as-a-request": (
-        "advance maps need explicit physical layouts"
-    ),
+    "224-advance-refuses-auto-beside-a-layout": "advance maps need explicit physical layouts",
+    "225-advance-refuses-auto-whatever-it-says": "advance maps need explicit physical layouts",
     "227-advance-refuses-a-group-without-a-generation": (
         "carries no write generation, so there is none to advance"
     ),
     "228-advance-cannot-give-a-group-a-generation": "an advance cannot change an unaffected group",
     "229-advance-cannot-go-back-a-map": "an advance must allocate a newer map",
+    "230-advance-maps-are-the-local-projects": (
+        "this generation-bearing map needs its locally configured project_id"
+    ),
 }
 
 
@@ -76,6 +78,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
     parser.add_argument("--scratch-directory", type=Path, required=True)
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="write only these vectors (repeatable); every vector carries its own key, so the "
+        "others stay byte for byte as they are",
+    )
     args = parser.parse_args()
     scratch = args.scratch_directory.resolve()
     if not scratch.is_dir() or scratch.is_relative_to(ROOT):
@@ -170,21 +179,18 @@ def main() -> None:
     # Of every group, as for a staging and a cutover: the rule is the map's, not the group's.
     case("223-advance-needs-every-layout-explicit", derived_layout("Order"))
 
-    # `auto` asks for a derived layout when the reference reads its value as present. An empty
-    # array beside a layout written out does not, in any language: JavaScript calls `[]` true.
-    def auto_that_asks_for_nothing(p: dict[str, Any]) -> None:
-        for name in ("before", "after"):
-            p[name]["groups"]["Event"]["source"]["layout"]["auto"] = []
-            p[name]["groups"]["Order"]["source"]["layout"]["auto"] = {}
+    # The member is refused whatever it says, a layout written out beside it or not. Whether a
+    # value asks for a derived layout is each language's own notion of a true value - an empty
+    # array is one in JavaScript and not in Python - so no library is left to decide it.
+    def auto_of(value: Any, group: str) -> Callable[[dict[str, Any]], None]:
+        def change(p: dict[str, Any]) -> None:
+            for name in ("before", "after"):
+                p[name]["groups"][group]["source"]["layout"]["auto"] = value
 
-    case("224-advance-reads-an-empty-auto-as-absent", auto_that_asks_for_nothing, False)
+        return change
 
-    # And a value the reference reads as present asks for one, whether or not it is `true`.
-    def auto_that_is_not_true(p: dict[str, Any]) -> None:
-        for name in ("before", "after"):
-            p[name]["groups"]["Event"]["source"]["layout"]["auto"] = 1
-
-    case("225-advance-reads-any-present-auto-as-a-request", auto_that_is_not_true)
+    case("224-advance-refuses-auto-beside-a-layout", auto_of([], "Event"))
+    case("225-advance-refuses-auto-whatever-it-says", auto_of(False, "Order"))
 
     # Contract 6: a group whose engine cannot fence writes carries no generation (section 7k). An
     # advance of another group carries it byte for byte, and there is nothing to advance in it.
@@ -215,6 +221,14 @@ def main() -> None:
         p["after"]["map_version"] = 3
 
     case("229-advance-cannot-go-back-a-map", goes_back)
+
+    # The envelope names the local project and its maps another's: a map is bound to the project
+    # the caller configured, never to the one a document says it is for.
+    def maps_of_another_project(p: dict[str, Any]) -> None:
+        for name in ("before", "after"):
+            p[name]["project_id"] = "9" * 32
+
+    case("230-advance-maps-are-the-local-projects", maps_of_another_project)
     with tempfile.TemporaryDirectory(prefix="sde-advance-vectors-", dir=scratch) as tmp:
         work = Path(tmp)
         private, public = work / "key.pem", work / "public.pem"
@@ -240,7 +254,11 @@ def main() -> None:
                 "value": base64.b64encode((work / "sig").read_bytes()).decode(),
             }
 
-        for name, change, bad in cases:
+        unknown = set(args.only) - {name for name, _, _ in cases}
+        if unknown:
+            parser.error(f"no such vector: {sorted(unknown)}")
+        written = [entry for entry in cases if not args.only or entry[0] in args.only]
+        for name, change, bad in written:
             plan = copy.deepcopy(template)
             if change:
                 change(plan)
@@ -286,7 +304,7 @@ def main() -> None:
                 (directory / filename).write_text(
                     json.dumps(value, indent=2, ensure_ascii=False) + "\n"
                 )
-    print(f"Wrote {len(cases)} independently signed advance fixtures")
+    print(f"Wrote {len(written)} independently signed advance fixtures")
 
 
 if __name__ == "__main__":
