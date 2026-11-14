@@ -867,3 +867,206 @@ def test_the_operator_cli_resumes_an_unfinished_advance_and_does_not_abandon_it(
         code, receipt = run_cli([*base, "resume"], environment)
         assert code == 0
         assert_advanced(made, receipt, recovered=True)
+
+
+# --- more than one advance, and what is not this advance's ---------------------------------------
+
+
+def following(made: Group) -> Any:
+    """The advance that comes next: from the map in force to the generation after its own."""
+    before = made.state()["active_map"]
+    after = deepcopy(before)
+    after["map_version"] += 1
+    after["groups"]["Event"]["write_epoch"] += 1
+    packet = made.signed(
+        {
+            "kind": "sde-advance",
+            "protocol": 1,
+            "advance_id": uuid4().hex,
+            "project_id": PROJECT,
+            "group": "Event",
+            "pause_budget_ms": 30000,
+            "before": before,
+            "after": made.signed(after),
+        }
+    )
+    return sde.load_advance_plan(
+        packet, model=made.model, project_id=PROJECT, public_key=made.public
+    )
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_second_advance_follows_the_first(source: str, tmp_path: Path) -> None:
+    """Each advance has a barrier of its own, spent with it, so the next one starts clean; and
+    each generation stays on the rows written under it."""
+    with group(source, tmp_path) as made:
+        made.operator.advance(made.plan)
+        made.session().save("Event", {"id": 3, "value": 33})
+        second = following(made)
+        assert (second.source_epoch, second.next_epoch) == (2, 3)
+        receipt = made.operator.advance(second).as_record()
+        assert (receipt["outcome"], receipt["write_epoch"], receipt["map_version"]) == (
+            "advanced",
+            3,
+            3,
+        )
+        made.session().save("Event", {"id": 4, "value": 44})
+        assert made.everywhere() == [{1: (11, 1), 2: (22, 1), 3: (33, 2), 4: (44, 3)}] * 2
+        for role in ("source", "copy"):
+            observed = made.fence(role)
+            assert (observed.epoch, observed.closed, len(observed.retired)) == (3, False, 2)
+        assert set(made.state()["advances"]) == {made.plan.advance_id, second.advance_id}
+        # The first packet is spent and still answers; it does not run against the newer map.
+        assert made.operator.advance(made.plan).as_record()["write_epoch"] == 2
+        assert made.fence("source").epoch == 3
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_barrier_that_appears_mid_advance_stops_the_decision_and_the_ending(
+    source: str, tmp_path: Path
+) -> None:
+    with group(source, tmp_path) as made:
+        other = uuid4().hex
+        fence = made.roles[made.target].operator.write_fence(TABLE["copy"], project_id=PROJECT)
+
+        def intrude(step: str) -> None:
+            if step == "advance_freeze_copy:done":
+                fence.freeze(other)
+
+        made.operator._after_step = intrude
+        with pytest.raises(CutoverRecoveryRequired):
+            made.operator.advance(made.plan)
+        made.operator._after_step = quiet
+        assert made.operator.status()["decision"] is None
+        assert made.fence("source").epoch == made.fence("copy").epoch == 1
+        # The recovery lifts this advance's own barrier. The other one is not its to lift, and
+        # the advance reports no end while a table of the group is still closed.
+        with pytest.raises(CutoverRecoveryRequired):
+            made.operator.resume()
+        assert tuple(made.fence("copy").holds) == (other,)
+        assert not made.fence("source").closed
+        assert made.operator.status()["decision"] == "abandoned"
+        fence.release(other)
+        assert_abandoned(made, made.operator.resume().as_record(), "recovered_before_decision")
+
+
+def test_two_names_of_one_physical_table_refuse_the_advance(tmp_path: Path) -> None:
+    """Two bindings of one database, and a map whose source and copy name the same table in
+    them: one table would be fenced twice and counted as a source and its own copy."""
+    with group("postgres", tmp_path / "state") as made:
+        role = made.roles["postgres"]
+        before = deepcopy(made.plan.as_record()["before"])
+        for material in (
+            before["groups"]["Event"]["source"],
+            before["groups"]["Event"]["derived"][0],
+        ):
+            material["layout"] = deepcopy(before["groups"]["Event"]["source"]["layout"])
+        before = made.signed(before)
+        after = deepcopy(before)
+        after["map_version"], after["groups"]["Event"]["write_epoch"] = 2, 2
+        packet = made.signed(
+            {
+                "kind": "sde-advance",
+                "protocol": 1,
+                "advance_id": uuid4().hex,
+                "project_id": PROJECT,
+                "group": "Event",
+                "pause_budget_ms": 30000,
+                "before": before,
+                "after": made.signed(after),
+            }
+        )
+        plan = sde.load_advance_plan(
+            packet, model=made.model, project_id=PROJECT, public_key=made.public
+        )
+        aliased = LocalCutover(
+            tmp_path / "aliased",
+            model=made.model,
+            project_id=PROJECT,
+            public_key=made.public,
+            operators={"postgres": role.operator, "clickhouse": role.operator},
+            runtime={"postgres": [role.runtime], "clickhouse": [role.runtime]},
+        )
+        aliased.enroll(before)
+        with pytest.raises(sde.MigrationRefused, match="resolve to the same physical table"):
+            aliased.advance(plan)
+        observed = made.fence("source")
+        assert (observed.epoch, observed.closed, observed.retired) == (1, False, ())
+        with aliased.store.lock():
+            assert aliased.store.read()["execution"] is None
+
+
+def test_a_table_another_group_also_names_refuses_the_advance(tmp_path: Path) -> None:
+    """Raising its generation would close it to the other group, whose map says the earlier one."""
+    with group("postgres", tmp_path / "state", copied=False) as made:
+        role = made.roles["postgres"]
+        sde.clear_registry()
+
+        @sde.entity
+        class Event:
+            id: int
+            value: sde.Int32
+
+        @sde.entity
+        class Other:
+            id: int
+            value: sde.Int32
+
+        model = sde.build_model(Event, Other)
+        layout = made.plan.as_record()["before"]["groups"]["Event"]["source"]["layout"]
+
+        def placed(entity: str, engine: str) -> dict[str, Any]:
+            return {
+                "write_epoch": 1,
+                "source": {
+                    "engine": engine,
+                    "id": entity.lower(),
+                    "layout": {
+                        "tables": {entity: TABLE["source"]},
+                        "columns": {entity: dict(layout["columns"]["Event"])},
+                    },
+                },
+            }
+
+        before = made.signed(
+            {
+                "contract": 4,
+                "project_id": PROJECT,
+                "model_version": model.version,
+                "map_version": 1,
+                "groups": {
+                    "Event": placed("Event", "postgres"),
+                    "Other": placed("Other", "clickhouse"),
+                },
+            }
+        )
+        after = deepcopy(before)
+        after["map_version"], after["groups"]["Event"]["write_epoch"] = 2, 2
+        packet = made.signed(
+            {
+                "kind": "sde-advance",
+                "protocol": 1,
+                "advance_id": uuid4().hex,
+                "project_id": PROJECT,
+                "group": "Event",
+                "pause_budget_ms": 30000,
+                "before": before,
+                "after": made.signed(after),
+            }
+        )
+        plan = sde.load_advance_plan(
+            packet, model=model, project_id=PROJECT, public_key=made.public
+        )
+        aliased = LocalCutover(
+            tmp_path / "aliased",
+            model=model,
+            project_id=PROJECT,
+            public_key=made.public,
+            operators={"postgres": role.operator, "clickhouse": role.operator},
+            runtime={"postgres": [role.runtime], "clickhouse": [role.runtime]},
+        )
+        aliased.enroll(before)
+        with pytest.raises(sde.MigrationRefused, match="another group's physical table"):
+            aliased.advance(plan)
+        observed = made.fence("source")
+        assert (observed.epoch, observed.closed, observed.retired) == (1, False, ())
