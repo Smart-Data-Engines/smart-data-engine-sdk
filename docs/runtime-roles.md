@@ -165,7 +165,7 @@ qualification fails with code 497 and refuses; with it, every user's grants are 
 
 Who else may hold a grant covering a table of the operation:
 
-| Principal | Staging, cutover, recovery | In-place index build |
+| Principal | Staging, cutover, generation advance, recovery | In-place index build |
 |---|---|---|
 | the operation's runtime logins | qualified as above | qualified as above |
 | a PostgreSQL superuser | admitted: appears in no ACL | admitted |
@@ -177,6 +177,9 @@ and no access transition. After the cutover it would keep reading the retired so
 it, and those writes would be lost. An administrator is admitted because refusing one protects
 nothing: it can grant itself anything, and this protocol does not revoke administrative powers. A
 build moves no authority, because the tables stay the same tables, so nobody beside it is affected.
+A [generation advance](generation-advance.md) moves none either and is qualified as a cutover all
+the same: the generation it leaves on the rows is a mark a later comparison stands on, and a
+principal nobody declared could change a row under it.
 A role is never an administrator here.
 
 "A direct global `ACCESS MANAGEMENT`" means the whole group as the server itself defines it in
