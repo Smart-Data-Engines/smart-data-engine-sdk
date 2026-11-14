@@ -35,8 +35,16 @@ engine's facts list it as `fixed_shape.nullable` and `fixed_shape.assigned_by_se
 
 ## Connecting
 
-The engine's Python client is not on PyPI. Install it from the engine's repository: its `python/`
-directory, and for local mode its shared library, `liborderbook_shared.so`, through `OB_LIB_PATH`.
+The engine's Python client is the extra `orderbook`:
+`pip install 'smart-data-engine-sdk[orderbook]'` installs it from PyPI, where it is
+`orderbook-dbengine`. It is the client alone. Local mode also needs the engine's shared library,
+`liborderbook_shared.so`, built from the engine's source and named by `OB_LIB_PATH`.
+
+The client on PyPI is the engine's 0.1.0. A book stream needs a newer one, from the `python/`
+directory of the engine's repository at the commit of the server you run: 0.1.0 has no
+`replace_side`, and a stream is refused by name on it, before anything is sent. Everything else
+works with it, against its own server and against a newer one
+([what works with what](compatibility.md#the-orderbook-engines-release)).
 
 | Mode | Construction | What it is |
 |---|---|---|

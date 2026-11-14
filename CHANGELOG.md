@@ -8,6 +8,40 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: what works with what, and what to do when upgrading** (Python, TypeScript, C++).
+[`docs/compatibility.md`](docs/compatibility.md) lists the engine versions the suites run against,
+the drivers each library takes, the map contracts and signed packets each release reads, and what a
+release of which number may change. [`docs/upgrading.md`](docs/upgrading.md) takes the changes since
+0.2.0 that can make a working application fail or answer differently, and says who is affected and
+what to do: connection strings, values written and read, hand-written maps, and messages an alert
+may match. Two tests hold them. `test_compatibility.py` compares the first page with the CI
+workflow, the packaging metadata and the three libraries' constants. `test_upgrading.py` requires
+the second to cite every entry here that warns it breaks something, and to cite no title this
+changelog does not have.
+
+**Measured: the libraries against the orderbook engine's release 0.1.0** (Python, TypeScript, C++;
+[`docs/qualification/orderbook-release-0.1.0/`](docs/qualification/orderbook-release-0.1.0/README.md)).
+The suites run against the engine at a pinned commit that is newer than its only release, so
+nothing said what a client who installs the release gets. Against a server built from the tag
+`v0.1.0`, over TCP, every case of each library's slice passes, with credentials and TLS, and
+Python does so with the client PyPI serves. A book stream and a book as of a moment are refused by
+name there, in all three: they need a server that announces `replace_side`, which came after 0.1.0.
+
+**Added: the orderbook engine's Python client is the extra `orderbook`** (Python).
+`pip install 'smart-data-engine-sdk[orderbook]'` installs `orderbook-dbengine` from PyPI, where the
+engine's client has been since 18 October 2026. The adapter's message for a missing client, the
+README and `docs/orderbook.md` still said it was not there. It is the client alone: local mode also
+needs the engine's shared library, built from its source and named by `OB_LIB_PATH`. The
+`orderbook` CI job runs the TCP slices on the extra's floor, `orderbook-dbengine==0.1.0`, in an
+environment of its own, and the dependency audit installs the extra with the others.
+
+**Fixed: a book stream on a client older than its server is refused by name** (Python). The
+engine's 0.1.0 client has no `replace_side`. Against a server that announces the capability, the
+adapter asked only the server, and a stream's first update was an `AttributeError`. A session now
+refuses the stream before anything is sent, naming the client, and so does a replacement of a side
+sent through the adapter. An update by price and a book as of a moment need nothing that client
+lacks, and work on it.
+
 **Changed, and it may break a configuration: the orderbook engine's connection states its TLS too**
 (Python, TypeScript, C++). An `orderbook://` DSN to a host other than the loopback that does not say
 `tls` at all is refused when the engine is constructed, as PostgreSQL's and ClickHouse's already

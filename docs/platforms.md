@@ -57,5 +57,6 @@ What that means precisely, because "should work" is the phrasing requirement 15.
 
 ## What is not on this list
 
-**Anything about your engines.** The versions of PostgreSQL and ClickHouse this library speaks to
-are a separate question, answered by the adapters and their live test slices, not by this page.
+**Anything about your engines.** The versions of PostgreSQL, ClickHouse, Elasticsearch and the
+orderbook engine the suites run against are on [`compatibility.md`](compatibility.md), with the
+drivers and the map contracts each release reads.

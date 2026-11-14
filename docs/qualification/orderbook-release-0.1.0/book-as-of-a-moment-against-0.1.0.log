@@ -1,0 +1,2 @@
+the server announces replace_side: False
+book_at refused: this orderbook server composes a book by position, not by price (it predates the capability replace_side, which came with reads by price), and would read a book written by price wrongly. Upgrade the server; nothing was read.

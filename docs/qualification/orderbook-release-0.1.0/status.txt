@@ -1,0 +1,5 @@
+python-released-client-against-0.1.0=1
+book-as-of-a-moment-against-0.1.0=0
+typescript-against-0.1.0=1
+cpp-against-0.1.0=8
+python-released-client-against-the-pin=0
