@@ -1,9 +1,9 @@
 """What the live orderbook tests share: switches, the engine in both of its modes, and fresh books.
 
-The engine's Python client is not on PyPI and its shared library is built from C++, so these tests
-run only where an engine is: the SDK's ``orderbook`` CI job builds one at the commit
-``.github/orderbook-engine.txt`` pins, starts two servers and fails if anything here was
-skipped. Locally::
+The engine's server and its shared library are built from C++, and the pinned commit is newer than
+the client on PyPI, so these tests run only where an engine is: the SDK's ``orderbook`` CI job
+builds one at the commit ``.github/orderbook-engine.txt`` pins, takes that commit's Python client,
+starts two servers and fails if anything here was skipped. Locally::
 
     cmake -S . -B build -DOB_BUILD_TESTS=OFF
     cmake --build build --target ob_tcp_server orderbook_shared
@@ -31,9 +31,9 @@ SECURE_DSN = os.environ.get("SDE_ORDERBOOK_SECURE_DSN")
 
 REASON = (
     "set SDE_ORDERBOOK=1, OB_LIB_PATH and PYTHONPATH to run the orderbook slice. The engine's "
-    "Python client is not on PyPI and its shared library is built from C++, so this cannot run "
-    "everywhere - which is why the adapter's own decisions are tested against a fake and only the "
-    "engine's measured behaviour is tested here"
+    "server and shared library are built from C++, so this cannot run everywhere - which is why "
+    "the adapter's own decisions are tested against a fake and only the engine's measured "
+    "behaviour is tested here"
 )
 
 MODES = [

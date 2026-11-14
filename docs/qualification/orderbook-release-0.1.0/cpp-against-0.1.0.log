@@ -1,0 +1,153 @@
+Test project <sdk>/cpp/build/check
+      Start 655: OrderbookSlice.AReadAfterAWriteFlushesFirstAndFindsIt
+ 1/29 Test #655: OrderbookSlice.AReadAfterAWriteFlushesFirstAndFindsIt .................................   Passed    0.02 sec
+      Start 656: OrderbookSlice.ASingleLevelWriteLandsAtLevelZeroAndAnyOtherLevelIsRefused
+ 2/29 Test #656: OrderbookSlice.ASingleLevelWriteLandsAtLevelZeroAndAnyOtherLevelIsRefused .............   Passed    0.06 sec
+      Start 657: OrderbookSlice.AMultiLevelUpdateNumbersLevelsByPosition
+ 3/29 Test #657: OrderbookSlice.AMultiLevelUpdateNumbersLevelsByPosition ...............................   Passed    0.05 sec
+      Start 658: OrderbookSlice.TwoWritesWithOneKeyBothPersistAndGetRefusesToPickOne
+ 4/29 Test #658: OrderbookSlice.TwoWritesWithOneKeyBothPersistAndGetRefusesToPickOne ...................   Passed    0.02 sec
+      Start 659: OrderbookSlice.TheServerNumbersEveryUpdateAndAChosenNumberNeverLeaves
+ 5/29 Test #659: OrderbookSlice.TheServerNumbersEveryUpdateAndAChosenNumberNeverLeaves .................   Passed    0.03 sec
+      Start 660: OrderbookSlice.TheEngineAnswersInArrivalOrderAndItsLimitKeepsTheFirstToArrive
+ 6/29 Test #660: OrderbookSlice.TheEngineAnswersInArrivalOrderAndItsLimitKeepsTheFirstToArrive .........   Passed    0.02 sec
+      Start 661: OrderbookSlice.ABookNobodyHasWrittenToIsNamedByTheServerAndReadAsEmpty
+ 7/29 Test #661: OrderbookSlice.ABookNobodyHasWrittenToIsNamedByTheServerAndReadAsEmpty ................   Passed    0.01 sec
+      Start 662: OrderbookSlice.AStoredValueTheModelsTypeCannotHoldIsRefusedOnReadWithoutIt
+ 8/29 Test #662: OrderbookSlice.AStoredValueTheModelsTypeCannotHoldIsRefusedOnReadWithoutIt ............   Passed    0.01 sec
+      Start 663: OrderbookSlice.TheFixedShapeIsAcceptedAndNothingIsCreated
+ 9/29 Test #663: OrderbookSlice.TheFixedShapeIsAcceptedAndNothingIsCreated .............................   Passed    0.02 sec
+      Start 664: OrderbookSlice.ARowWrittenThroughTheMapComesBackWithEveryField
+10/29 Test #664: OrderbookSlice.ARowWrittenThroughTheMapComesBackWithEveryField ........................   Passed    0.01 sec
+      Start 665: OrderbookSlice.ARangeReadIsAddressedByBookAndBoundedByTimeAtBothEnds
+11/29 Test #665: OrderbookSlice.ARangeReadIsAddressedByBookAndBoundedByTimeAtBothEnds ..................   Passed    0.03 sec
+      Start 666: OrderbookSlice.TransactionsAreRefusedAgainstTheRealEngineToo
+12/29 Test #666: OrderbookSlice.TransactionsAreRefusedAgainstTheRealEngineToo ..........................   Passed    0.01 sec
+      Start 667: OrderbookSlice.SaveManyWritesWholeUpdatesAndEveryRowReadsBack
+13/29 Test #667: OrderbookSlice.SaveManyWritesWholeUpdatesAndEveryRowReadsBack .........................   Passed    0.03 sec
+      Start 668: OrderbookSlice.EveryQuantityTheAdapterAdmitsReadsBackAsWritten
+14/29 Test #668: OrderbookSlice.EveryQuantityTheAdapterAdmitsReadsBackAsWritten ........................   Passed    0.03 sec
+      Start 669: OrderbookSlice.AScanPagesInKeyOrderAlthoughTheEngineAnswersInArrivalOrder
+15/29 Test #669: OrderbookSlice.AScanPagesInKeyOrderAlthoughTheEngineAnswersInArrivalOrder .............   Passed    0.15 sec
+      Start 670: OrderbookSlice.AScanNarrowedBySideLevelTimeAndPrice
+16/29 Test #670: OrderbookSlice.AScanNarrowedBySideLevelTimeAndPrice ...................................   Passed    0.04 sec
+      Start 671: OrderbookSlice.ADuplicatedKeyIsRefusedByAScanAsByAGet
+17/29 Test #671: OrderbookSlice.ADuplicatedKeyIsRefusedByAScanAsByAGet .................................   Passed    0.06 sec
+      Start 672: OrderbookSlice.CountAndSummarizeAreRefusedByNameAndAreNotRecordedAsErrors
+18/29 Test #672: OrderbookSlice.CountAndSummarizeAreRefusedByNameAndAreNotRecordedAsErrors .............   Passed    0.03 sec
+      Start 673: OrderbookSlice.TheWindowSeesEveryCallAndTheSizeIsUnknownAndSaidSo
+19/29 Test #673: OrderbookSlice.TheWindowSeesEveryCallAndTheSizeIsUnknownAndSaidSo .....................   Passed    0.03 sec
+      Start 674: OrderbookSlice.AChosenSequenceNumberNeverLeavesTheSession
+20/29 Test #674: OrderbookSlice.AChosenSequenceNumberNeverLeavesTheSession .............................   Passed    0.05 sec
+      Start 675: OrderbookSlice.ThisLibraryReadsWhatTheReferenceWroteAndTheReferenceWhatThisOneWrote
+21/29 Test #675: OrderbookSlice.ThisLibraryReadsWhatTheReferenceWroteAndTheReferenceWhatThisOneWrote ...   Passed    1.26 sec
+      Start 676: OrderbookSecureSlice.WithCredentialsAndTlsASessionWritesAndReads
+22/29 Test #676: OrderbookSecureSlice.WithCredentialsAndTlsASessionWritesAndReads ......................   Passed    0.05 sec
+      Start 677: OrderbookSecureSlice.AWrongSecretIsRefusedAtConnectAsAnAuthenticationFailure
+23/29 Test #677: OrderbookSecureSlice.AWrongSecretIsRefusedAtConnectAsAnAuthenticationFailure ..........   Passed    0.04 sec
+      Start 678: OrderbookSecureSlice.WithoutTheCaThatSignedItTheCertificateIsRefused
+24/29 Test #678: OrderbookSecureSlice.WithoutTheCaThatSignedItTheCertificateIsRefused ..................   Passed    0.08 sec
+      Start 679: OrderbookSecureSlice.PlainTextAgainstTheTlsPortTimesOutRatherThanConnecting
+25/29 Test #679: OrderbookSecureSlice.PlainTextAgainstTheTlsPortTimesOutRatherThanConnecting ...........   Passed    2.01 sec
+      Start 680: BooksSlice.AFullStreamComposesTheBookTheApplicationGave
+26/29 Test #680: BooksSlice.AFullStreamComposesTheBookTheApplicationGave ...............................***Failed    0.02 sec
+Running main() from ./googletest/src/gtest_main.cc
+Note: Google Test filter = BooksSlice.AFullStreamComposesTheBookTheApplicationGave
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from BooksSlice
+[ RUN      ] BooksSlice.AFullStreamComposesTheBookTheApplicationGave
+unknown file: Failure
+C++ exception with description "this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent." thrown in the test body.
+
+[  FAILED  ] BooksSlice.AFullStreamComposesTheBookTheApplicationGave (11 ms)
+[----------] 1 test from BooksSlice (12 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (12 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] BooksSlice.AFullStreamComposesTheBookTheApplicationGave
+
+ 1 FAILED TEST
+
+      Start 681: BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave
+27/29 Test #681: BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave .......................***Failed    0.02 sec
+Running main() from ./googletest/src/gtest_main.cc
+Note: Google Test filter = BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from BooksSlice
+[ RUN      ] BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave
+unknown file: Failure
+C++ exception with description "this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent." thrown in the test body.
+
+[  FAILED  ] BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave (7 ms)
+[----------] 1 test from BooksSlice (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (7 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave
+
+ 1 FAILED TEST
+
+      Start 682: BooksSlice.AnEarlierBookReadsAsItWas
+28/29 Test #682: BooksSlice.AnEarlierBookReadsAsItWas ..................................................***Failed    0.02 sec
+Running main() from ./googletest/src/gtest_main.cc
+Note: Google Test filter = BooksSlice.AnEarlierBookReadsAsItWas
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from BooksSlice
+[ RUN      ] BooksSlice.AnEarlierBookReadsAsItWas
+unknown file: Failure
+C++ exception with description "this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent." thrown in the test body.
+
+[  FAILED  ] BooksSlice.AnEarlierBookReadsAsItWas (7 ms)
+[----------] 1 test from BooksSlice (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (8 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] BooksSlice.AnEarlierBookReadsAsItWas
+
+ 1 FAILED TEST
+
+      Start 683: BooksSlice.ADepthBoundsEachSide
+29/29 Test #683: BooksSlice.ADepthBoundsEachSide .......................................................***Failed    0.02 sec
+Running main() from ./googletest/src/gtest_main.cc
+Note: Google Test filter = BooksSlice.ADepthBoundsEachSide
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from BooksSlice
+[ RUN      ] BooksSlice.ADepthBoundsEachSide
+unknown file: Failure
+C++ exception with description "this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent." thrown in the test body.
+
+[  FAILED  ] BooksSlice.ADepthBoundsEachSide (7 ms)
+[----------] 1 test from BooksSlice (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (8 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] BooksSlice.ADepthBoundsEachSide
+
+ 1 FAILED TEST
+
+
+86% tests passed, 4 tests failed out of 29
+
+Label Time Summary:
+orderbook    =   4.26 sec*proc (29 tests)
+
+Total Test time (real) =   4.32 sec
+
+The following tests FAILED:
+	680 - BooksSlice.AFullStreamComposesTheBookTheApplicationGave (Failed) orderbook
+	681 - BooksSlice.AnIncrementalStreamComposesTheBookTheApplicationGave (Failed) orderbook
+	682 - BooksSlice.AnEarlierBookReadsAsItWas (Failed)     orderbook
+	683 - BooksSlice.ADepthBoundsEachSide (Failed)          orderbook
+Errors while running CTest

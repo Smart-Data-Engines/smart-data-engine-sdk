@@ -1,0 +1,4 @@
+cryptography          50.0.2
+orderbook-dbengine    0.1.0
+pytest                9.2.0
+smart-data-engine-sdk 0.2.1.dev0

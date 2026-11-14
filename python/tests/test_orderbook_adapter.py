@@ -3,7 +3,7 @@
 The split between this file and `test_orderbook_slice.py` is deliberate and worth reading before
 adding to either.
 
-The engine's Python client is not on PyPI and its shared library has to be built from C++, so a live
+The engine's Python client is an extra and its shared library has to be built from C++, so a live
 test cannot run everywhere. Everything the adapter *decides* - the shape check, the refusal of a
 non-zero level, the refusal on a key collision, unknown-not-zero for the sequence number, the
 literal check on a symbol - is decided before the client library is called, so it is tested here and
@@ -145,9 +145,23 @@ def test_a_data_directory_or_a_host_but_not_both_and_not_neither() -> None:
 
 
 def test_an_absent_client_library_says_where_to_get_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """By the extra this package declares, read from its metadata: the message said the client was
+    not on PyPI for four weeks after it was."""
+    import tomllib
+    from pathlib import Path
+
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+    (requirement,) = project["optional-dependencies"]["orderbook"]
+    distribution = requirement.split(">=")[0]
     monkeypatch.setitem(sys.modules, "orderbook_engine", None)
-    with pytest.raises(EngineError, match="not on PyPI"):
+    with pytest.raises(EngineError) as refusal:
         OrderbookEngine("/tmp/x").connect()
+    message = str(refusal.value)
+    assert f"pip install '{project['name']}[orderbook]'" in message
+    assert f"({distribution})" in message
+    assert "OB_LIB_PATH" in message and "not on PyPI" not in message
 
 
 # ── ensure_schema: verify, because there is nothing to create ───────────────────────────────────
