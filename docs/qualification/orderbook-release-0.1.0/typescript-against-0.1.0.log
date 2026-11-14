@@ -1,0 +1,57 @@
+
+ RUN  v3.2.7 <sdk>/typescript
+
+ ❯ tests/orderbook.books.test.ts (3 tests | 3 failed) 201ms
+   × a book stream, from TypeScript > composes the book the application gave, full 131ms
+     → this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+   × a book stream, from TypeScript > composes the book the application gave, incremental 29ms
+     → this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+   × a book stream, from TypeScript > reads an earlier book as it was 27ms
+     → this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+ ✓ tests/orderbook.slice.test.ts (7 tests) 3552ms
+   ✓ the orderbook engine, from TypeScript > reads what the reference library wrote, and the reference reads what this one wrote  1141ms
+   ✓ the orderbook engine with credentials and TLS, from TypeScript > refuses a wrong secret as an authentication failure, and plain text at the TLS port  2031ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/orderbook.books.test.ts > a book stream, from TypeScript > composes the book the application gave, full
+ FAIL  tests/orderbook.books.test.ts > a book stream, from TypeScript > composes the book the application gave, incremental
+EngineError: this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+ ❯ src/session.ts:824:15
+    822|       }
+    823|       if (!books.supportsReplaceSide()) {
+    824|         throw new EngineError(
+       |               ^
+    825|           'this orderbook server does not replace a side of a book (ca…
+    826|             'stream needs: in full mode for every update, in increment…
+ ❯ src/_usage.ts:135:28
+ ❯ withSession src/_usage.ts:33:23
+ ❯ SessionUsage.operation src/_usage.ts:134:20
+ ❯ Session.bookStream src/session.ts:812:23
+ ❯ tests/orderbook.books.test.ts:101:38
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/orderbook.books.test.ts > a book stream, from TypeScript > reads an earlier book as it was
+EngineError: this orderbook server does not replace a side of a book (capability replace_side), which a book stream needs: in full mode for every update, in incremental mode for each resync. Upgrade the server; nothing was sent.
+ ❯ src/session.ts:824:15
+    822|       }
+    823|       if (!books.supportsReplaceSide()) {
+    824|         throw new EngineError(
+       |               ^
+    825|           'this orderbook server does not replace a side of a book (ca…
+    826|             'stream needs: in full mode for every update, in increment…
+ ❯ src/_usage.ts:135:28
+ ❯ withSession src/_usage.ts:33:23
+ ❯ SessionUsage.operation src/_usage.ts:134:20
+ ❯ Session.bookStream src/session.ts:812:23
+ ❯ tests/orderbook.books.test.ts:154:36
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  3 failed | 7 passed (10)
+   Start at  12:03:08
+   Duration  9.91s (transform 3.47s, setup 0ms, collect 7.70s, tests 3.75s, environment 7ms, prepare 918ms)
+

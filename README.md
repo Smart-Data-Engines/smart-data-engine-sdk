@@ -333,8 +333,8 @@ The integration slices run against real servers rather than fakes. A fake would 
 this library believes about types, quoting and transactions, which is exactly the set of beliefs
 worth checking.
 
-The orderbook slices are split rather than waived. That engine's Python client is not on PyPI and
-its shared library is built from C++, so they cannot run wherever the other suites do. Everything the
+The orderbook slices are split rather than waived. That engine's server and shared library are
+built from C++, so they cannot run wherever the other suites do. Everything the
 adapter *decides* happens before the client library is called and is tested against fakes, which run
 everywhere:
 - the shape check, the level refusal and the refusal on a duplicate key;
@@ -368,6 +368,10 @@ bounds, source/copy ordering and uncertain outcomes.
 including portable keyset pages, typed values and explicit failure semantics.
 
 Engine credentials and verified TLS configuration: [connection guide](docs/engine-connections.md).
+
+[What works with what](docs/compatibility.md): the engine versions the suites run against, the
+drivers, and the map contracts and signed packets each release reads. [Upgrading](docs/upgrading.md)
+says, release by release, what can make a working application fail and what to do about it.
 
 Physical design (placement map contract 5): [key order, ClickHouse partitions and index
 methods](docs/physical-design.md) - what a map can declare, how it renders, how the result is read

@@ -348,6 +348,14 @@ def _scan_of(plan: ReadPlan) -> _Scan | None:
     )
 
 
+CLIENT_PREDATES_REPLACE = (
+    "the orderbook engine's Python client installed here cannot replace a side of a book: it has "
+    "no replace_side, which came after the engine's 0.1.0, with its updates by price. A book "
+    "stream needs it, in full mode for every update and in incremental mode for each resync. "
+    "Install the client of the engine you run; nothing was sent."
+)
+"""What a book stream is told on a client older than the server it talks to."""
+
 PLAINTEXT = (
     "an orderbook connection to a host other than the loopback needs its TLS stated: tls=on (with "
     "ca for a private CA), or tls=off if plaintext is intended"
@@ -513,12 +521,14 @@ class OrderbookEngine:
             import orderbook_engine
         except ImportError as exc:  # pragma: no cover - depends on a separate install
             raise EngineError(
-                "the orderbook adapter needs the engine's own Python client, which is not on PyPI: "
-                "install it from https://github.com/Smart-Data-Engines/"
-                "low-cost-and-low-latency-orderbook-dbengine (its `python/` directory) and, for "
-                "local mode, point OB_LIB_PATH at liborderbook_shared.so. It is not declared as an "
-                "extra here because an extra resolving to a git URL cannot be published, and a "
-                "dependency you cannot install from an index is worse than one you were told about."
+                "the orderbook adapter needs the engine's own Python client: "
+                "`pip install 'smart-data-engine-sdk[orderbook]'` installs it from PyPI "
+                "(orderbook-dbengine), or use the `python/` directory of the engine's repository, "
+                "https://github.com/Smart-Data-Engines/"
+                "low-cost-and-low-latency-orderbook-dbengine, "
+                "at the commit of the engine you run. For local mode, also point OB_LIB_PATH at "
+                "liborderbook_shared.so, built from that source: the package on PyPI is the client "
+                "alone."
             ) from exc
         # Typed as Any on purpose: the client is typed where it is installed and absent from the
         # index everywhere else, and this module has to check the same in both.
@@ -833,9 +843,23 @@ class OrderbookEngine:
         except Exception as exc:
             raise EngineError(f"could not read the orderbook server's capabilities: {exc}") from exc
 
+    def _replace(self) -> Any:
+        """The client's replacement of a side, or a refusal that names the client.
+
+        The engine's 0.1.0 client - the one on PyPI - has no ``replace_side``: it came later, with
+        the engine's updates by price. Against a server that announces the capability, such a
+        client made a book stream fail with an ``AttributeError``, measured on 14 November 2026.
+        """
+        call = getattr(self._ob, "replace_side", None)
+        if not callable(call):
+            raise EngineError(CLIENT_PREDATES_REPLACE)
+        return call
+
     def check_book(self, symbol: str, exchange: str) -> None:
-        """Refuse the names of a book that a write to it would refuse, for a caller that holds them
-        across many writes - a book stream - and should hear it before the first one."""
+        """Refuse what the first write of a book stream would refuse, for a caller that holds a
+        book across many writes and should hear it before the first one: a client that cannot
+        replace a side, and the names of the book."""
+        self._replace()
         _name(symbol, "symbol")
         _name(exchange, "exchange")
 
@@ -878,7 +902,7 @@ class OrderbookEngine:
         checked = self._book_levels(levels, "")
         if not checked and not replace:
             return   # a change of nothing is not an update
-        call = self._ob.replace_side if replace else self._ob.insert
+        call = self._replace() if replace else self._ob.insert
         try:
             call(
                 symbol,
