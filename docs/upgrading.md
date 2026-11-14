@@ -196,5 +196,7 @@ Open a session on each service's map in a staging environment first: every refus
 a layout or a connection string can cause happens when the session opens or when the engine is
 constructed, before a row is read or written. The refusals of a value and of a key happen at the
 call that passes it, so they need the application's own tests. The local operator's commands work as they
-did: `depart` and `erase` are new, and its configuration gains one optional key, `chunk_rows`
-([`local-cutover.md`](local-cutover.md)).
+did. `depart`, `erase` and `backfill` are new, and its configuration gains two optional keys,
+`chunk_rows` and `repair` ([`local-cutover.md`](local-cutover.md)). A cutover repairs a copy that
+`backfill` filled by the rows that differ, where it refilled every copy whole; `repair: "refill"`
+keeps the earlier behaviour, and the receipt is the same either way.

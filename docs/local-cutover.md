@@ -154,6 +154,12 @@ pause - at 5000 the measured pause of a 200 000-row move was a third to a half s
 ([qualification/cutover-limits](qualification/cutover-limits/README.md)) - and holds more rows in the
 operator's memory at once, a few copies of each, so a group of wide rows keeps the default.
 
+`repair`, optional, is how a cutover makes its copy the frozen source's equal inside the pause:
+`diff` when it is absent, or `refill`. `diff` compares the two and writes over the rows that differ.
+`refill` empties the copy and copies every row, which is what every cutover did before `diff`
+existed and what `diff` goes back to by itself where it cannot do better
+([Filling the copy before the pause](#filling-the-copy-before-the-pause)).
+
 Obtain the project id and public keys through the authenticated enrollment channel, independently
 of the supplied packet. Populate the named variables locally. For PostgreSQL, operator and runtime
 connections must resolve the same schema/search path. Engine binding names must match the map and
@@ -169,9 +175,13 @@ so caller changes after verification cannot replace the document being persisted
 ```sh
 sde-operator --config local-operator.json --project-dir ./client-state enroll --map before.json
 sde-operator --config local-operator.json --project-dir ./client-state status
+sde-operator --config local-operator.json --project-dir ./client-state backfill
 sde-operator --config local-operator.json --project-dir ./client-state execute --plan cutover.json
 sde-operator --config local-operator.json --project-dir ./client-state current-map
 ```
+
+`backfill` fills the copy before the pause, and is what makes the pause short
+([Filling the copy before the pause](#filling-the-copy-before-the-pause)).
 
 `status` and `current-map` work without database connections or connection environment variables.
 `current-map` verifies and prints the same snapshot of the signed file. The status distinguishes
@@ -198,11 +208,16 @@ qualifies schemas, capabilities, native identities, runtime privileges, existing
 and records its execution intent. It then:
 
 1. Revokes target runtime access, drains the target, freezes the source and revokes source access.
-2. Opens the target only to operator repair at E+1. It truncates that disposable copy and rebuilds
-   it from the frozen source, stamping copied rows with E+1. This includes committed source rows
-   whose original application process failed before fan-out.
-3. Freezes and drains both copies again and compares exact values and stable counts. No AI is
-   involved, and no rows are sent to the controller.
+2. Opens the target only to operator repair at E+1. Where the copy is mostly there, it reads the
+   frozen source and the copy side by side and writes over the rows that differ - a row the copy
+   lacks, a row it holds with another value - stamping each with E+1 and reading it back. Where it
+   is not, it truncates that disposable copy and rebuilds it from the frozen source, stamping every
+   row with E+1. Either way this includes committed source rows whose original application process
+   failed before fan-out.
+3. Freezes and drains both copies again and compares, under those barriers. After a rebuild: the
+   exact values of every row, and stable counts. After a repair of what differs: the exact values
+   of every row of the copy that carries E+1, and stable counts. No AI is involved, and no rows are
+   sent to the controller.
 4. Persists success or abort before native activation. Success retires the source at E+2 and
    activates the target at E+2. Abort restores the complete source at E+1 and keeps the target closed.
 5. Records the terminal map version, atomically publishes its signed map, restores runtime access
@@ -254,28 +269,96 @@ CLI exit codes: 0 is a result, 2 a refused/invalid input, and 3 an operation or 
 requiring inspection. A successful abort returns 0 with `outcome: "abort"`; consumers must read the
 outcome. Driver error details are omitted from the JSON output to avoid including local credentials.
 
+## Filling the copy before the pause
+
+A staging creates the copy and publishes the map that fans new writes out to it, and copies
+nothing. A cutover that follows it directly therefore copies the whole group inside its pause.
+`sde-operator backfill` copies it before the pause instead, while the application keeps writing:
+
+- It fills every copy the map in force names, from its source, with the operator's logins: the
+  library's own `sde.backfill`, chunk first and marker after. A run that stops - a signal, a lost
+  connection - is continued by the next one from its marker, and a run after the end copies nothing.
+- It takes no barrier and pauses nothing. It runs under the project lock, so beside no staging,
+  cutover or index build, and is refused while one is unfinished.
+- It prints one record a group: the rows copied and whether the end of each table was reached.
+
+The cutover then finds a copy that is the source's equal but for a few rows, and its pause
+compares the two and writes over those: a row written by a session still on the earlier map, which
+fans nothing out; a fan-out that failed after its source commit; and, on ClickHouse, a row whose
+older version the backfill wrote after a newer one had arrived. Nothing is emptied and no row is
+deleted.
+
+**The cutover refills the copy whole, as before, where a repair of what differs is not the better
+way or not possible**, and its local record says which it did:
+- the copy holds less than half the rows of its source, which is the copy that was never filled;
+- an engine of the copy cannot be written over and read by generation, which today is
+  Elasticsearch;
+- the configuration says `repair: "refill"`;
+- the copy holds a key the source lacks, which only emptying removes;
+- a row the repair wrote could not be read back as written;
+- the repair's pass read another number of rows than the source counts: an answer that ended
+  before the table did, which ClickHouse gives without an error to a login whose settings cap a
+  result and say `break`
+  ([measured](qualification/cutover-repair/README.md#an-answer-that-ends-before-the-table-does)).
+  What the pass did not read, it did not compare.
+
+**Why comparing the rows the repair wrote is the whole comparison.** While the copy is repaired it
+is at the cutover's own write generation, E+1, and admits a write of that generation only: the two
+constraints of the [write-fence protocol](write-fences.md), which PostgreSQL holds an `UPDATE` to as
+well. So every row of the copy written or changed since then carries E+1, and a row that carries
+another generation is as it was. At the decision, under the final barriers, a row of the copy
+either carries E+1 and has just been compared with the source's, or carries another generation: it
+has not changed since the repair's pass compared it with a source frozen since before that pass,
+and had it differed, the pass wrote over it and read it back carrying E+1. The pass visits every
+key of the source, which it holds itself to by the source's count, so the copy holds each, and
+equal counts leave no room for a key the source lacks or for a row deleted after it was compared.
+Nothing is inferred from a count or a checksum.
+
+What this assumes is what the pause already assumed: an engine's own constraints hold for whoever
+writes. One write goes past them, measured on ClickHouse 24.8: a mutation (`ALTER TABLE ... UPDATE`)
+checks no constraint. No runtime login the operator admits can run one: it qualifies them as
+holding `SELECT` and `INSERT` alone. An administrator's mutation was never seen once the comparison
+had read its row. For a row the repair did not write, that reading is now the repair's pass, where
+it was the comparison under the final barriers: earlier in the same pause, by the seconds between
+the two.
+
+It assumes too, as every comparison of this library does, that an answer without an error is the
+whole answer. For the one statement that reads a table whole, the repair's pass checks that
+itself, by the source's count. A ClickHouse login set to break its reads short, or its statements
+off by time (`read_overflow_mode`, `timeout_overflow_mode` = `break`), is answered short counts as
+well; the operator does not check a login for that today.
+
+The receipt does not change: its comparison carries the same counts, taken the same way. Which way
+the copy was repaired, and how many rows that compared and wrote, is in the completed plan's
+`repair` record in `project.json`, numbers only.
+
 ## How large a group a move fits
 
-The pause covers refilling the copy from the frozen source and comparing every value, so it grows
-with the group, and a group that does not fit its budget is not moved: the watchdog stops the
-pause at the budget and recovery aborts the cutover, with the source as it was. Measured on a
-laptop (i3-7100U, 4 threads) with PostgreSQL 15.19 and ClickHouse 24.8.14.39 on the same machine,
-rows of three integer columns and the 30 s budget of the live tests
-([qualification/cutover-limits](qualification/cutover-limits/README.md)):
+A group that does not fit its budget is not moved: the watchdog stops the pause at the budget and
+recovery aborts the cutover, with the source as it was. What the pause covers depends on whether
+the copy was filled before it. Measured on a laptop (i3-7100U, 4 threads) with PostgreSQL 15.19 and
+ClickHouse 24.8.14.39 on the same machine, rows of three integer columns and the 30 s budget of the
+live tests ([qualification/cutover-repair](qualification/cutover-repair/README.md), and
+[qualification/cutover-limits](qualification/cutover-limits/README.md) for the pause as it was):
 
-| move | rows within 30 s | pause a row |
-|---|---|---|
-| PostgreSQL → ClickHouse | about 900 000, at the edge | about 32 µs |
-| ClickHouse → PostgreSQL | about 450 000 | 46-58 µs |
+| move | the copy was | pause for 200 000 rows | rows within 30 s |
+|---|---|---|---|
+| PostgreSQL → ClickHouse | never filled: refilled in the pause | 8.1-10.6 s | about 900 000, at the edge |
+| PostgreSQL → ClickHouse | filled by `backfill` | 2.5-3.5 s | 3 million, the largest size that fitted |
+| ClickHouse → PostgreSQL | never filled: refilled in the pause | 11.5-11.9 s | about 450 000 |
+| ClickHouse → PostgreSQL | filled by `backfill` | 2.2-2.6 s | 3 million, the largest size that fitted |
 
 The budget is signed for each cutover, so a larger one moves a larger group in a longer write
-pause, and a larger `chunk_rows` moves a larger group in the same one. A wider row costs more than these. Qualify the intended group on the intended engines with
-the scripts in that record before signing a budget for it; an index change needs no move at all
+pause, and a larger `chunk_rows` moves a larger group in the same one. A wider row costs more than
+these. Qualify the intended group on the intended engines with the scripts in those records before
+signing a budget for it; an index change needs no move at all
 ([in-place index builds](in-place-index.md)).
 
 ## Evidence
 
-`test_local_cutover_live.py` exercises both directions, missing fan-out, mismatching repair,
+`test_local_cutover_live.py` exercises both directions and both repairs, missing fan-out, a copy
+never filled, a key the source lacks, a source answer the server cut short, a write and a deletion
+in the copy after its repair, mismatching repair,
 checkpoints before and after success/abort decisions, lost completion responses, actual SIGKILL,
 a competing process lock, permanent detach recovery, partial native epoch DDL and watchdog
 interruptions. `test_operator_native_live.py` exercises actual restricted grants and refusal when

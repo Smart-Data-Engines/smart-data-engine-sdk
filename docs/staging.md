@@ -4,8 +4,10 @@ A signed staging packet authorizes one new maintained copy of a source-only grou
 `LocalCutover.stage` executor creates the copy in the customer's environment and publishes the
 prepared map. Python and TypeScript applications can consume that map. The source remains
 unchanged and authoritative; existing source-only sessions can continue writing. Staging does
-not backfill data or switch reads. The subsequent [local cutover](local-cutover.md) repairs missing
-fan-out, compares frozen data and activates one of its separately authorized outcomes.
+not backfill data or switch reads. `sde-operator backfill` fills the copy afterwards, while writes
+continue ([Filling the copy before the pause](local-cutover.md#filling-the-copy-before-the-pause)).
+The subsequent [local cutover](local-cutover.md) repairs missing fan-out, compares frozen data and
+activates one of its separately authorized outcomes.
 
 ## Signed packet protocols 1 and 2
 

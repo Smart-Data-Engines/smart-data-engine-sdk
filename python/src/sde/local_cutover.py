@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from time import monotonic_ns
 from typing import TYPE_CHECKING, Any, cast
@@ -27,10 +28,17 @@ from .groups import colocation_groups
 from .index_build import IndexPlan, IndexReceipt
 from .inspection import InspectionContext
 from .layout import group_columns
-from .migration import CHUNK_ROWS, _plan, precision_refusal
+from .migration import CHUNK_ROWS, BackfillProgress, _plan, precision_refusal
 from .model import LogicalModel
 from .physical import refuse_findings
 from .placement import WATERMARK_TABLE, PlacementMap, load_map
+from .reconcile import (
+    Reconciliation,
+    compare_stamped,
+    copy_is_mostly_there,
+    reconcile,
+    repairs_what_differs,
+)
 from .staging import StagingPlan, StagingReceipt
 from .watermark import newer_map
 
@@ -38,6 +46,15 @@ if TYPE_CHECKING:
     from ._cutover_project import ProjectState
     from .engines._operator import NativeOperations, NativeOperator, TableIdentity
     from .erasure import ErasurePlan, ErasureReceipt, ErasureRequest
+
+
+REPAIRS = ("diff", "refill")
+"""How a cutover makes its copy the frozen source's equal inside the pause.
+
+``diff`` compares the two and writes over the rows that differ; ``refill`` empties the copy and
+copies every row, which is what every cutover did before and what ``diff`` falls back to. Both end
+in a comparison under the final barriers, and neither decides success by anything else.
+"""
 
 
 class CutoverRecoveryRequired(EngineError):
@@ -126,6 +143,7 @@ class LocalCutover:
         operators: Mapping[str, Any],
         runtime: Mapping[str, Sequence[Any]],
         chunk_rows: int = CHUNK_ROWS,
+        repair: str = "diff",
     ) -> None:
         if os.name != "posix":
             raise MigrationRefused("local cutover requires a local POSIX filesystem")
@@ -135,6 +153,10 @@ class LocalCutover:
         if chunk_rows < 1 or set(runtime) != set(operators):
             raise MigrationRefused(
                 "cutover needs positive chunks and matching operator/runtime bindings"
+            )
+        if repair not in REPAIRS:
+            raise MigrationRefused(
+                f"a cutover repairs its copy by one of {list(REPAIRS)}, not {repair!r}"
             )
         self.model, self.project_id = model, project_id
         self.keys = (
@@ -148,6 +170,7 @@ class LocalCutover:
         }
         self.store: ProjectState = ProjectState(Path(directory), project_id, model.version)
         self.chunk_rows = chunk_rows
+        self.repair = repair
         self._pid = os.getpid()
         self._after_step: Callable[[str], None] = lambda _step: None
         self._started = 0
@@ -176,6 +199,43 @@ class LocalCutover:
         return load_local_map(
             self.store.root, model=self.model, project_id=self.project_id, public_key=self.keys
         )
+
+    def backfill(self, *, stop_after: int | None = None) -> list[BackfillProgress]:
+        """Fill every copy the map in force names from its source, while writes continue.
+
+        A staging creates a copy and publishes the map that fans new writes out to it, and copies
+        nothing. Without this, the cutover that follows copies the whole group inside its pause.
+        With it the pause compares the two and repairs what differs: the rows a session on the
+        earlier map wrote meanwhile, and on ClickHouse a row whose older version this copy wrote
+        after a newer one arrived.
+
+        It is the library's own :func:`sde.backfill` on the operator's logins: chunk first and
+        marker after, so a run that stops is continued by the next one. Under the project lock,
+        beside no staging, cutover or index build; ``stop_after`` bounds a run to that many
+        chunks an entity.
+        """
+        from .migration import backfill
+
+        self._owner()
+        with self.store.lock():
+            state = self.store.read()
+            if state["execution"] is not None:
+                raise MigrationRefused(
+                    "an unfinished operation of this project holds its tables; resume or abandon "
+                    "it before a backfill"
+                )
+            current = self.active_map()
+            groups = sorted(name for name, spot in current.groups.items() if spot.also_write)
+            if not groups:
+                raise MigrationRefused(
+                    "the map in force names no copy to fill: a backfill follows a staging and "
+                    "precedes its cutover"
+                )
+            context = InspectionContext(self.model, current, self.engines, self.project_id)
+            return [
+                backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
+                for group in groups
+            ]
 
     def erase(
         self, request: ErasureRequest, *, execute: bool = False, at: str | None = None
@@ -414,7 +474,44 @@ class LocalCutover:
             for hold in holds:
                 self._call(fence.release, hold)
 
-    def _repair(self, plan: CutoverPlan, execution: dict[str, Any]) -> None:
+    def _repair(self, plan: CutoverPlan, execution: dict[str, Any]) -> Reconciliation | None:
+        """Make the copy the frozen source's equal, and say which way.
+
+        By what differs where every engine of the copy can and the copy is mostly there
+        (:mod:`sde.reconcile`): one read of each side and a write of the rows that differ, which
+        after a backfill and under fan-out are few. Whole, as before - emptied and refilled -
+        where an engine cannot, where the copy was never filled, where the operator's
+        configuration says ``refill``, where the copy holds a key the source lacks, which only
+        emptying removes, where a row this repair wrote could not be read back, and where its
+        walk of the source read another number of rows than the source counts. What comes back
+        decides the comparison that follows: the rows this repair wrote, or every row.
+        """
+        context = InspectionContext(self.model, plan.before, self.engines, self.project_id)
+        if (
+            self.repair == "diff"
+            and repairs_what_differs(context, plan.group)
+            and copy_is_mostly_there(context, plan.group, call=self._call)
+        ):
+            done = reconcile(
+                context,
+                plan.group,
+                epoch=plan.maintenance_epoch,
+                chunk_rows=self.chunk_rows,
+                call=self._call,
+            )
+            if done.settled:
+                execution["repair"] = {"mode": "diff", **done.as_record()}
+                return done
+            # A key the source lacks, a write that could not be read back, or a walk that did
+            # not read the whole source: only the whole refill and the whole comparison settle it.
+            self._refill(plan, execution)
+            execution["repair"] = {"mode": "refill", "after": done.as_record()}
+            return None
+        self._refill(plan, execution)
+        execution["repair"] = {"mode": "refill"}
+        return None
+
+    def _refill(self, plan: CutoverPlan, execution: dict[str, Any]) -> None:
         from .engines._operator import TableIdentity
 
         for name, native in self.native.items():
@@ -566,6 +663,9 @@ class LocalCutover:
         state["completed"][plan.plan_id] = {
             "plan_fingerprint": plan.fingerprint,
             "receipt": receipt,
+            # Local, and numbers only: which way the copy was repaired and how many rows that
+            # wrote. The receipt keeps the fields the control plane reads.
+            "repair": execution.get("repair"),
         }
         state["active_map"] = json.loads(plan.candidate_payload(outcome))
         state["execution"] = None
@@ -653,9 +753,18 @@ class LocalCutover:
                     "release_maintenance",
                     lambda: self._release(execution, "target", [execution["holds"]["maintenance"]]),
                 )
-                self._step(state, "repair", lambda: self._repair(plan, execution))
+                reconciled = self._step(state, "repair", lambda: self._repair(plan, execution))
                 context = InspectionContext(self.model, plan.before, self.engines, self.project_id)
                 spot = plan.before.groups[plan.group]
+                # After a repair of what differs, the rows it wrote and both counts; after a
+                # refill, every row. Under the same barriers either way.
+                compare = (
+                    None
+                    if reconciled is None
+                    else partial(
+                        compare_stamped, epoch=plan.maintenance_epoch, reconciled=reconciled
+                    )
+                )
                 report = self._step(
                     state,
                     "verify_frozen",
@@ -670,6 +779,7 @@ class LocalCutover:
                             spot.derived[0].id: plan.maintenance_epoch,
                         },
                         chunk_rows=self.chunk_rows,
+                        compare=compare,
                     ),
                     hold=execution["holds"]["final"],
                 )

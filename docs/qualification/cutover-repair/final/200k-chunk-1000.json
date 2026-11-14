@@ -1,0 +1,744 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "commit": "1f8f87ea88b410d8078fbf2a8729cee33257deba",
+  "results": [
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": null,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 11523,
+      "within_budget": true,
+      "repair_ms": 6021,
+      "verify_frozen_ms": 5103,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 0,
+      "wall_ms": 11682,
+      "run": 1,
+      "load_before": [
+        2.44,
+        3.36,
+        3.52
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6360,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2605,
+      "within_budget": true,
+      "repair_ms": 1708,
+      "verify_frozen_ms": 320,
+      "repair": {
+        "chunks": 200,
+        "mode": "diff",
+        "rows": 200000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 2761,
+      "run": 1,
+      "load_before": [
+        2.89,
+        3.41,
+        3.54
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill-lost",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 200,
+      "backfill_ms": 6472,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2141,
+      "within_budget": true,
+      "repair_ms": 1529,
+      "verify_frozen_ms": 221,
+      "repair": {
+        "chunks": 201,
+        "mode": "diff",
+        "rows": 200200,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 200200,
+      "rows_target": 200200,
+      "chunks_compared": 202,
+      "wall_ms": 2298,
+      "run": 1,
+      "load_before": [
+        3.06,
+        3.43,
+        3.54
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill-refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6214,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 11729,
+      "within_budget": true,
+      "repair_ms": 5581,
+      "verify_frozen_ms": 5602,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 11898,
+      "run": 1,
+      "load_before": [
+        3.19,
+        3.45,
+        3.55
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": null,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 11940,
+      "within_budget": true,
+      "repair_ms": 6066,
+      "verify_frozen_ms": 5471,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 0,
+      "wall_ms": 12131,
+      "run": 2,
+      "load_before": [
+        3.72,
+        3.57,
+        3.59
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6029,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2173,
+      "within_budget": true,
+      "repair_ms": 1540,
+      "verify_frozen_ms": 223,
+      "repair": {
+        "chunks": 200,
+        "mode": "diff",
+        "rows": 200000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 2333,
+      "run": 2,
+      "load_before": [
+        4.55,
+        3.77,
+        3.65
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill-lost",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 200,
+      "backfill_ms": 9607,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2389,
+      "within_budget": true,
+      "repair_ms": 1652,
+      "verify_frozen_ms": 292,
+      "repair": {
+        "chunks": 201,
+        "mode": "diff",
+        "rows": 200200,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 200200,
+      "rows_target": 200200,
+      "chunks_compared": 202,
+      "wall_ms": 2560,
+      "run": 2,
+      "load_before": [
+        4.31,
+        3.75,
+        3.65
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill-refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 5607,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 11300,
+      "within_budget": true,
+      "repair_ms": 5645,
+      "verify_frozen_ms": 5211,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 11483,
+      "run": 2,
+      "load_before": [
+        3.96,
+        3.69,
+        3.63
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": null,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 11484,
+      "within_budget": true,
+      "repair_ms": 5970,
+      "verify_frozen_ms": 5105,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 0,
+      "wall_ms": 11656,
+      "run": 3,
+      "load_before": [
+        4.6,
+        3.85,
+        3.68
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6717,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2352,
+      "within_budget": true,
+      "repair_ms": 1609,
+      "verify_frozen_ms": 235,
+      "repair": {
+        "chunks": 200,
+        "mode": "diff",
+        "rows": 200000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 2566,
+      "run": 3,
+      "load_before": [
+        4.76,
+        3.93,
+        3.71
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill-lost",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 200,
+      "backfill_ms": 5951,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2275,
+      "within_budget": true,
+      "repair_ms": 1645,
+      "verify_frozen_ms": 212,
+      "repair": {
+        "chunks": 201,
+        "mode": "diff",
+        "rows": 200200,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 200200,
+      "rows_target": 200200,
+      "chunks_compared": 202,
+      "wall_ms": 2510,
+      "run": 3,
+      "load_before": [
+        5.12,
+        4.03,
+        3.75
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 200000,
+      "way": "backfill-refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6001,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 14047,
+      "within_budget": true,
+      "repair_ms": 6771,
+      "verify_frozen_ms": 6843,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 14239,
+      "run": 3,
+      "load_before": [
+        4.95,
+        4.03,
+        3.75
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": null,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 10562,
+      "within_budget": true,
+      "repair_ms": 4594,
+      "verify_frozen_ms": 5357,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 0,
+      "wall_ms": 10761,
+      "run": 1,
+      "load_before": [
+        5.5,
+        4.21,
+        3.81
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6380,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 3528,
+      "within_budget": true,
+      "repair_ms": 1952,
+      "verify_frozen_ms": 513,
+      "repair": {
+        "chunks": 200,
+        "mode": "diff",
+        "rows": 200000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 3744,
+      "run": 1,
+      "load_before": [
+        5.84,
+        4.34,
+        3.86
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill-lost",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 200,
+      "backfill_ms": 5677,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2449,
+      "within_budget": true,
+      "repair_ms": 1598,
+      "verify_frozen_ms": 281,
+      "repair": {
+        "chunks": 201,
+        "mode": "diff",
+        "rows": 200200,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 200200,
+      "rows_target": 200200,
+      "chunks_compared": 202,
+      "wall_ms": 2633,
+      "run": 1,
+      "load_before": [
+        5.63,
+        4.36,
+        3.88
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill-refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 4984,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 9072,
+      "within_budget": true,
+      "repair_ms": 3370,
+      "verify_frozen_ms": 4853,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 9241,
+      "run": 1,
+      "load_before": [
+        5.29,
+        4.33,
+        3.87
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": null,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 8136,
+      "within_budget": true,
+      "repair_ms": 3459,
+      "verify_frozen_ms": 4163,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 0,
+      "wall_ms": 8333,
+      "run": 2,
+      "load_before": [
+        5.24,
+        4.38,
+        3.9
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6711,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 3473,
+      "within_budget": true,
+      "repair_ms": 2263,
+      "verify_frozen_ms": 446,
+      "repair": {
+        "chunks": 200,
+        "mode": "diff",
+        "rows": 200000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 3674,
+      "run": 2,
+      "load_before": [
+        4.89,
+        4.33,
+        3.89
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill-lost",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 200,
+      "backfill_ms": 6088,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 3821,
+      "within_budget": true,
+      "repair_ms": 2407,
+      "verify_frozen_ms": 430,
+      "repair": {
+        "chunks": 201,
+        "mode": "diff",
+        "rows": 200200,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 200200,
+      "rows_target": 200200,
+      "chunks_compared": 202,
+      "wall_ms": 4028,
+      "run": 2,
+      "load_before": [
+        6.74,
+        4.79,
+        4.04
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill-refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 6449,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 8617,
+      "within_budget": true,
+      "repair_ms": 3702,
+      "verify_frozen_ms": 4138,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 8848,
+      "run": 2,
+      "load_before": [
+        6.16,
+        4.73,
+        4.03
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": null,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 8304,
+      "within_budget": true,
+      "repair_ms": 3461,
+      "verify_frozen_ms": 4339,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 0,
+      "wall_ms": 8483,
+      "run": 3,
+      "load_before": [
+        5.98,
+        4.76,
+        4.06
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 4799,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2494,
+      "within_budget": true,
+      "repair_ms": 1573,
+      "verify_frozen_ms": 253,
+      "repair": {
+        "chunks": 200,
+        "mode": "diff",
+        "rows": 200000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 2654,
+      "run": 3,
+      "load_before": [
+        5.53,
+        4.71,
+        4.05
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill-lost",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 200,
+      "backfill_ms": 4569,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2696,
+      "within_budget": true,
+      "repair_ms": 1856,
+      "verify_frozen_ms": 274,
+      "repair": {
+        "chunks": 201,
+        "mode": "diff",
+        "rows": 200200,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 200200,
+      "rows_target": 200200,
+      "chunks_compared": 202,
+      "wall_ms": 2860,
+      "run": 3,
+      "load_before": [
+        4.83,
+        4.58,
+        4.01
+      ]
+    },
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 200000,
+      "way": "backfill-refill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 4685,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 8402,
+      "within_budget": true,
+      "repair_ms": 3889,
+      "verify_frozen_ms": 3960,
+      "repair": {
+        "mode": "refill"
+      },
+      "rows_source": 200000,
+      "rows_target": 200000,
+      "chunks_compared": 200,
+      "wall_ms": 8568,
+      "run": 3,
+      "load_before": [
+        4.94,
+        4.61,
+        4.03
+      ]
+    }
+  ]
+}
