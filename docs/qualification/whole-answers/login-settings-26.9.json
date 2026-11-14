@@ -1,0 +1,234 @@
+{
+ "version": "26.9.27.3",
+ "rows": 200000,
+ "overflow_modes": {
+  "distinct_overflow_mode": "throw",
+  "group_by_overflow_mode": "throw",
+  "join_overflow_mode": "throw",
+  "read_overflow_mode": "throw",
+  "read_overflow_mode_leaf": "throw",
+  "result_overflow_mode": "throw",
+  "set_overflow_mode": "throw",
+  "sort_overflow_mode": "throw",
+  "timeout_overflow_mode": "throw",
+  "timeout_overflow_mode_leaf": "throw",
+  "transfer_overflow_mode": "throw"
+ },
+ "parts": 10,
+ "an error after the answer began": {
+  "as the statement is sent": {
+   "status": "200, then the body was cut after 111905 bytes"
+  },
+  "with wait_end_of_query=1": {
+   "status": 500,
+   "parses": false,
+   "says": "Code: 396. DB::Exception: Limit for result exceeded, max rows: 5.00 thousand, current rows: 5.10 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (official"
+  }
+ },
+ "logins": {
+  "nobody configured it": {
+   "settings": "",
+   "rows as it is": 200000,
+   "count as it is": "200000",
+   "rows, saying so": 200000,
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   },
+   "as JSON, saying so": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   }
+  },
+  "a result capped, break": {
+   "settings": "max_result_rows = 1000, result_overflow_mode = 'break'",
+   "rows as it is": 20000,
+   "count as it is": "200000",
+   "rows, saying so": "ERROR Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand, current rows: 20.00 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (official build))",
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 20000
+   },
+   "as JSON, saying so": {
+    "status": 500,
+    "parses": false,
+    "says": "Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand, current rows: 20.00 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (officia"
+   }
+  },
+  "the same, the mode constrained": {
+   "settings": "max_result_rows = 1000, result_overflow_mode = 'break' CONST",
+   "rows as it is": 20000,
+   "count as it is": "200000",
+   "rows, saying so": "ERROR Code: 452. DB::Exception: Setting result_overflow_mode should not be changed. (SETTING_CONSTRAINT_VIOLATION) (version 26.9.27.3 (official build))",
+   "count, saying so": "Code: 452. DB::Exception: Setting result_overflow_mode should not be changed. (SETTING_CONSTRAINT_VIOLATION) (version 26.9.27.3 (official build))",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 20000
+   },
+   "as JSON, saying so": {
+    "status": 500,
+    "parses": false,
+    "says": "Code: 452. DB::Exception: Setting result_overflow_mode should not be changed. (SETTING_CONSTRAINT_VIOLATION) (version 26.9.27.3 (official build))"
+   }
+  },
+  "the same, read-only": {
+   "settings": "max_result_rows = 1000, result_overflow_mode = 'break', readonly = 1",
+   "rows as it is": 20000,
+   "count as it is": "200000",
+   "rows, saying so": "ERROR Code: 164. DB::Exception: Cannot modify 'result_overflow_mode' setting in readonly mode. (READONLY) (version 26.9.27.3 (official build))",
+   "count, saying so": "Code: 164. DB::Exception: Cannot modify 'result_overflow_mode' setting in readonly mode. (READONLY) (version 26.9.27.3 (official build))",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 20000
+   },
+   "as JSON, saying so": {
+    "status": 500,
+    "parses": false,
+    "says": "Code: 164. DB::Exception: Cannot modify 'result_overflow_mode' setting in readonly mode. (READONLY) (version 26.9.27.3 (official build))"
+   }
+  },
+  "read-only, the server's own modes": {
+   "settings": "readonly = 1",
+   "rows as it is": 200000,
+   "count as it is": "200000",
+   "rows, saying so": 200000,
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   },
+   "as JSON, saying so": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   }
+  },
+  "rows to read capped, break": {
+   "settings": "max_rows_to_read = 50000, read_overflow_mode = 'break'",
+   "rows as it is": 200000,
+   "count as it is": "120000",
+   "rows, saying so": "ERROR Code: 158. DB::Exception: Limit for rows or bytes to read exceeded, max rows: 50.00 thousand, current rows: 91.81 thousand: While executing MergeTreeSelect(pool: ReadPoolInOrder, algorithm: InOrder). ",
+   "count, saying so": "Code: 158. DB::Exception: Limit for rows (controlled by 'max_rows_to_read' setting) exceeded, max rows: 50.00 thousand, current rows: 60.00 thousand. (TOO_MANY_",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   },
+   "as JSON, saying so": {
+    "status": 500,
+    "parses": false,
+    "says": "Code: 158. DB::Exception: Limit for rows or bytes to read exceeded, max rows: 50.00 thousand, current rows: 71.81 thousand: While executing MergeTreeSelect(pool"
+   }
+  },
+  "time capped, break": {
+   "settings": "max_execution_time = 0.001, timeout_overflow_mode = 'break'",
+   "rows as it is": 0,
+   "count as it is": "",
+   "rows, saying so": "ERROR Code: 159. DB::Exception: Timeout exceeded: elapsed 1.043 ms, maximum: 1.000 ms. (TIMEOUT_EXCEEDED) (version 26.9.27.3 (official build))",
+   "count, saying so": "Code: 159. DB::Exception: Timeout exceeded: elapsed 1.044 ms, maximum: 1.000 ms. (TIMEOUT_EXCEEDED) (version 26.9.27.3 (official build))",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": false,
+    "says": null
+   },
+   "as JSON, saying so": {
+    "status": 408,
+    "parses": false,
+    "says": "Code: 159. DB::Exception: Timeout exceeded: elapsed 1.443 ms, maximum: 1.000 ms. (TIMEOUT_EXCEEDED) (version 26.9.27.3 (official build))"
+   }
+  },
+  "a limit": {
+   "settings": "limit = 10",
+   "rows as it is": 10,
+   "count as it is": "200000",
+   "rows, saying so": 200000,
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 10
+   },
+   "as JSON, saying so": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   }
+  },
+  "a limit, read-only": {
+   "settings": "limit = 10, readonly = 1",
+   "rows as it is": 10,
+   "count as it is": "200000",
+   "rows, saying so": 200000,
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 10
+   },
+   "as JSON, saying so": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   }
+  },
+  "an offset": {
+   "settings": "offset = 199995",
+   "rows as it is": 5,
+   "count as it is": "",
+   "rows, saying so": 200000,
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 5
+   },
+   "as JSON, saying so": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   }
+  },
+  "a filter on every result": {
+   "settings": "additional_result_filter = 'id < 10'",
+   "rows as it is": 10,
+   "count as it is": "Code: 47. DB::Exception: Unknown expression or function identifier `id`. In scope id < 10. (UNKNOWN_IDENTIFIER) (version 26.9.27.3 (official build))",
+   "rows, saying so": 200000,
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 10
+   },
+   "as JSON, saying so": {
+    "status": 200,
+    "parses": true,
+    "rows_in_data": 200000
+   }
+  },
+  "a result capped, throw": {
+   "settings": "max_result_rows = 1000",
+   "rows as it is": "ERROR Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand, current rows: 20.00 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (official build))",
+   "count as it is": "200000",
+   "rows, saying so": "ERROR Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand, current rows: 20.00 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (official build))",
+   "count, saying so": "200000",
+   "as JSON, as it is": {
+    "status": 500,
+    "parses": false,
+    "says": "Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand, current rows: 20.00 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (officia"
+   },
+   "as JSON, saying so": {
+    "status": 500,
+    "parses": false,
+    "says": "Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand, current rows: 20.00 thousand. (TOO_MANY_ROWS_OR_BYTES) (version 26.9.27.3 (officia"
+   }
+  }
+ }
+}

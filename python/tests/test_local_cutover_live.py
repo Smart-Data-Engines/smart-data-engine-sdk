@@ -262,11 +262,12 @@ def test_a_pass_that_did_not_read_the_whole_source_ends_in_a_refill_and_the_whol
     copy the source's equal. The pass holds the rows it read to the source's count and says it
     fell short, and the cutover refills the copy and compares every row.
 
-    From ClickHouse the short answer is the server's own: the statement that reads the table whole
-    is sent with a cap on its result and ``break`` for what to do at it, which is what a settings
-    profile does to a login, at a size that bites that statement and no other. PostgreSQL has no
-    such mode, and the pass reads it a statement a chunk: there the test answers the second chunk
-    with nothing, once, to hold the same rule in the other direction."""
+    The answer is cut by the test: the stream after its first chunk where the adapter reads by one
+    (ClickHouse), the second chunk answered with nothing, once, where it reads a statement a chunk
+    (PostgreSQL). A ClickHouse server did this by itself to a login whose settings said ``break``
+    at a limit, which is how the check came to be; every statement says ``throw`` since
+    (``test_clickhouse_whole_answers_live.py``), and the check stays for whatever else ends an
+    answer early."""
     with fixture(source, tmp_path) as (executor, plan, _old, roles, _, target, _model, _public):
         roles[target].operator.upsert_in(
             "copy_events", [{"id": 2, "value": 999, sde.WRITE_EPOCH_COLUMN: 1}], key=["id"]
@@ -275,15 +276,16 @@ def test_a_pass_that_did_not_read_the_whole_source_ends_in_a_refill_and_the_whol
         operator = roles[source].operator
         cut: list[str] = []
         clickhouse = source == "clickhouse"
-        patched, name = (
-            (operator._cx, "query_row_block_stream") if clickhouse else (operator, "key_range")
-        )
+        patched, name = operator, "key_stream" if clickhouse else "key_range"
         whole = getattr(patched, name)
 
-        def capped_by_the_server(statement: str, *args: Any, **kwargs: Any) -> Any:
-            cut.append(statement)
-            settings = {"max_result_rows": 1, "max_block_size": 1, "result_overflow_mode": "break"}
-            return whole(statement, *args, settings=settings, **kwargs)
+        def one_chunk_of_the_stream(table: str, order: Any, *, chunk_rows: int) -> Iterator[Any]:
+            chunks = whole(table, order, chunk_rows=chunk_rows)
+            try:
+                yield next(chunks)
+                cut.append(table)
+            finally:
+                chunks.close()
 
         def nothing_for_the_second_chunk_once(table: str, order: Any, **bounds: Any) -> Any:
             if table == "source_events" and bounds.get("after") is not None and not cut:
@@ -291,9 +293,8 @@ def test_a_pass_that_did_not_read_the_whole_source_ends_in_a_refill_and_the_whol
                 return []
             return whole(table, order, **bounds)
 
-        setattr(
-            patched, name, capped_by_the_server if clickhouse else nothing_for_the_second_chunk_once
-        )
+        short = one_chunk_of_the_stream if clickhouse else nothing_for_the_second_chunk_once
+        setattr(patched, name, short)
         try:
             receipt = executor.execute(plan).as_record()
         finally:

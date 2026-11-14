@@ -685,4 +685,134 @@ TEST_F(ClickHouseLive, ACaThatIsNotCertificatesIsRefusedBeforeAnySocket) {
   EXPECT_TRUE(endpoint.seen().empty());
 }
 
+/// What every statement says with it, written out: the reference's `WHOLE_ANSWERS`.
+const std::vector<std::string> kSaid = {
+    "distinct_overflow_mode=throw", "group_by_overflow_mode=throw", "join_overflow_mode=throw",
+    "read_overflow_mode=throw",     "read_overflow_mode_leaf=throw", "result_overflow_mode=throw",
+    "set_overflow_mode=throw",      "sort_overflow_mode=throw",      "timeout_overflow_mode=throw",
+    "timeout_overflow_mode_leaf=throw", "transfer_overflow_mode=throw",
+    "limit=0", "offset=0", "additional_table_filters=%7B%7D", "additional_result_filter="};
+
+TEST_F(ClickHouseLive, EveryStatementSaysALimitIsAnErrorAndNoLimitOrFilterOfTheProfiles) {
+  // ClickHouse ends an answer early and raises nothing under an overflow mode of `break`, and a
+  // profile's limit, offset and result filter shorten one the same way. The library takes an
+  // answer without an error for the whole answer, so every request says otherwise: the handshake,
+  // a read, the DESCRIBE of an insert and the insert.
+  sde::live::ScriptedServer server({sde::live::version_answer("24.8.14.39"), "",
+                                    sde::live::texts_answer({"name", "type"}, {{"name", "String"}}),
+                                    ""});
+  sde::ClickHouseEngine ch("clickhouse://fixture:secret@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default");
+  ch.connect();
+  EXPECT_NE(message_of([&] { (void)ch.get("events", {{"name", std::string("k")}}); }), "accepted");
+  EXPECT_NE(message_of([&] { ch.insert("events", {{"name", std::string("k")}}); }), "accepted");
+  const std::vector<std::string> requests = server.requests();
+  ASSERT_EQ(requests.size(), 4U);
+  for (const std::string& request : requests) {
+    // The request line, with a '&' after its last setting so that each one is found whole.
+    const std::string line = request.substr(0, request.find(" HTTP/1.1")) + "&";
+    for (const std::string& said : kSaid) {
+      const std::size_t at = line.find("&" + said + "&");
+      EXPECT_NE(at, std::string::npos) << said << " in " << line;
+      // Once: which of two values the server would take is not found out in production.
+      EXPECT_EQ(line.find("&" + said.substr(0, said.find('=') + 1), at + 1), std::string::npos)
+          << said << " twice in " << line;
+    }
+  }
+}
+
+TEST_F(ClickHouseLive, ACountAnsweredNoRowAtAllIsAnErrorAndNotZero) {
+  // An empty table counts as one row holding 0. No row at all was measured for a statement cut off
+  // by time under `break` and for a profile's `offset`, on tables that held rows.
+  sde::live::ScriptedServer server({sde::live::version_answer("24.8.14.39"),
+                                    sde::live::texts_answer({"count()"}, {})});
+  sde::ClickHouseEngine ch("clickhouse://fixture:secret@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default");
+  ch.connect();
+  const std::string said = message_of([&] { (void)ch.count("events"); });
+  EXPECT_NE(said.find("count on events failed"), std::string::npos) << said;
+  EXPECT_NE(said.find("answered no row at all"), std::string::npos) << said;
+}
+
+TEST_F(ClickHouseLive, ALoginThatMayNotSayThrowIsRefusedByTheSettingsName) {
+  // The server names the setting it would not take, under codes 164 and 452. The refusal repeats
+  // a name this adapter sends and none of the server's text; any other refusal stays as it was.
+  struct Case {
+    std::string code;
+    std::string body;
+    std::string names;
+  };
+  const std::vector<Case> cases = {
+      {"164", "Code: 164. DB::Exception: Cannot modify 'result_overflow_mode' setting in readonly "
+              "mode. (READONLY) (version 24.8.14.39 (official build))", "result_overflow_mode"},
+      {"452", "Code: 452. DB::Exception: Setting limit should not be changed. "
+              "(SETTING_CONSTRAINT_VIOLATION) (version 26.9.27.3 (official build))", "limit"},
+      {"164", "Code: 164. DB::Exception: Cannot modify 'max_threads' setting in readonly mode. "
+              "(READONLY)", ""},
+      {"516", "Code: 516. DB::Exception: fixture: Authentication failed. (AUTHENTICATION_FAILED)", ""},
+  };
+  for (const Case& one : cases) {
+    sde::live::ScriptedServer server({sde::live::http_answer(
+        "500 Internal Server Error", one.body, "X-ClickHouse-Exception-Code: " + one.code + "\r\n")});
+    const std::string said = message_of([&] {
+      sde::ClickHouseEngine("clickhouse://fixture:secret@127.0.0.1:" + std::to_string(server.port()) +
+                            "/default")
+          .connect();
+    });
+    if (one.names.empty()) {
+      EXPECT_EQ(said, "could not connect to ClickHouse with the configured transport") << one.body;
+    } else {
+      EXPECT_NE(said.find("this ClickHouse login's " + one.names + " is not '"), std::string::npos)
+          << said;
+      EXPECT_NE(said.find("may not change it"), std::string::npos) << said;
+      EXPECT_EQ(said.find("DB::Exception"), std::string::npos) << said;
+    }
+  }
+}
+
+TEST_F(ClickHouseLive, ALoginTheServerWouldAnswerShortGetsAnErrorOrTheWholeTable) {
+  // On the live server, as the reference's test_clickhouse_whole_answers_live.py shows the premise
+  // of each: a result capped with `break` is cut at the cap and says nothing, and a profile's
+  // limit answers its first rows. Through this adapter the first is the server's error and the
+  // second the whole table.
+  const ClickHouseScope scope(dsn_);
+  const sde::live::ClickHouseAdmin admin = scope.admin();
+  admin.run("CREATE TABLE `events` (id Int64, value Int32) ENGINE = ReplacingMergeTree ORDER BY (id)");
+  admin.run("INSERT INTO `events` SELECT number, number % 7 FROM numbers(20000)");
+  const std::string capped = "sde_whole_" + sde::live::fresh(12);
+  const std::string limited = "sde_whole_" + sde::live::fresh(12);
+  const std::string secret = sde::live::fresh(48);
+  const auto drop = [&] {
+    for (const std::string& user : {capped, limited}) {
+      try {
+        scope.root().run("DROP USER IF EXISTS `" + user + "`");
+      } catch (...) {
+        // Reported by the assertion that failed; the name is never reused.
+      }
+    }
+  };
+  try {
+    scope.root().run("CREATE USER `" + capped + "` IDENTIFIED WITH sha256_password BY '" + secret +
+                     "' SETTINGS max_block_size = 100, max_result_rows = 5000, "
+                     "result_overflow_mode = 'break'");
+    scope.root().run("CREATE USER `" + limited + "` IDENTIFIED WITH sha256_password BY '" + secret +
+                     "' SETTINGS limit = 10");
+    for (const std::string& user : {capped, limited}) {
+      scope.root().run("GRANT SELECT ON `" + scope.name() + "`.`events` TO `" + user + "`");
+    }
+    const auto short_of = engine(sde::live::with_login(scope.dsn(), capped, secret));
+    const std::string said = message_of([&] { (void)short_of->key_range("events", {"id"}, {}, {}, {}); });
+    EXPECT_NE(said.find("396"), std::string::npos) << said;
+    EXPECT_EQ(short_of->key_range("events", {"id"}, {}, {}, 100).size(), 100U);
+    EXPECT_EQ(short_of->count("events"), 20000U);
+    const auto whole = engine(sde::live::with_login(scope.dsn(), limited, secret));
+    EXPECT_EQ(whole->key_range("events", {"id"}, {}, {}, {}).size(), 20000U);
+    EXPECT_EQ(whole->count("events"), 20000U);
+  } catch (...) {
+    drop();
+    throw;
+  }
+  drop();
+}
+
 }  // namespace

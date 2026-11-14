@@ -42,6 +42,24 @@ class TransportFailure : public std::exception {
 };
 
 /// What a failed exchange says to the caller, in the reference's words.
+/// What every statement of this adapter says with it, whatever its login's settings say.
+///
+/// ClickHouse ends an answer early and raises nothing when a limit is reached under an overflow
+/// mode of `break`: measured on 24.8 and 26.9, a login with `max_result_rows` and
+/// `result_overflow_mode = 'break'` was answered 48 193 and 20 000 rows of 200 000, and one with a
+/// small `max_execution_time` and `timeout_overflow_mode = 'break'` nothing at all, a count
+/// included. A profile's `limit`, `offset` and `additional_result_filter` shorten an answer the same
+/// way. The library takes an answer without an error for the whole answer, so it says `throw`, and
+/// no limit and no filter of the profile's, with every statement. A login that may not say so and
+/// whose own value is another is refused by the server, by the setting's name. The names and
+/// values of the reference's `WHOLE_ANSWERS`; the braces are an empty map, percent-encoded.
+inline constexpr std::string_view kWholeAnswers =
+    "&distinct_overflow_mode=throw&group_by_overflow_mode=throw&join_overflow_mode=throw"
+    "&read_overflow_mode=throw&result_overflow_mode=throw&set_overflow_mode=throw"
+    "&sort_overflow_mode=throw&timeout_overflow_mode=throw&transfer_overflow_mode=throw"
+    "&read_overflow_mode_leaf=throw&timeout_overflow_mode_leaf=throw"
+    "&limit=0&offset=0&additional_table_filters=%7B%7D&additional_result_filter=";
+
 inline constexpr std::string_view kNotReplayed =
     "ClickHouse transport failed; the operation was not replayed and its outcome may be unknown";
 

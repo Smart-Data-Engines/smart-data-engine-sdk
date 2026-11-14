@@ -240,3 +240,181 @@ def test_distribution_floor_matches_the_pre_connection_refusal() -> None:
     assert metadata["project"]["optional-dependencies"]["clickhouse"] == [
         f"clickhouse-connect>={MIN_CLICKHOUSE_CONNECT}"
     ]
+
+
+class Seen(Pool):
+    """A pool that keeps the URL it was asked for, which is where a statement's settings travel."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.urls: list[str] = []
+
+    def request(self, method: str, url: str, **options: Any) -> Any:
+        self.urls.append(url)
+        return super().request(method, url, **options)
+
+
+def _settings_of(url: str) -> dict[str, str]:
+    from urllib.parse import parse_qsl, urlsplit
+
+    return dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
+
+
+def test_what_every_statement_says_is_what_was_measured() -> None:
+    """The names and values, written out: the eleven overflow modes ClickHouse 24.8 and 26.9 have,
+    and the four settings of a profile that shorten an answer without one. A change here is a
+    change to what a login may be answered, so it is made in two places."""
+    from sde.engines.clickhouse import WHOLE_ANSWERS
+
+    assert dict(WHOLE_ANSWERS) == {
+        "distinct_overflow_mode": "throw",
+        "group_by_overflow_mode": "throw",
+        "join_overflow_mode": "throw",
+        "read_overflow_mode": "throw",
+        "read_overflow_mode_leaf": "throw",
+        "result_overflow_mode": "throw",
+        "set_overflow_mode": "throw",
+        "sort_overflow_mode": "throw",
+        "timeout_overflow_mode": "throw",
+        "timeout_overflow_mode_leaf": "throw",
+        "transfer_overflow_mode": "throw",
+        "limit": "0",
+        "offset": "0",
+        "additional_table_filters": "{}",
+        "additional_result_filter": "",
+    }
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.invalid:8123",
+        "http://example.invalid:8123/",
+        "http://example.invalid:8123/?database=sde&query_id=1",
+        "https://example.invalid/proxied/?database=sde&query=INSERT+INTO+t+%28limit%29&param_k=offset%3D1",
+    ],
+)
+def test_every_request_carries_them_after_whatever_it_carried(url: str) -> None:
+    """Whatever the driver built: no query, the session's parameters, a statement and a bound
+    value that spell one of the names inside a value, where they are not settings."""
+    from sde.engines.clickhouse import WHOLE_ANSWERS
+
+    pool = Seen()
+    _NoReplayTransport(pool).request("POST", url, body=b"SELECT 1")
+    (sent,) = pool.urls
+    carried, before = _settings_of(sent), _settings_of(url)
+    assert {name: carried[name] for name in WHOLE_ANSWERS} == dict(WHOLE_ANSWERS)
+    assert {name: carried[name] for name in before} == before
+    assert sent.split("?")[0] == url.split("?")[0] and sent.startswith(url.rstrip("?"))
+
+
+def test_a_ping_is_not_a_statement_and_is_sent_as_it_was() -> None:
+    pool = Seen()
+    _NoReplayTransport(pool).request("GET", "http://example.invalid:8123/ping")
+    assert pool.urls == ["http://example.invalid:8123/ping"]
+
+
+@pytest.mark.parametrize("name", ["limit", "result_overflow_mode", "additional_result_filter"])
+@pytest.mark.parametrize("first", [True, False])
+def test_a_statement_that_sets_one_of_them_itself_is_refused_before_it_is_sent(
+    name: str, first: bool
+) -> None:
+    """Which of two values of one setting the server would take is not found out in production."""
+    pool = Seen()
+    query = f"{name}=1&database=sde" if first else f"database=sde&{name}=1"
+    with pytest.raises(EngineError, match=f"cannot set {name} to '1'"):
+        _NoReplayTransport(pool).request("POST", f"http://example.invalid:8123/?{query}")
+    assert pool.urls == []
+
+
+def test_a_statement_that_says_one_of_them_as_this_adapter_does_keeps_it_once() -> None:
+    """The demo's query count bounds its statement's time and says ``throw`` for it itself. That
+    is this adapter's value, so the statement goes out with the setting once and the rest added."""
+    from sde.engines.clickhouse import WHOLE_ANSWERS
+
+    pool = Seen()
+    url = "http://example.invalid:8123/?readonly=1&max_execution_time=10&timeout_overflow_mode=throw"
+    _NoReplayTransport(pool).request("POST", url)
+    (sent,) = pool.urls
+    assert sent.startswith(url) and sent.count("timeout_overflow_mode=") == 1
+    carried = _settings_of(sent)
+    assert {name: carried[name] for name in WHOLE_ANSWERS} == dict(WHOLE_ANSWERS)
+    assert (carried["readonly"], carried["max_execution_time"]) == ("1", "10")
+    # And one that already says all of them is sent as it is.
+    from urllib.parse import urlencode
+
+    whole = "http://example.invalid:8123/?" + urlencode(WHOLE_ANSWERS)
+    _NoReplayTransport(pool).request("POST", whole)
+    assert pool.urls[-1] == whole
+
+
+READONLY = (
+    "HTTPDriver for http://example.invalid:8123 received ClickHouse error code 164\n"
+    " Code: 164. DB::Exception: Cannot modify 'result_overflow_mode' setting in readonly mode. "
+    "(READONLY) (version 24.8.14.39 (official build))"
+)
+CONSTRAINED = (
+    "Code: 452. DB::Exception: Setting timeout_overflow_mode should not be changed. "
+    "(SETTING_CONSTRAINT_VIOLATION) (version 26.9.27.3 (official build))"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        (READONLY, "result_overflow_mode"),
+        (CONSTRAINED, "timeout_overflow_mode"),
+        # A setting this adapter does not send, a limit that was reached, and another error.
+        (READONLY.replace("result_overflow_mode", "max_threads"), None),
+        ("Code: 396. DB::Exception: Limit for result exceeded, max rows: 1.00 thousand", None),
+        ("Code: 516. DB::Exception: reader: Authentication failed", None),
+    ],
+)
+def test_a_refusal_of_one_of_them_is_recognised_by_the_servers_code_and_name(
+    text: str, name: str | None
+) -> None:
+    from sde.engines.clickhouse import _setting_the_login_cannot_send
+
+    assert _setting_the_login_cannot_send(Exception(text)) == name
+    # As a driver hands it over: wrapped, the server's text one cause down.
+    try:
+        try:
+            raise ValueError(text)
+        except ValueError as inner:
+            raise RuntimeError("the driver's own words") from inner
+    except RuntimeError as wrapped:
+        assert _setting_the_login_cannot_send(wrapped) == name
+
+
+def test_a_refused_connection_can_say_the_servers_code_and_nothing_else_of_its_text() -> None:
+    from sde.engines.clickhouse import _server_code
+
+    assert _server_code(Exception(READONLY)) == 164
+    assert _server_code(Exception("Code: 396. DB::Exception: Limit for result exceeded")) == 396
+    assert _server_code(Exception("the name reader:hunter2 did not resolve")) is None
+    try:
+        try:
+            raise ValueError(CONSTRAINED)
+        except ValueError as inner:
+            raise RuntimeError("the driver's own words") from inner
+    except RuntimeError as wrapped:
+        assert _server_code(wrapped) == 452
+
+
+def test_a_count_answered_no_row_is_an_error_and_not_zero() -> None:
+    """An empty table counts as one row holding 0. No row at all is an answer that was cut:
+    measured for a statement stopped by time under ``break`` and for a profile's ``offset``."""
+    from sde.engines.clickhouse import ClickHouseEngine
+
+    class Client:
+        rows: list[tuple[int]] = []
+
+        def query(self, _sql: str) -> Any:
+            return SimpleNamespace(result_rows=self.rows)
+
+    engine = ClickHouseEngine("clickhouse://localhost:1/default")
+    engine._client = Client()
+    with pytest.raises(EngineError, match="answered no row at all"):
+        engine.count("events")
+    Client.rows = [(0,)]
+    assert engine.count("events") == 0

@@ -1,0 +1,49 @@
+CREATE ROLE
+CREATE ROLE
+CREATE ROLE
+CREATE SCHEMA
+GRANT
+SET
+CREATE TABLE
+INSERT 0 100
+GRANT
+ALTER TABLE
+CREATE POLICY
+== the owner, the policy enabled and not forced
+rows|100
+row_security_active|f
+ALTER TABLE
+== the owner, the policy forced
+rows|10
+row_security_active|t
+SET
+== the owner, the policy forced, row_security off
+ERROR:  query would be affected by row-level security policy for table "t"
+HINT:  To disable the policy for the table's owner, use ALTER TABLE NO FORCE ROW LEVEL SECURITY.
+ERROR:  query would be affected by row-level security policy for table "t"
+HINT:  To disable the policy for the table's owner, use ALTER TABLE NO FORCE ROW LEVEL SECURITY.
+ERROR:  query would be affected by row-level security policy for table "t"
+HINT:  To disable the policy for the table's owner, use ALTER TABLE NO FORCE ROW LEVEL SECURITY.
+row_security_active|t
+RESET
+RESET
+SET
+== a grantee the policy applies to
+rows|10
+SET
+== the same, row_security off
+ERROR:  query would be affected by row-level security policy for table "t"
+RESET
+RESET
+SET
+== a role with BYPASSRLS
+rows|100
+row_security_active|f
+SET
+rows, row_security off|100
+RESET
+RESET
+== the superuser
+rows|100
+row_security_active|f
+PostgreSQL 15.19 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit

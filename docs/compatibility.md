@@ -30,6 +30,9 @@ What is measured about other versions, and nothing more is claimed:
   outside it before it is sent ([format contract](format-contract.md) §8b).
 - **ClickHouse from 26.5 writes a one-column sort key back in parentheses.** The libraries read both
   spellings; the catalogue reading was measured on nine releases from 24.8 to 26.9.
+- **Every statement to ClickHouse carries eleven overflow modes**, which 24.8 and 26.9 both have
+  ([format contract](format-contract.md) §7o). A server that does not know one of them refuses the
+  statement by the setting's name; none older than 24.8 was run.
 - **Elasticsearch means Elasticsearch 9.** The layout of §7m, its strict mappings and the write
   fence in an index's final pipeline were written against 9.5.5, and no earlier major version was
   run.

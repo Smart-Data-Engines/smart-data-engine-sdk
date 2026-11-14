@@ -142,6 +142,15 @@ the index-verification grant this page offers, so a login given it could not be 
 
 ## The operator's login, and the principals beside it
 
+**The operator's login has to be shown every row of the tables it works on.** It copies and
+compares them, and a login a row policy shows some of the rows would move what it was shown. A
+table with a row policy (ClickHouse) or with row-level security enabled (PostgreSQL) is refused
+where the operator takes its identity, before a cutover, a staging or a backfill changes anything,
+and the operator's PostgreSQL connections are opened with `row_security = off`, under which
+PostgreSQL refuses a statement a policy would narrow. On ClickHouse the operator's settings need
+nothing of you unless a profile fixes one of those the library sends with every statement
+([engine connections](engine-connections.md#clickhouse-an-answer-is-whole-or-an-error)).
+
 The operator may log in as the server's administrator or as a login of its own. On ClickHouse a
 login of its own needs what the tests and the general test of 2 October 2026 gave it:
 

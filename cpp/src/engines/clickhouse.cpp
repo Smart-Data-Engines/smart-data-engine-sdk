@@ -160,6 +160,30 @@ void ClickHouseEngine::connect() {
   } catch (const EngineError& error) {
     // The CA's refusal, in its own words.
     throw EngineError(std::string("could not connect to ClickHouse: ") + error.what());
+  } catch (const ServerError& error) {
+    // Codes 164 (READONLY) and 452 (SETTING_CONSTRAINT_VIOLATION) name the setting the login may
+    // not send. Only a name this adapter itself sends is repeated, and none of the server's text.
+    if (error.code() == 164 || error.code() == 452) {
+      const std::string_view said = error.what();
+      std::string_view settings = detail::clickhouse::kWholeAnswers;
+      while (!settings.empty()) {
+        settings.remove_prefix(1);  // the '&'
+        const std::string_view pair = settings.substr(0, settings.find('&'));
+        const std::string name(pair.substr(0, pair.find('=')));
+        std::string value(pair.substr(pair.find('=') + 1));
+        if (value == "%7B%7D") value = "{}";
+        if (said.find("Cannot modify '" + name + "' setting") != std::string_view::npos ||
+            said.find("Setting " + name + " should not be changed") != std::string_view::npos) {
+          throw EngineError("this ClickHouse login's " + name + " is not '" + value +
+                            "' and the login may not change it, so the server could end its "
+                            "answers early without an error. This library sends " + name + "='" +
+                            value + "' with every statement and the server refused that: set it "
+                            "so for the login, or let the login change it");
+        }
+        settings.remove_prefix(std::min(pair.size(), settings.size()));
+      }
+    }
+    throw EngineError("could not connect to ClickHouse with the configured transport");
   } catch (const std::exception&) {
     // A server's answer at this point can echo the URL, a credential or its own content, so it
     // is not repeated; the connection error proves nothing was changed.
@@ -681,7 +705,10 @@ std::uint64_t ClickHouseEngine::count(const std::string& table) {
     // FINAL, so this counts entities rather than stored rows.
     const std::vector<std::vector<Value>> rows =
         answer("SELECT count() FROM " + quote(table) + " FINAL").rows;
-    if (rows.empty()) return 0;
+    // An empty table counts as one row holding 0. No row at all was measured for a statement cut
+    // off by time under `break` and for a profile's `offset`, on tables that held rows, and it was
+    // read as 0 until 14 November 2026.
+    if (rows.empty()) throw ServerError(std::nullopt, "it was answered no row at all");
     return static_cast<std::uint64_t>(integer_at(rows.front(), 0));
   } catch (const std::exception& error) {
     throw EngineError("count on " + table + " failed: " + failure(error));

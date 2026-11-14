@@ -85,6 +85,53 @@ export const CONNECT_TIMEOUT_MS = 10_000
  */
 export const HANDSHAKE_TIMEOUT_MS = 15_000
 
+/**
+ * What every statement of this adapter says with it, whatever its login's settings say.
+ *
+ * ClickHouse ends an answer early and raises nothing when a limit is reached under an overflow mode
+ * of `break`: measured on 24.8 and 26.9, a login with `max_result_rows` and
+ * `result_overflow_mode = 'break'` was answered 48 193 and 20 000 rows of 200 000, and one with a
+ * small `max_execution_time` and `timeout_overflow_mode = 'break'` nothing at all, a count
+ * included. A profile's `limit`, `offset` and `additional_result_filter` shorten an answer the same
+ * way. This library takes an answer without an error for the whole answer - a count, a page of a
+ * scan, a comparison of two copies - so it says `throw`, and no limit and no filter of the
+ * profile's, with every statement. A limit is then an error, as it is for a login nobody
+ * configured.
+ *
+ * A login that is read-only, or whose setting is constrained, cannot say so: where its own value is
+ * the one here the server accepts the statement as it is, and where it is not the server refuses the
+ * first statement by the setting's name. The same names and values as the reference's
+ * `WHOLE_ANSWERS`, which a test of both holds to the server's own list.
+ */
+export const WHOLE_ANSWERS: ReadonlyArray<readonly [string, string]> = [
+  ['distinct_overflow_mode', 'throw'],
+  ['group_by_overflow_mode', 'throw'],
+  ['join_overflow_mode', 'throw'],
+  ['read_overflow_mode', 'throw'],
+  ['result_overflow_mode', 'throw'],
+  ['set_overflow_mode', 'throw'],
+  ['sort_overflow_mode', 'throw'],
+  ['timeout_overflow_mode', 'throw'],
+  ['transfer_overflow_mode', 'throw'],
+  ['read_overflow_mode_leaf', 'throw'],
+  ['timeout_overflow_mode_leaf', 'throw'],
+  ['limit', '0'],
+  ['offset', '0'],
+  ['additional_table_filters', '{}'],
+  ['additional_result_filter', ''],
+]
+
+/**
+ * Which of `WHOLE_ANSWERS` the server refused to take from this login, if that is the error: codes
+ * 164 (`READONLY`) and 452 (`SETTING_CONSTRAINT_VIOLATION`), which name the setting.
+ */
+function settingTheLoginCannotSend(error: unknown): readonly [string, string] | undefined {
+  const text = error instanceof Error ? error.message : String(error)
+  const found = /Code: (?:164|452)\b[\s\S]*?(?:Cannot modify '(\w+)' setting|Setting (\w+) should not be changed)/.exec(text)
+  const name = found?.[1] ?? found?.[2]
+  return WHOLE_ANSWERS.find(([known]) => known === name)
+}
+
 
 interface Meta {
   readonly name: string
@@ -94,6 +141,38 @@ interface Meta {
 interface JsonResult {
   readonly meta?: readonly Meta[]
   readonly data?: readonly Record<string, unknown>[]
+  readonly exception?: unknown
+}
+
+/**
+ * A JSON answer, or the error the server ended it with.
+ *
+ * An exception raised after the answer has begun arrives under HTTP 200, the status having been
+ * sent already. Measured on 24.8 with a limit on a result reached in the middle of one: a valid
+ * JSON document holding the 5000 rows written so far, `"rows": 5000`, and an `"exception"` member
+ * with the server's error. Read for its `data` alone, as it was until 14 November 2026, that is
+ * the first rows of a table returned as the table - for a limit, a timeout, a memory limit or a
+ * cancelled query alike. Where the server writes the exception as text after the unfinished
+ * document instead, the document does not parse, and the error says what the server said in place
+ * of where the parser stopped.
+ */
+function finished(text: string): JsonResult {
+  let parsed: JsonResult
+  try {
+    parsed = JSON.parse(text) as JsonResult
+  } catch (error) {
+    const said = /Code: (\d+)\. DB::Exception: [^\n]*/.exec(text)
+    if (said === null) throw error
+    throw Object.assign(new Error(`ClickHouse ended its answer with an error: ${said[0].trim()}`),
+      { clickhouseCode: Number(said[1]) })
+  }
+  if (parsed !== null && typeof parsed === 'object' && parsed.exception !== undefined) {
+    const said = String(parsed.exception)
+    const code = Number(/^Code: (\d+)\./.exec(said)?.[1] ?? Number.NaN)
+    throw Object.assign(new Error(`ClickHouse ended its answer with an error: ${said}`),
+      Number.isInteger(code) ? { clickhouseCode: code } : {})
+  }
+  return parsed
 }
 
 /**
@@ -217,9 +296,17 @@ export class ClickHouseEngine {
           timeoutMs: Math.ceil(this.target.send_receive_timeout * 1000),
           format: 'JSON',
         })
-        const parsed = JSON.parse(result) as JsonResult
+        const parsed = finished(result)
         this.serverVersion = String(Object.values(parsed.data?.[0] ?? {})[0] ?? '')
       } catch (error) {
+        const fixed = settingTheLoginCannotSend(error)
+        if (fixed !== undefined) {
+          throw new EngineError(
+            `this ClickHouse login's ${fixed[0]} is not '${fixed[1]}' and the login may not change it, ` +
+            `so the server could end its answers early without an error. This library sends ` +
+            `${fixed[0]}='${fixed[1]}' with every statement and the server refused that: set it so ` +
+            `for the login, or let the login change it`)
+        }
         throw new EngineError(`could not connect to ClickHouse: ${message(error)}`)
       }
       this.open = true
@@ -284,6 +371,9 @@ export class ClickHouseEngine {
     return this.usage.operation(async () => {
       const query = options.format === undefined ? sql : `${sql} FORMAT ${options.format}`
       const search = new URLSearchParams({ database: this.target.database })
+      // A limit of the login's is an error and not a shorter answer, and no limit or filter of its
+      // profile's applies: with every statement, a write's too (`WHOLE_ANSWERS`).
+      for (const [name, value] of WHOLE_ANSWERS) search.set(name, value)
       if (options.format === 'JSON') {
         // JSON.parse would round native numeric tokens before convert() can inspect their type.
         // Pin the wire contract per request, independently of server/version/profile defaults.
@@ -324,6 +414,19 @@ export class ClickHouseEngine {
           (response) => {
             const chunks: Buffer[] = []
             response.on('data', (chunk: Buffer) => chunks.push(chunk))
+            // An answer the server stops sending never ends: no `end`, and nothing on the request,
+            // whose part is done. ClickHouse 26.9 ends an answer that way when the statement fails
+            // after its first rows are on their way - measured: 200, then the body cut - and until
+            // 14 November 2026 a read it happened to waited for ever. What had arrived is the
+            // start of a table and is not returned.
+            response.on('error', (error) => { reject(error) })
+            response.on('close', () => {
+              if (!response.complete) {
+                reject(new Error('the server stopped its answer before the end of it: the statement ' +
+                  'failed after the answer had begun, or the connection was cut. Nothing of what ' +
+                  'had arrived is returned'))
+              }
+            })
             response.on('end', () => {
               const text = Buffer.concat(chunks).toString('utf8')
               const status = response.statusCode ?? 0
@@ -382,7 +485,7 @@ export class ClickHouseEngine {
   private async query(sql: string): Promise<Row[]> {
     this.ensureOpen()
     const text = await this.send(sql, { format: 'JSON' })
-    const parsed = JSON.parse(text) as JsonResult
+    const parsed = finished(text)
     const types = new Map((parsed.meta ?? []).map((column) => [column.name, column.type]))
     return (parsed.data ?? []).map((row) => {
       const out: Row = {}
@@ -795,7 +898,11 @@ export class ClickHouseEngine {
     return this.usage.operation(async () => {
       try {
         const rows = await this.query(`SELECT count() AS n FROM ${quote(table)} FINAL`)
-        return Number(rows[0]?.['n'] ?? 0)
+        // An empty table counts as one row holding 0. No row at all was measured for a statement
+        // cut off by time under `break` and for a profile's `offset`, on tables that held rows, and
+        // it was read as 0 until 14 November 2026.
+        if (rows[0]?.['n'] === undefined) throw new EngineError('it was answered no row at all')
+        return Number(rows[0]['n'])
       } catch (error) {
         throw new EngineError(`count on ${table} failed: ${message(error)}`)
       }

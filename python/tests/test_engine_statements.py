@@ -31,6 +31,9 @@ DOC = ROOT / "docs" / "engine-statements.md"
 SQL = re.compile(
     r"(CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|LOCK|DETACH|ATTACH|KILL|COMMENT|DELETE|INSERT|"
     r"UPDATE|OPTIMIZE|RENAME|EXCHANGE|SET|SYSTEM|COPY) [A-Z…({]"
+    # A session setting is named in lower case: `SET row_security = off` was sent and not seen
+    # here until 14 November 2026, since the word after SET had to begin with a capital.
+    r"|SET [a-z_]+ (=|TO) "
 )
 REQUEST = re.compile(r"(PUT|POST|DELETE) /")
 WRITING_WITH = re.compile(r"WITH [^(]*\((DELETE|INSERT|UPDATE) ")
