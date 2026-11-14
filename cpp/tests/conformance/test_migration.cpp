@@ -43,7 +43,8 @@ using Engines = std::map<std::string, std::unique_ptr<MemoryEngine>>;
 const std::vector<std::string>& written_drivers() {
   static const std::vector<std::string> drivers = {
       "fencing", "watermark", "operations", "bulk",    "generation", "backfill",
-      "verify",  "verification", "frozen",   "staging", "index",       "cutover"};
+      "verify",  "verification", "frozen",   "staging", "index",       "cutover",
+      "advance"};
   return drivers;
 }
 
@@ -560,7 +561,7 @@ void drive_operations(const std::filesystem::path& directory, const sde::Model& 
   }
 }
 
-// --- cutover.json, staging.json, index.json: signed packets ------------------------------------
+// --- cutover.json, staging.json, index.json, advance.json: signed packets ----------------------
 
 sde::PublicKeys case_keys(const std::filesystem::path& directory) {
   std::map<std::string, std::string> keys;
@@ -699,6 +700,42 @@ void drive_index(const std::filesystem::path& directory, const sde::Model& model
             text(fingerprints, "prepared"));
 }
 
+/// A packet that advances one group's write generation and nothing else.
+void drive_advance(const std::filesystem::path& directory, const sde::Model& model) {
+  const sde::Json raw = read_json(directory / "plan.json");
+  const sde::Json want = read_json(directory / "advance.json");
+  const sde::PublicKeys keys = case_keys(directory);
+  const std::string project = text(want, "project_id");
+  if (want.contains("error")) {
+    expect_packet_refused([&] { (void)sde::load_advance_plan(raw, model, project, keys); }, want);
+    return;
+  }
+  const sde::AdvancePlan plan = sde::load_advance_plan(raw, model, project, keys);
+  EXPECT_EQ(plan.fingerprint(), text(want, "advance_fingerprint"));
+  EXPECT_EQ(plan.verified_with(), text(want, "verified_with"));
+  EXPECT_EQ(plan.as_record(), raw);
+  EXPECT_EQ(plan.pause_budget_ms(), want.find("pause_budget_ms")->to_int64());
+  plan.check_current(plan.before());
+  try {
+    plan.check_current(plan.after());
+    ADD_FAILURE() << "the map that follows was taken for the map in force";
+  } catch (const sde::MigrationRefused& refusal) {
+    EXPECT_NE(std::string_view(refusal.what()).find("does not name the signed current map"),
+              std::string_view::npos)
+        << refusal.what();
+  }
+  const sde::Json& fingerprints = *want.find("map_fingerprints");
+  const sde::Json& epochs = *want.find("write_epochs");
+  EXPECT_EQ(plan.before().fingerprint(), text(fingerprints, "before"));
+  EXPECT_EQ(plan.after().fingerprint(), text(fingerprints, "after"));
+  EXPECT_EQ(plan.before().placement_of(plan.group()).write_epoch,
+            epochs.find("before")->to_int64());
+  EXPECT_EQ(plan.after().placement_of(plan.group()).write_epoch, epochs.find("after")->to_int64());
+  EXPECT_EQ(plan.source_epoch(), epochs.find("before")->to_int64());
+  EXPECT_EQ(plan.next_epoch(), epochs.find("after")->to_int64());
+  EXPECT_EQ(published_fingerprint(plan.after_payload(), model, keys), text(fingerprints, "after"));
+}
+
 // --- the family ---------------------------------------------------------------------------------
 
 std::optional<std::string> driver_of(const std::filesystem::path& directory) {
@@ -730,6 +767,10 @@ TEST_P(MigrationVector, TakesPartAsTheVectorSays) {
   }
   if (*driver == "index") {
     drive_index(directory, model);
+    return;
+  }
+  if (*driver == "advance") {
+    drive_advance(directory, model);
     return;
   }
   const sde::PlacementMap map = load_case_map(directory, model);

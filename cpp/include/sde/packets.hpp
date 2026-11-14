@@ -1,9 +1,10 @@
 #pragma once
 
-/// Signed packets a local operator executes (format contract sections 7g, 7h and 7j): a cutover, a
-/// staging and an in-place index build. This library decodes and authorises them - every rule of a
-/// packet checked against the model, the locally configured project and the keys - and executes
-/// none of them. Loading touches no engine, adopts no map and advances no watermark.
+/// Signed packets a local operator executes (format contract sections 7g, 7h, 7j and 7p): a
+/// cutover, a staging, an in-place index build and a generation advance. This library decodes and
+/// authorises them - every rule of a packet checked against the model, the locally configured
+/// project and the keys - and executes none of them. Loading touches no engine, adopts no map and
+/// advances no watermark.
 ///
 /// A plan exists only as loaded: its constructors are private, so every plan in hand has passed
 /// every rule, and its record and fingerprint are those of the document that was checked.
@@ -34,6 +35,8 @@ inline constexpr int STAGING_RELAYOUT_PROTOCOL = 2;
 inline constexpr int INDEX_PROTOCOL = 1;
 /// Indexes added to and removed from one group's source, in place; at least one removed.
 inline constexpr int INDEX_CHANGE_PROTOCOL = 2;
+/// One group's write generation raised by one, with its placement as it was.
+inline constexpr int ADVANCE_PROTOCOL = 1;
 /// A day. The budget bounds a build on a server that stopped answering; nothing is paused while it
 /// runs, so it is not a pause budget and it is deliberately far longer than a cutover's.
 inline constexpr std::int64_t MAX_BUILD_BUDGET_MS = 86'400'000;
@@ -197,5 +200,55 @@ class IndexPlan {
 [[nodiscard]] IndexPlan load_index_plan(const Json& raw, const Model& model,
                                         const std::string& project_id,
                                         const PublicKeys& public_keys);
+
+/// A signed authorization to advance one group's write generation by one, and nothing else: the
+/// map in force and the map that follows it, which is the first with a newer version and that
+/// group's generation raised by one.
+class AdvancePlan {
+ public:
+  [[nodiscard]] const std::string& advance_id() const noexcept { return advance_id_; }
+  [[nodiscard]] const std::string& project_id() const noexcept { return project_id_; }
+  [[nodiscard]] const std::string& group() const noexcept { return group_; }
+  [[nodiscard]] const PlacementMap& before() const noexcept { return before_; }
+  [[nodiscard]] const PlacementMap& after() const noexcept { return after_; }
+  [[nodiscard]] std::int64_t pause_budget_ms() const noexcept { return pause_budget_ms_; }
+  [[nodiscard]] const std::optional<std::string>& verified_with() const noexcept {
+    return verified_with_;
+  }
+  [[nodiscard]] const std::string& fingerprint() const noexcept { return fingerprint_; }
+
+  /// The generation the group's rows carry before the advance, and the one every write of the
+  /// group carries after it.
+  [[nodiscard]] std::int64_t source_epoch() const noexcept { return source_epoch_; }
+  [[nodiscard]] std::int64_t next_epoch() const noexcept { return source_epoch_ + 1; }
+
+  [[nodiscard]] const Json& as_record() const noexcept { return document_; }
+  /// The canonical bytes of the map that follows, which the operator publishes.
+  [[nodiscard]] std::string after_payload() const;
+  void check_current(const PlacementMap& current) const;
+
+ private:
+  friend AdvancePlan load_advance_plan(const Json& raw, const Model& model,
+                                       const std::string& project_id,
+                                       const PublicKeys& public_keys);
+  AdvancePlan(PlacementMap before, PlacementMap after);
+
+  std::string advance_id_;
+  std::string project_id_;
+  std::string group_;
+  PlacementMap before_;
+  PlacementMap after_;
+  std::int64_t pause_budget_ms_ = 0;
+  std::optional<std::string> verified_with_;
+  std::int64_t source_epoch_ = 0;
+  std::string fingerprint_;
+  Json document_;
+};
+
+/// Verifies a generation-advance authorization and its two maps exactly (`MigrationRefused`). A map
+/// or encoding refusal inside it is reported as `advance authorization refused: ...`.
+[[nodiscard]] AdvancePlan load_advance_plan(const Json& raw, const Model& model,
+                                            const std::string& project_id,
+                                            const PublicKeys& public_keys);
 
 }  // namespace sde

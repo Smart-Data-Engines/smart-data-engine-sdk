@@ -175,12 +175,12 @@
     "signature": {
       "alg": "ed25519",
       "key_id": "advance",
-      "value": "4D6a28L4YaKyuCWvXq53MajQLRdEzr1+Ww3kZw3+ng/wRqVrJrScDh3DO8zJ/IIpyMjD63aWrQc+bEdcMX94DQ=="
+      "value": "CawdWpLBZUdq17/VsaV2tUyr3K3EIGVDOML1TZgZ4JWMAcefGvzhCP3NLxjwXImxWDNHaKwQnPQngAcT/1TVAA=="
     }
   },
   "signature": {
     "alg": "ed25519",
     "key_id": "advance",
-    "value": "T5RDssftgpoi4mRbPELoYyD1EmE/6BCTxD4dPtFDnjKWHiM34LlqF12yXmYOaADZjQVlVNrT+nNr3Tp4u5Z2AQ=="
+    "value": "iXaD7H/LRRkzXt7UMDS5s28cYtjQ5m5p0xKMZnSr3EP4lnu8S/B9BgCHkjbVTH4z99t6SK5KLanv13lRoHDEDg=="
   }
 }

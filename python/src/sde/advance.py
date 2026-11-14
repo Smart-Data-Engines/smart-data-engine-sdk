@@ -47,6 +47,8 @@ ADVANCE = "advance"
 """The subject of every refusal of this packet. The helpers it shares with the cutover packet name
 a cutover unless told otherwise."""
 
+_NEEDS_LAYOUTS = "advance maps need explicit physical layouts"
+
 
 @dataclass(frozen=True)
 class AdvancePlan:
@@ -124,6 +126,21 @@ def _load(
     for name in ("before", "after"):
         document = _record(body[name], name, ADVANCE)
         _signature(document, ADVANCE)
+        # The operator fences the tables these maps name. A layout left to be derived would be
+        # derived by whichever library loads the map, so nobody signed the tables it names.
+        for raw_group in _record(document.get("groups"), "groups", ADVANCE).values():
+            value = _record(raw_group, "group", ADVANCE)
+            copies = value.get("derived", [])
+            if not isinstance(copies, list):
+                raise MigrationRefused("advance derived copies must be an array")
+            for raw_material in (value.get("source"), *copies):
+                raw_layout = _record(
+                    _record(raw_material, "materialization", ADVANCE).get("layout"),
+                    "layout",
+                    ADVANCE,
+                )
+                if raw_layout.get("auto"):
+                    raise MigrationRefused(_NEEDS_LAYOUTS)
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
         if parsed.contract < GENERATIONS_SINCE:
             raise MigrationRefused(
@@ -131,6 +148,10 @@ def _load(
                 f"write generation, and an earlier map has none"
             )
         check_map_project(parsed, project_id)
+        for placement in parsed.groups.values():
+            for material in placement.all():
+                if not material.layout.tables or not material.layout.columns:
+                    raise MigrationRefused(_NEEDS_LAYOUTS)
         maps.append(parsed)
     before, after = maps
     before_raw, after_raw = body["before"], body["after"]

@@ -21,10 +21,11 @@ namespace sde {
 
 namespace {
 
-// The three packets share their rules, and each refusal names the packet it is about.
+// The packets share their rules, and each refusal names the packet it is about.
 constexpr std::string_view kCutover = "cutover";
 constexpr std::string_view kStaging = "staging";
 constexpr std::string_view kIndex = "index build";
+constexpr std::string_view kAdvance = "advance";
 
 std::string cat(std::initializer_list<std::string_view> parts) {
   std::string out;
@@ -734,6 +735,111 @@ CheckedIndex check_index(const Json& raw, const Model& model, const std::string&
 }
 
 /// The record a plan keeps: the packet's canonical bytes read back, as the reference's `as_record`.
+// ── Generation advance ──────────────────────────────────────────────────────────────────────────
+
+struct CheckedAdvance {
+  Json body;
+  std::string advance_id;
+  std::string project_id;
+  std::string group;
+  std::int64_t pause_budget_ms = 0;
+  std::optional<std::string> verified_with;
+  std::vector<PlacementMap> maps;  ///< before, after
+  std::int64_t source_epoch = 0;
+};
+
+CheckedAdvance check_advance(const Json& raw, const Model& model, const std::string& project_id,
+                             const PublicKeys& public_keys) {
+  CheckedAdvance out;
+  out.body = detail::integral_numbers(raw);
+  const Json& body = record(&out.body, "authorization", kAdvance);
+  if (!exactly(body, {"kind", "protocol", "advance_id", "project_id", "group", "pause_budget_ms",
+                      "before", "after", "signature"})) {
+    refuse("advance authorization has missing or unknown fields");
+  }
+  const std::optional<std::int64_t> protocol = integer(*body.find("protocol"));
+  const Json& kind = *body.find("kind");
+  if (!protocol || *protocol != ADVANCE_PROTOCOL || !kind.is_string() ||
+      kind.as_string() != "sde-advance") {
+    refuse("unsupported advance authorization kind or protocol");
+  }
+  out.advance_id = hex(body.find("advance_id"), 32, "advance_id", kAdvance);
+  out.project_id = hex(body.find("project_id"), 32, "project_id", kAdvance);
+  if (out.project_id != project_id) {
+    refuse("advance authorization belongs to another local project");
+  }
+  const Json& group = *body.find("group");
+  if (!group.is_string() || group.as_string().empty()) {
+    refuse("advance group must be a nonempty string");
+  }
+  out.group = group.as_string();
+  const std::optional<std::int64_t> budget = integer(*body.find("pause_budget_ms"));
+  if (!budget || *budget < 1 || *budget > MAX_EPOCH) {
+    refuse("advance pause_budget_ms must be a positive safe integer");
+  }
+  out.pause_budget_ms = *budget;
+  signature_block(body, kAdvance);
+  out.verified_with = verify_packet(body, public_keys);
+  // The operator fences the tables these maps name. A layout left to be derived would be derived
+  // by whichever library loads the map, so nobody signed the tables it names.
+  const std::string needs_layouts = "advance maps need explicit physical layouts";
+  for (std::string_view name : {std::string_view("before"), std::string_view("after")}) {
+    const Json& document = record(body.find(name), name, kAdvance);
+    signature_block(document, kAdvance);
+    refuse_derived_layouts(document, kAdvance, needs_layouts);
+    PlacementMap parsed = load_candidate(document, model, public_keys);
+    if (parsed.contract() < GENERATIONS_SINCE) {
+      refuse(cat({"an advance requires map contract ", std::to_string(GENERATIONS_SINCE),
+                  " or later: it changes a write generation, and an earlier map has none"}));
+    }
+    (void)detail::check_map_project(parsed, project_id);
+    refuse_empty_layouts(parsed, needs_layouts);
+    out.maps.push_back(std::move(parsed));
+  }
+  const PlacementMap& before = out.maps[0];
+  const PlacementMap& after = out.maps[1];
+  if (before.map_version() >= after.map_version()) {
+    refuse("an advance must allocate a newer map");
+  }
+  if (!before.groups().contains(out.group)) {
+    refuse(cat({"an advance names a group the map in force does not have: ", out.group}));
+  }
+  if (keys_of(before.groups()) != keys_of(after.groups())) {
+    refuse("an advance cannot add or remove colocation groups");
+  }
+  const std::optional<std::int64_t> epoch = before.groups().at(out.group).write_epoch;
+  if (!epoch) {
+    refuse(cat({"group ", out.group,
+                " carries no write generation, so there is none to advance: its engine cannot "
+                "fence writes"}));
+  }
+  if (*epoch >= MAX_EPOCH) refuse("an advance needs one available write generation");
+  out.source_epoch = *epoch;
+  const Json& before_raw = *body.find("before");
+  const Json& after_raw = *body.find("after");
+  const Json& old_groups = *before_raw.find("groups");
+  const Json& new_groups = *after_raw.find("groups");
+  for (const auto& entry : before.groups()) {
+    if (entry.first != out.group &&
+        !same_bytes(*old_groups.find(entry.first), *new_groups.find(entry.first))) {
+      refuse("an advance cannot change an unaffected group");
+    }
+  }
+  // The loaded map holds the generation the document states, so the rule reads it there.
+  if (after.groups().at(out.group).write_epoch != *epoch + 1) {
+    refuse("an advance raises the group's write generation by exactly one");
+  }
+  if (!same_bytes(without(*old_groups.find(out.group), {"write_epoch"}),
+                  without(*new_groups.find(out.group), {"write_epoch"}))) {
+    refuse("an advance cannot change where the group is placed or which copies it maintains");
+  }
+  if (!same_bytes(without(before_raw, {"signature", "map_version", "groups"}),
+                  without(after_raw, {"signature", "map_version", "groups"}))) {
+    refuse("an advance cannot change routing or other map attributes");
+  }
+  return out;
+}
+
 Json canonical_record(const Json& body) { return parse_json(canonical_bytes(body)); }
 
 std::string fingerprint_of(const Json& body) {
@@ -882,6 +988,43 @@ IndexPlan load_index_plan(const Json& raw, const Model& model, const std::string
     throw MigrationRefused(std::string("index build authorization refused: ") + error.what());
   } catch (const CanonicalError& error) {
     throw MigrationRefused(std::string("index build authorization refused: ") + error.what());
+  }
+}
+
+// ── Generation advance ──────────────────────────────────────────────────────────────────────────
+
+AdvancePlan::AdvancePlan(PlacementMap before, PlacementMap after)
+    : before_(std::move(before)), after_(std::move(after)) {}
+
+std::string AdvancePlan::after_payload() const {
+  return canonical_bytes(*document_.find("after"));
+}
+
+void AdvancePlan::check_current(const PlacementMap& current) const {
+  (void)detail::check_map_project(current, project_id_);
+  if (!current.is_signed() || current.fingerprint() != before_.fingerprint()) {
+    refuse("advance authorization does not name the signed current map");
+  }
+}
+
+AdvancePlan load_advance_plan(const Json& raw, const Model& model, const std::string& project_id,
+                              const PublicKeys& public_keys) {
+  try {
+    CheckedAdvance checked = check_advance(raw, model, project_id, public_keys);
+    AdvancePlan plan(std::move(checked.maps[0]), std::move(checked.maps[1]));
+    plan.advance_id_ = std::move(checked.advance_id);
+    plan.project_id_ = std::move(checked.project_id);
+    plan.group_ = std::move(checked.group);
+    plan.pause_budget_ms_ = checked.pause_budget_ms;
+    plan.verified_with_ = std::move(checked.verified_with);
+    plan.source_epoch_ = checked.source_epoch;
+    plan.fingerprint_ = fingerprint_of(checked.body);
+    plan.document_ = canonical_record(checked.body);
+    return plan;
+  } catch (const MapError& error) {
+    throw MigrationRefused(std::string("advance authorization refused: ") + error.what());
+  } catch (const CanonicalError& error) {
+    throw MigrationRefused(std::string("advance authorization refused: ") + error.what());
   }
 }
 

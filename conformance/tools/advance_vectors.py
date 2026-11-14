@@ -58,6 +58,8 @@ ADVANCE_MATCHES: dict[str, str] = {
     "219-advance-needs-an-available-generation": "an advance needs one available write generation",
     "220-advance-keeps-the-contract": "an advance cannot change routing or other map attributes",
     "221-advance-id-is-32-hex-digits": "advance advance_id must be 32 lowercase hexadecimal digits",
+    "222-advance-needs-explicit-layouts": "advance maps need explicit physical layouts",
+    "223-advance-needs-every-layout-explicit": "advance maps need explicit physical layouts",
 }
 
 
@@ -146,6 +148,27 @@ def main() -> None:
     case("219-advance-needs-an-available-generation", last_generation)
     case("220-advance-keeps-the-contract", lambda p: p["after"].update(contract=5))
     case("221-advance-id-is-32-hex-digits", lambda p: p.update(advance_id="7" * 31))
+
+    # A layout left to be derived names no table anybody signed, and the operator fences tables.
+    def derived_layout(group: str) -> Callable[[dict[str, Any]], None]:
+        def change(p: dict[str, Any]) -> None:
+            for name in ("before", "after"):
+                p[name]["groups"][group]["source"]["layout"] = {"auto": True}
+
+        return change
+
+    case("222-advance-needs-explicit-layouts", derived_layout("Event"))
+    # Of every group, as for a staging and a cutover: the rule is the map's, not the group's.
+    case("223-advance-needs-every-layout-explicit", derived_layout("Order"))
+
+    # `auto` asks for a derived layout when the reference reads its value as present. An empty
+    # array beside a layout written out does not, in any language: JavaScript calls `[]` true.
+    def auto_that_asks_for_nothing(p: dict[str, Any]) -> None:
+        for name in ("before", "after"):
+            p[name]["groups"]["Event"]["source"]["layout"]["auto"] = []
+            p[name]["groups"]["Order"]["source"]["layout"]["auto"] = {}
+
+    case("224-advance-reads-an-empty-auto-as-absent", auto_that_asks_for_nothing, False)
     with tempfile.TemporaryDirectory(prefix="sde-advance-vectors-", dir=scratch) as tmp:
         work = Path(tmp)
         private, public = work / "key.pem", work / "public.pem"
