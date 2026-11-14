@@ -18,6 +18,17 @@ group. `load_advance_plan` / `loadAdvancePlan` / `sde::load_advance_plan` valida
 the same rules, pinned by `migration/201`-`230`. **Nothing executes it yet**: this is the format
 and its loaders.
 
+**Changed: a backfill reads a ClickHouse source by one statement** (Python;
+[`docs/qualification/backfill-by-a-stream/`](docs/qualification/backfill-by-a-stream/README.md)).
+`sde.backfill`, and `sde-operator backfill` with it, read the source a statement a chunk: the next
+rows after the last key copied. Under `FINAL` ClickHouse answers that by merging the table's parts
+again from the key, so a table read whole cost more than in proportion to its size. It is read by
+one statement now, from where the last run stopped: measured on the record's laptop, one run of
+each side by side, 4 million rows into PostgreSQL in 61 s where they took 248 s, and 200 000 in
+4.3 s where they took 8.9 s. A run that stops is continued by the next as before, from its marker.
+A row written while the statement runs is not in it - it is the fan-out's, as a row above the
+marker always was. A PostgreSQL source is read as before.
+
 **Fixed: an answer ClickHouse cut short is an error, in every library** (Python, TypeScript, C++;
 [`docs/engine-connections.md`](docs/engine-connections.md#clickhouse-an-answer-is-whole-or-an-error),
 format contract §7o). ClickHouse ends an answer early and raises nothing for a login whose

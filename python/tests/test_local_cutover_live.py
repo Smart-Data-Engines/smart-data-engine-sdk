@@ -279,8 +279,8 @@ def test_a_pass_that_did_not_read_the_whole_source_ends_in_a_refill_and_the_whol
         patched, name = operator, "key_stream" if clickhouse else "key_range"
         whole = getattr(patched, name)
 
-        def one_chunk_of_the_stream(table: str, order: Any, *, chunk_rows: int) -> Iterator[Any]:
-            chunks = whole(table, order, chunk_rows=chunk_rows)
+        def one_chunk_of_the_stream(table: str, order: Any, **how: Any) -> Iterator[Any]:
+            chunks = whole(table, order, **how)
             try:
                 yield next(chunks)
                 cut.append(table)

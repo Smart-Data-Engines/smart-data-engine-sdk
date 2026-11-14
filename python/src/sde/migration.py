@@ -48,7 +48,9 @@ while the copy runs - that is what a live migration is - so a naive "copy until 
 growing" never terminates. It does not need to. ``DUAL_WRITE`` precedes ``BACKFILL``, so every row
 written from then on reaches the copy through the fan-out; the backfill's job is only the rows that
 were there before it started. Reaching the end of the table **once** is therefore enough, and a
-chunk that comes back short is what says so. Every row in the source is then in one of two regions:
+chunk that comes back short is what says so - or, where the source is read by one statement
+(:func:`source_chunks`), the end of that statement's answer, which is the table as it was when the
+statement began. Every row in the source is then in one of two regions:
 below the final marker and copied here, or written after dual-write began and copied by
 :meth:`sde.Session.save`.
 
@@ -74,7 +76,7 @@ happen at different instants and a write between them is not a defect.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import isnan
@@ -641,6 +643,56 @@ def backfill(
     return BackfillProgress(group=group, entities=tuple(progress))
 
 
+def _direct(function: Any, *args: Any, **kwargs: Any) -> Any:
+    return function(*args, **kwargs)
+
+
+def source_chunks(
+    copy: _Copy,
+    chunk_rows: int,
+    *,
+    after: tuple[Any, ...] | None = None,
+    call: Any = _direct,
+) -> Generator[list[dict[str, Any]], None, None]:
+    """A source's rows in key order from strictly after ``after``, a chunk at a time, to its end.
+
+    By one streamed statement where the source's engine offers it (``key_stream``) and is not also
+    the copy's - a stream holds its engine until it ends, and a relayout reads and writes one
+    engine. Otherwise by a keyset read a chunk, whose short chunk is the end. ``call`` wraps each
+    fetch, which is where a cutover checks its pause budget.
+
+    Why a stream where there is one: on ClickHouse a chunk read from a starting key merges the
+    table's parts again from that key under `FINAL`, so a table read whole by chunks costs more
+    than in proportion to its size (``docs/qualification/cutover-repair``). The stream is the
+    table as one statement saw it: a row written after it began is not in it, which for a backfill
+    is the fan-out's row, and for a comparison under a pause cannot happen.
+
+    The caller closes the generator if it stops early; that closes the stream.
+    """
+    stream = getattr(copy.source, "key_stream", None)
+    if callable(stream) and copy.source is not copy.target:
+        chunks = stream(copy.source_table, copy.key, chunk_rows=chunk_rows, after=after)
+        try:
+            while True:
+                chunk = call(next, chunks, None)
+                if not chunk:
+                    return
+                yield chunk
+        finally:
+            chunks.close()
+    while True:
+        rows = call(
+            copy.source.key_range, copy.source_table, copy.key, after=after, limit=chunk_rows
+        )
+        if not rows:
+            return
+        yield rows
+        if len(rows) < chunk_rows:
+            # The end of the table, once: no statement is spent on finding it empty.
+            return
+        after = tuple(rows[-1][column] for column in copy.key)
+
+
 def _backfill_one(
     copy: _Copy, *, group: str, chunk_rows: int, stop_after: int | None
 ) -> EntityProgress:
@@ -649,44 +701,45 @@ def _backfill_one(
     rows_this_run = 0
     chunks = 0
     complete = False
-    while stop_after is None or chunks < stop_after:
-        rows = copy.source.key_range(
-            copy.source_table, copy.key, after=after, limit=chunk_rows
-        )
-        if not rows:
-            complete = True
-            break
-        # The chunk first, then the marker. A crash between them costs a recopy, which the target's
-        # key semantics absorb; the other order costs the chunk, permanently. See the module
-        # docstring - this ordering is why the copy has to be idempotent, and the idempotence is
-        # why this ordering is free.
-        payload = rows if copy.write_epoch is None else [
-            {**_logical_copy_row(copy, row), EPOCH_COLUMN: copy.write_epoch} for row in rows
-        ]
-        _held_by_target(copy, rows)
-        copy.target.copy_in(copy.target_table, payload)
-        marker += len(rows)
-        copy.target.record_backfill_marker(
-            materialization=copy.target_id, entity=copy.entity, rows=marker
-        )
-        after = tuple(rows[-1][column] for column in copy.key)
-        rows_this_run += len(rows)
-        chunks += 1
-        log(
-            "sde.migration.backfill_progress",
-            group=group,
-            entity=copy.entity,
-            engine=copy.target_engine,
-            table=copy.target_table,
-            chunk=chunks,
-            rows=len(rows),
-            rows_copied=marker,
-        )
-        if len(rows) < chunk_rows:
-            # The end of the table, once. Rows arriving above this point from here on are the
-            # fan-out's, which is why there is no ceiling and no second pass.
-            complete = True
-            break
+    source = source_chunks(copy, chunk_rows, after=after)
+    try:
+        while stop_after is None or chunks < stop_after:
+            rows = next(source, None)
+            if rows is None:
+                # The end of the table, once. Rows arriving above this point from here on are the
+                # fan-out's, which is why there is no ceiling and no second pass.
+                complete = True
+                break
+            # The chunk first, then the marker. A crash between them costs a recopy, which the
+            # target's key semantics absorb; the other order costs the chunk, permanently. See the
+            # module docstring - this ordering is why the copy has to be idempotent, and the
+            # idempotence is why this ordering is free.
+            payload = rows if copy.write_epoch is None else [
+                {**_logical_copy_row(copy, row), EPOCH_COLUMN: copy.write_epoch} for row in rows
+            ]
+            _held_by_target(copy, rows)
+            copy.target.copy_in(copy.target_table, payload)
+            marker += len(rows)
+            copy.target.record_backfill_marker(
+                materialization=copy.target_id, entity=copy.entity, rows=marker
+            )
+            rows_this_run += len(rows)
+            chunks += 1
+            log(
+                "sde.migration.backfill_progress",
+                group=group,
+                entity=copy.entity,
+                engine=copy.target_engine,
+                table=copy.target_table,
+                chunk=chunks,
+                rows=len(rows),
+                rows_copied=marker,
+            )
+            if len(rows) < chunk_rows:
+                complete = True
+                break
+    finally:
+        source.close()
     return EntityProgress(
         entity=copy.entity,
         engine=copy.target_engine,
