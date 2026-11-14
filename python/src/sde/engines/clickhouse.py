@@ -1237,9 +1237,15 @@ class ClickHouseEngine:
         return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
 
     def key_stream(
-        self, table: str, order: Sequence[str], *, chunk_rows: int
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        chunk_rows: int,
+        after: Sequence[Any] | None = None,
     ) -> Iterator[list[dict[str, Any]]]:
-        """Every row in key order, with `FINAL`, as the chunks of one statement's answer.
+        """Every row in key order, with `FINAL`, as the chunks of one statement's answer. With
+        ``after``, the rows strictly after that key: where a backfill that stopped goes on from.
 
         ``key_range`` with a limit is one statement a chunk, and under `FINAL` each of them merges
         the table's parts again from its starting key to find its 1000 rows: measured on 24.8 on a
@@ -1266,10 +1272,19 @@ class ClickHouseEngine:
         if chunk_rows < 1:
             raise EngineError(f"a key stream of {table} in chunks of {chunk_rows} rows has none")
         tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
-        sql = f"SELECT * FROM {_quote(table)} FINAL ORDER BY {tuple_expr}"
+        parameters: dict[str, Any] = {}
+        where = ""
+        if after is not None:
+            same_width(after, cols, "after")
+            bound = [
+                _query_parameter(f"after_{index}", value, parameters)
+                for index, value in enumerate(after)
+            ]
+            where = f" WHERE {tuple_expr} > ({', '.join(bound)})"
+        sql = f"SELECT * FROM {_quote(table)} FINAL{where} ORDER BY {tuple_expr}"
         with self._usage.operation():
             try:
-                with self._cx.query_row_block_stream(sql) as blocks:
+                with self._cx.query_row_block_stream(sql, parameters=parameters) as blocks:
                     names = blocks.source.column_names
                     types = blocks.source.column_types
                     pending: list[dict[str, Any]] = []

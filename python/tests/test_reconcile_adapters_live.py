@@ -244,6 +244,15 @@ def test_clickhouse_streams_a_table_in_key_order_by_the_newest_version_of_each_k
             stream.close()
             assert engine._usage.operation_owner is None and engine.count(name) == 30
             assert sum(len(chunk) for chunk in engine.key_stream(name, KEY, chunk_rows=1000)) == 30
+            # From strictly after a key of two columns, a timestamp to the microsecond among
+            # them: where a backfill that stopped goes on from, and the key itself not again.
+            middle = keys[11]
+            later = [r for chunk in engine.key_stream(name, KEY, chunk_rows=7, after=middle)
+                     for r in chunk]
+            assert later == rows[12:] == engine.key_range(name, KEY, after=middle)
+            assert list(engine.key_stream(name, KEY, chunk_rows=7, after=keys[-1])) == []
+            with pytest.raises(EngineError, match="after"):
+                next(engine.key_stream(name, KEY, chunk_rows=7, after=(1,)))
             with pytest.raises(EngineError, match="has none"):
                 next(engine.key_stream(name, KEY, chunk_rows=0))
             with pytest.raises(EngineError, match=r"key stream of .* failed"):

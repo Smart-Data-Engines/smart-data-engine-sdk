@@ -1,0 +1,25 @@
+{"source": "clickhouse", "target": "postgres", "rows": 200000, "chunk_rows": 1000, "backfill_s": 8.94, "us_a_row": 44.7, "complete": true, "rows_copied": 200000, "chunks": 200, "rows_in_the_copy": 200000, "load_before": 4.36}
+chunks clickhouse 200000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 200000, "chunk_rows": 1000, "backfill_s": 4.3, "us_a_row": 21.5, "complete": true, "rows_copied": 200000, "chunks": 200, "rows_in_the_copy": 200000, "load_before": 5.31}
+stream clickhouse 200000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 450000, "chunk_rows": 1000, "backfill_s": 24.02, "us_a_row": 53.4, "complete": true, "rows_copied": 450000, "chunks": 450, "rows_in_the_copy": 450000, "load_before": 4.8}
+chunks clickhouse 450000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 450000, "chunk_rows": 1000, "backfill_s": 9.52, "us_a_row": 21.2, "complete": true, "rows_copied": 450000, "chunks": 450, "rows_in_the_copy": 450000, "load_before": 6.91}
+stream clickhouse 450000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 900000, "chunk_rows": 1000, "backfill_s": 63.25, "us_a_row": 70.3, "complete": true, "rows_copied": 900000, "chunks": 900, "rows_in_the_copy": 900000, "load_before": 6.96}
+chunks clickhouse 900000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 900000, "chunk_rows": 1000, "backfill_s": 19.98, "us_a_row": 22.2, "complete": true, "rows_copied": 900000, "chunks": 900, "rows_in_the_copy": 900000, "load_before": 7.96}
+stream clickhouse 900000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 2000000, "chunk_rows": 1000, "backfill_s": 134.9, "us_a_row": 67.5, "complete": true, "rows_copied": 2000000, "chunks": 2000, "rows_in_the_copy": 2000000, "load_before": 8.62}
+chunks clickhouse 2000000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 2000000, "chunk_rows": 1000, "backfill_s": 42.5, "us_a_row": 21.3, "complete": true, "rows_copied": 2000000, "chunks": 2000, "rows_in_the_copy": 2000000, "load_before": 9.08}
+stream clickhouse 2000000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 4000000, "chunk_rows": 1000, "backfill_s": 248.46, "us_a_row": 62.1, "complete": true, "rows_copied": 4000000, "chunks": 4000, "rows_in_the_copy": 4000000, "load_before": 7.75}
+chunks clickhouse 4000000 rc=0
+{"source": "clickhouse", "target": "postgres", "rows": 4000000, "chunk_rows": 1000, "backfill_s": 60.85, "us_a_row": 15.2, "complete": true, "rows_copied": 4000000, "chunks": 4000, "rows_in_the_copy": 4000000, "load_before": 4.65}
+stream clickhouse 4000000 rc=0
+{"source": "postgres", "target": "clickhouse", "rows": 900000, "chunk_rows": 1000, "backfill_s": 24.86, "us_a_row": 27.6, "complete": true, "rows_copied": 900000, "chunks": 900, "rows_in_the_copy": 900000, "load_before": 3.33}
+chunks postgres 900000 rc=0
+{"source": "postgres", "target": "clickhouse", "rows": 900000, "chunk_rows": 1000, "backfill_s": 22.61, "us_a_row": 25.1, "complete": true, "rows_copied": 900000, "chunks": 900, "rows_in_the_copy": 900000, "load_before": 4.2}
+stream postgres 900000 rc=0
+done

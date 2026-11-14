@@ -57,6 +57,7 @@ from .migration import (
     _plan,
     _same_value,
     _stamp,
+    source_chunks,
 )
 from .verification import VerificationRequest
 
@@ -195,37 +196,6 @@ def _same_row(source: Mapping[str, Any], target: Mapping[str, Any]) -> bool:
     return True
 
 
-def _source_chunks(
-    copy: _Copy, chunk_rows: int, call: Callable[..., Any]
-) -> Generator[list[dict[str, Any]], None, None]:
-    """The source's rows in key order, a chunk at a time.
-
-    By one streamed statement where the source's engine offers it and is not also the copy's (a
-    stream holds its engine until it ends, and a relayout reads and writes one engine); otherwise
-    by a keyset read a chunk. ``call`` wraps each fetch, which is where a cutover checks its budget.
-    """
-    stream = getattr(copy.source, "key_stream", None)
-    if callable(stream) and copy.source is not copy.target:
-        chunks = stream(copy.source_table, copy.key, chunk_rows=chunk_rows)
-        try:
-            while True:
-                chunk = call(next, chunks, None)
-                if not chunk:
-                    return
-                yield chunk
-        finally:
-            chunks.close()
-    after: tuple[Any, ...] | None = None
-    while True:
-        rows = call(
-            copy.source.key_range, copy.source_table, copy.key, after=after, limit=chunk_rows
-        )
-        if not rows:
-            return
-        yield rows
-        after = _key(copy, rows[-1])
-
-
 class _Mirror:
     """The copy's rows beside each chunk of the source: those up to the chunk's last key.
 
@@ -305,9 +275,9 @@ def reconcile(
         after: tuple[Any, ...] | None = None
         walked = 0
         mirror = _Mirror(copy, chunk_rows, call)
-        source_chunks = _source_chunks(copy, chunk_rows, call)
+        source_chunks_ = source_chunks(copy, chunk_rows, call=call)
         try:
-            for wanted in source_chunks:
+            for wanted in source_chunks_:
                 done = _repair_chunk(copy, target, mirror, wanted, after, epoch, call)
                 written += done[0]
                 unconfirmed += done[1]
@@ -315,7 +285,7 @@ def reconcile(
                 walked += len(wanted)
                 after = _key(copy, wanted[-1])
         finally:
-            source_chunks.close()
+            source_chunks_.close()
             mirror.close()
         rows += walked
         there = call(copy.target.count, copy.target_table)

@@ -105,21 +105,33 @@ class Streaming(Table):
     """Whether the stream comes in an order this process does not share: here, the reverse."""
 
     def key_stream(
-        self, table: str, order: Sequence[str], *, chunk_rows: int
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        chunk_rows: int,
+        after: Sequence[Any] | None = None,
     ) -> Iterator[list[dict[str, Any]]]:
         # Kept, as a driver keeps its response: a stream nobody closes stays open, where a
         # generator nothing refers to would be closed by the interpreter and hide a missing close.
-        self.streams = [*getattr(self, "streams", []), self._stream(table, order, chunk_rows)]
+        self.started = [*getattr(self, "started", []), after]
+        self.streams = [
+            *getattr(self, "streams", []), self._stream(table, order, chunk_rows, after)
+        ]
         return self.streams[-1]
 
     def _stream(
-        self, table: str, order: Sequence[str], chunk_rows: int
+        self, table: str, order: Sequence[str], chunk_rows: int, after: Sequence[Any] | None = None
     ) -> Iterator[list[dict[str, Any]]]:
         self.calls.append("key_stream")
         self.opened += 1
         try:
             rows = sorted(
-                self.tables[table],
+                (
+                    row
+                    for row in self.tables[table]
+                    if after is None or tuple(row[c] for c in order) > tuple(after)
+                ),
                 key=lambda row: tuple(row[c] for c in order),
                 reverse=self.backwards,
             )
@@ -135,9 +147,9 @@ class CutShort(Streaming):
     """
 
     def _stream(
-        self, table: str, order: Sequence[str], chunk_rows: int
+        self, table: str, order: Sequence[str], chunk_rows: int, after: Sequence[Any] | None = None
     ) -> Iterator[list[dict[str, Any]]]:
-        chunks = super()._stream(table, order, chunk_rows)
+        chunks = super()._stream(table, order, chunk_rows, after)
         try:
             yield next(chunks)
         finally:
@@ -559,6 +571,17 @@ def test_a_group_of_two_entities_is_walked_counted_and_compared_an_entity_at_a_t
     report = compare_stamped(view, "Event", epoch=OPERATION, reconciled=done, chunk_rows=1)
     (difference,) = report.differences
     assert not report.matched and (difference.entity, difference.table) == ("Note", "notes_copy")
+
+
+def test_a_short_chunk_is_the_end_of_a_source_read_by_chunks() -> None:
+    """No statement is spent on finding the table empty: under a pause every one is time. Five
+    rows two a chunk are three reads, and a table that ends on a full chunk needs the fourth."""
+    view, source, _ = fixture(ROWS, ROWS)
+    assert reconcile(view, "Event", epoch=OPERATION, chunk_rows=2).chunks == 3
+    assert source.calls.count("key_range") == 3
+    view, source, _ = fixture({1: "a", 2: "b", 3: "c", 4: "d"}, {1: "a", 2: "b", 3: "c", 4: "d"})
+    assert reconcile(view, "Event", epoch=OPERATION, chunk_rows=2).chunks == 2
+    assert source.calls.count("key_range") == 3
 
 
 def test_a_relayout_reads_its_one_engine_by_chunks_and_not_by_a_stream() -> None:

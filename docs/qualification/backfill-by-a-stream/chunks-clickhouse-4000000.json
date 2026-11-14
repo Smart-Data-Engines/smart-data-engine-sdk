@@ -1,0 +1,26 @@
+{
+ "label": "chunks",
+ "commit": "428a683b6af54047a2c2729acbc8cf97295e199e",
+ "python_src_modified": false,
+ "runs": [
+  {
+   "source": "clickhouse",
+   "target": "postgres",
+   "rows": 4000000,
+   "chunk_rows": 1000,
+   "backfill_s": 248.46,
+   "us_a_row": 62.1,
+   "complete": true,
+   "rows_copied": 4000000,
+   "chunks": 4000,
+   "rows_in_the_copy": 4000000,
+   "load_before": 7.75
+  }
+ ],
+ "machine": {
+  "node": "km-ThinkPad-E570",
+  "processor": "",
+  "cpus": 4,
+  "python": "3.14.4"
+ }
+}
