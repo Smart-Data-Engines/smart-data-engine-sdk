@@ -36,8 +36,14 @@ import sde
 from sde.departure import bookkeeping_statement
 from sde.write_fence import EPOCH_COLUMN, FENCE_PREFIX
 
-PROJECT = "d" * 32
-OTHER = "e" * 32
+PROJECT = uuid4().hex
+OTHER = uuid4().hex
+"""A project of this run's own, and another's. A departure lists what its project left in an engine,
+and an Elasticsearch cluster is one namespace for every test: with a project id fixed in this
+file, the table a stopped run had left behind was this run's own project's, outside its map, and
+the next run of the suite failed on it (measured on 14 November 2026, on two indices a run killed
+in the middle of this file had left). A fresh id makes what any other run left another project's,
+which the listing calls foreign and the tests expect."""
 HOLD = "5" * 32
 DSN = {
     "postgres": "SDE_POSTGRES_DSN",
@@ -348,7 +354,21 @@ def test_execute_runs_what_was_listed_and_refuses_an_engine_that_changed_since(
         model, placement = _signed(dialect, table)
         sde.prepare_schema(model, placement, {"db": engine}, project_id=PROJECT)
         listed = sde.departure(placement, {"db": engine}, project_id=PROJECT)
-        assert any("sde_map_state" in statement for statement in listed.engines[0].cleanup)
+        only = listed.engines[0]
+        # The bookkeeping goes with the cleanup unless another project shares the namespace. A
+        # schema or a database of this test's own never is shared; the Elasticsearch cluster is
+        # whenever a run that was stopped left something behind.
+        shared = any(finding.kind == "foreign" for finding in only.findings)
+        assert shared is False or dialect == "elasticsearch"
+        assert any("sde_map_state" in statement for statement in only.cleanup) is not shared
+        if shared:
+            # The rest is about a listing that removes the bookkeeping, and this one keeps it.
+            # Said as a skip and not passed over: remove what the stopped run left (indices and
+            # pipelines named sde_*) and the whole test runs.
+            pytest.skip(
+                "the Elasticsearch cluster holds another project's objects, left by a run that "
+                "was stopped: the bookkeeping is shared and kept, and this test needs it listed"
+            )
 
         # A barrier taken after the listing refuses it, and leaves the table as it was.
         fence = engine.write_fence(table, project_id=PROJECT)
