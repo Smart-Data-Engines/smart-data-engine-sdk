@@ -99,7 +99,7 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
   const group = body['group']
   if (typeof group !== 'string' || group.length === 0) throw new MigrationRefused('advance group must be a nonempty string')
   const budget = body['pause_budget_ms']
-  if (typeof budget !== 'number' || !Number.isSafeInteger(budget) || budget < 1 || budget > MAX_EPOCH) {
+  if (typeof budget !== 'number' || !Number.isSafeInteger(budget) || budget < 1) {
     throw new MigrationRefused('advance pause_budget_ms must be a positive safe integer')
   }
   signature(body)
