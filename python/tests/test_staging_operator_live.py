@@ -363,6 +363,126 @@ def test_a_relayout_in_the_same_engine_stages_and_cuts_over_like_a_move(
             old.get("Event", {"id": 1})
 
 
+def _repair(operator: Any, plan: Any) -> dict[str, Any]:
+    with operator.store.lock():
+        record: dict[str, Any] = operator.store.read()["completed"][plan.plan_id]["repair"]
+    return record
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_backfill_fills_the_copy_before_the_pause_and_the_cutover_writes_what_is_left(
+    source: str, tmp_path: Path
+) -> None:
+    """A staging copies nothing, so without a backfill the cutover copies the group in its pause.
+    With one the pause compares, and writes the rows a session on the earlier map wrote since."""
+    with initial(source, tmp_path) as (
+        operator, stage, old, roles, model, public, signed, _, _, target,
+    ):
+        with pytest.raises(sde.MigrationRefused, match="names no copy to fill"):
+            operator.backfill()
+        operator.stage(stage)
+        old.save("Event", {"id": 2, "value": 22})
+        copy_table = stage.prepared.groups["Event"].derived[0].layout.tables["Event"]
+        assert roles[target].operator.count(copy_table) == 0
+        (progress,) = operator.backfill()
+        assert progress.complete and progress.rows_this_run == 2
+        assert roles[target].operator.count(copy_table) == 2
+        runtime = {name: role.runtime for name, role in roles.items()}
+        active = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        active.save("Event", {"id": 3, "value": 33})  # fanned out to the copy
+        old.save("Event", {"id": 4, "value": 44})  # the source only: what the pause repairs
+        assert roles[target].operator.count(copy_table) == 3
+        plan = cutover(stage, signed, model, public)
+        final = operator.execute(plan).as_record()
+        assert final["outcome"] == "success"
+        assert _repair(operator, plan) == {
+            "mode": "diff",
+            "chunks": 1,
+            "rows": 4,
+            "written": 1,
+            "surplus": False,
+            "unconfirmed": 0,
+            "partial": False,
+        }
+        stored = {
+            row["id"]: row[sde.WRITE_EPOCH_COLUMN]
+            for row in roles[target].operator.key_range(copy_table, ["id"])
+        }
+        assert stored == {1: 1, 2: 1, 3: 1, 4: plan.maintenance_epoch}
+        moved = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        for identity in (1, 2, 3, 4):
+            assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_backfill_that_stops_is_continued_by_the_next_run(source: str, tmp_path: Path) -> None:
+    with initial(source, tmp_path) as (operator, stage, _old, roles, _model, _, _, _, _, target):
+        operator.stage(stage)
+        roles[source].operator.copy_in(
+            "initial_events",
+            [{"id": n, "value": n, sde.WRITE_EPOCH_COLUMN: 1} for n in range(10, 15)],
+        )
+        copy_table = stage.prepared.groups["Event"].derived[0].layout.tables["Event"]
+        operator.chunk_rows = 2
+        (first,) = operator.backfill(stop_after=1)
+        assert (first.rows_this_run, first.complete) == (2, False)
+        assert roles[target].operator.count(copy_table) == 2
+        (second,) = operator.backfill()
+        assert (second.rows_this_run, second.complete) == (4, True)
+        assert roles[target].operator.count(copy_table) == 6
+        (third,) = operator.backfill()
+        assert (third.rows_this_run, third.complete) == (0, True)
+        assert third.entities[0].rows_copied == 6
+
+
+def test_a_backfill_is_refused_beside_an_unfinished_operation(tmp_path: Path) -> None:
+    with initial("postgres", tmp_path) as (operator, stage, *_):
+
+        def crash(step: str) -> None:
+            if step == "stage_grants:done":
+                raise Crash(step)
+
+        operator._after_step = crash
+        with pytest.raises(Crash):
+            operator.stage(stage)
+        operator._after_step = lambda _step: None
+        with pytest.raises(sde.MigrationRefused, match="resume or abandon it before a backfill"):
+            operator.backfill()
+        assert operator.resume().as_record()["outcome"] == "prepared"
+        (progress,) = operator.backfill()
+        assert progress.complete
+
+
+@pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
+def test_a_relayout_backfilled_before_its_cutover_writes_what_is_left(
+    engine: str, tmp_path: Path
+) -> None:
+    """The same two steps in one engine: the copy under its new design is filled before the pause,
+    and the pause writes the row the old session wrote since."""
+    index: dict[str, Any] = {"entity": "Event", "name": "sde_i_relayout_000002"}
+    index.update(
+        {"columns": ["value"]}
+        if engine == "postgres"
+        else {"columns": ["value"], "method": "minmax", "granularity": 4}
+    )
+    with initial(engine, tmp_path, target=engine, indexes=[index]) as (
+        operator, stage, old, roles, model, public, signed, _, _, _,
+    ):
+        operator.stage(stage)
+        (progress,) = operator.backfill()
+        assert progress.complete and progress.rows_this_run == 1
+        old.save("Event", {"id": 2, "value": 22})
+        plan = cutover(stage, signed, model, public)
+        assert plan.as_record()["protocol"] == 2
+        assert operator.execute(plan).as_record()["outcome"] == "success"
+        record = _repair(operator, plan)
+        assert (record["mode"], record["rows"], record["written"]) == ("diff", 2, 1)
+        runtime = {name: role.runtime for name, role in roles.items()}
+        moved = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        for identity in (1, 2):
+            assert moved.get("Event", {"id": identity}) == {"id": identity, "value": identity * 11}
+
+
 class Crash(BaseException):
     pass
 
@@ -742,6 +862,14 @@ def test_staging_cli_publishes_a_usable_map_and_repeats_the_same_receipt(
             receipts.append(json.loads(run.stdout))
         assert receipts[0] == receipts[1]
         assert receipts[0]["outcome"] == "prepared"
+        filled = subprocess.run(
+            [*base, "backfill"], env=environment, capture_output=True, text=True, timeout=45
+        )
+        assert filled.returncode == 0, filled.stderr
+        (progress,) = json.loads(filled.stdout)
+        assert (progress["group"], progress["complete"], progress["rows_this_run"]) == (
+            "Event", True, 1
+        )
         active = sde.Session(
             model,
             operator.active_map(),

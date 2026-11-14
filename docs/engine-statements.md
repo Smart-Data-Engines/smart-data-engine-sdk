@@ -36,8 +36,9 @@ Who sends it:
 | `INSERT INTO … (…) VALUES (…)`, `INSERT INTO … (…) VALUES …` | application | `save`, `save_many` |
 | `INSERT INTO … (…, …) VALUES (%s, %s)` | application | a newer signed map is loaded: its version, into `sde_map_state` |
 | `INSERT INTO … (…, …, …) VALUES (%s, %s, %s)` | `sde.backfill` | its progress, into `sde_backfill_state` |
-| `COPY … (…) FROM STDIN` | `sde.backfill`; operator | a backfill, or a cutover refilling the copy: each chunk first goes this way |
+| `COPY … (…) FROM STDIN` | `sde.backfill`; operator | a backfill, or a cutover copying a row its copy lacks or refilling the copy: each chunk first goes this way |
 | `INSERT INTO … (…) VALUES … ON CONFLICT DO NOTHING` | `sde.backfill`; operator | the same chunk again, only when the `COPY` was refused for a key already there |
+| `INSERT INTO … (…) VALUES … ON CONFLICT (…) DO UPDATE SET …` | operator | a cutover writing a row of the frozen source over the row its copy holds with another value |
 | `ALTER TABLE … ADD COLUMN IF NOT EXISTS … bigint NOT NULL DEFAULT 0` | provisioning | fence setup: `__sde_write_epoch` |
 | `ALTER TABLE … ADD CONSTRAINT … CHECK (…) NOT VALID` | provisioning; operator | fence setup, a barrier, a generation change: `__sde_f_*` only |
 | `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only |
@@ -61,7 +62,7 @@ Who sends it:
 | `CREATE TABLE IF NOT EXISTS … (… Int64, … String, … DateTime64(3, 'UTC') DEFAULT now64(3, 'UTC')) ENGINE = MergeTree ORDER BY (…)` | provisioning | `sde_map_state`, for the first signed map |
 | `CREATE TABLE IF NOT EXISTS … (… String, … String, … Int64, … DateTime64(3, 'UTC') DEFAULT now64(3, 'UTC')) ENGINE = MergeTree ORDER BY (…, …)` | `sde.backfill` | `sde_backfill_state`, for the first backfill |
 | `CREATE TABLE IF NOT EXISTS … (table_name String, table_uuid UUID, project_id FixedString(32), hold String) ENGINE=MergeTree ORDER BY (table_uuid, project_id, hold)` | provisioning; operator | `__sde_fence_drains`, for the first drain |
-| `INSERT` built by the driver from the rows; `INSERT INTO … (…) FORMAT JSONEachRow` from TypeScript | application; `sde.backfill`; operator | `save`, `save_many`, a map version, backfill progress, a copy's refill, a drain's record |
+| `INSERT` built by the driver from the rows; `INSERT INTO … (…) FORMAT JSONEachRow` from TypeScript | application; `sde.backfill`; operator | `save`, `save_many`, a map version, backfill progress, a copy's repair or refill, a drain's record |
 | `ALTER TABLE … ADD COLUMN IF NOT EXISTS … Int64 DEFAULT 0` | provisioning | fence setup: `__sde_write_epoch` |
 | `ALTER TABLE … ADD CONSTRAINT IF NOT EXISTS … CHECK …` | provisioning; operator | fence setup, a barrier, a generation change: `__sde_f_*` only |
 | `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only |

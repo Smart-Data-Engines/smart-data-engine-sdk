@@ -8,7 +8,7 @@ which permits release, rollback or activation.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter_ns
 from typing import Any, cast
@@ -81,12 +81,18 @@ def verify_frozen(
     epochs: Mapping[str, int],
     chunk_rows: int = CHUNK_ROWS,
     at: str | None = None,
+    compare: Callable[..., VerifyReport] | None = None,
 ) -> FrozenVerifyReport:
     """Acquire/drain each barrier and compare exact logical content; do not release the holds.
 
     `epochs` names materialization ids, including the source. They can differ during operator
     maintenance and therefore cannot be inferred from a runtime session's single group epoch.
     A caller must budget this work and handle uncertain engine I/O as recovery, not as success.
+
+    `compare` is the comparison run under the barriers, :func:`sde.migration.verify` when absent.
+    A cutover that repaired its copy by what differs gives :func:`sde.reconcile.compare_stamped`,
+    which reads the rows that repair wrote and both counts. It is called as `verify` is, and what
+    this function does around it - the barriers taken before and checked after - does not change.
     """
     if not isinstance(hold_id, str) or re.fullmatch("[0-9a-f]{32}", hold_id) is None:
         raise MigrationRefused(
@@ -142,7 +148,9 @@ def verify_frozen(
         # Constraint presence alone does not drain an old ClickHouse INSERT. Always execute the
         # native drain, including when resuming an already installed hold.
         _matches(fence.freeze(hold_id), wanted)
-    comparison = verify(context, group, request=request, chunk_rows=chunk_rows, at=at)
+    comparison = (compare or verify)(
+        context, group, request=request, chunk_rows=chunk_rows, at=at
+    )
     for fence, wanted in planned:
         _matches(fence.state(), wanted)
     return FrozenVerifyReport(

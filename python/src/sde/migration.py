@@ -78,7 +78,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import isnan
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from ._usage import session_function
 from .capabilities import satisfies
@@ -90,9 +90,6 @@ from .logging import log
 from .placement import BACKFILL_TABLE, Materialization
 from .temporal_range import TEMPORAL_KINDS, kind_noun
 from .verification import VerificationRequest
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .session import Session
 
 __all__ = [
     "BACKFILL_TABLE",
@@ -616,7 +613,7 @@ def _shapes_agree(
 
 @session_function
 def backfill(
-    session: Session,
+    session: MigrationView,
     group: str,
     *,
     chunk_rows: int = CHUNK_ROWS,
@@ -793,11 +790,8 @@ def verify(
             after = high
             seen += len(rows)
 
-    at = at if at is not None else datetime.now(UTC).isoformat()
-    if request is not None:
-        request.check_time(at)
     return VerifyReport(
-        at=at,
+        at=_stamp(at, request),
         request=request,
         group=group,
         chunks_compared=chunks_compared,
@@ -809,6 +803,19 @@ def verify(
         differences=tuple(differences),
         differences_suppressed=suppressed,
     )
+
+
+def _stamp(at: str | None, request: VerificationRequest | None) -> str:
+    """When a comparison ran: the time given, or now, held to its request's window.
+
+    The one place a comparison reads the clock, for the report it stamps and for nothing it
+    decides. The comparison of the rows a cutover's repair wrote (:mod:`sde.reconcile`) stamps its
+    report here too.
+    """
+    at = at if at is not None else datetime.now(UTC).isoformat()
+    if request is not None:
+        request.check_time(at)
+    return at
 
 
 def _missing_in_target(

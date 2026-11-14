@@ -102,6 +102,9 @@ The Python [local cutover operator](docs/local-cutover.md) adds durable executio
 for signed generation-bearing packets, including native access changes for existing Python and
 TypeScript processes. [Staging](docs/staging.md) creates successive fresh copies while preserving
 the source and local recovery history; controller handoff and workload qualification are separate.
+`sde-operator backfill` fills a copy while the application keeps writing, so that the cutover's
+write pause compares the two and repairs what differs
+[instead of copying the group](docs/local-cutover.md#filling-the-copy-before-the-pause).
 A design that only changes indexes - adds, removes or replaces them - is carried out
 [in place](docs/in-place-index.md), on the live tables and without pausing a write, instead of
 through a copy.

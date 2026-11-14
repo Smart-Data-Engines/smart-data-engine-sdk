@@ -22,7 +22,9 @@ PROJECT = "1" * 32
 
 
 @contextmanager
-def fixture(source: str, root: Path, *, budget_ms: int = 30000) -> Iterator[tuple[Any, ...]]:
+def fixture(
+    source: str, root: Path, *, budget_ms: int = 30000, repair: str = "diff"
+) -> Iterator[tuple[Any, ...]]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     with runtime_roles("postgres") as pg, runtime_roles("clickhouse") as ch:
@@ -126,6 +128,7 @@ def fixture(source: str, root: Path, *, budget_ms: int = 30000) -> Iterator[tupl
             operators=operators,
             runtime={name: [value] for name, value in runtime.items()},
             chunk_rows=1,
+            repair=repair,
         )
         executor.enroll(before)
         try:
@@ -144,11 +147,252 @@ def fixture(source: str, root: Path, *, budget_ms: int = 30000) -> Iterator[tupl
                         )
 
 
+def repair_of(executor: Any, plan: Any) -> dict[str, Any]:
+    """Which way the completed cutover repaired its copy: local, numbers only."""
+    with executor.store.lock():
+        record: dict[str, Any] = executor.store.read()["completed"][plan.plan_id]["repair"]
+    return record
+
+
+def copy_rows(roles: Any, target: str) -> dict[int, tuple[int, int]]:
+    """The copy as it is stored: each key's value and the generation that wrote it."""
+    return {
+        row["id"]: (row["value"], row[sde.WRITE_EPOCH_COLUMN])
+        for row in roles[target].operator.key_range("copy_events", ["id"])
+    }
+
+
+def lose_the_fanout_of(old: Any, roles: Any, target: str, identity: int) -> None:
+    actual = roles[target].runtime.insert
+
+    def failed_copy(_table: str, _values: Any) -> None:
+        raise sde.EngineError("controlled missing copy")
+
+    roles[target].runtime.insert = failed_copy
+    try:
+        old.save("Event", {"id": identity, "value": identity * 11})
+    finally:
+        roles[target].runtime.insert = actual
+    assert roles[target].operator.get("copy_events", {"id": identity}) is None
+
+
 @pytest.mark.parametrize("source", ["postgres", "clickhouse"])
-def test_cutover_repairs_lost_fanout_and_rejects_old_reads_and_writes(
+def test_a_copy_that_is_there_is_compared_and_only_what_differs_is_written(
     source: str, tmp_path: Path
 ) -> None:
-    with fixture(source, tmp_path) as (executor, plan, old, roles, _, target, model, _public):
+    """Three rows in the source: the copy holds the first as it is, the second with another value,
+    and lacks the third. The cutover writes two rows and leaves the first as it was written, under
+    the generation it was written in."""
+    with fixture(source, tmp_path) as (executor, plan, old, roles, _, target, _model, _public):
+        lose_the_fanout_of(old, roles, target, 3)
+        roles[target].operator.upsert_in(
+            "copy_events", [{"id": 2, "value": 999, sde.WRITE_EPOCH_COLUMN: 1}], key=["id"]
+        )
+        assert copy_rows(roles, target) == {1: (11, 1), 2: (999, 1)}
+        receipt = executor.execute(plan).as_record()
+        assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
+        assert repair_of(executor, plan) == {
+            "mode": "diff",
+            "chunks": 3,
+            "rows": 3,
+            "written": 2,
+            "surplus": False,
+            "unconfirmed": 0,
+            "partial": False,
+        }
+        assert copy_rows(roles, target) == {
+            1: (11, 1),
+            2: (22, plan.maintenance_epoch),
+            3: (33, plan.maintenance_epoch),
+        }
+        comparison = receipt["verification"]["comparison"]
+        assert comparison["rows_source"] == comparison["rows_target"] == 3
+        # Three chunks of one row in the first pass, two stamped rows in the second.
+        assert (comparison["chunks_compared"], comparison["chunks_mismatched"]) == (5, 0)
+
+
+def _empty(roles: Any, target: str) -> None:
+    connection = roles[target].operator._cx
+    if roles[target].operator.dialect == "postgres":
+        connection.execute('TRUNCATE "copy_events"')
+    else:
+        connection.command("TRUNCATE TABLE copy_events")
+    assert roles[target].operator.count("copy_events") == 0
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_copy_that_was_never_filled_is_refilled_whole(source: str, tmp_path: Path) -> None:
+    with fixture(source, tmp_path) as (executor, plan, _old, roles, _, target, _model, _public):
+        _empty(roles, target)
+        receipt = executor.execute(plan).as_record()
+        assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
+        assert repair_of(executor, plan) == {"mode": "refill"}
+        assert copy_rows(roles, target) == {
+            1: (11, plan.maintenance_epoch),
+            2: (22, plan.maintenance_epoch),
+        }
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_key_the_source_lacks_ends_in_a_refill_and_is_gone(source: str, tmp_path: Path) -> None:
+    """Writing over rows cannot remove one, and nothing here deletes: the copy is emptied and
+    refilled, as every copy was before, and compared whole."""
+    with fixture(source, tmp_path) as (executor, plan, _old, roles, _, target, _model, _public):
+        roles[target].operator.copy_in(
+            "copy_events", [{"id": 99, "value": 1, sde.WRITE_EPOCH_COLUMN: 1}]
+        )
+        receipt = executor.execute(plan).as_record()
+        assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
+        record = repair_of(executor, plan)
+        assert record["mode"] == "refill" and record["after"]["surplus"] is True
+        assert record["after"]["written"] == 0
+        assert copy_rows(roles, target) == {
+            1: (11, plan.maintenance_epoch),
+            2: (22, plan.maintenance_epoch),
+        }
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_pass_that_did_not_read_the_whole_source_ends_in_a_refill_and_the_whole_comparison(
+    source: str, tmp_path: Path
+) -> None:
+    """The source answers the pass one row of its two and raises nothing. The copy holds every key
+    and a wrong value in the row the pass never reached, so the pass writes nothing, nothing
+    carries its generation and both counts agree - comparing the rows it wrote would call this
+    copy the source's equal. The pass holds the rows it read to the source's count and says it
+    fell short, and the cutover refills the copy and compares every row.
+
+    From ClickHouse the short answer is the server's own: the statement that reads the table whole
+    is sent with a cap on its result and ``break`` for what to do at it, which is what a settings
+    profile does to a login, at a size that bites that statement and no other. PostgreSQL has no
+    such mode, and the pass reads it a statement a chunk: there the test answers the second chunk
+    with nothing, once, to hold the same rule in the other direction."""
+    with fixture(source, tmp_path) as (executor, plan, _old, roles, _, target, _model, _public):
+        roles[target].operator.upsert_in(
+            "copy_events", [{"id": 2, "value": 999, sde.WRITE_EPOCH_COLUMN: 1}], key=["id"]
+        )
+        assert copy_rows(roles, target) == {1: (11, 1), 2: (999, 1)}
+        operator = roles[source].operator
+        cut: list[str] = []
+        clickhouse = source == "clickhouse"
+        patched, name = (
+            (operator._cx, "query_row_block_stream") if clickhouse else (operator, "key_range")
+        )
+        whole = getattr(patched, name)
+
+        def capped_by_the_server(statement: str, *args: Any, **kwargs: Any) -> Any:
+            cut.append(statement)
+            settings = {"max_result_rows": 1, "max_block_size": 1, "result_overflow_mode": "break"}
+            return whole(statement, *args, settings=settings, **kwargs)
+
+        def nothing_for_the_second_chunk_once(table: str, order: Any, **bounds: Any) -> Any:
+            if table == "source_events" and bounds.get("after") is not None and not cut:
+                cut.append(table)
+                return []
+            return whole(table, order, **bounds)
+
+        setattr(
+            patched, name, capped_by_the_server if clickhouse else nothing_for_the_second_chunk_once
+        )
+        try:
+            receipt = executor.execute(plan).as_record()
+        finally:
+            setattr(patched, name, whole)
+        assert len(cut) == 1 and "source_events" in cut[0]
+        assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
+        assert repair_of(executor, plan) == {
+            "mode": "refill",
+            "after": {
+                "chunks": 1,
+                "rows": 1,
+                "written": 0,
+                "surplus": False,
+                "unconfirmed": 0,
+                "partial": True,
+            },
+        }
+        assert copy_rows(roles, target) == {
+            1: (11, plan.maintenance_epoch),
+            2: (22, plan.maintenance_epoch),
+        }
+        comparison = receipt["verification"]["comparison"]
+        assert comparison["rows_source"] == comparison["rows_target"] == 2
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+@pytest.mark.parametrize("what", ["a row left alone", "a row repaired", "a row added"])
+def test_a_write_into_the_copy_after_its_repair_is_compared_under_the_barriers(
+    source: str, what: str, tmp_path: Path
+) -> None:
+    """Between the repair and the final barriers the copy admits one generation, the cutover's own.
+    A write of any other is refused by the engine, and a write of that one is read again under the
+    barriers - wherever the repair's pass had already been."""
+    with fixture(source, tmp_path) as (executor, plan, old, roles, _, target, _model, _public):
+        lose_the_fanout_of(old, roles, target, 3)
+        operator = roles[target].operator
+        written = {
+            "a row left alone": {"id": 1, "value": 0},
+            "a row repaired": {"id": 3, "value": 0},
+            "a row added": {"id": 77, "value": 7},
+        }[what]
+
+        def after(step: str) -> None:
+            if step != "repair:done":
+                return
+            with pytest.raises(sde.EngineError):
+                operator.upsert_in(
+                    "copy_events", [{**written, sde.WRITE_EPOCH_COLUMN: 1}], key=["id"]
+                )
+            operator.upsert_in(
+                "copy_events",
+                [{**written, sde.WRITE_EPOCH_COLUMN: plan.maintenance_epoch}],
+                key=["id"],
+            )
+
+        executor._after_step = after
+        receipt = executor.execute(plan).as_record()
+        assert receipt["outcome"] == "abort" and receipt["reason"] == "verification_mismatch"
+        assert receipt["verification"]["matched"] is False
+        assert receipt["verification"]["comparison"]["chunks_mismatched"] == 1
+        assert repair_of(executor, plan)["mode"] == "diff"
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_row_deleted_from_the_copy_after_its_repair_is_in_the_counts(
+    source: str, tmp_path: Path
+) -> None:
+    """A deletion carries no generation, so no row says it happened. The two counts under the
+    barriers do, and they are part of what a match requires."""
+    with fixture(source, tmp_path) as (executor, plan, _old, roles, _, target, _model, _public):
+        operator = roles[target].operator
+
+        def after(step: str) -> None:
+            if step != "repair:done":
+                return
+            if operator.dialect == "postgres":
+                operator._cx.execute('DELETE FROM "copy_events" WHERE id = 1')
+            else:
+                operator._cx.command(
+                    "ALTER TABLE copy_events DELETE WHERE id = 1", settings={"mutations_sync": 2}
+                )
+
+        executor._after_step = after
+        receipt = executor.execute(plan).as_record()
+        assert receipt["outcome"] == "abort" and receipt["reason"] == "verification_mismatch"
+        comparison = receipt["verification"]["comparison"]
+        assert comparison["chunks_mismatched"] == 0
+        assert (comparison["rows_source"], comparison["rows_target"]) == (2, 1)
+        assert receipt["verification"]["matched"] is False
+
+
+@pytest.mark.parametrize("repair", ["diff", "refill"])
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_cutover_repairs_lost_fanout_and_rejects_old_reads_and_writes(
+    source: str, repair: str, tmp_path: Path
+) -> None:
+    with fixture(source, tmp_path, repair=repair) as (
+        executor, plan, old, roles, _, target, model, _public
+    ):
         actual = roles[target].runtime.insert
 
         def failed_copy(_table: str, _values: Any) -> None:
@@ -164,6 +408,7 @@ def test_cutover_repairs_lost_fanout_and_rejects_old_reads_and_writes(
         assert receipt["outcome"] == "success"
         assert receipt["verification"]["matched"] is True
         assert receipt["within_budget"] is True
+        assert repair_of(executor, plan)["mode"] == repair
         current = sde.Session(
             model,
             executor.active_map(),
@@ -273,15 +518,22 @@ def test_restart_obeys_the_durable_decision(checkpoint: str, tmp_path: Path) -> 
             roles[retired].runtime.get(table, {"id": 1})
 
 
+@pytest.mark.parametrize("repair", ["diff", "refill"])
 @pytest.mark.parametrize("source", ["postgres", "clickhouse"])
 def test_a_mismatching_repair_aborts_without_changing_authority(
-    source: str, tmp_path: Path
+    source: str, repair: str, tmp_path: Path
 ) -> None:
-    with fixture(source, tmp_path) as (executor, plan, old, roles, _, target, model, _public):
+    """The copy's engine answers a write and does not keep one row of it. A refill is caught by the
+    whole comparison, as it always was. A repair of what differs reads back what it wrote, finds
+    the row is not there, and hands over to the refill and the whole comparison."""
+    with fixture(source, tmp_path, repair=repair) as (
+        executor, plan, old, roles, _, target, model, _public
+    ):
+        lose_the_fanout_of(old, roles, target, 3)
         actual = roles[target].operator.copy_in
 
         def omit_one(table: str, rows: Any) -> None:
-            actual(table, [row for row in rows if row["id"] != 2])
+            actual(table, [row for row in rows if row["id"] != 3])
 
         roles[target].operator.copy_in = omit_one
         try:
@@ -291,6 +543,11 @@ def test_a_mismatching_repair_aborts_without_changing_authority(
         assert receipt["outcome"] == "abort"
         assert receipt["reason"] == "verification_mismatch"
         assert receipt["verification"]["matched"] is False
+        record = repair_of(executor, plan)
+        assert record["mode"] == "refill"
+        assert ("after" in record) is (repair == "diff")
+        if repair == "diff":
+            assert (record["after"]["written"], record["after"]["unconfirmed"]) == (1, 1)
         active = sde.Session(
             model,
             executor.active_map(),
@@ -655,10 +912,14 @@ def test_interrupted_abort_restores_only_the_complete_source(
     checkpoint: str, tmp_path: Path
 ) -> None:
     with fixture("postgres", tmp_path) as (executor, plan, old, roles, _, target, model, _):
+        # The abort under test is made by a copy that loses the one row it has to gain: the
+        # repair cannot read it back, the refill that follows loses it again, and the whole
+        # comparison does not match.
+        lose_the_fanout_of(old, roles, target, 3)
         actual = roles[target].operator.copy_in
 
         def omit_one(table: str, rows: Any) -> None:
-            actual(table, [row for row in rows if row["id"] != 2])
+            actual(table, [row for row in rows if row["id"] != 3])
 
         roles[target].operator.copy_in = omit_one
 

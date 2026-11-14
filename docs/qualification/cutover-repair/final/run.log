@@ -1,0 +1,11 @@
+13:27:26
+ 13:27:26 up  2:26,  1 user,  load average: 2,44, 3,36, 3,52
+commit 1f8f87ea88b410d8078fbf2a8729cee33257deba
+a=0 13:32:47
+b=0 13:34:18
+c=0 13:39:41
+d=0 13:42:53
+MEASURE-DONE
+extra 13:43:05 commit 1f8f87ea88b410d8078fbf2a8729cee33257deba
+e=0 13:55:40
+EXTRA-DONE

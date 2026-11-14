@@ -8,6 +8,52 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: a cutover's pause no longer copies the group** (Python;
+[`docs/local-cutover.md`](docs/local-cutover.md#filling-the-copy-before-the-pause)). A staging
+creates a copy and copies nothing, so the cutover that followed copied the whole group inside its
+write pause: it emptied the copy, refilled it from the frozen source and compared every value.
+- **`sde-operator backfill`** fills the copy before the pause, while the application keeps writing.
+  It is the library's `sde.backfill` on the operator's logins, under the project lock, and a run
+  that stops is continued by the next one.
+- **The pause then repairs what differs.** It reads the frozen source and the copy side by side and
+  writes over the rows that differ - a row a session on the earlier map wrote, a fan-out that
+  failed - reading each back. Under its final barriers it compares every row of the copy that
+  carries the cutover's own write generation, and both counts. The copy admits a write of that
+  generation only while it is repaired, so a row carrying another is as it was when the pass
+  compared it: the same guarantee as the whole comparison, and the page says why and what it
+  assumes. Nothing is emptied and no row is deleted.
+- **It goes back to the refill by itself** for a copy that was never filled, for an engine that
+  cannot be written over (Elasticsearch), for a copy holding a key the source lacks, when a row it
+  wrote could not be read back, and when its pass read another number of rows than the source
+  counts. `repair` in the operator's configuration is `diff` when absent, and `refill` is the
+  cutover as it was.
+- **The signed packet and the receipt do not change.** A control plane that predates this accepts
+  the receipt, and the local record of a completed plan says which way its copy was repaired.
+
+Measured on the record's laptop, side by side with the refill
+([`docs/qualification/cutover-repair/`](docs/qualification/cutover-repair/README.md)): a move of
+200 000 rows from ClickHouse into PostgreSQL paused 2.2-2.6 s where it paused 11.5-11.9 s, and one
+out of PostgreSQL 2.5-3.5 s where it paused 8.1-10.6 s. Three million rows fitted a 30 s budget in
+each direction, where about 450 000 did from ClickHouse and about 900 000 the other way; four
+million did not, and were aborted with the source as it was. New on
+[the statement page](docs/engine-statements.md): `INSERT ... ON CONFLICT (...) DO UPDATE SET ...` on
+PostgreSQL, sent by the operator.
+
+**Changed: the operator reads a ClickHouse table in key order by one statement** (Python). A table
+read whole in key order was read by one statement a chunk, and under `FINAL` each of them merged
+the table's parts again from its starting key: measured on 24.8 on a table of 900 000 rows, from
+8 ms for 1000 rows near the table's end to 31 ms at its start. The more rows after the key, the
+longer, so the whole table cost more than in proportion to its size: 22.2 s by chunks and 1.6 s
+by one statement. The adapter's new `key_stream` is that statement, and a cutover's repair reads its
+source and its copy by it. `key_range`, and a backfill, which has to be able to stop and continue,
+are unchanged.
+
+**Fixed: `copy_in` into PostgreSQL sends a large chunk's conflict form as several statements**
+(Python). A statement binds at most 65535 values. A chunk that met a key already there was sent
+again as one `INSERT ... ON CONFLICT DO NOTHING`, which a chunk of 20 000 rows of four columns is
+past: a resumed `sde.backfill(chunk_rows=20000)` of such a table failed at the chunk it recopied.
+It is sent as several statements in one transaction now.
+
 **Added: what works with what, and what to do when upgrading** (Python, TypeScript, C++).
 [`docs/compatibility.md`](docs/compatibility.md) lists the engine versions the suites run against,
 the drivers each library takes, the map contracts and signed packets each release reads, and what a

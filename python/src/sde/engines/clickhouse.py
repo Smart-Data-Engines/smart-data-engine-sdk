@@ -151,6 +151,10 @@ def _row(names: Sequence[str], types: Sequence[Any], row: Sequence[Any]) -> dict
     return out
 
 
+_KEYS_A_STATEMENT = 500
+_KEY_TEXT_A_STATEMENT = 64_000
+"""The bounds of one ``rows_for_keys`` statement: keys, and characters of their values."""
+
 UNANNOUNCED_IDLE_LIMIT = 5.0
 """Seconds a connection may stay idle and be reused when the server announces no keep-alive
 timeout: half of ClickHouse's default of 10 s."""
@@ -1101,6 +1105,136 @@ class ClickHouseEngine:
             raise EngineError(f"key range select from {table} failed: {exc}") from exc
         return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
 
+    def key_stream(
+        self, table: str, order: Sequence[str], *, chunk_rows: int
+    ) -> Iterator[list[dict[str, Any]]]:
+        """Every row in key order, with `FINAL`, as the chunks of one statement's answer.
+
+        ``key_range`` with a limit is one statement a chunk, and under `FINAL` each of them merges
+        the table's parts again from its starting key to find its 1000 rows: measured on 24.8 on a
+        table of 900 000, from 8 ms near the table's end to 31 ms at its start, against 7 ms for a
+        range bounded at both ends. The more rows after the starting key, the longer, so a table
+        read whole in key order - a cutover's pass over its frozen source - cost more than in
+        proportion to its size, and it was most of the pass: those 900 000 rows took 22 s by
+        chunks and 1.6 s by one statement, which merges once.
+
+        The stream holds a connection, and this adapter's lease, until it is read to its end or
+        closed, so a caller that stops early closes it. The rows are the server's answer to one
+        statement at one moment, which for a frozen table is the table.
+
+        **The end of the stream is not proof of the end of the table.** A login whose settings cap
+        a result and say ``break`` is answered the first part and no error: measured on 24.8,
+        106 497 rows of 200 000 under ``max_result_rows = 50000``
+        (``docs/qualification/cutover-repair``). A read by chunks continues from the last key it
+        was given and loses nothing to that; this has nothing to continue from. A caller that
+        needs every row holds what it read to ``count``, as a cutover's pass does.
+        """
+        cols = key_columns(order, table)
+        if chunk_rows < 1:
+            raise EngineError(f"a key stream of {table} in chunks of {chunk_rows} rows has none")
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        sql = f"SELECT * FROM {_quote(table)} FINAL ORDER BY {tuple_expr}"
+        with self._usage.operation():
+            try:
+                with self._cx.query_row_block_stream(sql) as blocks:
+                    names = blocks.source.column_names
+                    types = blocks.source.column_types
+                    pending: list[dict[str, Any]] = []
+                    for block in blocks:
+                        for row in block:
+                            pending.append(_row(names, types, row))
+                            if len(pending) == chunk_rows:
+                                yield pending
+                                pending = []
+                    if pending:
+                        yield pending
+            except Exception as exc:
+                raise EngineError(f"key stream of {table} failed: {exc}") from exc
+
+    @guarded
+    def stamped_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows that carry one write generation, in key order, strictly after one key, with `FINAL`.
+
+        A table at a generation admits an insert of that generation only, and a changed row here
+        is an inserted one, so the rows whose newest version carries an operation's own generation
+        are the rows it wrote, and every other row is as it was before. A cutover reads its copy by
+        this to compare what it repaired.
+        """
+        cols = key_columns(order, table)
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        parameters: dict[str, Any] = {"write_epoch": int(epoch)}
+        clauses = [f"{_quote(EPOCH_COLUMN)} = %(write_epoch)s"]
+        if after is not None:
+            same_width(after, cols, "after")
+            bound = [
+                _query_parameter(f"after_{index}", value, parameters)
+                for index, value in enumerate(after)
+            ]
+            clauses.append(f"{tuple_expr} > ({', '.join(bound)})")
+        cap = ""
+        if limit is not None:
+            cap = " LIMIT %(row_limit)s"
+            parameters["row_limit"] = int(limit)
+        sql = (
+            f"SELECT * FROM {_quote(table)} FINAL WHERE {' AND '.join(clauses)} "
+            f"ORDER BY {tuple_expr}{cap}"
+        )
+        try:
+            result = self._cx.query(sql, parameters=parameters)
+        except Exception as exc:
+            raise EngineError(f"select of one generation from {table} failed: {exc}") from exc
+        return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
+
+    @guarded
+    def rows_for_keys(
+        self, table: str, order: Sequence[str], keys: Sequence[Sequence[Any]]
+    ) -> list[dict[str, Any]]:
+        """The rows of these keys, those that exist, in no promised order, with `FINAL`.
+
+        One statement for a set of keys where ``get`` is one for each. The keys are part of the
+        statement's text, which the server bounds (``max_query_size``, 256 KiB by default), so a
+        large set goes as several statements of at most ``_KEYS_A_STATEMENT`` keys and about
+        ``_KEY_TEXT_A_STATEMENT`` characters of them each.
+        """
+        cols = key_columns(order, table)
+        for key in keys:
+            same_width(key, cols, "a key")
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        found: list[dict[str, Any]] = []
+        start = 0
+        while start < len(keys):
+            parameters: dict[str, Any] = {}
+            marks: list[str] = []
+            size = 0
+            while start < len(keys) and len(marks) < _KEYS_A_STATEMENT and (
+                not marks or size < _KEY_TEXT_A_STATEMENT
+            ):
+                key = keys[start]
+                bound = [
+                    _query_parameter(f"key_{len(marks)}_{index}", value, parameters)
+                    for index, value in enumerate(key)
+                ]
+                marks.append(f"({', '.join(bound)})")
+                size += sum(len(str(value)) for value in key)
+                start += 1
+            sql = f"SELECT * FROM {_quote(table)} FINAL WHERE {tuple_expr} IN ({', '.join(marks)})"
+            try:
+                result = self._cx.query(sql, parameters=parameters)
+            except Exception as exc:
+                raise EngineError(f"select by keys from {table} failed: {exc}") from exc
+            found.extend(
+                _row(result.column_names, result.column_types, row) for row in result.result_rows
+            )
+        return found
+
     @guarded
     def nth_key(
         self, table: str, order: Sequence[str], *, position: int
@@ -1149,6 +1283,22 @@ class ClickHouseEngine:
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
+
+    def upsert_in(
+        self, table: str, rows: Sequence[Mapping[str, Any]], *, key: Sequence[str]
+    ) -> None:
+        """Write rows, replacing the row of any key that is already there.
+
+        ``copy_in`` already is that here: the table is a `ReplacingMergeTree` ordered by the key,
+        so an inserted row is the newest version of its key and the one every read under `FINAL`
+        returns. The method exists so that a cutover's repair asks every engine the same thing,
+        and so that the key it names is checked to be in the rows it gives.
+        """
+        if rows and not set(key_columns(key, table)) <= set(rows[0]):
+            raise EngineError(
+                f"upsert_in into {table} was given rows without their key {list(key)}"
+            )
+        self.copy_in(table, rows)
 
     @guarded
     def backfill_marker(self, *, materialization: str, entity: str) -> int:

@@ -1,0 +1,29 @@
+{
+  "rows": 200000,
+  "chunk_rows": 1000,
+  "version": "24.8.14.39",
+  "no_cap": {
+    "by_one_stream": 200000,
+    "by_chunks": {
+      "rows": 200000,
+      "statements": 201
+    },
+    "count": 200000
+  },
+  "max_result_rows_50000_break": {
+    "by_one_stream": 106497,
+    "by_chunks": {
+      "rows": 200000,
+      "statements": 201
+    },
+    "count": 200000
+  },
+  "max_result_rows_100_break": {
+    "by_one_stream": 49153,
+    "by_chunks": {
+      "rows": 200000,
+      "statements": 205
+    },
+    "count": 200000
+  }
+}

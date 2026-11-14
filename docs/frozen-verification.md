@@ -50,6 +50,18 @@ These are operator calls with previously loaded/verified inputs. They are not an
 migration recipe; the executor must still enforce its approval, active-map identity, deadlines,
 role qualification, state transitions and recovery procedure.
 
+## The comparison a caller gives
+
+`verify_frozen(..., compare=...)` in Python runs the caller's comparison under the barriers in
+place of the full one; what the function does around it, the barriers taken before and checked
+after, is the same. The local cutover gives `sde.reconcile.compare_stamped` after it repaired its
+copy by what differs: every row of the copy that carries the operation's write generation,
+compared with the source's, and both counts. Its report has the full comparison's fields and
+meaning, so the result below does not change.
+[Filling the copy before the pause](local-cutover.md#filling-the-copy-before-the-pause) says why
+that is the whole comparison. TypeScript and C++ run the full comparison only: neither has an
+operator.
+
 ## Result protocol
 
 The Python `as_record()` and TypeScript `frozenVerifyRecord()` produce the same metadata-only

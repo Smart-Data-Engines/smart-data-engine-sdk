@@ -260,6 +260,7 @@ MAY_IMPORT = frozenset(
         "json",
         "logging",
         "math",
+        "operator",  # itemgetter, a row's key in a cutover's pass over a group; no network facility
         "os",
         "pathlib",
         "re",

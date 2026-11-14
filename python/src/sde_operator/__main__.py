@@ -13,7 +13,7 @@ from typing import Any
 
 from sde.errors import EngineError, MigrationRefused, SdeError
 from sde.generation import check_map_project
-from sde.local_cutover import CutoverRecoveryRequired, LocalCutover, _local_status
+from sde.local_cutover import REPAIRS, CutoverRecoveryRequired, LocalCutover, _local_status
 from sde.migration import CHUNK_ROWS
 from sde.placement import load_map
 from sde.testing.loader import model_from_neutral
@@ -107,6 +107,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="with --execute, also drop the generation column and the bookkeeping tables",
     )
+    commands.add_parser(
+        "backfill",
+        help="fill the copy a staging created, before its cutover, while writes continue",
+    )
     erase = commands.add_parser(
         "erase",
         help="list, and with --execute delete, one entity's rows by key in every table of the map",
@@ -124,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = read(args.config)
         if (
-            set(config) - {"chunk_rows"}
+            set(config) - {"chunk_rows", "repair"}
             != {"protocol", "project_id", "model", "public_keys", "engines"}
             or type(config["protocol"]) is not int
             or config["protocol"] != 1
@@ -135,6 +139,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise MigrationRefused(
                 f"chunk_rows is a whole number of rows from 1 to {MAX_CHUNK_ROWS}: the rows a "
                 f"cutover's repair and comparison move at once"
+            )
+        repair = config.get("repair", "diff")
+        if repair not in REPAIRS:
+            raise MigrationRefused(
+                f"repair is one of {list(REPAIRS)}: how a cutover makes its copy the frozen "
+                f"source's equal, by the rows that differ or by refilling it whole"
             )
         model = model_from_neutral(config["model"])
         project = config["project_id"]
@@ -223,6 +233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             operators=operators,
             runtime=runtime,
             chunk_rows=chunk_rows,
+            repair=repair,
         )
         if args.command == "enroll":
             executor.enroll(read(args.map))
@@ -243,6 +254,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(executor.index(build).as_record()))
         elif args.command == "abandon":
             print(json.dumps(executor.abandon().as_record()))
+        elif args.command == "backfill":
+            print(json.dumps([progress.as_record() for progress in executor.backfill()]))
         elif args.command == "erase":
             from sde.erasure import ErasureReceipt, ErasureRequest
 

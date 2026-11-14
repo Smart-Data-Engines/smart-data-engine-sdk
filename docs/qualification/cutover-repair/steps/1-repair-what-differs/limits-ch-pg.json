@@ -1,0 +1,85 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "commit": "51e87bd7cfbbfe23abf5c47e611c8b0fcd1f49ba",
+  "results": [
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 450000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "rows_written_after_the_backfill": 0,
+      "backfill_ms": 14550,
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 15485,
+      "within_budget": true,
+      "repair_ms": 14854,
+      "verify_frozen_ms": 274,
+      "repair": {
+        "chunks": 450,
+        "mode": "diff",
+        "rows": 450000,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 0
+      },
+      "rows_source": 450000,
+      "rows_target": 450000,
+      "chunks_compared": 450,
+      "wall_ms": 15638,
+      "run": 1,
+      "load_before": [
+        2.85,
+        3.54,
+        3.61
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 900000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "backfill_ms": 43579,
+      "outcome": "recovery_required",
+      "reason": "CutoverRecoveryRequired",
+      "interrupted_after_ms": 30247,
+      "resume_ms": 465,
+      "resumed_outcome": "abort",
+      "resumed_reason": "recovered_before_decision",
+      "run": 1,
+      "load_before": [
+        3.09,
+        3.52,
+        3.6
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 1200000,
+      "way": "backfill",
+      "chunk_rows": 1000,
+      "backfill_ms": 54364,
+      "outcome": "recovery_required",
+      "reason": "CutoverRecoveryRequired",
+      "interrupted_after_ms": 30156,
+      "resume_ms": 711,
+      "resumed_outcome": "abort",
+      "resumed_reason": "recovered_before_decision",
+      "run": 1,
+      "load_before": [
+        7.23,
+        4.67,
+        4.0
+      ]
+    }
+  ]
+}

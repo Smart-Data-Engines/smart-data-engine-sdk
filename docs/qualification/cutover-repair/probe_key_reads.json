@@ -1,0 +1,42 @@
+{
+  "rows": 900000,
+  "chunk_rows": 1000,
+  "version": "24.8.14.39",
+  "parts": 7,
+  "one_chunk_after_a_key_with_a_limit": {
+    "0": {
+      "min_ms": 31.3,
+      "median_ms": 40.8
+    },
+    "300000": {
+      "min_ms": 23.9,
+      "median_ms": 25.7
+    },
+    "600000": {
+      "min_ms": 17.9,
+      "median_ms": 19.7
+    },
+    "890000": {
+      "min_ms": 7.9,
+      "median_ms": 8.4
+    }
+  },
+  "one_chunk_bounded_at_both_ends": {
+    "0": {
+      "min_ms": 6.9,
+      "median_ms": 8.2
+    },
+    "600000": {
+      "min_ms": 6.7,
+      "median_ms": 8.7
+    }
+  },
+  "whole_table_by_one_stream": {
+    "rows": 900000,
+    "seconds": 1.64
+  },
+  "whole_table_by_chunks": {
+    "rows": 900000,
+    "seconds": 22.22
+  }
+}

@@ -59,6 +59,10 @@ _quote = QUOTE["postgres"]
 # alternative, measured, is a call that never returns.
 CONNECT_TIMEOUT_SECONDS = 10
 
+_PARAMETERS = 60_000
+"""The most values one statement binds here. The protocol's count of them is 16 bits, so a chunk of
+20 000 rows of four columns does not fit one statement, and is sent as several."""
+
 
 # What fixes a table whose text columns predate the reads' collation, in the
 # sde.schema.text_collation event. Both measured on 15.19: the ALTER rewrites no table, and holds
@@ -1024,16 +1028,168 @@ class PostgresEngine:
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
-        placeholders = ", ".join(f"({', '.join(['%s'] * len(cols))})" for _ in rows)
-        sql = (
-            f"INSERT INTO {_quote(table)} ({columns}) VALUES {placeholders} ON CONFLICT DO NOTHING"
-        )
+        # In statements of at most ``_PARAMETERS`` values, and in one transaction, as the one
+        # statement was: a chunk of 20 000 rows of four columns is past the 65535 a statement binds.
+        step = max(1, _PARAMETERS // len(cols))
         try:
-            with self._cx.cursor() as cur:
-                cur.execute(sql, [value for row in values for value in row])
+            with self._cx.transaction(), self._cx.cursor() as cur:
+                for start in range(0, len(values), step):
+                    batch = values[start : start + step]
+                    placeholders = ", ".join(
+                        f"({', '.join(['%s'] * len(cols))})" for _ in batch
+                    )
+                    cur.execute(
+                        f"INSERT INTO {_quote(table)} ({columns}) VALUES {placeholders} "
+                        f"ON CONFLICT DO NOTHING",
+                        [value for row in batch for value in row],
+                    )
         except Exception as exc:
             log("sde.write.failed", table=table, error=type(exc).__name__)
             raise EngineError(f"copying {len(rows)} rows into {table} failed: {exc}") from exc
+
+    @guarded
+    def upsert_in(
+        self, table: str, rows: Sequence[Mapping[str, Any]], *, key: Sequence[str]
+    ) -> None:
+        """Write rows, replacing the row of any key that is already there.
+
+        What a cutover's repair writes into the copy when it repairs only what differs: a row the
+        copy lacks, and a row it holds with another value. ``copy_in`` cannot do the second - it
+        leaves the row that is there - and nothing here deletes a row to make room for one.
+
+        The conflict target is the key, named, where ``copy_in`` names none: an update needs to
+        know which row it replaces. Every other column is set from the new row, the write
+        generation among them, so a replaced row carries the generation of the operation that
+        replaced it. A statement holds at most ``_PARAMETERS`` values, under the protocol's 65535.
+        """
+        if not rows:
+            return
+        cols = sorted(rows[0])
+        for row in rows:
+            if sorted(row) != cols:
+                raise EngineError(
+                    f"upsert_in into {table} was given rows with different columns "
+                    f"({cols} and {sorted(row)}). A chunk comes from one table, so this is a "
+                    f"caller assembling it from two."
+                )
+        keys = key_columns(key, table)
+        if not set(keys) <= set(cols):
+            raise EngineError(
+                f"upsert_in into {table} was given rows without their key {list(keys)}"
+            )
+        from psycopg.types.json import Jsonb
+
+        columns = ", ".join(_quote(c) for c in cols)
+        target = ", ".join(_quote(c) for c in keys)
+        updates = ", ".join(
+            f"{_quote(c)} = EXCLUDED.{_quote(c)}" for c in cols if c not in keys
+        )
+        if not updates:
+            raise EngineError(
+                f"upsert_in into {table} was given rows of their key alone: there is nothing "
+                f"of such a row to replace, and copy_in writes the ones that are missing"
+            )
+        step = max(1, _PARAMETERS // len(cols))
+        try:
+            with self._cx.transaction(), self._cx.cursor() as cur:
+                for start in range(0, len(rows), step):
+                    batch = rows[start : start + step]
+                    placeholders = ", ".join(
+                        f"({', '.join(['%s'] * len(cols))})" for _ in batch
+                    )
+                    sql = (
+                        f"INSERT INTO {_quote(table)} ({columns}) VALUES {placeholders} "
+                        f"ON CONFLICT ({target}) DO UPDATE SET {updates}"
+                    )
+                    cur.execute(
+                        sql,
+                        [
+                            Jsonb(row[c]) if isinstance(row[c], (dict, list)) else row[c]
+                            for row in batch
+                            for c in cols
+                        ],
+                    )
+        except Exception as exc:
+            log("sde.write.failed", table=table, error=type(exc).__name__)
+            raise EngineError(
+                f"writing {len(rows)} rows over {table} failed: {self._explain(exc)}"
+            ) from exc
+
+    @guarded
+    def stamped_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows that carry one write generation, in key order, strictly after one key.
+
+        A table at a generation admits a write of that generation only, an update included, so
+        the rows that carry an operation's own generation are the rows it wrote or changed, and
+        every other row is as it was before. A cutover reads its copy by this to compare what it
+        repaired. A sequential scan: nothing indexes the generation, and its answer is the few
+        rows a repair wrote.
+        """
+        cols = key_columns(order, table)
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        clauses = [f"{_quote(EPOCH_COLUMN)} = %s"]
+        params: list[Any] = [int(epoch)]
+        if after is not None:
+            same_width(after, cols, "after")
+            clauses.append(f"{tuple_expr} > ({', '.join(['%s'] * len(cols))})")
+            params.extend(after)
+        cap = ""
+        if limit is not None:
+            cap = " LIMIT %s"
+            params.append(int(limit))
+        sql = (
+            f"SELECT * FROM {_quote(table)} WHERE {' AND '.join(clauses)} "
+            f"ORDER BY {tuple_expr}{cap}"
+        )
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(sql, params)
+                names = [d.name for d in cur.description or ()]
+                return [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
+        except Exception as exc:
+            raise EngineError(
+                f"select of one generation from {table} failed: {self._explain(exc)}"
+            ) from exc
+
+    @guarded
+    def rows_for_keys(
+        self, table: str, order: Sequence[str], keys: Sequence[Sequence[Any]]
+    ) -> list[dict[str, Any]]:
+        """The rows of these keys, those that exist, in no promised order.
+
+        One statement for a set of keys where ``get`` is one for each: what a comparison reads
+        when it knows which keys it wants and they are few among many.
+        """
+        cols = key_columns(order, table)
+        for key in keys:
+            same_width(key, cols, "a key")
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        step = max(1, _PARAMETERS // len(cols))
+        found: list[dict[str, Any]] = []
+        try:
+            with self._cx.cursor() as cur:
+                for start in range(0, len(keys), step):
+                    batch = keys[start : start + step]
+                    marks = ", ".join(f"({', '.join(['%s'] * len(cols))})" for _ in batch)
+                    cur.execute(
+                        f"SELECT * FROM {_quote(table)} WHERE {tuple_expr} IN ({marks})",
+                        [value for key in batch for value in key],
+                    )
+                    names = [d.name for d in cur.description or ()]
+                    found.extend(dict(zip(names, row, strict=True)) for row in cur.fetchall())
+        except Exception as exc:
+            raise EngineError(
+                f"select by keys from {table} failed: {self._explain(exc)}"
+            ) from exc
+        return found
 
     @guarded
     def backfill_marker(self, *, materialization: str, entity: str) -> int:

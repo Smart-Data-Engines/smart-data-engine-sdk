@@ -301,8 +301,12 @@ TEST(OrderbookWire, AFailureToConnectIsSaidInPythonsWords) {
   }
   EXPECT_EQ(failure_of([&] { ob::Connection(target(closed_port)); }),
             "ConnectionRefusedError: [Errno 111] Connection refused");
+  // The final dot makes the name absolute. Without it the resolver also tries the network's search
+  // domains, and one whose DNS answers every name by a wildcard gives this name an address: the
+  // connection then waits out its timeout where the resolver should have refused. Measured on such
+  // a network on 14 November 2026, where this was the one failure of the suite.
   const std::string unknown =
-      failure_of([] { ob::Connection(ob::parse_dsn("orderbook://no-such-host.invalid:1")); });
+      failure_of([] { ob::Connection(ob::parse_dsn("orderbook://no-such-host.invalid.:1")); });
   EXPECT_TRUE(unknown.starts_with("gaierror: [Errno -")) << unknown;
 }
 
