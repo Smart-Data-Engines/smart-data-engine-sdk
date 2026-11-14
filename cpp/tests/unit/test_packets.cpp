@@ -512,7 +512,8 @@ TEST_F(AdvancePacket, ItsFingerprintCoversItsMapsAsTheyWereSigned) {
     const auto directory =
         vectors_root() / "migration" / "201-advance-raises-one-group-by-one-generation";
     std::map<std::string, std::string> keys;
-    for (const auto& [name, value] : read_json(directory / "keys.json").as_object()) {
+    const sde::Json encoded = read_json(directory / "keys.json");
+    for (const auto& [name, value] : encoded.as_object()) {
       keys.emplace(name, *sde::detail::base64_decode(value.as_string()));
     }
     return sde::PublicKeys::named(std::move(keys));
