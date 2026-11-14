@@ -95,6 +95,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     stage.add_argument("--plan", type=Path, required=True)
     index = commands.add_parser("index")
     index.add_argument("--plan", type=Path, required=True)
+    advance = commands.add_parser(
+        "advance",
+        help="raise one group's write generation by one, as a signed advance packet says",
+    )
+    advance.add_argument("--plan", type=Path, required=True)
     depart = commands.add_parser(
         "depart",
         help="list what this library left in the engines and the statements that remove it",
@@ -252,6 +257,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 read(args.plan), model=model, project_id=project, public_key=keys
             )
             print(json.dumps(executor.index(build).as_record()))
+        elif args.command == "advance":
+            from sde.advance import load_advance_plan
+
+            raised = load_advance_plan(
+                read(args.plan), model=model, project_id=project, public_key=keys
+            )
+            print(json.dumps(executor.advance(raised).as_record()))
         elif args.command == "abandon":
             print(json.dumps(executor.abandon().as_record()))
         elif args.command == "backfill":
