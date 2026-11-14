@@ -1,0 +1,147 @@
+{
+  "kind": "sde-advance",
+  "protocol": 1,
+  "advance_id": "77777777777777777777777777777777",
+  "project_id": "11111111111111111111111111111111",
+  "group": "Event",
+  "pause_budget_ms": 30000,
+  "before": {
+    "contract": 4,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "groups": {
+      "Event": {
+        "write_epoch": 1,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        }
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "advance",
+      "value": "OB4os3GCNJIYjX44bDYJIsjZJKHIU2eKuYbfd3FmuxdOhyorQIIC0oBsJ7CskXD0xyJHWgI4VDPIty3fbxt0Dw=="
+    }
+  },
+  "after": {
+    "contract": 4,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 2,
+    "groups": {
+      "Event": {
+        "write_epoch": 2,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        }
+      },
+      "Order": {
+        "write_epoch": 7,
+        "source": {
+          "engine": "pg-main",
+          "id": "Order@pg",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@pg"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "advance",
+      "value": "7Z0y4UkKlGXVAB1CXrOnvB4S/UppxWgw3kHGRom182r2syh4J//+NAOc9PYOuT0fUv330l/anr7JL7N856RECg=="
+    }
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "advance",
+    "value": "Pelvfyr1gKMtr+UfcmB0FCpAnC5ZuwpiJSSrbMU142CqmyQCw70QOcUz0jh7rnaagrmg7lU6Un/VtgSfnjtCBg=="
+  }
+}

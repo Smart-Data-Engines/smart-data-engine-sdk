@@ -461,6 +461,9 @@ def test_migration_vector(case: Path) -> None:
     if (case / "staging.json").is_file():
         _drive_staging_vector(case, model)
         return
+    if (case / "advance.json").is_file():
+        _drive_advance_vector(case, model)
+        return
     if (case / "index.json").is_file():
         _drive_index_vector(case, model)
         return
@@ -1160,6 +1163,38 @@ def _drive_staging_vector(case: Path, model: sde.LogicalModel) -> None:
         json.loads(plan.prepared_payload()), model=model, public_key=keys, require_signature=True
     )
     assert decoded.fingerprint == wanted["map_fingerprints"]["prepared"]
+
+
+def _drive_advance_vector(case: Path, model: sde.LogicalModel) -> None:
+    """A packet that advances one group's write generation and nothing else."""
+    raw = _read_json(case / "plan.json")
+    wanted = _read_json(case / "advance.json")
+    keys = {name: b64decode(value) for name, value in _read_json(case / "keys.json").items()}
+    if "error" in wanted:
+        with pytest.raises(sde.MigrationRefused, match=re.escape(wanted["match"])):
+            sde.load_advance_plan(
+                raw, model=model, project_id=wanted["project_id"], public_key=keys
+            )
+        return
+    plan = sde.load_advance_plan(raw, model=model, project_id=wanted["project_id"], public_key=keys)
+    assert plan.fingerprint == wanted["advance_fingerprint"]
+    assert plan.verified_with == wanted["verified_with"]
+    assert plan.as_record() == raw
+    assert plan.pause_budget_ms == wanted["pause_budget_ms"]
+    plan.check_current(plan.before)
+    with pytest.raises(sde.MigrationRefused, match="does not name the signed current map"):
+        plan.check_current(plan.after)
+    for name in ("before", "after"):
+        assert getattr(plan, name).fingerprint == wanted["map_fingerprints"][name]
+        assert getattr(plan, name).groups[plan.group].write_epoch == wanted["write_epochs"][name]
+    assert (plan.source_epoch, plan.next_epoch) == (
+        wanted["write_epochs"]["before"],
+        wanted["write_epochs"]["after"],
+    )
+    decoded = sde.load_map(
+        json.loads(plan.after_payload()), model=model, public_key=keys, require_signature=True
+    )
+    assert decoded.fingerprint == wanted["map_fingerprints"]["after"]
 
 
 # --- search vectors ---------------------------------------------------------------------------

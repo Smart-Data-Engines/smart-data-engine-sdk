@@ -1,0 +1,5 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "error": "MigrationRefused",
+  "match": "advance pause_budget_ms must be a positive safe integer"
+}
