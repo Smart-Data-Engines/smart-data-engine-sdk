@@ -33,12 +33,33 @@ one action instead of two.
 
 | | |
 |---|---|
-| Supported | **18, 20, 22, 24, 26** |
-| Tested in CI | 18, 20, 22, 24, 26 — every one, on every pull request |
-| Declared in `typescript/package.json` | `>=18 <27` |
+| Supported | **22, 24, 26** |
+| Tested in CI | 22, 24, 26 — every one, on every pull request |
+| Declared in `typescript/package.json` | `>=22 <27` |
 
 Same reasoning, same closed ceiling. The TypeScript implementation has to agree with the Python one
 byte for byte on the shared conformance vectors, so an untested runtime is an untested encoder.
+
+## When a runtime leaves
+
+A line of Python or of Node is supported while its upstream maintains it. In the first minor
+release after a line's end of life it leaves, in one commit: its CI job, its place in
+`requires-python` or `engines`, the required checks of `.github/rulesets/main.json`, and these
+tables, with a CHANGELOG entry marked as one that may break a configuration. A release already on
+the registry keeps working on the line it supported; it just gets no successor there.
+
+| Line | Upstream end of life |
+|---|---|
+| Python 3.11 | October 2027 |
+| Python 3.12 | October 2028 |
+| Python 3.13 | October 2029 |
+| Python 3.14 | October 2030 |
+| Node 22 | 30 April 2027 |
+| Node 24 | 30 April 2028 |
+| Node 26 | 30 April 2029 |
+
+Node 18 (end of life 30 April 2025) and Node 20 (30 April 2026) left by this rule, for 0.3.0. The
+0.2.0 on npm still installs on them.
 
 ## Operating systems
 

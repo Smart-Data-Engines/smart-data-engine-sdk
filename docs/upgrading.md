@@ -21,8 +21,19 @@ vector that 0.2.0 passed has changed, so the tables the library creates on Postg
 are the ones it created before. Nothing is rewritten in your engines by installing the new version.
 
 **During a rollout** services on 0.2.0 and on the new version open the same map and the same
-tables. What differs between them is listed below: which connection strings, values and keys each
-one refuses, and how a `float32` field reads.
+tables. What differs between them is listed below: the Node versions each one runs on, which
+connection strings, values and keys each one refuses, and how a `float32` field reads.
+
+### Runtimes
+
+**Node 18 and 20 are no longer supported.** Affected: an application of the TypeScript library on
+either. Both are past their upstream end of life, and the package's `engines` is now `>=22 <27`,
+so npm warns on an older Node, or refuses with `engine-strict`. Move to Node 22, 24 or 26. 0.2.0
+still installs on 18 and 20 and gets no successor there. The rule that decided it, and the date
+each supported line leaves, are on [`platforms.md`](platforms.md#when-a-runtime-leaves). Python's
+lines are unchanged: 3.11 to 3.14.
+
+Changelog: *Changed, and it may break an installation: Node 18 and 20 are no longer supported*.
 
 ### Connection strings
 
