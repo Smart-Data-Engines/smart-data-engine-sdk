@@ -13,6 +13,7 @@ from pathlib import Path
 from time import monotonic_ns
 from typing import TYPE_CHECKING, Any, cast
 
+from .advance import AdvancePlan, AdvanceReceipt
 from .canonical import canonical_bytes
 from .cutover import CutoverPlan, load_cutover_plan
 from .errors import EngineError, MigrationRefused
@@ -861,6 +862,31 @@ class LocalCutover:
         finally:
             self._alarm = None
 
+    def advance(self, plan: AdvancePlan) -> AdvanceReceipt:
+        """Raise the group's write generation by one on its source and copies, then publish
+        ``plan``'s next map.
+
+        The group's writes wait from the first barrier to the last release, which the signed
+        pause budget bounds: an advance that cannot decide within it lifts its barrier and
+        leaves the map in force.
+        """
+        from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
+        from .advance_operator import execute_advance
+
+        self._owner()
+        try:
+            with OperatorDeadline() as deadline:
+                self._alarm = deadline
+                deadline.arm(30000)  # Qualification does not pause application writes.
+                return execute_advance(self, plan)
+        except DeadlineInterrupt as exc:
+            self._interrupted()
+            raise CutoverRecoveryRequired(
+                "the advance deadline interrupted an operation; reconnect and resume its state"
+            ) from exc
+        finally:
+            self._alarm = None
+
     def abandon(self) -> IndexReceipt | StagingReceipt:
         """Abandon the unfinished index build or staging before its decision.
 
@@ -884,6 +910,11 @@ class LocalCutover:
                     return abandon_index(self)
                 if kind == "staging":
                     return abandon_stage(self)
+                if kind == "advance":
+                    raise MigrationRefused(
+                        "a generation advance is not abandoned by hand: resume lifts its barrier "
+                        "and keeps the map in force before its decision, and completes it after"
+                    )
                 raise MigrationRefused("there is no unfinished index build or staging to abandon")
         except DeadlineInterrupt as exc:
             self._interrupted()
@@ -893,7 +924,7 @@ class LocalCutover:
         finally:
             self._alarm = None
 
-    def resume(self) -> CutoverReceipt | StagingReceipt | IndexReceipt:
+    def resume(self) -> CutoverReceipt | StagingReceipt | IndexReceipt | AdvanceReceipt:
         from ._operator_deadline import DeadlineInterrupt, OperatorDeadline
 
         self._owner()
@@ -910,7 +941,7 @@ class LocalCutover:
         finally:
             self._alarm = None
 
-    def _resume(self) -> CutoverReceipt | StagingReceipt | IndexReceipt:
+    def _resume(self) -> CutoverReceipt | StagingReceipt | IndexReceipt | AdvanceReceipt:
         self._owner()
         with self.store.lock():
             state = self.store.read()
@@ -925,6 +956,10 @@ class LocalCutover:
                 from .index_operator import resume_index
 
                 return resume_index(self, state)
+            if execution.get("kind") == "advance":
+                from .advance_operator import resume_advance
+
+                return resume_advance(self, state)
             plan = load_cutover_plan(
                 execution["plan"],
                 model=self.model,

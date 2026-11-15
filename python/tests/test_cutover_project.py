@@ -232,3 +232,67 @@ def test_an_index_change_needs_contract_five(tmp_path: Path, contract: int, wher
         store.read()
     _rewrite(store, 5, payload)
     assert store.read()["stages"] == {}
+
+
+def test_an_advance_history_raises_the_state_contract_to_six(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    state = store.read()
+    state["stages"], state["indexes"] = {}, {}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 3
+    # From the intent on, before any advance has a receipt: the history is there and empty.
+    state["advances"], state["execution"] = {}, {"kind": "advance", "plan": {"protocol": 1}}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 6
+    assert store.read()["advances"] == {}
+    state["advances"]["a" * 32] = {"receipt": {"outcome": "advanced"}}
+    state["execution"] = None
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 6
+    assert store.read()["advances"] == {"a" * 32: {"receipt": {"outcome": "advanced"}}}
+    # Above what an index change and an abandoned staging ask for, which it still carries.
+    state["indexes"]["b" * 32] = _index_record(2)
+    state["stages"]["c" * 32] = _stage_record("abandoned")
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 6
+    assert set(store.read()) >= {"stages", "indexes", "advances"}
+
+
+@pytest.mark.parametrize(
+    ("contract", "drop", "history"),
+    [
+        (6, "advances", None),  # contract 6 without its history
+        (6, None, []),  # a history that is not an object
+        (6, "indexes", {}),  # contract 6 still carries the histories before it
+        (6, "stages", {}),
+        (5, None, {}),  # an advance history under a contract that does not know it
+        (3, None, {}),
+    ],
+)
+def test_the_advance_history_belongs_to_contract_six_only(
+    tmp_path: Path, contract: int, drop: str | None, history: Any
+) -> None:
+    """What makes an operator that knows contracts 1 to 5 refuse a state an advance wrote, where
+    it would otherwise resume the advance as if it were a cutover."""
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"], payload["indexes"], payload["advances"] = {}, {}, history
+    if drop is not None:
+        del payload[drop]
+    _rewrite(store, contract, payload)
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()
+
+
+def test_a_state_storage_contract_this_operator_does_not_know_is_refused(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"], payload["indexes"], payload["advances"] = {}, {}, {}
+    _rewrite(store, 6, payload)
+    assert store.read()["advances"] == {}
+    _rewrite(store, 7, payload)
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()

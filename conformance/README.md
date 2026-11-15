@@ -345,8 +345,8 @@ among them a layout that carries `auto` whatever the member says, which leaves n
 by its language's notion of a true value. `advance.json` names the packet's and both maps'
 fingerprints and the group's generation in each map. `tools/advance_vectors.py` uses the independent
 fixture encoder and OpenSSL; every vector carries its own key, so `--only` rewrites the named
-vectors and leaves the others byte for byte. Nothing executes the packet yet, so it has no live
-tests.
+vectors and leaves the others byte for byte. The barrier, the recovery from every checkpoint and
+the order the group closes and opens in have separate live tests.
 
 `errors/074`–`077`, `migration/188`–`199` and `signature/015` hold map contract 6, a group that
 carries no write generation because its engine cannot fence writes: the map refusals, four session

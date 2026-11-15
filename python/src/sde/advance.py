@@ -28,7 +28,7 @@ from .generation import GENERATIONS_SINCE, MAX_EPOCH, check_map_project, json_nu
 from .model import LogicalModel
 from .placement import PlacementMap, _verify_signature, load_map
 
-__all__ = ["ADVANCE_PROTOCOL", "AdvancePlan", "load_advance_plan"]
+__all__ = ["ADVANCE_PROTOCOL", "AdvancePlan", "AdvanceReceipt", "load_advance_plan"]
 
 ADVANCE_PROTOCOL = 1
 _FIELDS = {
@@ -93,6 +93,26 @@ class AdvancePlan:
         check_map_project(current, self.project_id)
         if not current.signed or current.fingerprint != self.before.fingerprint:
             raise MigrationRefused("advance authorization does not name the signed current map")
+
+
+@dataclass(frozen=True, init=False)
+class AdvanceReceipt:
+    """What an executed advance left: its outcome, the map in force and the group's generation."""
+
+    _payload: bytes
+
+    def __init__(self, record: Mapping[str, Any]) -> None:
+        object.__setattr__(
+            self,
+            "_payload",
+            json.dumps(
+                record, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8"),
+        )
+
+    def as_record(self) -> dict[str, Any]:
+        record: dict[str, Any] = json.loads(self._payload)
+        return record
 
 
 def _load(

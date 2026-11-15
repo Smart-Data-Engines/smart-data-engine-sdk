@@ -5,9 +5,10 @@ nothing else: the group stays in the engines, tables and copies it is in, every 
 as it is, and so does routing. The packet holds the signed map in force and the signed map that
 follows it, and the second is the first with a newer version and that one number.
 
-**This page defines the packet and what loading it guarantees.** The three libraries load and
-validate it by the same rules, pinned by shared vectors. Nothing in this repository executes it
-yet: `sde-operator` has no command for it, and no map is published by loading one.
+The three libraries load and validate the packet by the same rules, pinned by shared vectors.
+The Python `LocalCutover.advance` executor runs it in the customer's environment: a barrier on the
+group's tables, the next generation behind it, the next map published, the barrier lifted. No row
+is read, copied or compared, and no grant changes hands.
 
 ## What a generation is a mark of
 
@@ -104,10 +105,94 @@ three acceptances - a group with a maintained copy, a group without one, a map t
 group without a generation - and a refusal for each rule, each with the fragment of the message
 every library gives.
 
+## Local execution
+
+Use the [operator configuration](local-cutover.md#local-configuration-and-command-handoff) already
+enrolled for the project. An advance needs no grant a cutover does not need.
+
+```sh
+sde-operator --config local-operator.json --project-dir ./client-state advance --plan advance.json
+sde-operator --config local-operator.json --project-dir ./client-state status
+sde-operator --config local-operator.json --project-dir ./client-state resume
+```
+
+**Before anything waits**, the operator checks, and records an intent that binds:
+
+- the signed map in force;
+- a binding for every engine a group with a generation uses, because the next map version is
+  recorded in each;
+- the native identity of every table of the group, the source's and each copy's - none of them
+  one table under two names, and none a table another group also names, whose generation would
+  be raised under a map that still says the earlier one;
+- each table's write barrier complete, at the group's generation and **without any hold**: an
+  advance does not start beside another operation's barrier;
+- the runtime logins, and every other grantee of the tables, as a cutover qualifies them
+  ([runtime roles](runtime-roles.md#the-operators-login-and-the-principals-beside-it)). An advance
+  moves no authority, and the generation it leaves on the rows is a mark a later comparison
+  stands on, which a principal nobody declared could change a row under;
+- no engine holding a newer map version.
+
+A refusal here has changed nothing.
+
+**Then the group's writes wait**, and the packet's `pause_budget_ms` bounds the wait:
+
+1. a barrier on the source's tables, then on each copy's. A write is the source's first and a
+   copy's additionally, so with the source closed first nothing reaches a copy but what was
+   already on its way;
+2. the barrier read back: every table is the one that was qualified, closed by this advance's
+   barrier and by no other, at the generation it started from;
+3. the decision `advanced`, written durably;
+4. the next generation on the source and on the copies, the next map version recorded in every
+   engine, the next map published, and the barrier lifted - from the copies first, so that the
+   source takes no write while a copy still refuses it.
+
+It ends by reading that every table of the group is open at the next generation.
+
+### What the application sees
+
+From the first barrier to the last release an insert into the group is refused by the engine, at
+either generation: nothing is written at the earlier one after the advance began, nor at the next
+before its map is out. Afterwards a session that still holds the earlier map is refused until it
+loads the next one, and a library does not retry ([generation maps](generation-maps.md)). Rows
+written before the advance keep the generation they were written in. That is the mark.
+
+### Interruption, the pause budget and recovery
+
+An advance has two ends and reaches one of them from wherever it stops.
+
+- **Before the decision** the map in force is still true of every table. An interruption followed
+  by `resume`, and a pause budget spent before the decision, lift this advance's own barrier and
+  leave that map in force: outcome `abandoned`, with the reason `recovered_before_decision` or
+  `budget_exceeded`. Applications still hold that map and write again at once.
+- **From the decision on** it is completed: a write fence cannot lower a generation, so there is
+  no way back and `resume` goes forward, to the outcome `advanced`. A spent budget does not turn
+  a decision into another one.
+
+A deadline equal to the pause budget interrupts a statement on a server that stopped answering.
+The command then exits with `recovery_required`, and `resume` with fresh connections ends the
+advance one way or the other. After a kill, `resume` first restores what the last statement left:
+a ClickHouse table detached by an unfinished barrier is attached again under its recorded intent.
+There is no `abandon` for an advance - before the decision `resume` is the abandonment, and after
+it nothing can be.
+
+An abandoned advance spends its packet: the barrier's id is retired in the engines, as after an
+aborted cutover, and the same packet answers with its receipt. Advancing again takes a new packet.
+A barrier that is not this advance's, appearing while it runs, stops the decision, is not lifted
+by the recovery, and keeps the advance from reporting an end until it is gone.
+
+### Receipt and local state
+
+The receipt holds `outcome`, `reason`, the version and fingerprint of the map in force afterwards,
+the group's `write_epoch`, the tables acted on with their roles, `elapsed_ms`, `recovered` and
+`within_budget`. The same packet again returns the same receipt and changes nothing; another
+packet under a spent `advance_id` is refused.
+
+`project.json` keeps the history of advances under `advances`, and uses storage contract 6 from an
+advance's first intent: operators that know contracts 1 to 5 refuse the state whole, where they
+would otherwise resume an advance as if it were a cutover.
+
 ## What this does not do
 
-- It does not execute. The packet authorizes one change of one number; fencing the group's tables,
-  publishing `after` and recording a receipt belong to an operator, and none is here yet.
 - It does not make a cutover shorter by itself. A cutover reads what it reads today until an
   operator compares the earlier generations before the pause and tells the cutover so.
 - It is not free for the application. Raising a generation is what a cutover's first step does: a
