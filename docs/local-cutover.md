@@ -183,6 +183,10 @@ sde-operator --config local-operator.json --project-dir ./client-state current-m
 `backfill` fills the copy before the pause, and is what makes the pause short
 ([Filling the copy before the pause](#filling-the-copy-before-the-pause)).
 
+The same configuration and project directory run the other signed operations: `stage`
+([staging](staging.md)), `index` ([in-place index builds](in-place-index.md)) and `advance`
+([generation advances](generation-advance.md)). `resume` ends whichever of them is unfinished.
+
 `status` and `current-map` work without database connections or connection environment variables.
 `current-map` verifies and prints the same snapshot of the signed file. The status distinguishes
 `active_map_version` (the actually published file) from `recorded_map_version` (the last completed

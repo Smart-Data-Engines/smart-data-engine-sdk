@@ -33,7 +33,7 @@ mode, not a loophole.
 
 from __future__ import annotations
 
-from .advance import ADVANCE_PROTOCOL, AdvancePlan, load_advance_plan
+from .advance import ADVANCE_PROTOCOL, AdvancePlan, AdvanceReceipt, load_advance_plan
 from .books import ENGINE_DEPTH, BookStream, Resync, book_diff
 from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
@@ -201,6 +201,7 @@ __all__ = [
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
     "AdvancePlan",
+    "AdvanceReceipt",
     "BackfillProgress",
     "BookStream",
     "BulkWritable",

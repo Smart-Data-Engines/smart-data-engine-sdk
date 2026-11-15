@@ -27,8 +27,16 @@ raised by one: the same engines, tables, copies and routes, byte for byte. A row
 still carries an earlier generation has then not been written through a library since, which is
 the mark a later change will let a cutover start from, so that its pause stops growing with the
 group. `load_advance_plan` / `loadAdvancePlan` / `sde::load_advance_plan` validate the packet by
-the same rules, pinned by `migration/201`-`230`. **Nothing executes it yet**: this is the format
-and its loaders.
+the same rules, pinned by `migration/201`-`230`.
+- **`sde-operator advance --plan`** executes it (Python): a barrier on the source's tables and then
+  on each copy's, the next generation behind it, the next map published, the barrier lifted. No
+  row is read and no grant changes hands. The group's writes wait from the first barrier to the
+  last release, which the packet's pause budget bounds.
+- **It has two ends.** Until its decision, an interruption followed by `resume`, and a spent
+  budget, lift its barrier and leave the map in force; from the decision on `resume` completes
+  it, because a write fence cannot lower a generation.
+- The operator's state keeps the history of advances under storage contract 6, which an earlier
+  operator refuses whole.
 
 **Changed: a backfill reads a ClickHouse source by one statement** (Python;
 [`docs/qualification/backfill-by-a-stream/`](docs/qualification/backfill-by-a-stream/README.md)).

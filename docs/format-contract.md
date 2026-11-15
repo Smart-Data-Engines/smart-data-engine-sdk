@@ -2416,8 +2416,8 @@ without a write generation (§7k) cannot be advanced.
 
 The three libraries load and validate the packet; `migration/201`-`230` pin three acceptances and a
 refusal for each rule, each with the fragment of the message every library gives. Loading one
-executes nothing, publishes no map and advances no watermark, and no operator in this repository
-executes it yet.
+executes nothing, publishes no map and advances no watermark. The Python local operator executes
+the advance, its recovery and its abandonment before the decision.
 
 **Which number moves: neither.** The packet has a protocol of its own and no IR or map changed: a
 library that predates it has no loader for it and reads every map as before.
