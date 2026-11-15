@@ -48,7 +48,7 @@ def main() -> None:
             if sql.startswith("DETACH TABLE"):
                 ready()
 
-        ClickHouseFences._command = stop_after_detach  # type: ignore[method-assign]
+        ClickHouseFences._command = stop_after_detach
     executor = LocalCutover(
         Path(request["directory"]),
         model=model,
