@@ -33,6 +33,7 @@ mode, not a loophole.
 
 from __future__ import annotations
 
+from .advance import ADVANCE_PROTOCOL, AdvancePlan, load_advance_plan
 from .books import ENGINE_DEPTH, BookStream, Resync, book_diff
 from .bulk import MAX_BATCH_ROWS, MAX_BATCH_VALUES, BulkWritable
 from .canonical import CanonicalError, canonical_bytes, canonical_str, digest16
@@ -165,6 +166,7 @@ from .write_fence import FenceState, WriteFence
 __version__ = "0.2.1.dev0"
 
 __all__ = [
+    "ADVANCE_PROTOCOL",
     "ALSO_WRITE_SINCE",
     "BACKFILL_TABLE",
     "CHUNK_ROWS",
@@ -198,6 +200,7 @@ __all__ = [
     "WATERMARK_TABLE",
     "WRITE_EPOCH_COLUMN",
     "WRITE_KINDS",
+    "AdvancePlan",
     "BackfillProgress",
     "BookStream",
     "BulkWritable",
@@ -311,6 +314,7 @@ __all__ = [
     "infer_model",
     "infer_models",
     "internal_failures",
+    "load_advance_plan",
     "load_cutover_plan",
     "load_index_plan",
     "load_local_map",

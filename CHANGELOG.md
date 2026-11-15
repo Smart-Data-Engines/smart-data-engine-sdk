@@ -8,6 +8,16 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: a signed packet that advances one group's write generation** (Python, TypeScript, C++;
+[`docs/generation-advance.md`](docs/generation-advance.md), format contract §7p). The map in force
+and the map that follows it, which is the first with a newer version and one group's generation
+raised by one: the same engines, tables, copies and routes, byte for byte. A row of the group that
+still carries an earlier generation has then not been written through a library since, which is
+the mark a later change will let a cutover start from, so that its pause stops growing with the
+group. `load_advance_plan` / `loadAdvancePlan` / `sde::load_advance_plan` validate the packet by
+the same rules, pinned by `migration/201`-`230`. **Nothing executes it yet**: this is the format
+and its loaders.
+
 **Changed: a backfill reads a ClickHouse source by one statement** (Python;
 [`docs/qualification/backfill-by-a-stream/`](docs/qualification/backfill-by-a-stream/README.md)).
 `sde.backfill`, and `sde-operator backfill` with it, read the source a statement a chunk: the next

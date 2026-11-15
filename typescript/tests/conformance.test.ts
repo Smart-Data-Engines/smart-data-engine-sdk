@@ -1,4 +1,5 @@
 import { loadStagingPlan } from '../src/staging.js'
+import { loadAdvancePlan } from '../src/advance.js'
 import { indexBuildName, loadIndexPlan } from '../src/in-place-index.js'
 import { MigrationRefused as StagingRefused } from '../src/errors.js'
 import { loadCutoverPlan } from '../src/cutover.js'
@@ -920,6 +921,10 @@ describe('migration vectors', () => {
         driveStagingVector(dir, model)
         return
       }
+      if (existsSync(join(dir, 'advance.json'))) {
+        driveAdvanceVector(dir, model)
+        return
+      }
       if (existsSync(join(dir, 'index.json'))) {
         driveIndexVector(dir, model)
         return
@@ -1415,6 +1420,38 @@ function driveStagingVector(dir: string, model: LogicalModel): void {
   expect(plan.prepared.groups[plan.group]!.derived[0]!.layout.tables).toEqual(wanted.tables)
   const decoded = loadMap(JSON.parse(Buffer.from(plan.preparedPayload()).toString('utf8')), { model, publicKey, requireSignature: true })
   expect(decoded.fingerprint).toBe(wanted.map_fingerprints.prepared)
+}
+
+/** A packet that advances one group's write generation and nothing else. */
+function driveAdvanceVector(dir: string, model: LogicalModel): void {
+  const raw = readJson<Record<string, unknown>>(join(dir, 'plan.json'))
+  const wanted = readJson<{ project_id: string; error?: string; match?: string; advance_fingerprint: string;
+    verified_with: string; pause_budget_ms: number; map_fingerprints: Record<'before' | 'after', string>;
+    write_epochs: Record<'before' | 'after', number> }>(join(dir, 'advance.json'))
+  const keys = readJson<Record<string, string>>(join(dir, 'keys.json'))
+  const publicKey = Object.fromEntries(Object.entries(keys).map(([name, value]) => [name, Buffer.from(value, 'base64')]))
+  const options = { model, projectId: wanted.project_id, publicKey }
+  if (wanted.error !== undefined) {
+    let refusal: unknown
+    try { loadAdvancePlan(raw, options) } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(StagingRefused)
+    expect((refusal as Error).message).toContain(wanted.match)
+    return
+  }
+  const plan = loadAdvancePlan(raw, options)
+  expect(plan.fingerprint).toBe(wanted.advance_fingerprint)
+  expect(plan.verifiedWith).toBe(wanted.verified_with)
+  expect(plan.asRecord()).toEqual(raw)
+  expect(plan.pauseBudgetMs).toBe(wanted.pause_budget_ms)
+  plan.checkCurrent(plan.before)
+  expect(() => plan.checkCurrent(plan.after)).toThrow(/does not name the signed current map/)
+  for (const name of ['before', 'after'] as const) {
+    expect(plan[name].fingerprint).toBe(wanted.map_fingerprints[name])
+    expect(plan[name].groups[plan.group]!.writeEpoch).toBe(wanted.write_epochs[name])
+  }
+  expect([plan.sourceEpoch, plan.nextEpoch]).toEqual([wanted.write_epochs.before, wanted.write_epochs.after])
+  const decoded = loadMap(JSON.parse(Buffer.from(plan.afterPayload()).toString('utf8')), { model, publicKey, requireSignature: true })
+  expect(decoded.fingerprint).toBe(wanted.map_fingerprints.after)
 }
 
 // --- search vectors (contract 7l) -------------------------------------------------------------

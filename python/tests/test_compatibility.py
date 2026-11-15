@@ -18,7 +18,7 @@ import tomllib
 from pathlib import Path
 
 import sde
-from sde import cutover, index_build, staging, verification
+from sde import advance, cutover, index_build, staging, verification
 
 ROOT = Path(__file__).resolve().parents[2]
 PAGE = ROOT / "docs" / "compatibility.md"
@@ -176,7 +176,7 @@ def test_the_page_points_at_the_record_of_the_orderbook_release() -> None:
 
 
 def test_the_numbers_main_reads_are_the_libraries_constants() -> None:
-    rows = {row[0]: _numbers(row[1]) for row in _rows(_section("Maps and signed packets"))[:6]}
+    rows = {row[0]: _numbers(row[1]) for row in _rows(_section("Maps and signed packets"))[:7]}
     assert rows == {
         "model IR": [sde.CONTRACT],
         "placement map": list(range(sde.MAP_CONTRACT_FLOOR, sde.MAP_CONTRACT + 1)),
@@ -184,6 +184,7 @@ def test_the_numbers_main_reads_are_the_libraries_constants() -> None:
         "cutover packet": [cutover.CUTOVER_PROTOCOL, cutover.CUTOVER_RELAYOUT_PROTOCOL],
         "staging packet": [staging.STAGING_PROTOCOL, staging.STAGING_RELAYOUT_PROTOCOL],
         "index build packet": [index_build.INDEX_PROTOCOL, index_build.INDEX_CHANGE_PROTOCOL],
+        "generation advance packet": [advance.ADVANCE_PROTOCOL],
     }
     contract = (ROOT / "conformance" / "contract-version.txt").read_text(encoding="utf-8").strip()
     assert rows["model IR"] == [int(contract)]
@@ -202,6 +203,7 @@ def test_the_three_libraries_read_the_same_numbers() -> None:
         "STAGING_RELAYOUT_PROTOCOL": ("typescript/src/staging.ts", packets),
         "INDEX_PROTOCOL": ("typescript/src/in-place-index.ts", packets),
         "INDEX_CHANGE_PROTOCOL": ("typescript/src/in-place-index.ts", packets),
+        "ADVANCE_PROTOCOL": ("typescript/src/advance.ts", packets),
     }
     reference = {
         "MAP_CONTRACT": sde.MAP_CONTRACT,
@@ -213,6 +215,7 @@ def test_the_three_libraries_read_the_same_numbers() -> None:
         "STAGING_RELAYOUT_PROTOCOL": staging.STAGING_RELAYOUT_PROTOCOL,
         "INDEX_PROTOCOL": index_build.INDEX_PROTOCOL,
         "INDEX_CHANGE_PROTOCOL": index_build.INDEX_CHANGE_PROTOCOL,
+        "ADVANCE_PROTOCOL": advance.ADVANCE_PROTOCOL,
     }
     for name, paths in sources.items():
         for path in paths:
@@ -222,10 +225,14 @@ def test_the_three_libraries_read_the_same_numbers() -> None:
 
 
 def test_the_release_table_ends_with_main_and_has_every_release() -> None:
-    rows = _rows(_section("Maps and signed packets"))[6:]
+    rows = _rows(_section("Maps and signed packets"))[7:]
     assert rows[-1][0] == "`main`", rows[-1]
     assert _numbers(rows[-1][1]) == list(range(sde.MAP_CONTRACT_FLOOR, sde.MAP_CONTRACT + 1))
     assert _numbers(rows[-1][2]) == [cutover.CUTOVER_PROTOCOL, cutover.CUTOVER_RELAYOUT_PROTOCOL]
+    assert _numbers(rows[-1][3]) == [advance.ADVANCE_PROTOCOL]
+    # A release that has no loader for the packet says so in words, never with a number.
+    released_with_it = [row[0] for row in rows[:-1] if _numbers(row[3])]
+    assert released_with_it == [], released_with_it
     listed = {version for row in rows[:-1] for version in re.findall(r"\d+\.\d+\.\d+", row[0])}
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     released = {

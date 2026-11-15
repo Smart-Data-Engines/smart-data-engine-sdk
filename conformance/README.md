@@ -337,6 +337,17 @@ OpenSSL; every vector is signed with a key of its own, so `--only` rewrites the 
 leaves the others byte for byte. The native build, its removals, recovery and abandonment have
 separate live tests.
 
+`migration/201`–`230` carry `plan.json` and `advance.json` for a signed generation advance, the
+packet that raises one group's write generation by one and changes nothing else: three acceptances
+(a group with a maintained copy, one without, a map that carries a group without a generation) and a
+refusal per loader rule, each with the `match` fragment of the message every library must give -
+among them a layout that carries `auto` whatever the member says, which leaves no library to decide
+by its language's notion of a true value. `advance.json` names the packet's and both maps'
+fingerprints and the group's generation in each map. `tools/advance_vectors.py` uses the independent
+fixture encoder and OpenSSL; every vector carries its own key, so `--only` rewrites the named
+vectors and leaves the others byte for byte. Nothing executes the packet yet, so it has no live
+tests.
+
 `errors/074`–`077`, `migration/188`–`199` and `signature/015` hold map contract 6, a group that
 carries no write generation because its engine cannot fence writes: the map refusals, four session
 cases (writes without the column, the column still reserved, an engine whose fences contradict the

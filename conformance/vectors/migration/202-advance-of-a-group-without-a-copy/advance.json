@@ -1,0 +1,14 @@
+{
+  "project_id": "11111111111111111111111111111111",
+  "advance_fingerprint": "67ed2baab257a002236faad4deb9f1c722eefd6cb49baab9d7f2836623382c3f",
+  "verified_with": "advance",
+  "map_fingerprints": {
+    "before": "0932da8dddcdbfc38fda4b219ef853b4ba58f8200b618688fb89e2103b124bff",
+    "after": "4ad7927bddf5eab96379f4762e87368f948f6ddb6023813393b6b01a3a3440bd"
+  },
+  "write_epochs": {
+    "before": 1,
+    "after": 2
+  },
+  "pause_budget_ms": 30000
+}

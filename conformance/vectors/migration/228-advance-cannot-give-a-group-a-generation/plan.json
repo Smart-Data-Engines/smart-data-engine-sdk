@@ -1,0 +1,190 @@
+{
+  "kind": "sde-advance",
+  "protocol": 1,
+  "advance_id": "77777777777777777777777777777777",
+  "project_id": "11111111111111111111111111111111",
+  "group": "Event",
+  "pause_budget_ms": 30000,
+  "before": {
+    "contract": 6,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "groups": {
+      "Event": {
+        "write_epoch": 1,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        },
+        "derived": [
+          {
+            "engine": "ch-1",
+            "id": "Event@ch",
+            "lag_budget_ms": 30000,
+            "layout": {
+              "tables": {
+                "Event": "event_copy"
+              },
+              "columns": {
+                "Event": {
+                  "at": "DateTime64(6, 'UTC')",
+                  "id": "UUID",
+                  "name": "String"
+                }
+              }
+            }
+          }
+        ],
+        "also_write": [
+          "Event@ch"
+        ]
+      },
+      "Order": {
+        "source": {
+          "engine": "book-1",
+          "id": "Order@book",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@book"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "advance",
+      "value": "LOjrBDQRSC1V/iBFrOC8q05ycYcblidUjeKUJZwoS//+wjJJVEVypDXmDMBIj2W5of7cyKWcsU1nLFpeZShqDA=="
+    }
+  },
+  "after": {
+    "contract": 6,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 2,
+    "groups": {
+      "Event": {
+        "write_epoch": 2,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        },
+        "derived": [
+          {
+            "engine": "ch-1",
+            "id": "Event@ch",
+            "lag_budget_ms": 30000,
+            "layout": {
+              "tables": {
+                "Event": "event_copy"
+              },
+              "columns": {
+                "Event": {
+                  "at": "DateTime64(6, 'UTC')",
+                  "id": "UUID",
+                  "name": "String"
+                }
+              }
+            }
+          }
+        ],
+        "also_write": [
+          "Event@ch"
+        ]
+      },
+      "Order": {
+        "source": {
+          "engine": "book-1",
+          "id": "Order@book",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            }
+          }
+        },
+        "write_epoch": 1
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@book"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "advance",
+      "value": "2OgpQZAysU4WwTPzSuH0VbMy9d9HHrnYbo91uatWND3apxCvPcNZG78PpnKycb+6drHEkG+SvnTLPgZIA6G0BQ=="
+    }
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "advance",
+    "value": "MzBvoq73WIyzDFrN91dcrnhlUnqq1cgLgH+7lOK0trNgjGWXIJFBXM/oEUKq9oiXTxlipuUIJ8ZAwK+LtctlBQ=="
+  }
+}
