@@ -70,14 +70,14 @@ std::size_t on_header(char* data, std::size_t size, std::size_t count, void* use
 
 /// Runs one transfer, and gives up on it once its socket has been silent for longer than the bound.
 ///
-/// Silence is the socket's, not the callbacks'. A long query is kept alive by the progress headers
-/// the server sends while it works, and from 8.18.0 libcurl hands a header line on only when the
-/// next line begins - it has to see whether that one continues it. A bound counted from the header
-/// callback therefore heard each progress header one interval late, and with the interval this
-/// adapter asks for, later than the bound: a statement still running at send_receive_timeout was
-/// cut although the server had said it was working (docs/qualification/libcurl-held-headers).
-/// Anything arriving on the socket, or leaving it, is the exchange making progress - which is also
-/// what the reference's driver bounds, with a timeout on its socket.
+/// Silence is the socket's, not the callbacks'. From 8.18.0 libcurl hands a header line on only
+/// when the next line begins - it has to see whether that one continues it - so a bound counted
+/// from the header callback did not hear a progress header when it arrived. Against ClickHouse
+/// itself the next arrival handed it on and the count kept its pace; a header that arrived alone
+/// and was followed by a pause was not heard at all, which an answer paced that way shows
+/// (docs/qualification/libcurl-held-headers). Anything arriving on the socket, or leaving it, is
+/// the exchange making progress: what `send_receive_timeout` is documented to bound, and what the
+/// reference's driver bounds with a timeout on its socket.
 CURLcode perform(CURL* curl, Exchange& exchange) {
   const std::unique_ptr<CURLM, decltype(&curl_multi_cleanup)> multi(curl_multi_init(),
                                                                    &curl_multi_cleanup);
