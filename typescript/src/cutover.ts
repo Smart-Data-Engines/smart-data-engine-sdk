@@ -116,7 +116,8 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
       if (!Array.isArray(derived)) throw new MigrationRefused('cutover derived copies must be an array')
       for (const value of [spot['source'], ...derived]) {
         const material = record(value, 'materialization'), layout = record(material['layout'], 'layout')
-        if (layout['auto']) throw new MigrationRefused('cutover maps require explicit physical layouts')
+        // Whatever the member says: `[]` is true here and not in Python, and no signed map carries one.
+        if (Object.hasOwn(layout, 'auto')) throw new MigrationRefused('cutover maps require explicit physical layouts')
       }
     }
     const parsed = loadMap(document, { model, publicKey, requireSignature: true })

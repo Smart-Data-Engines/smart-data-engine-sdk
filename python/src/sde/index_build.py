@@ -184,7 +184,9 @@ def _load(
                     "layout",
                     _SUBJECT,
                 )
-                if raw_layout.get("auto"):
+                # Whatever the member says: whether a value asks for a derived layout is each
+                # language's own notion of a true value, and no signed map carries one.
+                if "auto" in raw_layout:
                     raise MigrationRefused("index build maps need explicit physical layouts")
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
         if parsed.contract < GENERATIONS_SINCE:

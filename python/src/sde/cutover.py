@@ -170,7 +170,9 @@ def _load(
             for raw_material in (raw_spot.get("source"), *derived):
                 raw_material = _record(raw_material, "materialization")
                 layout = _record(raw_material.get("layout"), "layout")
-                if layout.get("auto"):
+                # Whatever the member says: whether a value asks for a derived layout is each
+                # language's own notion of a true value, and no signed map carries one.
+                if "auto" in layout:
                     raise MigrationRefused("cutover maps require explicit physical layouts")
         parsed = load_map(document, model=model, public_key=public_key, require_signature=True)
         # Generations arrived in contract 4 and contract 5 keeps them. The three candidates share

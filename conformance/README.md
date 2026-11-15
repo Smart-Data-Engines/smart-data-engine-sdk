@@ -348,6 +348,12 @@ fixture encoder and OpenSSL; every vector carries its own key, so `--only` rewri
 vectors and leaves the others byte for byte. The barrier, the recovery from every checkpoint and
 the order the group closes and opens in have separate live tests.
 
+`migration/231`–`236` carry a staging, an index build and a cutover whose maps have an `auto`
+member beside a layout written out, once as `[]` and once as `false`: each is refused, by the
+packet's own words for a map without explicit layouts (format contract §7q). Before the rule
+was on the member the libraries disagreed on the first. `tools/auto_member_vectors.py` takes
+its packets from `tools/unfenced_vectors.py`, signs with OpenSSL and writes with `--only`.
+
 `errors/074`–`077`, `migration/188`–`199` and `signature/015` hold map contract 6, a group that
 carries no write generation because its engine cannot fence writes: the map refusals, four session
 cases (writes without the column, the column still reserved, an engine whose fences contradict the

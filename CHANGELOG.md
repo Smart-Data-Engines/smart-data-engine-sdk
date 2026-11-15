@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: one signed packet, two verdicts - a map in a packet carries no `auto`, whatever the member
+says** (Python, TypeScript, C++; format contract §7q). A staging, a cutover and an index build
+refuse a map whose layout is left to be derived. They asked whether the value of `auto` was one the
+language calls true, and an empty array is that in JavaScript and not in Python: a packet whose
+map had `"auto": []` beside a layout written out was loaded by the Python and C++ libraries and
+refused by the TypeScript one. The member is refused now, in every loader and whatever it says, as
+the generation advance had it from the start. No control plane writes such a map; `migration/231`-`236`
+hold the rule.
+
 **Added: a signed packet that advances one group's write generation** (Python, TypeScript, C++;
 [`docs/generation-advance.md`](docs/generation-advance.md), format contract §7p). The map in force
 and the map that follows it, which is the first with a newer version and one group's generation

@@ -112,7 +112,8 @@ function load(raw: unknown, model: LogicalModel, projectId: string, publicKey: P
       if (!Array.isArray(copies)) throw new MigrationRefused('staging derived copies must be an array')
       for (const rawMaterial of [value['source'], ...copies]) {
         const layout = record(record(rawMaterial, 'materialization')['layout'], 'layout')
-        if (layout['auto']) throw new MigrationRefused('staging maps need explicit physical layouts')
+        // Whatever the member says: `[]` is true here and not in Python, and no signed map carries one.
+        if (Object.hasOwn(layout, 'auto')) throw new MigrationRefused('staging maps need explicit physical layouts')
       }
     }
     const parsed = loadMap(document, { model, publicKey, requireSignature: true })

@@ -41,7 +41,9 @@ from missing data. No arbitrary SQL, database endpoint or credential field is pa
 
 ## Scope and generations
 
-Protocols 1 and 2 accept placement map contract 4 or later with explicit physical layouts. The
+Protocols 1 and 2 accept placement map contract 4 or later with explicit physical layouts: a
+layout that carries `auto` is refused whatever the member says (`migration/235`, `236`), because
+whether a value asks for a derived layout is each language's own notion of a true value. The
 migrating group has one source and one maintained derived copy - on different engine bindings under
 protocol 1 (a move), on the source's own binding under protocol 2 (a relayout that follows a staging
 protocol 2 preparation). Each protocol refuses the other's shape (`migration/141`, `142`); the
