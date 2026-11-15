@@ -421,6 +421,32 @@ def test_an_unfinished_advance_is_not_abandoned_by_hand(tmp_path: Path) -> None:
         assert_abandoned(made, made.operator.resume().as_record(), "recovered_before_decision")
 
 
+def test_a_recovery_checks_the_packet_its_state_holds(tmp_path: Path) -> None:
+    """The state names its packet twice, as a record and as a fingerprint. A record that is
+    another signed packet's, under the same id, is not resumed."""
+    with group("postgres", tmp_path) as made:
+        made.operator._after_step = crash_at("advance_freeze_copy:done")
+        with pytest.raises(Crash):
+            made.operator.advance(made.plan)
+        made.operator._after_step = quiet
+
+        def stored(plan: dict[str, Any]) -> None:
+            with made.operator.store.lock():
+                state = made.operator.store.read()
+                state["execution"]["plan"] = plan
+                made.operator.store.write(state)
+
+        other = made.plan.as_record()
+        other["pause_budget_ms"] += 1
+        stored(made.signed(other))
+        with pytest.raises(sde.MigrationRefused, match="names another signed authorization"):
+            made.operator.resume()
+        # Nothing was lifted or raised on its word.
+        assert made.fence("source").closed and made.fence("copy").closed
+        stored(made.plan.as_record())
+        assert_abandoned(made, made.operator.resume().as_record(), "recovered_before_decision")
+
+
 def test_another_packet_under_a_spent_id_is_refused(tmp_path: Path) -> None:
     with group("postgres", tmp_path) as made:
         made.operator.advance(made.plan)
