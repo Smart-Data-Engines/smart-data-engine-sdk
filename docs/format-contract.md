@@ -2435,5 +2435,5 @@ change). `migration/224`, `225` and `231`-`236` hold the rule for each packet wi
 languages disagreed on, `[]`, and one they agreed on, `false`.
 
 **Which number moves: neither.** A refusal was tightened and none was dropped (§11): a map with an
-`auto` member that is not `true` was never one a control plane wrote, and a packet that carried
-one was already refused by one library of the three.
+`auto` member that is not `true` was never one a control plane wrote, and for the value the
+libraries disagreed on, one of the three refused the packet already.
