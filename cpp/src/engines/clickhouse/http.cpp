@@ -105,7 +105,8 @@ CURLcode perform(CURL* curl, Exchange& exchange) {
     // Until something happens on the socket, and no longer than what is left of the bound.
     const long long left = (exchange.silence - quiet).count() + 1;
     int active = 0;
-    if (curl_multi_poll(multi.get(), nullptr, 0, static_cast<int>(std::min<long long>(left, 1000)),
+    if (curl_multi_poll(multi.get(), nullptr, 0,
+                        static_cast<int>(std::clamp<long long>(left, 1, 1000)),
                         &active) != CURLM_OK) {
       break;
     }
