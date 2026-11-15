@@ -35,11 +35,10 @@ void initialise_once() {
   std::call_once(once, [] { (void)curl_global_init(CURL_GLOBAL_DEFAULT); });
 }
 
-/// What one exchange received, and when it last received anything.
+/// What one exchange received, and how long its socket may stay silent.
 struct Exchange {
   std::string body;
   std::optional<std::string> exception_code;
-  Clock::time_point heard = Clock::now();
   std::chrono::milliseconds silence{0};
   bool silent_too_long = false;
 };
@@ -47,13 +46,11 @@ struct Exchange {
 std::size_t on_body(char* data, std::size_t size, std::size_t count, void* user) {
   auto& exchange = *static_cast<Exchange*>(user);
   exchange.body.append(data, size * count);
-  exchange.heard = Clock::now();
   return size * count;
 }
 
 std::size_t on_header(char* data, std::size_t size, std::size_t count, void* user) {
   auto& exchange = *static_cast<Exchange*>(user);
-  exchange.heard = Clock::now();  // a progress header is the server saying it is still working
   std::string_view line(data, size * count);
   const std::size_t colon = line.find(':');
   if (colon != std::string_view::npos) {
@@ -71,13 +68,51 @@ std::size_t on_header(char* data, std::size_t size, std::size_t count, void* use
   return size * count;
 }
 
-int on_progress(void* user, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-  auto& exchange = *static_cast<Exchange*>(user);
-  if (Clock::now() - exchange.heard > exchange.silence) {
-    exchange.silent_too_long = true;
-    return 1;  // abort: the bound is on silence, not on how long the server works
+/// Runs one transfer, and gives up on it once its socket has been silent for longer than the bound.
+///
+/// Silence is the socket's, not the callbacks'. A long query is kept alive by the progress headers
+/// the server sends while it works, and from 8.18.0 libcurl hands a header line on only when the
+/// next line begins - it has to see whether that one continues it. A bound counted from the header
+/// callback therefore heard each progress header one interval late, and with the interval this
+/// adapter asks for, later than the bound: a statement still running at send_receive_timeout was
+/// cut although the server had said it was working (docs/qualification/libcurl-held-headers).
+/// Anything arriving on the socket, or leaving it, is the exchange making progress - which is also
+/// what the reference's driver bounds, with a timeout on its socket.
+CURLcode perform(CURL* curl, Exchange& exchange) {
+  const std::unique_ptr<CURLM, decltype(&curl_multi_cleanup)> multi(curl_multi_init(),
+                                                                   &curl_multi_cleanup);
+  if (!multi || curl_multi_add_handle(multi.get(), curl) != CURLM_OK) return CURLE_FAILED_INIT;
+  CURLcode outcome = CURLE_RECV_ERROR;
+  Clock::time_point heard = Clock::now();
+  while (true) {
+    int running = 0;
+    if (curl_multi_perform(multi.get(), &running) != CURLM_OK) break;
+    if (running == 0) {
+      int pending = 0;
+      while (const CURLMsg* message = curl_multi_info_read(multi.get(), &pending)) {
+        if (message->msg == CURLMSG_DONE && message->easy_handle == curl) {
+          outcome = message->data.result;
+        }
+      }
+      break;
+    }
+    const auto quiet = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - heard);
+    if (quiet > exchange.silence) {
+      exchange.silent_too_long = true;  // the bound is on silence, not on how long the server works
+      outcome = CURLE_OPERATION_TIMEDOUT;
+      break;
+    }
+    // Until something happens on the socket, and no longer than what is left of the bound.
+    const long long left = (exchange.silence - quiet).count() + 1;
+    int active = 0;
+    if (curl_multi_poll(multi.get(), nullptr, 0, static_cast<int>(std::min<long long>(left, 1000)),
+                        &active) != CURLM_OK) {
+      break;
+    }
+    if (active > 0) heard = Clock::now();
   }
-  return 0;
+  (void)curl_multi_remove_handle(multi.get(), curl);
+  return outcome;
 }
 
 /// Python's `str.strip()` on the first 1,024 characters: what the reference's driver keeps.
@@ -203,9 +238,6 @@ std::string Http::post(std::string_view sql, std::optional<std::string_view> for
     (void)curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
                            static_cast<long>(std::ceil(target_.send_receive_timeout * 1000.0)));
   }
-  (void)curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-  (void)curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, &on_progress);
-  (void)curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &exchange);
   (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &on_body);
   (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, &exchange);
   (void)curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, &on_header);
@@ -225,8 +257,7 @@ std::string Http::post(std::string_view sql, std::optional<std::string_view> for
       (void)curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &blob);
     }
   }
-  exchange.heard = Clock::now();
-  const CURLcode outcome = curl_easy_perform(curl);
+  const CURLcode outcome = perform(curl, exchange);
   if (outcome != CURLE_OK) {
     throw TransportFailure(exchange.silent_too_long ? "no answer within the bound"
                                                     : curl_easy_strerror(outcome));
