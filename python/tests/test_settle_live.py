@@ -310,19 +310,51 @@ def test_an_erasure_voids_the_settle(tmp_path: Path) -> None:
         assert 5 not in values(made, "copy") and 5 not in values(made, "source")
 
 
-def test_a_table_replaced_since_the_settle_voids_it(tmp_path: Path) -> None:
-    """The record names the tables by their native identities; a cutover that qualifies other
-    ones does not stand on it."""
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda record: record["tables"][0]["identity"].update(object="0"),
+        lambda record: record["tables"][1]["identity"].update(object="0"),
+        lambda record: record.update(map_fingerprint="0" * 64),
+        lambda record: record.update(write_epoch=1),
+    ],
+    ids=["the source replaced", "the copy replaced", "another map", "another generation"],
+)
+def test_a_record_that_is_not_of_this_cutover_is_not_stood_on(
+    tamper: Any, tmp_path: Path
+) -> None:
+    """Each thing the record binds, alone: the tables by their native identities, the map it was
+    made under, and the generation. A cutover that finds another does not stand on it."""
     with group("postgres", tmp_path) as made:
         settled_then_written(made)
         made.operator.settle()
         with made.operator.store.lock():
             state = made.operator.store.read()
-            state["settled"]["Event"]["tables"][0]["identity"]["object"] = "0"
+            tamper(state["settled"]["Event"])
             made.operator.store.write(state)
         plan = cutover_of(made)
         assert made.operator.execute(plan).as_record()["outcome"] == "success"
         assert repair_of(made, plan)["mode"] == "diff"
+        assert values(made, "copy") == values(made, "source")
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_a_key_the_copy_holds_since_and_the_source_lacks_is_refilled_away(
+    source: str, tmp_path: Path
+) -> None:
+    """Only emptying removes it, so the pause refills the copy whole and compares it whole."""
+    with group(source, tmp_path) as made:
+        settled_then_written(made)
+        made.operator.settle()
+        made.roles[made.target].operator.upsert_in(
+            TABLE["copy"], [{"id": 99, "value": 9, sde.WRITE_EPOCH_COLUMN: 2}], key=["id"]
+        )
+        plan = cutover_of(made)
+        receipt = made.operator.execute(plan).as_record()
+        assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
+        repair = repair_of(made, plan)
+        assert repair["mode"] == "refill" and repair["after"]["surplus"] is True
+        assert values(made, "copy") == values(made, "source") == EXPECTED[source]
 
 
 def test_a_settle_that_could_not_read_back_a_write_keeps_no_record(tmp_path: Path) -> None:
