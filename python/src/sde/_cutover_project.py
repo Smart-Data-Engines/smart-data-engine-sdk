@@ -74,7 +74,7 @@ class ProjectState:
                 raise ValueError("invalid state envelope")
             if type(envelope["storage_contract"]) is not int or envelope[
                 "storage_contract"
-            ] not in (1, 2, 3, 4, 5, 6):
+            ] not in (1, 2, 3, 4, 5, 6, 7):
                 raise ValueError("unsupported state storage contract")
             payload = envelope["payload"]
             if (
@@ -111,6 +111,12 @@ class ProjectState:
                 fields.add("advances")
                 if not isinstance(payload.get("advances"), dict):
                     raise ValueError("advance history must be an object")
+            if envelope["storage_contract"] >= 7:
+                # What a settle compared before a cutover: an operator that predates it refuses
+                # this state, where it would otherwise keep it while the rows it vouches for change.
+                fields.add("settled")
+                if not isinstance(payload.get("settled"), dict):
+                    raise ValueError("settle records must be an object")
             if envelope["storage_contract"] < 4 and _abandoned_stages(payload):
                 # Contract 4 is what makes an older operator refuse an abandoned staging's record
                 # instead of reading a receipt whose tables may name no identity.
@@ -137,7 +143,9 @@ class ProjectState:
     def write(self, payload: dict[str, Any]) -> None:
         body = encode(payload)
         envelope = {
-            "storage_contract": 6
+            "storage_contract": 7
+            if "settled" in payload
+            else 6
             if "advances" in payload
             else 5
             if _index_changes(payload)

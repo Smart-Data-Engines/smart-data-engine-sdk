@@ -96,6 +96,16 @@ class Reconcilable(Protocol):
         self, table: str, order: Sequence[str], keys: Sequence[Sequence[Any]]
     ) -> list[dict[str, Any]]: ...
 
+    def earlier_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
 
 _NEEDED = ("upsert_in", "stamped_range", "rows_for_keys")
 
@@ -399,7 +409,9 @@ def settles_before_a_pause(view: MigrationView, group: str) -> bool:
     if not repairs_what_differs(view, group):
         return False
     return all(
-        callable(getattr(copy.source, "stamped_range", None)) for copy in _plan(view, group)
+        callable(getattr(copy.source, name, None))
+        for copy in _plan(view, group)
+        for name in ("stamped_range", "earlier_range", "rows_for_keys")
     )
 
 
@@ -431,27 +443,33 @@ class Settlement:
 
 
 def _to_the_end(
-    copy: _Copy, chunk_rows: int, call: Callable[..., Any]
+    copy: _Copy, chunk_rows: int, epoch: int, call: Callable[..., Any]
 ) -> Generator[list[dict[str, Any]], None, None]:
-    """Every row of the source in key order, to the end of the table and not of a stream.
+    """Every row of the source in key order, and then every row below ``epoch`` it did not reach.
 
-    The pass that reads this compares rows nothing will compare again, so "it read the table" has
-    to be a fact. A stream that ends, and a page that comes short, are reasons to ask; the end is
-    a fresh statement for the rows after the last key that answers with none. The source is being
-    written to meanwhile, so no count can say it: an insert hides a row that was not read.
+    The pass that reads this compares rows nothing will compare again, so "it read them all" has
+    to be a fact, and the source is being written to meanwhile: no count can say it, since an
+    insert hides a row that was not read. The rows that matter are those below the generation,
+    and no new row can be one of them. So the read of the whole source - one statement where the
+    engine streams - ends when a fresh statement for the rows below ``epoch`` after its last key
+    answers none; until then the rows it answers are read by such statements, page after page.
+    Each page moves past the last, and the rows below the generation are a set that only stays
+    or shrinks, so this ends however fast the application writes.
     """
     after: tuple[Any, ...] | None = None
+    chunks = source_chunks(copy, chunk_rows, call=call)
+    try:
+        for chunk in chunks:
+            yield chunk
+            after = _key(copy, chunk[-1])
+    finally:
+        chunks.close()
+    source = cast(Reconcilable, copy.source)
     while True:
-        chunks = source_chunks(copy, chunk_rows, after=after, call=call)
-        try:
-            for chunk in chunks:
-                yield chunk
-                after = _key(copy, chunk[-1])
-        finally:
-            chunks.close()
         beyond: list[dict[str, Any]] = call(
-            copy.source.key_range, copy.source_table, copy.key, after=after, limit=chunk_rows
-        )
+            source.earlier_range,
+            copy.source_table, copy.key, epoch=epoch, after=after, limit=chunk_rows,
+        )  # fmt: skip
         if not beyond:
             return
         yield beyond
@@ -487,7 +505,7 @@ def settle(
         after: tuple[Any, ...] | None = None
         mirror = _Mirror(copy, chunk_rows, call)
         try:
-            for wanted in _to_the_end(copy, chunk_rows, call):
+            for wanted in _to_the_end(copy, chunk_rows, epoch, call):
                 before = [row for row in wanted if row[EPOCH_COLUMN] < epoch]
                 done = _repair_chunk(
                     copy, target, mirror, before, after, epoch, call,
