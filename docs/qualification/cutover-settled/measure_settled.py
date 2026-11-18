@@ -14,8 +14,9 @@ own code paths, with the same fixtures and seeding as that record:
   fan-out write them, and one in ten of them to the source alone, as a fan-out that failed.
 
 The pause is the receipt's ``elapsed_ms``. The phases are the time between the operator's own step
-markers, and ``repair`` is the operator's local record of what the repair did, numbers only. The
-advance's own pause and the settle's time are measured too: they are what a settle costs.
+markers, ``steps`` is every marker in milliseconds since the command was called, and ``repair`` is
+the operator's local record of what the repair did, numbers only. The advance's own pause, with its
+phases, and the settle's time are measured too: they are what a settle costs.
 
 It imports the live-test fixtures, so it runs from ``python/tests`` with both engine DSNs set:
 
@@ -136,6 +137,11 @@ def phases_of(marks: list[tuple[str, float]]) -> dict[str, int]:
     return phases
 
 
+def timeline(marks: list[tuple[str, float]], started: float) -> list[tuple[str, int]]:
+    """Every step marker of the operator, in milliseconds since the command was called."""
+    return [(step, round((at - started) * 1000)) for step, at in marks]
+
+
 def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[str, Any]:
     target = OTHER[source]
     with (
@@ -166,13 +172,18 @@ def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[
         settle_ms: int | None = None
         if way.startswith("settled"):
             plan = advance_of(before, signed, model, public)
+            steps: list[tuple[str, float]] = []
+            operator._after_step = lambda step: steps.append((step, time.monotonic()))
             started = time.monotonic()
             receipt = operator.advance(plan).as_record()
             advance = {
                 "outcome": receipt["outcome"],
                 "pause_ms": receipt["elapsed_ms"],
                 "wall_ms": round((time.monotonic() - started) * 1000),
+                "phases": phases_of(steps),
+                "steps": timeline(steps, started),
             }
+            operator._after_step = lambda _step: None
             before = plan.as_record()["after"]
             started = time.monotonic()
             (settled,) = operator.settle()
@@ -231,6 +242,7 @@ def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[
                 "resumed_outcome": resumed["outcome"],
                 "resumed_reason": resumed["reason"],
                 "phases_before_the_deadline": phases_of(marks),
+                "steps": timeline(marks, started),
             }
         ended = time.monotonic()
         phases = phases_of(marks)
@@ -257,6 +269,8 @@ def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[
             "within_budget": receipt["within_budget"],
             "repair_ms": phases.get("repair"),
             "verify_frozen_ms": phases.get("verify_frozen"),
+            "phases": phases,
+            "steps": timeline(marks, started),
             "repair": repair,
             "rows_source": comparison["rows_source"],
             "rows_target": comparison["rows_target"],
