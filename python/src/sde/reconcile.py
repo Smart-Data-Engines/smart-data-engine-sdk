@@ -421,7 +421,8 @@ class Settlement:
 
     chunks: int
     rows: int
-    """Rows of the source the pass read."""
+    """Rows of the source the pass read: every row where the source streams, and those below the
+    generation where it is read by pages."""
     earlier: int
     """Of them, the rows that carry a generation below the map's: the ones it compared."""
     written: int
@@ -445,35 +446,43 @@ class Settlement:
 def _to_the_end(
     copy: _Copy, chunk_rows: int, epoch: int, call: Callable[..., Any]
 ) -> Generator[list[dict[str, Any]], None, None]:
-    """Every row of the source in key order, and then every row below ``epoch`` it did not reach.
+    """The source's rows in key order, to the last row below ``epoch``.
 
     The pass that reads this compares rows nothing will compare again, so "it read them all" has
     to be a fact, and the source is being written to meanwhile: no count can say it, since an
     insert hides a row that was not read. The rows that matter are those below the generation,
-    and no new row can be one of them. So the read of the whole source - one statement where the
-    engine streams - ends when a fresh statement for the rows below ``epoch`` after its last key
-    answers none; until then the rows it answers are read by such statements, page after page.
-    Each page moves past the last, and the rows below the generation are a set that only stays
-    or shrinks, so this ends however fast the application writes.
+    and no new row can be one of them, so they are a set that only stays or shrinks.
+
+    - Where the source streams, one statement reads the table as it was when it began - every
+      row, those since the advance too - and then the rows below the generation after its last
+      key are read by statements of their own, until one answers none: a stream that ended before
+      the table did is carried on, and an answer that ended early without an error is not taken
+      for the end.
+    - Otherwise every statement asks for the rows below the generation only, page after page,
+      until one answers none. A page of every row would end on a short page, and an application
+      that appends faster than pages are read would never leave one.
+
+    Either way this ends however fast the application writes.
     """
     after: tuple[Any, ...] | None = None
-    chunks = source_chunks(copy, chunk_rows, call=call)
-    try:
-        for chunk in chunks:
-            yield chunk
-            after = _key(copy, chunk[-1])
-    finally:
-        chunks.close()
+    if callable(getattr(copy.source, "key_stream", None)) and copy.source is not copy.target:
+        chunks = source_chunks(copy, chunk_rows, call=call)
+        try:
+            for chunk in chunks:
+                yield chunk
+                after = _key(copy, chunk[-1])
+        finally:
+            chunks.close()
     source = cast(Reconcilable, copy.source)
     while True:
-        beyond: list[dict[str, Any]] = call(
+        page: list[dict[str, Any]] = call(
             source.earlier_range,
             copy.source_table, copy.key, epoch=epoch, after=after, limit=chunk_rows,
         )  # fmt: skip
-        if not beyond:
+        if not page:
             return
-        yield beyond
-        after = _key(copy, beyond[-1])
+        yield page
+        after = _key(copy, page[-1])
 
 
 def settle(
