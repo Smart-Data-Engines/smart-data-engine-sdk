@@ -1,0 +1,17 @@
+# curl 8.18.0, Ubuntu package 8.18.0-1ubuntu2.8
+## server
+sent at  0.000s: b'HTTP/1.1 200 OK\r\n'
+sent at  1.001s: b'X-ClickHouse-Progress: {"read_rows":"0"}'
+sent at  2.001s: b'X-ClickHouse-Progress: {"read_rows":"1"}'
+sent at  3.002s: b'X-ClickHouse-Progress: {"read_rows":"2"}'
+sent at  4.002s: b'X-ClickHouse-Progress: {"read_rows":"3"}'
+sent at  4.502s: b'Content-Length: 5\r\nConnection: close\r\n\r\n'
+## client (curl -v --trace-time: when libcurl handed each header on)
+02:31:48.433166 < HTTP/1.1 200 OK
+02:31:50.433809 < X-ClickHouse-Progress: {"read_rows":"0"}
+02:31:51.434085 < X-ClickHouse-Progress: {"read_rows":"1"}
+02:31:52.434302 < X-ClickHouse-Progress: {"read_rows":"2"}
+02:31:52.934573 < X-ClickHouse-Progress: {"read_rows":"3"}
+02:31:52.934712 < Content-Length: 5
+02:31:52.934789 < Connection: close
+02:31:52.934852 < 

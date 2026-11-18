@@ -64,6 +64,10 @@ request inactivity too. This explicit difference is about the native transports,
 analytical query duration.
 The connect timeout covers establishment of a new connection. Progress can extend a receive
 inactivity timer. Configure query execution limits at the server when the workload needs them.
+The C++ adapter counts that inactivity on the socket itself and not on what libcurl has handed on:
+from 8.18.0 libcurl hands a header line on only when the next line begins, so a progress header
+that arrives alone is not handed on until something follows it
+([`qualification/libcurl-held-headers`](qualification/libcurl-held-headers/README.md)).
 
 No request follows an HTTP redirect or automatically replays a transport-ambiguous operation,
 including the first version/settings request. After a lost response, inspect the uncertain outcome;
