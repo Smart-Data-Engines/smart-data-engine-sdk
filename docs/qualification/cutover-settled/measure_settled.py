@@ -5,8 +5,10 @@ it still grows with the group. This measures the same move after a generation ad
 settle, whose pause reads only the rows that carry the advanced generation - each way on the SDK's
 own code paths, with the same fixtures and seeding as that record:
 
-- ``backfill``: staging, ``LocalCutover.backfill``, the cutover. The pause of ``../cutover-repair/``.
-- ``settled``: staging, the backfill, ``LocalCutover.advance``, ``LocalCutover.settle``, the cutover.
+- ``backfill``: staging, ``LocalCutover.backfill``, the cutover - the pause of
+  ``../cutover-repair/``.
+- ``settled``: staging, the backfill, ``LocalCutover.advance``, ``LocalCutover.settle``, the
+  cutover.
 - ``settled-written``: the same, with rows written after the settle - ``--since`` in a thousand of
   the group - under the advanced generation: to the source and the copy, as a session and its
   fan-out write them, and one in ten of them to the source alone, as a fan-out that failed.
@@ -136,8 +138,20 @@ def phases_of(marks: list[tuple[str, float]]) -> dict[str, int]:
 
 def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[str, Any]:
     target = OTHER[source]
-    with TemporaryDirectory() as tmp, initial(source, Path(tmp), target=target) as (
-        operator, stage, _old, roles, model, public, signed, _m, _s, _t,
+    with (
+        TemporaryDirectory() as tmp,
+        initial(source, Path(tmp), target=target) as (
+            operator,
+            stage,
+            _old,
+            roles,
+            model,
+            public,
+            signed,
+            _m,
+            _s,
+            _t,
+        ),
     ):
         seed(roles[source].operator, "initial_events", 2, rows - 1)
         operator.stage(stage)
@@ -190,20 +204,32 @@ def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[
                     role.operator._cx.execute('SET search_path TO "' + role.namespace + '"')
                 role.runtime.close()
                 role.runtime.connect()
-            resumed = LocalCutover(
-                operator.store.root,
-                model=model,
-                project_id=PROJECT,
-                public_key=public,
-                operators={name: role.operator for name, role in roles.items()},
-                runtime={name: [role.runtime] for name, role in roles.items()},
-            ).resume().as_record()
+            resumed = (
+                LocalCutover(
+                    operator.store.root,
+                    model=model,
+                    project_id=PROJECT,
+                    public_key=public,
+                    operators={name: role.operator for name, role in roles.items()},
+                    runtime={name: [role.runtime] for name, role in roles.items()},
+                )
+                .resume()
+                .as_record()
+            )
             return {
-                "source": source, "target": target, "rows": rows, "way": way,
-                "chunk_rows": chunk_rows, "backfill_ms": backfill_ms, "advance": advance,
-                "settle_ms": settle_ms, "outcome": "recovery_required",
-                "reason": type(exc).__name__, "interrupted_after_ms": interrupted,
-                "resumed_outcome": resumed["outcome"], "resumed_reason": resumed["reason"],
+                "source": source,
+                "target": target,
+                "rows": rows,
+                "way": way,
+                "chunk_rows": chunk_rows,
+                "backfill_ms": backfill_ms,
+                "advance": advance,
+                "settle_ms": settle_ms,
+                "outcome": "recovery_required",
+                "reason": type(exc).__name__,
+                "interrupted_after_ms": interrupted,
+                "resumed_outcome": resumed["outcome"],
+                "resumed_reason": resumed["reason"],
                 "phases_before_the_deadline": phases_of(marks),
             }
         ended = time.monotonic()
@@ -221,7 +247,8 @@ def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[
             "backfill_ms": backfill_ms,
             "advance": advance,
             "settle_ms": settle_ms,
-            "settle": settled and {
+            "settle": settled
+            and {
                 key: settled[key] for key in ("chunks", "rows", "earlier", "written", "unconfirmed")
             },
             "outcome": receipt["outcome"],
@@ -263,8 +290,12 @@ def main() -> int:
                         print(json.dumps(result), flush=True)
                         args.out.write_text(json.dumps({"partial": results}, indent=2) + "\n")
     report = {
-        "machine": {"node": platform.node(), "processor": platform.processor(),
-                    "cpus": os.cpu_count(), "python": platform.python_version()},
+        "machine": {
+            "node": platform.node(),
+            "processor": platform.processor(),
+            "cpus": os.cpu_count(),
+            "python": platform.python_version(),
+        },
         "sde_version": sde.__version__,
         "commit": os.environ.get("SDE_MEASURED_COMMIT"),
         "results": results,
