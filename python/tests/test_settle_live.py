@@ -196,6 +196,8 @@ def test_a_cutover_after_a_settle_compares_only_the_rows_written_since_the_advan
         assert (record["group"], record["settled"]) == ("Event", True)
         assert (record["write_epoch"], record["map_version"]) == (2, 2)
         assert (record["earlier"], record["written"], record["unconfirmed"]) == (earlier, 2, 0)
+        # ClickHouse streams, so every row is read; PostgreSQL is read by pages of the rows below.
+        assert record["rows"] == (6 if source == "clickhouse" else 5)
         assert [(row["role"], row["engine"]) for row in record["tables"]] == [
             ("source", made.source),
             ("target", made.target),
@@ -425,3 +427,49 @@ def test_the_operator_cli_settles_and_says_what_it_did(tmp_path: Path) -> None:
         stored = made.operator.store.path.read_text() + json.dumps(records)
         for role in made.roles.values():
             assert role.runtime._dsn not in stored
+
+
+@pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
+def test_the_rows_below_a_generation_are_read_in_key_order_after_a_key(
+    engine: str, tmp_path: Path
+) -> None:
+    """The read a settle's walk ends on, on each engine. On ClickHouse a key written again after
+    the advance is a new version under the new generation: its older version, below it, is not a
+    row any more, and is not answered."""
+    with group(engine, tmp_path, copied=False) as made:
+        made.old.save("Event", {"id": 7, "value": 77})
+        made.operator.advance(made.plan)
+        session = made.session()
+        session.save("Event", {"id": 3, "value": 33})
+        if engine == "clickhouse":
+            session.save("Event", {"id": 1, "value": 111})
+        reader = made.roles[engine].operator
+
+        def below(epoch: int, **bounds: Any) -> list[int]:
+            rows = reader.earlier_range(TABLE["source"], ["id"], epoch=epoch, **bounds)
+            assert all(row[sde.WRITE_EPOCH_COLUMN] < epoch for row in rows)
+            return [row["id"] for row in rows]
+
+        old = [2, 7] if engine == "clickhouse" else [1, 2, 7]
+        assert below(2) == old
+        assert below(2, after=[old[0]]) == old[1:]
+        assert below(2, limit=1) == old[:1]
+        assert below(3) == [1, 2, 3, 7]
+        assert below(1) == []
+
+
+def test_a_group_with_a_copy_on_elasticsearch_is_refused_a_settle_by_name(tmp_path: Path) -> None:
+    """Elasticsearch has no read by write generation, so there is nothing a settle could leave its
+    cutover to read: the cutover compares the group whole, and the settle says so."""
+    from test_elasticsearch_operator_live import moving
+
+    with moving("postgres", tmp_path) as move:
+        move.operator.stage(move.stage)
+        with pytest.raises(
+            sde.MigrationRefused,
+            match="Event cannot be settled before its cutover: an engine of it has no read by "
+            "write generation",
+        ):
+            move.operator.settle()
+        with move.operator.store.lock():
+            assert "settled" not in move.operator.store.read()
