@@ -577,6 +577,52 @@ TEST_F(ClickHouseLive, ProgressHeadersKeepALongAnswerAlive) {
   EXPECT_GE(std::chrono::duration<double>(Clock::now() - started).count(), 4.0);
 }
 
+TEST_F(ClickHouseLive, AHeaderWithinTheBoundCountsWhenItArrivesNotWhenLibcurlHandsItOn) {
+  // From 8.18.0 libcurl hands a header line on only when the next line begins. Here a header
+  // every second and a half under a two-second bound: each arrives in time, and each is handed on
+  // a second and a half later - three seconds after the status line. Silence is the socket's, so
+  // the answer is waited for. Counted from the header callback it was given up on at two seconds,
+  // on that libcurl and no earlier one (docs/qualification/libcurl-held-headers).
+  std::vector<std::pair<std::chrono::milliseconds, std::string>> pieces{
+      {std::chrono::milliseconds(0), "HTTP/1.1 200 OK\r\n"}};
+  for (int n = 0; n < 3; ++n) {
+    pieces.emplace_back(std::chrono::milliseconds(1500),
+                        "X-ClickHouse-Progress: {\"read_rows\":\"" + std::to_string(n) + "\"}\r\n");
+  }
+  const std::string body = sde::live::texts_body({"name"}, {{"slow"}});
+  pieces.emplace_back(std::chrono::milliseconds(500), "Content-Length: " + std::to_string(body.size()) +
+                                                        "\r\nConnection: close\r\n\r\n" + body);
+  sde::live::ScriptedServer server(
+      {sde::live::version_answer("24.8.14.39"), sde::live::Reply::paced(std::move(pieces))});
+  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default?send_receive_timeout=2");
+  ch.connect();
+  const auto started = Clock::now();
+  EXPECT_EQ(ch.get("events", {{"name", std::string("slow")}}),
+            (sde::Row{{"name", std::string("slow")}}));
+  EXPECT_GE(std::chrono::duration<double>(Clock::now() - started).count(), 5.0);
+}
+
+TEST_F(ClickHouseLive, ProgressExtendsTheWaitFromWhenItArrivesAndNoFurther) {
+  // A progress header at one second and then nothing: the answer is given up on two seconds after
+  // the header, not two seconds after the request and not never.
+  sde::live::Reply stalled = sde::live::Reply::paced(
+      {{std::chrono::milliseconds(0), "HTTP/1.1 200 OK\r\n"},
+       {std::chrono::milliseconds(1000), "X-ClickHouse-Progress: {\"read_rows\":\"0\"}\r\n"}});
+  stalled.hold = true;
+  sde::live::ScriptedServer server({sde::live::version_answer("24.8.14.39"), stalled});
+  sde::ClickHouseEngine ch("clickhouse://fixture:canary@127.0.0.1:" + std::to_string(server.port()) +
+                           "/default?send_receive_timeout=2");
+  ch.connect();
+  const auto started = Clock::now();
+  EXPECT_EQ(message_of([&] { (void)ch.get("events", {{"id", std::int64_t{1}}}); }),
+            "select from events failed: ClickHouse transport failed; the operation was not "
+            "replayed and its outcome may be unknown");
+  const double seconds = std::chrono::duration<double>(Clock::now() - started).count();
+  EXPECT_GE(seconds, 2.9);
+  EXPECT_LT(seconds, 5.0);
+}
+
 TEST_F(ClickHouseLive, AWrongPasswordRevealsNothingTheServerSaid) {
   const std::string wrong = sde::live::with_login(dsn_, "default", "not-the-password");
   EXPECT_EQ(message_of([&] { sde::ClickHouseEngine(wrong).connect(); }),

@@ -17,6 +17,18 @@ refused by the TypeScript one. The member is refused now, in every loader and wh
 the generation advance had it from the start. No control plane writes such a map; `migration/231`-`236`
 hold the rule.
 
+**Fixed: the C++ ClickHouse adapter did not hear a progress header when it arrived, on libcurl
+8.18.0 and later** (C++;
+[`docs/qualification/libcurl-held-headers/`](docs/qualification/libcurl-held-headers/README.md)).
+`send_receive_timeout` bounds silence, and the adapter counted silence from libcurl's header and
+body callbacks. From 8.18.0 libcurl hands a header line on only when the next line begins, so a
+progress header that arrived alone was not heard until something followed it. Against ClickHouse
+itself nothing was seen to go wrong: it sends its status line with its first progress header, and
+every later arrival hands on the header before it. An answer paced otherwise was given up on
+while it was arriving, and the suite's own test of the keep-alive failed 2 runs in 30 on that
+libcurl. Silence is counted on the socket now, which is what the option is documented to bound
+and what the reference's driver bounds.
+
 **Added: a signed packet that advances one group's write generation** (Python, TypeScript, C++;
 [`docs/generation-advance.md`](docs/generation-advance.md), format contract §7p). The map in force
 and the map that follows it, which is the first with a newer version and one group's generation

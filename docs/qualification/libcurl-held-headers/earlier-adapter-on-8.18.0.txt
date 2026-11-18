@@ -1,0 +1,9 @@
+# sde_live_tests of the adapter as it was (main at 202d704), built against libcurl 8.18.0, with this change's tests
+[       OK ] ClickHouseLive.ProgressHeadersKeepALongAnswerAlive (4504 ms)
+C++ exception with description "select from events failed: ClickHouse transport failed; the operation was not replayed and its outcome may be unknown" thrown in the test body.
+[  FAILED  ] ClickHouseLive.AHeaderWithinTheBoundCountsWhenItArrivesNotWhenLibcurlHandsItOn (5004 ms)
+[  FAILED  ] ClickHouseLive.ProgressExtendsTheWaitFromWhenItArrivesAndNoFurther (2012 ms)
+[  PASSED  ] 1 test.
+[  FAILED  ] 2 tests, listed below:
+[  FAILED  ] ClickHouseLive.AHeaderWithinTheBoundCountsWhenItArrivesNotWhenLibcurlHandsItOn
+[  FAILED  ] ClickHouseLive.ProgressExtendsTheWaitFromWhenItArrivesAndNoFurther
