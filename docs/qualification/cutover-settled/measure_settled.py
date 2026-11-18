@@ -45,6 +45,7 @@ from test_staging_operator_live import PROJECT, initial
 
 import sde
 from sde.generation import EPOCH_COLUMN
+from sde.local_cutover import CutoverRecoveryRequired, LocalCutover
 
 WAYS = ("backfill", "settled", "settled-written")
 
@@ -175,7 +176,36 @@ def move(source: str, rows: int, way: str, chunk_rows: int, since: int) -> dict[
         operator._after_step = lambda step: marks.append((step, time.monotonic()))
         plan = cutover_from(before, signed, model, public)
         started = time.monotonic()
-        receipt = operator.execute(plan).as_record()
+        try:
+            receipt = operator.execute(plan).as_record()
+        except CutoverRecoveryRequired as exc:
+            # The watchdog ended the pause at the signed budget: the operator's connections are
+            # closed and the source is still frozen. Fresh connections and a resume - without a
+            # decision, recovery aborts and reopens the source - are what a customer does next.
+            interrupted = round((time.monotonic() - started) * 1000)
+            for name, role in roles.items():
+                role.operator.close()
+                role.operator.connect()
+                if name == "postgres":
+                    role.operator._cx.execute('SET search_path TO "' + role.namespace + '"')
+                role.runtime.close()
+                role.runtime.connect()
+            resumed = LocalCutover(
+                operator.store.root,
+                model=model,
+                project_id=PROJECT,
+                public_key=public,
+                operators={name: role.operator for name, role in roles.items()},
+                runtime={name: [role.runtime] for name, role in roles.items()},
+            ).resume().as_record()
+            return {
+                "source": source, "target": target, "rows": rows, "way": way,
+                "chunk_rows": chunk_rows, "backfill_ms": backfill_ms, "advance": advance,
+                "settle_ms": settle_ms, "outcome": "recovery_required",
+                "reason": type(exc).__name__, "interrupted_after_ms": interrupted,
+                "resumed_outcome": resumed["outcome"], "resumed_reason": resumed["reason"],
+                "phases_before_the_deadline": phases_of(marks),
+            }
         ended = time.monotonic()
         phases = phases_of(marks)
         with operator.store.lock():
