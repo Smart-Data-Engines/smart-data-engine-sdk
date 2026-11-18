@@ -193,8 +193,9 @@ would otherwise resume an advance as if it were a cutover.
 
 ## What this does not do
 
-- It does not make a cutover shorter by itself. A cutover reads what it reads today until an
-  operator compares the earlier generations before the pause and tells the cutover so.
+- It does not make a cutover shorter by itself. A cutover reads the whole group under its pause
+  until [`sde-operator settle`](local-cutover.md#settling-before-the-pause) has compared the rows
+  below the new generation, after the advance and before the cutover.
 - It is not free for the application. Raising a generation is what a cutover's first step does: a
   session that still holds the earlier map has its writes refused by the engine from then on, and a
   library does not retry them - the application loads the next map

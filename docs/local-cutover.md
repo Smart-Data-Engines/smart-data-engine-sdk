@@ -343,6 +343,82 @@ The receipt does not change: its comparison carries the same counts, taken the s
 the copy was repaired, and how many rows that compared and wrote, is in the completed plan's
 `repair` record in `project.json`, numbers only.
 
+## Settling before the pause
+
+The repair above reads both sides of the group under the pause, so the pause still grows with the
+group. A [generation advance](generation-advance.md) marks a point the engines enforce: from it on
+every write of the group carries the map's generation, G, so a row below G has not been written
+since, on the source or on the copy. `sde-operator settle` compares those rows before the pause,
+while the application keeps writing, and the cutover's pause then reads only the rows that carry
+G. The order:
+
+```sh
+sde-operator --config local-operator.json --project-dir ./client-state backfill
+sde-operator --config local-operator.json --project-dir ./client-state advance --plan advance.json
+sde-operator --config local-operator.json --project-dir ./client-state settle
+sde-operator --config local-operator.json --project-dir ./client-state execute --plan cutover.json
+```
+
+The advance comes after the backfill: a backfill stamps what it copies with the generation in
+force, and the rows a settle compares are the rows below the one in force when it runs.
+
+**What a settle does**, for every group whose map names a copy:
+- it reads the source in key order and compares each row below G with the copy's: a row the copy
+  lacks is copied and one it holds with another value is written over, both under G - as a
+  session's fan-out would write them - and read back. A copy row that carries G already is newer
+  than what the settle read of the source, and is left;
+- it ends only when a fresh statement for the rows below G after the last key it read answers
+  none. A row below G cannot be written any more, so this ends however fast the application
+  writes, and no count stands in for it: a source that is being written to has no count a walk
+  could be held to. A ClickHouse source is read by one statement first, PostgreSQL by those
+  statements alone;
+- it takes no barrier and pauses nothing. It runs under the project lock, so beside no staging,
+  cutover, index build or advance, and is refused while one is unfinished;
+- it keeps, in `project.json`, a record a group: the generation, the map's version and
+  fingerprint, the native identity of every table, and its numbers - rows read, rows below G,
+  rows written, rows not read back. A pass that could not read back a write keeps no record,
+  and removes an earlier one. The command prints the records.
+
+**What the cutover's pause does then.** The cutover stands on the record when it was made from
+the map the packet starts from - the same fingerprint, so no advance, index build or other map
+came between - at the packet's generation, and over the tables the cutover has just qualified, by
+their identities. Its repair, under the same barriers as before, is then:
+1. the source's rows that carry G against the copy's, by key: a row the copy lacks or holds
+   otherwise is written under the cutover's generation, E+1 here as above, and read back;
+2. the copy's rows that carry G against the source's, by key: one that differs is written over
+   with the source's, and a key the source lacks ends in the whole refill, as above. A copy row
+   can carry G where the source's does not: a settle wrote it, or a backfill after the advance;
+3. under the final barriers, as before: the copy's rows that carry E+1, and both counts.
+
+The record of the completed cutover's repair says `"mode": "since"`. The record of the settle is
+removed when the cutover ends, either way: the map it was made under is not in force any more.
+
+**Why this is still the whole comparison.** At the decision a row of the copy carries E+1, and was
+compared under the final barriers; or carries G, and was compared under the pause with a source
+frozen since before that comparison - had it differed, it would carry E+1 now; or carries less,
+and has not changed since the advance. The settle compared that last kind with the source's row,
+which carried less too: if the source's row has changed since, it carries G now, step 1 compared
+it with the copy's, found them different and wrote it, so the copy's carries E+1. Every row of the
+source either carries less than G - and the settle found the copy's equal, or wrote it under G - or
+carries G, and step 1 visited it. Equal counts leave no room for a key the source lacks.
+
+A write of the application's that crosses a settle's - between the settle's read of a row and its
+write of it - leaves the copy's row under G with the settle's older value. Both rows carry G, and
+step 1 or 2 compares them. Nothing has to be ruled out for a settle to be right, only left
+visible for the pause.
+
+**What voids a record**, so that the cutover compares the whole group as above:
+- a map other than the one it was made under: another advance, an index build, any cutover;
+- an erasure, which removes every record before it deletes its first row;
+- a table that is not the one it settled, by its native identity;
+- a group on an engine without a read by write generation, which today is Elasticsearch: a settle
+  refuses it by name, and its cutover reads it whole.
+
+What still grows with the group under the pause: the counts under the final barriers, and the
+reads by generation, which find their rows by scanning the table (PostgreSQL) or its generation
+column (ClickHouse). [How large a group a move fits](#how-large-a-group-a-move-fits) gives the
+measurements of the repair before a settle; the settled pause is measured separately.
+
 ## How large a group a move fits
 
 A group that does not fit its budget is not moved: the watchdog stops the pause at the budget and

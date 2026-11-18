@@ -8,6 +8,21 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: `sde-operator settle`, and a cutover's pause over the rows written since the advance**
+(Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause)). After a
+generation advance a row below the map's generation has not been written since, on the source or
+on the copy. A settle compares those rows while the application keeps writing, writes over a copy
+row that differs as a fan-out would, and keeps a record of what it settled. A cutover from the same
+map then reads, under its pause, only the rows that carry the generation, on both sides, and
+compares under the final barriers as before. The walk of a settle ends on a statement that finds
+no row below the generation after its last key, so it ends however fast the application writes.
+Another map, an erasure or a replaced table voids the record, and the cutover compares the whole
+group, as before.
+- The operator's state keeps the records under storage contract 7, which an earlier operator
+  refuses whole.
+- The PostgreSQL and ClickHouse adapters read the rows below a generation after a key
+  (`earlier_range`).
+
 **Added: a signed packet that advances one group's write generation** (Python, TypeScript, C++;
 [`docs/generation-advance.md`](docs/generation-advance.md), format contract §7p). The map in force
 and the map that follows it, which is the first with a newer version and one group's generation
