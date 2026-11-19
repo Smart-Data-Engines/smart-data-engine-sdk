@@ -21,6 +21,7 @@ MINUTE_NS = 60_000_000_000
 RECOVERY_MARGIN_NS = 120_000_000_000  # a fault's window: the fault and two minutes after it
 RECOVERY_BOUND_S = 60.0
 DRIFT_BOUND = 2.0
+LATE_HOURS = 3  # the hours a trend has to show in, at the end of the run
 RSS_GROWTH_FRACTION = 0.10
 RSS_GROWTH_KIB = 16 * 1024
 MIN_SAMPLES = 100  # fewer operations in an hour than this gives a p99 without resolution
@@ -203,22 +204,28 @@ def hourly(run: Run, process: Process) -> list[dict[str, Any]]:
 
 
 def drift(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """p99 of each operation in the last quiet hour against the second hour (index 1)."""
+    """p99 of each operation late in the run against the second hour (index 1).
+
+    "Late" is the smallest p99 of the last three quiet hours. A trend - a leak, a structure that
+    grows - raises all three; a build somebody else ran on the machine raises one. The run shares
+    its machine, so the criterion has to tell the two apart.
+    """
     quiet = [r for r in rows if r["state"] == "quiet" and r["duration_samples"] >= MIN_SAMPLES]
     found = []
     for kind in sorted({r["op"] for r in quiet}):
         hours = sorted((r for r in quiet if r["op"] == kind), key=lambda r: r["hour"])
         second = next((r for r in hours if r["hour"] == 1), None)
-        last = hours[-1] if hours else None
-        if second is None or last is None or last["hour"] <= 1:
+        late = [r for r in hours if r["hour"] > 1][-LATE_HOURS:]
+        if second is None or not late:
             continue
-        ratio = last["duration_p99_ms"] / second["duration_p99_ms"]
+        least = min(late, key=lambda r: r["duration_p99_ms"])
+        ratio = least["duration_p99_ms"] / second["duration_p99_ms"]
         found.append(
             {
                 "op": kind,
                 "second_hour_p99_ms": second["duration_p99_ms"],
-                "last_hour": last["hour"],
-                "last_hour_p99_ms": last["duration_p99_ms"],
+                "late_hours": [r["hour"] for r in late],
+                "late_hours_p99_ms": [r["duration_p99_ms"] for r in late],
                 "ratio": round(ratio, 3),
                 "passed": ratio <= DRIFT_BOUND,
             }

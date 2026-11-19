@@ -161,13 +161,23 @@ def test_a_process_that_did_not_finish_is_a_breach() -> None:
 def test_p99_drift_beyond_twice_the_second_hour_is_a_breach() -> None:
     run = clean_run()
     slow = minutes(duration_ms=5.0)
-    run.processes[0].minutes = run.processes[0].minutes[:180] + slow[180:]
+    run.processes[0].minutes = run.processes[0].minutes[:120] + slow[120:]
     rows = hourly(run, run.processes[0])
     [found] = drift(rows)
-    assert found["last_hour"] == 3 and not found["passed"]
+    assert found["late_hours"] == [2, 3] and not found["passed"]
     assert summarise(run)["breaches"] == [
         f"python-postgres: p99 of write drifted x{found['ratio']}"
     ]
+
+
+def test_one_slow_hour_at_the_end_is_not_a_drift() -> None:
+    """Somebody else's build in the last hour: a trend would show in the hour before it too."""
+    run = clean_run()
+    slow = minutes(duration_ms=5.0)
+    run.processes[0].minutes = run.processes[0].minutes[:180] + slow[180:]
+    [found] = drift(hourly(run, run.processes[0]))
+    assert found["passed"], found
+    assert summarise(run)["passed"]
 
 
 def test_fault_minutes_are_kept_apart_from_quiet_ones() -> None:
