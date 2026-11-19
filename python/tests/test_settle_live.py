@@ -55,6 +55,20 @@ def cutover_of(made: Group, *, budget_ms: int = 30000) -> Any:
     """A signed cutover from the map in force to its copy: before, success and abort, as a
     control plane issues it after the advance."""
     before = made.state()["active_map"]
+    return cutover_from(before, made.signed, made.model, made.public, budget_ms=budget_ms)
+
+
+def cutover_from(
+    before: dict[str, Any],
+    signed: Any,
+    model: Any,
+    public: bytes,
+    *,
+    protocol: int = 1,
+    budget_ms: int = 30000,
+) -> Any:
+    """The cutover from ``before`` to its copy: protocol 2 when the copy is in the source's own
+    engine, a relayout."""
     epoch = before["groups"]["Event"]["write_epoch"]
     copy = deepcopy(before["groups"]["Event"]["derived"][0])
     del copy["lag_budget_ms"]
@@ -66,7 +80,7 @@ def cutover_of(made: Group, *, budget_ms: int = 30000) -> Any:
         "write_epoch": epoch + 1,
         "source": deepcopy(before["groups"]["Event"]["source"]),
     }
-    parsed = sde.load_map(before, model=made.model, public_key=made.public)
+    parsed = sde.load_map(before, model=model, public_key=public)
     request = sde.verification_request(
         parsed,
         group="Event",
@@ -74,24 +88,22 @@ def cutover_of(made: Group, *, budget_ms: int = 30000) -> Any:
         request_id=uuid4().hex,
         requested_at=datetime.now(UTC).isoformat(),
     )
-    packet = made.signed(
+    packet = signed(
         {
             "kind": "sde-cutover",
-            "protocol": 1,
+            "protocol": protocol,
             "plan_id": uuid4().hex,
             "project_id": PROJECT,
             "group": "Event",
             "pause_budget_ms": budget_ms,
             "query_impact_digest": "a" * 64,
             "before": before,
-            "success": made.signed(success),
-            "abort": made.signed(abort),
+            "success": signed(success),
+            "abort": signed(abort),
             "verification": request.as_record(),
         }
     )
-    return sde.load_cutover_plan(
-        packet, model=made.model, project_id=PROJECT, public_key=made.public
-    )
+    return sde.load_cutover_plan(packet, model=model, project_id=PROJECT, public_key=public)
 
 
 def advance_again(made: Group) -> None:
@@ -131,21 +143,22 @@ def values(made: Group, role: str) -> dict[int, int]:
 class Reads:
     """Every range and stream an engine is asked for while it is watched."""
 
-    def __init__(self, made: Group) -> None:
+    def __init__(self, roles: dict[str, Any]) -> None:
         self.seen: list[str] = []
-        self._made = made
+        self._roles = roles
         self._kept: list[tuple[Any, str, Any]] = []
 
     def __enter__(self) -> Reads:
-        for name, role in self._made.roles.items():
+        for name, role in self._roles.items():
             for method in ("key_range", "key_stream", "earlier_range"):
                 original = getattr(role.operator, method, None)
                 if original is None:
                     continue
                 self._kept.append((role.operator, method, original))
 
-                def watched(*args: Any, _n: str = f"{name}.{method}", _f: Any = original,
-                            **kwargs: Any) -> Any:
+                def watched(
+                    *args: Any, _n: str = f"{name}.{method}", _f: Any = original, **kwargs: Any
+                ) -> Any:
                     self.seen.append(_n)
                     return _f(*args, **kwargs)
 
@@ -205,7 +218,7 @@ def test_a_cutover_after_a_settle_compares_only_the_rows_written_since_the_advan
         assert made.state()["settled"]["Event"]["map_fingerprint"] == made.plan.after.fingerprint
         assert json.loads(made.operator.store.path.read_bytes())["storage_contract"] == 7
         plan = cutover_of(made)
-        with Reads(made) as reads:
+        with Reads(made.roles) as reads:
             receipt = made.operator.execute(plan).as_record()
         assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
         # No range of either side and no stream: the rows that carry the generation, by it.
@@ -322,9 +335,7 @@ def test_an_erasure_voids_the_settle(tmp_path: Path) -> None:
     ],
     ids=["the source replaced", "the copy replaced", "another map", "another generation"],
 )
-def test_a_record_that_is_not_of_this_cutover_is_not_stood_on(
-    tamper: Any, tmp_path: Path
-) -> None:
+def test_a_record_that_is_not_of_this_cutover_is_not_stood_on(tamper: Any, tmp_path: Path) -> None:
     """Each thing the record binds, alone: the tables by their native identities, the map it was
     made under, and the generation. A cutover that finds another does not stand on it."""
     with group("postgres", tmp_path) as made:
@@ -473,3 +484,128 @@ def test_a_group_with_a_copy_on_elasticsearch_is_refused_a_settle_by_name(tmp_pa
             move.operator.settle()
         with move.operator.store.lock():
             assert "settled" not in move.operator.store.read()
+
+
+def since_checkpoints() -> list[Any]:
+    """Every step of the cutover with a ClickHouse source, whose settle and pause read the most
+    ways; with a PostgreSQL source the steps whose state the settle changes - its repair and the
+    comparison after it - and the decision."""
+    from test_local_cutover_live import AFTER_DECISION, BEFORE_DECISION
+
+    since = ("repair:intent", "repair:done", "verify_frozen:intent", "verify_frozen:done")
+    return [
+        *(pytest.param("clickhouse", step, step in BEFORE_DECISION) for step in BEFORE_DECISION),
+        *(pytest.param("clickhouse", step, False) for step in AFTER_DECISION),
+        *(pytest.param("postgres", step, True) for step in since),
+        pytest.param("postgres", "decision:success", False),
+    ]
+
+
+@pytest.mark.parametrize(("source", "checkpoint", "aborts"), since_checkpoints())
+def test_a_cutover_after_a_settle_reaches_its_durable_decision_from_every_checkpoint(
+    source: str, checkpoint: str, aborts: bool, tmp_path: Path
+) -> None:
+    """A crash at a step of a cutover that stands on a settle, and a fresh operator's recovery.
+    Before the decision it aborts and reopens the source; after it, it completes. Either way the
+    record is gone - the map it was made under is not in force - and both ends hold every row."""
+    from test_advance_operator_live import Crash
+
+    with group(source, tmp_path) as made:
+        settled_then_written(made)
+        (record,) = made.operator.settle()
+        assert record["settled"]
+        plan = cutover_of(made)
+        made.operator._after_step = crash_at(checkpoint)
+        with pytest.raises(Crash, match=checkpoint):
+            made.operator.execute(plan)
+        if checkpoint.startswith(("verify_frozen", "decision")):
+            # The pause stood on the settle up to here.
+            assert made.state()["execution"]["repair"]["mode"] == "since"
+        receipt = made.reconnect().resume().as_record()
+        assert receipt["recovered"] is True
+        assert receipt["outcome"] == ("abort" if aborts else "success")
+        assert "Event" not in made.state()["settled"]
+        session = made.session()
+        for key, value in EXPECTED[source].items():
+            assert session.get("Event", {"id": key}) == {"id": key, "value": value}
+        session.save("Event", {"id": 8, "value": 88})
+        assert session.get("Event", {"id": 8}) == {"id": 8, "value": 88}
+
+
+@pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
+def test_a_relayout_settled_before_its_cutover_reads_only_the_rows_since_under_its_pause(
+    engine: str, tmp_path: Path
+) -> None:
+    """The copy in the source's own engine, under another physical design. The copy is read and
+    written there on the source's own connection, so a settle reads no stream: pages of the rows
+    below the generation, to one that answers none, and the pause reads the rows since."""
+    from test_staging_operator_live import initial
+
+    index: dict[str, Any] = {"entity": "Event", "name": "sde_i_relayout_000003"}
+    index.update(
+        {"columns": ["value"]}
+        if engine == "postgres"
+        else {"columns": ["value"], "method": "minmax", "granularity": 4}
+    )
+    with initial(engine, tmp_path, target=engine, indexes=[index]) as (
+        operator, stage, old, roles, model, public, signed, _, _, _,
+    ):  # fmt: skip
+        operator.stage(stage)
+        (progress,) = operator.backfill()
+        assert progress.complete
+        prepared = stage.as_record()["prepared"]
+        copy_table = prepared["groups"]["Event"]["derived"][0]["layout"]["tables"]["Event"]
+        native = roles[engine].operator
+        # Before the advance: a row the copy lacks - the old session writes the source alone -
+        # and one the copy holds with another value.
+        old.save("Event", {"id": 2, "value": 22})
+        native.upsert_in(
+            copy_table, [{"id": 1, "value": -1, sde.WRITE_EPOCH_COLUMN: 1}], key=["id"]
+        )
+        after = deepcopy(prepared)
+        after["map_version"] += 1
+        after["groups"]["Event"]["write_epoch"] += 1
+        after = signed(after)
+        advance = sde.load_advance_plan(
+            signed(
+                {
+                    "kind": "sde-advance",
+                    "protocol": 1,
+                    "advance_id": uuid4().hex,
+                    "project_id": PROJECT,
+                    "group": "Event",
+                    "pause_budget_ms": 30000,
+                    "before": prepared,
+                    "after": after,
+                }
+            ),
+            model=model,
+            project_id=PROJECT,
+            public_key=public,
+        )
+        assert operator.advance(advance).as_record()["outcome"] == "advanced"
+        runtime = {name: role.runtime for name, role in roles.items()}
+        sde.Session(model, operator.active_map(), runtime, project_id=PROJECT).save(
+            "Event", {"id": 3, "value": 33}
+        )
+        (record,) = operator.settle()
+        assert record["settled"] is True
+        # Read by pages of the rows below the generation only, 1 and 2, and both written.
+        assert (record["rows"], record["earlier"], record["written"]) == (2, 2, 2)
+        # A write crossing the settle's: the copy's row since the advance with another value.
+        native.upsert_in(
+            copy_table, [{"id": 3, "value": -3, sde.WRITE_EPOCH_COLUMN: 2}], key=["id"]
+        )
+        plan = cutover_from(after, signed, model, public, protocol=2)
+        with Reads(roles) as reads:
+            receipt = operator.execute(plan).as_record()
+        assert receipt["outcome"] == "success" and receipt["verification"]["matched"] is True
+        assert reads.seen == []
+        with operator.store.lock():
+            state = operator.store.read()
+        repair = state["completed"][plan.plan_id]["repair"]
+        assert (repair["mode"], repair["written"]) == ("since", 1)
+        assert "Event" not in state["settled"]
+        moved = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        for key in (1, 2, 3):
+            assert moved.get("Event", {"id": key}) == {"id": key, "value": key * 11}
