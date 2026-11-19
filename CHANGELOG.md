@@ -17,6 +17,21 @@ rows are a long way off - failed with `no answer within undefined ms`. Each requ
 unbounded itself. Found by the soak of the three libraries under injected faults, which saw the
 TypeScript process alone fail 5 seconds into a frozen ClickHouse.
 
+**Added: a session's operation hook, in all three libraries** ([`docs/observability.md`](docs/observability.md#the-operation-hook)).
+A session given a hook calls it once for every operation it completes - the method, the entity and
+group in your own names, the shape, the engine, the materialization that served it, how long it
+took, how many rows it moved and how it ended - and with nothing the operation carried: no key, no
+row, no filter, no statement and no error message. A whole transaction is a record of its own. A
+hook that raises changes nothing about the operation. The library depends on no tracing package;
+the page shows an OpenTelemetry bridge of a few lines in each language, which each library's tests
+run. [`docs/alerts.md`](docs/alerts.md) says which events and which numbers deserve an alert.
+
+**Added: TypeScript says its events, through a sink you pass** ([`docs/observability.md`](docs/observability.md#the-event-vocabulary)).
+The C++ library's vocabulary but `sde.schema.text_collation`: maps loaded and refused, the rollback
+check, the schema applied and differing from its design, extra columns, failed writes, a copy's
+divergence, backfill progress, orderbook flushes and storage sizes that could not be read. Without
+a sink it says nothing, as before.
+
 **Changed: a generation change, and a barrier's release, are one change of each table** (all three
 libraries; [`docs/write-fences.md`](docs/write-fences.md#stored-protocol), record
 [`docs/qualification/fence-in-one-statement/`](docs/qualification/fence-in-one-statement/README.md)).

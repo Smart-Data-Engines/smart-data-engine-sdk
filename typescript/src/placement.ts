@@ -10,6 +10,8 @@
  * come from us, when there is no key to check the claim against.
  */
 
+import { emit, truncated } from './events.js'
+import type { EventSink } from './events.js'
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
@@ -104,6 +106,8 @@ export interface LoadOptions {
    */
   readonly publicKey?: Uint8Array | Readonly<Record<string, Uint8Array>>
   readonly requireSignature?: boolean
+  /** Where `sde.map.loaded` and `sde.map.rejected` go; without it this says nothing (`events.ts`). */
+  readonly events?: EventSink
 }
 
 export const MAP_CONTRACT = 6
@@ -798,7 +802,32 @@ function requireCanonicalText(value: unknown): void {
   }
 }
 
+/**
+ * Read a placement map, or refuse it - and say which to the event sink, when there is one. A refusal
+ * reaches the application as a `MapError` and the operator as `sde.map.rejected`, and those are
+ * different people at four in the morning. Its reason is about structure, never a value.
+ */
 export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
+  let placement: PlacementMap
+  try {
+    placement = parseMap(raw, options)
+  } catch (error) {
+    if (error instanceof MapError) {
+      emit(options.events, 'sde.map.rejected', { error: error.name, reason: truncated(error.message) })
+    }
+    throw error
+  }
+  emit(options.events, 'sde.map.loaded', {
+    model_version: placement.modelVersion,
+    map_version: placement.mapVersion,
+    signed: placement.signed,
+    forward_only: placement.signed,
+    key: placement.verifiedWith,
+  })
+  return placement
+}
+
+function parseMap(raw: unknown, options: LoadOptions): PlacementMap {
   const body = asRecord(structuredClone(raw), 'a placement map')
 
   const contract = body['contract']

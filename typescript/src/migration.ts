@@ -1,3 +1,5 @@
+import { emit } from './events.js'
+import type { EventSink } from './events.js'
 import { withReader } from './_usage.js'
 import type { MigrationView } from './inspection.js'
 import { EPOCH_COLUMN } from './generation.js'
@@ -530,6 +532,8 @@ export interface BackfillOptions {
    * the end of its table.
    */
   readonly stopAfter?: number
+  /** Where `sde.migration.backfill_progress` goes, a line per chunk (`events.ts`). */
+  readonly events?: EventSink
 }
 
 /**
@@ -550,7 +554,7 @@ export async function backfill(
     if (chunkRows < 1) throw new MigrationRefused(`a chunk of ${chunkRows} rows is not a chunk`)
     const entities: EntityProgress[] = []
     for (const copy of plan(session, group)) {
-      entities.push(await backfillOne(copy, chunkRows, options.stopAfter))
+      entities.push(await backfillOne(copy, chunkRows, options.stopAfter, group, options.events))
     }
     return {
       group,
@@ -566,6 +570,8 @@ async function backfillOne(
   copy: Copy,
   chunkRows: number,
   stopAfter: number | undefined,
+  group: string,
+  events: EventSink | undefined,
 ): Promise<EntityProgress> {
   let marker = await copy.target.backfillMarker({
     materialization: copy.targetId,
@@ -601,6 +607,12 @@ async function backfillOne(
     after = copy.key.map((column) => last[column])
     rowsThisRun += rows.length
     chunks += 1
+    // A chunk landed and the marker moved: the one operation here that can take hours, so an
+    // operator watching it sees it move. The marker is a row count, never a key value.
+    emit(events, 'sde.migration.backfill_progress', {
+      group, entity: copy.entity, engine: copy.targetEngine, table: copy.targetTable,
+      chunk: chunks, rows: rows.length, rows_copied: marker,
+    })
     if (rows.length < chunkRows) {
       // The end of the table, once. Rows arriving above this point from here on are the fan-out's,
       // which is why there is no ceiling and no second pass.

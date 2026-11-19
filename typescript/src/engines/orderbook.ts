@@ -24,6 +24,8 @@
  * and this runtime has no binding for it.
  */
 
+import { emit } from '../events.js'
+import type { EventSink } from '../events.js'
 import { readFileSync } from 'node:fs'
 
 import { UsageGate } from '../_usage.js'
@@ -114,6 +116,8 @@ export interface OrderbookOptions {
   readonly tlsVerify?: boolean
   /** Milliseconds for the connection and for each answer. */
   readonly timeoutMs?: number
+  /** Where this adapter's events go (`events.ts`): `sde.write.failed`, `sde.orderbook.flushed`. */
+  readonly events?: EventSink
 }
 
 function name(value: unknown, what: string): string {
@@ -337,8 +341,10 @@ export class OrderbookEngine {
   private connection: WireConnection | null = null
   private capabilities: ReadonlySet<string> = new Set()
   private unflushed = 0
+  private readonly events: EventSink | undefined
 
   constructor(options: OrderbookOptions) {
+    this.events = options.events
     const { host, port } = options
     if (typeof host !== 'string' || host === '') throw new EngineError('an orderbook engine needs a host')
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -398,9 +404,10 @@ export class OrderbookEngine {
    * read by format contract 7n's grammar and by no URL parser, so every library reads one DSN alike.
    * No refusal repeats the DSN, which carries the secret.
    */
-  static fromDsn(dsn: string): OrderbookEngine {
+  static fromDsn(dsn: string, options: { readonly events?: EventSink } = {}): OrderbookEngine {
     const parsed = parseOrderbookDsn(dsn)
     return new OrderbookEngine({
+      ...options,
       host: parsed.host,
       port: parsed.port,
       ...(parsed.identity === null || parsed.secret === null
@@ -622,13 +629,17 @@ export class OrderbookEngine {
         raw = await connection.execute(this.command(update))
       } catch (error) {
         await this.lose()
+        emit(this.events, 'sde.write.failed', { table, error: error instanceof Error ? error.name : 'Exception' })
         throw new EngineError(
           `the engine did not confirm the write to ${table}: ${message(error)}. If the connection dropped after ` +
             'the update was sent, it may still have been stored: read the book before writing it again.',
         )
       }
       const answer = parseAnswer(raw)
-      if (answer.error !== null) throw new EngineError(`insert into ${table} failed: ${answer.error}`)
+      if (answer.error !== null) {
+        emit(this.events, 'sde.write.failed', { table, error: 'EngineError' })
+        throw new EngineError(`insert into ${table} failed: ${answer.error}`)
+      }
       this.unflushed += 1
     })
   }
@@ -710,6 +721,7 @@ export class OrderbookEngine {
           answers = await connection.executePipelined(part.map((update) => this.command(update)))
         } catch (error) {
           await this.lose()
+          emit(this.events, 'sde.write.failed', { table, error: error instanceof Error ? error.name : 'Exception' })
           throw new EngineError(
             `the outcome of this batch is unknown: ${stored} of its ${updates.length} updates were confirmed, and ` +
               `the connection failed on the next ${part.length} (${message(error)}). Those may have been stored in ` +
@@ -722,6 +734,7 @@ export class OrderbookEngine {
         for (const [index, outcome] of outcomes.entries()) if (outcome.error === null) this.unflushed += part[index]!.levels.length
         if (refused.length > 0) {
           const [first, index] = refused[0]!
+          emit(this.events, 'sde.write.failed', { table, error: 'EngineError' })
           throw new EngineError(
             `the server refused ${refused.length} of ${updates.length} updates in this batch; the first was update ` +
               `${start + index} (rows ${JSON.stringify(part[index]!.rows)}): ${first.error}. ${stored} updates were stored - ` +
@@ -749,6 +762,7 @@ export class OrderbookEngine {
     }
     const answer = parseAnswer(raw)
     if (answer.error !== null) throw new EngineError(`flush failed: ${answer.error}`)
+    emit(this.events, 'sde.orderbook.flushed', { rows: this.unflushed })
     this.unflushed = 0
   }
 
