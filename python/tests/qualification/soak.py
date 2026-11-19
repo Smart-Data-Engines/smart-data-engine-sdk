@@ -518,7 +518,7 @@ def main() -> int:
     length = parser.add_mutually_exclusive_group(required=True)
     length.add_argument("--hours", type=float)
     length.add_argument("--short", action="store_true")
-    parser.add_argument("--python", type=Path, required=True)
+    parser.add_argument("--python", type=Path)
     parser.add_argument("--npm", type=Path)
     parser.add_argument("--cpp-worker", type=Path)
     parser.add_argument("--pg-bin", type=Path, default=Path("/usr/lib/postgresql/16/bin"))
@@ -526,9 +526,20 @@ def main() -> int:
     parser.add_argument("--period-ms", type=int, default=100)
     parser.add_argument("--fault-every-s", type=float, default=1200.0)
     parser.add_argument("--fault-seconds", type=float, default=45.0)
-    parser.add_argument("--artifacts", type=Path, help="JSON of the artifacts' SHA-256")
+    parser.add_argument(
+        "--artifacts", type=Path, help="soak_artifacts' artifacts.json: paths and SHA-256"
+    )
     parser.add_argument("--keep-engines", action="store_true")
     args = parser.parse_args()
+    if args.artifacts:
+        built = json.loads(args.artifacts.read_text())
+        args.python = args.python or Path(built["python"]["interpreter"])
+        if "typescript" in built:
+            args.npm = args.npm or Path(built["typescript"]["package"])
+        if "cpp" in built:
+            args.cpp_worker = args.cpp_worker or Path(built["cpp"]["worker"])
+    if args.python is None:
+        parser.error("--python or --artifacts is required")
     if not args.run.is_absolute():
         parser.error("--run must be an absolute path")
     return Soak(args).run()
