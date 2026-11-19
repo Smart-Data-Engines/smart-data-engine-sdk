@@ -29,7 +29,9 @@ signature. The packet fingerprint is SHA-256 of that canonical unsigned envelope
 numbers normalize by the existing map rules before validation and canonical encoding.
 
 Both maps must use contract 4, match the locally enrolled project and model, and contain explicit
-layouts. `prepared.map_version` must exceed `current.map_version`. The controller must also reserve
+layouts: a layout that carries `auto` is refused whatever the member says (`migration/231`,
+`232`), because whether a value asks for a derived layout is each language's own notion of a true
+value. `prepared.map_version` must exceed `current.map_version`. The controller must also reserve
 that version above every previously issued or reserved version, including an unused cutover outcome.
 Signing or decoding a packet does not make its prepared map active.
 

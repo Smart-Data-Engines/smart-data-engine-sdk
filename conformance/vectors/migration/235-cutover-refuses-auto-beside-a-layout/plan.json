@@ -1,0 +1,256 @@
+{
+  "kind": "sde-cutover",
+  "protocol": 1,
+  "plan_id": "33333333333333333333333333333333",
+  "project_id": "11111111111111111111111111111111",
+  "group": "Event",
+  "pause_budget_ms": 5000,
+  "query_impact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "before": {
+    "contract": 6,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "groups": {
+      "Event": {
+        "write_epoch": 1,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        },
+        "derived": [
+          {
+            "engine": "ch-1",
+            "id": "Event@ch",
+            "lag_budget_ms": 30000,
+            "layout": {
+              "tables": {
+                "Event": "event_copy"
+              },
+              "columns": {
+                "Event": {
+                  "at": "DateTime64(6, 'UTC')",
+                  "id": "UUID",
+                  "name": "String"
+                }
+              }
+            }
+          }
+        ],
+        "also_write": [
+          "Event@ch"
+        ]
+      },
+      "Order": {
+        "source": {
+          "engine": "book-1",
+          "id": "Order@book",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            },
+            "auto": []
+          }
+        }
+      }
+    },
+    "routing": {
+      "2477d087f39d0ae4": "Event@pg",
+      "12f8b2171bc2bf78": "Order@book"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "cutover",
+      "value": "/1IpHrZ3SFGF3t64ATY2rqHplgIKNuTmEgf8elk/vEReg/bH227iSS/J/F/kWP4mgVTkgaO6yaew3j1EjT3ODg=="
+    }
+  },
+  "success": {
+    "contract": 6,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 2,
+    "groups": {
+      "Event": {
+        "write_epoch": 3,
+        "source": {
+          "engine": "ch-1",
+          "id": "source@ch-1",
+          "layout": {
+            "tables": {
+              "Event": "event_copy"
+            },
+            "columns": {
+              "Event": {
+                "at": "DateTime64(6, 'UTC')",
+                "id": "UUID",
+                "name": "String"
+              }
+            }
+          }
+        }
+      },
+      "Order": {
+        "source": {
+          "engine": "book-1",
+          "id": "Order@book",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            },
+            "auto": []
+          }
+        }
+      }
+    },
+    "routing": {
+      "12f8b2171bc2bf78": "Order@book"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "cutover",
+      "value": "KajGWDd8iI1C/g/sVs8kKesxrRGPk2+S5R5JBgbx1SAFC2OBT3e7WF1eqQJhA+RmwANJDhJFNBFOZt3GgNS1Dg=="
+    }
+  },
+  "abort": {
+    "contract": 6,
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 3,
+    "groups": {
+      "Event": {
+        "write_epoch": 2,
+        "source": {
+          "engine": "pg-main",
+          "id": "Event@pg",
+          "layout": {
+            "tables": {
+              "Event": "event_source"
+            },
+            "columns": {
+              "Event": {
+                "at": "timestamptz",
+                "id": "uuid",
+                "name": "text"
+              }
+            }
+          }
+        }
+      },
+      "Order": {
+        "source": {
+          "engine": "book-1",
+          "id": "Order@book",
+          "layout": {
+            "tables": {
+              "Order": "order",
+              "Payment": "payment",
+              "User": "user"
+            },
+            "columns": {
+              "Order": {
+                "id": "uuid",
+                "placed_at": "timestamptz",
+                "tenant": "uuid",
+                "total": "numeric(12,2)",
+                "user_id": "uuid"
+              },
+              "Payment": {
+                "amount": "numeric(12,2)",
+                "id": "uuid"
+              },
+              "User": {
+                "email": "text",
+                "id": "uuid"
+              }
+            },
+            "auto": []
+          }
+        }
+      }
+    },
+    "routing": {
+      "12f8b2171bc2bf78": "Order@book"
+    },
+    "signature": {
+      "alg": "ed25519",
+      "key_id": "cutover",
+      "value": "qT65QDo09lNYXjDakKa4v4G1glzaHAS2T0HZIBfncK/98TyaGqcqVsbOanVO71jWZPFk3PV1yDfz6a11jL1bCQ=="
+    }
+  },
+  "verification": {
+    "protocol": 1,
+    "request_id": "22222222222222222222222222222222",
+    "project_id": "11111111111111111111111111111111",
+    "model_version": "59a263d15793fb78",
+    "map_version": 1,
+    "map_fingerprint": "4e63cad3c02d7161663140f8d4ad98949e58d728afedcd21ac14a2a3d1f147fb",
+    "group": "Event",
+    "source": {
+      "engine": "pg-main",
+      "id": "Event@pg"
+    },
+    "targets": [
+      {
+        "engine": "ch-1",
+        "id": "Event@ch"
+      }
+    ],
+    "requested_at": "2026-10-02T18:00:00Z",
+    "requires_signature": true
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "cutover",
+    "value": "HMto4tiy16+ctK7hYeyM8PEAn6W5c9SuGlbHzvcZ72YFeaGGssTorF5fMquuE78xlX7CyKRt+LC8zx4Oh6djBg=="
+  }
+}
