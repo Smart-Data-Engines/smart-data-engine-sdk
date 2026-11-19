@@ -1,3 +1,6 @@
+import { EPOCH_COLUMN } from '../generation.js'
+import { emit } from '../events.js'
+import type { EventSink } from '../events.js'
 import { UsageGate } from '../_usage.js'
 /**
  * ClickHouse adapter, over the HTTP interface, with no driver dependency at all.
@@ -275,7 +278,8 @@ export class ClickHouseEngine {
   /** The server's range once read on this connection; `undefined` until then. */
   private range: TemporalRange | null | undefined = undefined
 
-  constructor(dsn: string) {
+  /** `events` is where this adapter's events go (`events.ts`): `sde.write.failed`. */
+  constructor(dsn: string, private readonly options: { readonly events?: EventSink } = {}) {
     this.target = parseDsn(dsn)
   }
 
@@ -751,6 +755,12 @@ export class ClickHouseEngine {
             `succeeds and comes back rounded is worse than one that fails.`,
         )
       }
+      // Allowed - a client may have added one outside SDE and writes are unaffected - and said:
+      // a schema that has quietly diverged is worth one line. Never the generation column.
+      const extra = [...actual.keys()]
+        .filter((column) => !Object.hasOwn(columns, column) && column !== EPOCH_COLUMN)
+        .sort()
+      if (extra.length > 0) emit(this.options.events, 'sde.schema.extra_columns', { table, columns: extra })
     }
   }
 
@@ -780,6 +790,7 @@ export class ClickHouseEngine {
       try {
         await this.insertRows(table, [values])
       } catch (error) {
+        emit(this.options.events, 'sde.write.failed', { table, error: error instanceof Error ? error.name : 'Exception' })
         throw new EngineError(`insert into ${table} failed: ${message(error)}`)
       }
 
@@ -801,6 +812,7 @@ export class ClickHouseEngine {
       try {
         await this.insertRows(table, rows)
       } catch (error) {
+        emit(this.options.events, 'sde.write.failed', { table, error: error instanceof Error ? error.name : 'Exception' })
         throw new EngineError(`batch insert into ${table} failed: ${message(error)}`)
       }
     })

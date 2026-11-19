@@ -19,6 +19,7 @@
 /// the map and the engines must outlive it; it copies none of them.
 
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <map>
 #include <optional>
@@ -32,6 +33,7 @@
 
 #include "sde/engine.hpp"
 #include "sde/hashing.hpp"
+#include "sde/hook.hpp"
 #include "sde/log.hpp"
 #include "sde/model.hpp"
 #include "sde/placement.hpp"
@@ -52,6 +54,9 @@ struct SessionOptions {
   /// generation-bearing map (contract 4 and later).
   std::optional<std::string> project_id;
   LogSink log;
+  /// Called once per completed operation with what it was and how it ended, never with what it
+  /// carried (`sde/hook.hpp`). Off when empty, as telemetry is.
+  OperationHook hook;
 };
 
 /// A bounded page, read where the map routes it.
@@ -214,15 +219,25 @@ class Session {
                                                                   bool fresh) const;
   /// A point read from where it goes on: read, record, hand back the client's row.
   std::optional<Row> read_one(const OperationShape& read, std::string_view entity, Engine& engine,
-                              const std::string& table, const Row& given);
+                              const Materialization& served, const std::string& table,
+                              const Row& given);
   void fan_out(const std::string& entity, const std::string& group, const std::vector<Row>& rows,
                bool batch);
   /// Refuses a row an engine its write goes to cannot hold, before any engine is written to.
   void held(std::string_view entity, const std::string& target, const std::string& group,
             const std::string& engine, const std::vector<Row>& rows, bool batch) const;
   void replay_one(const Deferred& write);
-  void observe(const OperationShape& shape, std::int64_t started, std::uint64_t rows, bool failed,
-               const ReadPlan* plan = nullptr);
+  /// One completed operation, to the recorder and to the hook, for each one there is; `error` is
+  /// what ended it, empty when it succeeded.
+  void observe(const OperationShape& shape, std::int64_t started, std::uint64_t rows,
+               std::string_view operation, const Materialization& served,
+               const std::exception_ptr& error, const ReadPlan* plan = nullptr);
+  /// Builds the record and calls the hook; a hook that throws changes nothing.
+  void call_hook(std::string_view operation, const std::string& entity, const std::string& group,
+                 const std::string& shape, const Materialization& served, std::int64_t elapsed,
+                 std::uint64_t rows, const std::exception_ptr& error);
+  /// An entity's or a group's name as the application wrote it (a group is named after an entity).
+  [[nodiscard]] std::string application_name(const std::string& model_name) const;
   [[nodiscard]] std::pair<std::string, ReadPlan> prepare_read(
       std::string_view entity, const std::optional<Row>& where, const std::optional<Range>& bounds,
       const std::optional<std::string>& order_by, bool descending, const std::optional<Row>& after,
@@ -236,6 +251,9 @@ class Session {
   const NameMap* names_;
   std::optional<std::string> project_id_;
   LogSink log_;
+  OperationHook hook_;
+  /// The application's name of each hashed entity name, for the hook's records; empty unhashed.
+  std::map<std::string, std::string> application_names_;
   std::vector<Group> groups_;
   std::map<std::tuple<std::string, std::string, std::vector<std::string>>, const OperationShape*>
       shapes_;
@@ -247,6 +265,7 @@ class Session {
   struct PointRead {
     struct Place {
       Engine* engine = nullptr;
+      const Materialization* materialization = nullptr;
       const std::string* table = nullptr;
     };
     std::vector<std::string> key;

@@ -58,6 +58,7 @@ from .facts import FACTS_VERSION, engine_facts
 from .frozen_verification import FrozenVerifyReport, verify_frozen
 from .groups import Group, colocation_groups, group_of
 from .hashing import NameMap, hash_identifiers, load_or_create_salt
+from .hook import OperationHook, OperationRecord
 from .index_build import (
     INDEX_CHANGE_PROTOCOL,
     INDEX_PROTOCOL,
@@ -249,6 +250,8 @@ __all__ = [
     "NameMap",
     "Note",
     "NumericSummary",
+    "OperationHook",
+    "OperationRecord",
     "OperationShape",
     "PhysicalFinding",
     "PhysicalLayout",

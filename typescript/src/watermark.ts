@@ -43,6 +43,8 @@
  * be set once during an incident and left set.
  */
 
+import { emit } from './events.js'
+import type { EventSink } from './events.js'
 import { compareCodePoints } from './canonical.js'
 import { satisfies, WATERMARK_MEMBERS } from './capabilities.js'
 import { MapRolledBack } from './errors.js'
@@ -137,6 +139,7 @@ function split(engines: Readonly<Record<string, unknown>>): {
 export async function enforceForwardOnly(
   placement: PlacementMap,
   engines: Readonly<Record<string, unknown>>,
+  events?: EventSink,
 ): Promise<WatermarkCheck> {
   if (!placement.signed) return decide(placement, engines, new Map())
   const { able } = split(engines)
@@ -146,6 +149,10 @@ export async function enforceForwardOnly(
     seen.set(name, await store.mapWatermark())
   }
   const check = decide(placement, engines, seen)
+  if (check.protection === 'unavailable') {
+    emit(events, 'sde.map.rollback_unprotected', { map_version: placement.mapVersion, engines: check.unable.length })
+    return check
+  }
   if (
     check.protection === 'enforced' &&
     (check.highestSeen === null || placement.mapVersion > check.highestSeen)
@@ -157,6 +164,11 @@ export async function enforceForwardOnly(
       const store = engines[name] as WatermarkStore
       await store.recordMapVersion(placement.mapVersion, { modelVersion: placement.modelVersion })
     }
+  }
+  if (check.protection === 'enforced') {
+    emit(events, 'sde.map.forward_only', {
+      map_version: placement.mapVersion, highest_seen: check.highestSeen, engines: check.participating.length,
+    })
   }
   return check
 }
