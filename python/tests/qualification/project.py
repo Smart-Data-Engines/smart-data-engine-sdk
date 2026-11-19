@@ -66,9 +66,13 @@ def project(
     source: str,
     *,
     bootstrap: Callable[[Path, str, dict[str, Any]], dict[str, Any]] | None = None,
+    declaration: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
+    """A project of one colocation group placed on ``source``; ``declaration`` is its model."""
+    if declaration is None:
+        declaration = DECLARATION
     root.mkdir(parents=True, exist_ok=False)
-    model = model_from_neutral(DECLARATION)
+    model = model_from_neutral(declaration)
     key = Ed25519PrivateKey.generate()
     public = {"qualification": key.public_key().public_bytes_raw()}
     project_id = uuid4().hex
@@ -134,7 +138,7 @@ def project(
         config: dict[str, Any] = {
             "protocol": 1,
             "project_id": project_id,
-            "model": DECLARATION,
+            "model": declaration,
             "public_keys": {
                 name: base64.b64encode(value).decode() for name, value in public.items()
             },
