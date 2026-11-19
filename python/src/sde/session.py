@@ -1501,17 +1501,18 @@ class Session:
         error: BaseException | None,
     ) -> None:
         """Build the record and call the hook; a hook that raises is counted, never propagated."""
+        # Positional, in the record's order: once per operation, and keywords cost a third more.
         record = OperationRecord(
-            operation=operation,
-            entity=self._application_name(entity),
-            group=self._application_name(group),
-            shape=shape,
-            engine=served.engine,
-            dialect=self._engines[served.engine].dialect,
-            materialization=served.id,
-            duration_ns=nanoseconds,
-            rows=rows,
-            outcome=outcome_of(error),
+            operation,
+            self._application_name(entity),
+            self._application_name(group),
+            shape,
+            served.engine,
+            self._engines[served.engine].dialect,
+            served.id,
+            nanoseconds,
+            rows,
+            outcome_of(error),
         )
         guard("session.hook", lambda: hook(record))
 

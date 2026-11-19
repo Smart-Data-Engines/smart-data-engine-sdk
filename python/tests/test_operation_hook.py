@@ -9,7 +9,6 @@ looking at nothing.
 
 from __future__ import annotations
 
-import dataclasses
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -182,7 +181,7 @@ def test_nothing_an_operation_carried_reaches_the_hook(records: list[OperationRe
     assert any(SENTINEL in repr(item) for item in returned)
     assert len(records) == 8
     for record in records:
-        assert SENTINEL not in repr(dataclasses.astuple(record)), record
+        assert SENTINEL not in repr(tuple(record)), record
 
 
 def test_the_record_has_the_contracts_fields_in_order() -> None:

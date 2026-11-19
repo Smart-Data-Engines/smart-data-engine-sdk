@@ -14,7 +14,7 @@ is a few lines of the application's own code, shown in ``docs/observability.md``
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from typing import NamedTuple
 
 from .errors import SdeError
 
@@ -33,9 +33,13 @@ OPERATIONS = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class OperationRecord:
-    """One completed operation. Field order is the contract's (``observability/001``)."""
+class OperationRecord(NamedTuple):
+    """One completed operation, in the order TypeScript and C++ keep its fields.
+
+    A named tuple rather than a frozen dataclass, and measured: built once per operation, the
+    dataclass cost 2.6 to 4.5 µs on the reference laptop and the tuple 1.0 to 1.3, against a
+    PostgreSQL round trip of 300 to 600 µs and a budget of 1 % (``tests/test_overhead.py``).
+    """
 
     operation: str
     """The session method: one of :data:`OPERATIONS`."""
@@ -61,7 +65,7 @@ class OperationRecord:
 
 OperationHook = Callable[[OperationRecord], None]
 
-FIELDS = tuple(OperationRecord.__dataclass_fields__)
+FIELDS: tuple[str, ...] = OperationRecord._fields
 
 
 def outcome_of(error: BaseException | None) -> str:
