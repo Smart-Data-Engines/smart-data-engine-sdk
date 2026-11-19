@@ -10,7 +10,9 @@ looking at nothing.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -191,3 +193,28 @@ def test_the_record_has_the_contracts_fields_in_order() -> None:
     assert outcome_of(None) == "ok"
     assert outcome_of(EngineError("x")) == "EngineError"
     assert outcome_of(KeyError("x")) == "unexpected"
+
+
+def test_the_record_is_one_record_in_three_languages() -> None:
+    """TypeScript's and C++'s operation names and fields are Python's, read from their sources.
+
+    Not a conformance family: the record is not bytes anything signs or compares, and a hook is an
+    API of each library. What has to hold across them is the spelling an exporter keys on, so this
+    reads it where each library keeps it.
+    """
+    root = Path(__file__).resolve().parents[2]
+    typescript = (root / "typescript" / "src" / "hook.ts").read_text(encoding="utf-8")
+    cpp = (root / "cpp" / "include" / "sde" / "hook.hpp").read_text(encoding="utf-8")
+
+    def listed(text: str, name: str) -> tuple[str, ...]:
+        found = re.search(name + r"[^=]*=\s*[\[{](.*?)[\]}]", text, re.DOTALL)
+        assert found is not None, name
+        return tuple(re.findall(r"['\"]([a-zA-Z_]+)['\"]", found.group(1)))
+
+    def snake(name: str) -> str:
+        return re.sub(r"(?<!^)([A-Z])", lambda m: "_" + m.group(1).lower(), name)
+
+    assert listed(typescript, "export const OPERATIONS") == OPERATIONS
+    assert tuple(snake(f) for f in listed(typescript, "export const FIELDS")) == FIELDS
+    assert listed(cpp, r"inline constexpr std::string_view OPERATIONS\[\]") == OPERATIONS
+    assert listed(cpp, r"inline constexpr std::string_view OPERATION_FIELDS\[\]") == FIELDS
