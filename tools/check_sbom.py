@@ -20,14 +20,24 @@ and a digest that cannot be in it, and must find neither: a matcher stuck on "fo
 one stuck on "missing" fails on the bill's own wheel. The npm bill is matched by one exact package
 URL, which has no such failure to catch.
 
+**requirements** writes what the Python bill names as an audit reads it: one `name==version` line
+per distribution, sorted, our own wheel left out - it has no advisory before it is published, and
+an audit that looks for it on PyPI only reports it missing. The release audits that list and
+nothing else (`pip-audit --disable-pip --no-deps`), so what is audited is what the bill says a
+client installs, version for version, with no resolution of its own. A component without a
+version, one that is not a PyPI distribution, a name at two versions, or a list with nothing in it
+is refused: each would make the audit pass over something it did not look at.
+
 Usage:
 
     python3 tools/check_sbom.py python sbom-python.cdx.json dist/sde-0.3.0-py3-none-any.whl 0.3.0 \
         --requires cryptography psycopg clickhouse-connect orderbook-dbengine
     python3 tools/check_sbom.py npm sbom-npm.cdx.json 0.3.0
+    python3 tools/check_sbom.py requirements sbom-python.cdx.json > bill-requirements.txt
 
 Exit status 0 only if the bill is CycloneDX, names the artefact as above, holds every required
-distribution, and, for Python, the control holds.
+distribution, and, for Python, the control holds; for requirements, only if every line could be
+written.
 """
 
 from __future__ import annotations
@@ -145,6 +155,40 @@ def check_npm(bom: Any, version: str) -> list[str]:
     return problems
 
 
+def requirements(bom: Any) -> tuple[list[str], list[str]]:
+    """The distributions a Python bill names, pinned and sorted, without our own; and the problems
+    that leave no list an audit could be trusted with."""
+    problems = _format(bom)
+    if problems:
+        return [], problems
+    root = (bom.get("metadata") or {}).get("component")
+    pinned: dict[str, str] = {}
+    for component in components(bom):
+        if component is root:
+            continue  # the environment the bill describes, not a distribution in it
+        name = str(component.get("name") or "")
+        if _normal(name) == _normal(PYTHON_NAME):
+            continue
+        version = component.get("version")
+        if not name or not isinstance(version, str) or not version:
+            problems.append(f"{name or 'a component'} has no version to audit")
+            continue
+        if not _purl(component).startswith("pkg:pypi/"):
+            found = _purl(component) or "no package URL"
+            problems.append(f"{name} is not a PyPI distribution ({found})")
+            continue
+        if pinned.get(_normal(name), version) != version:
+            first, second = sorted((pinned[_normal(name)], version))
+            problems.append(f"{name} is in the bill at {first} and at {second}")
+            continue
+        pinned[_normal(name)] = version
+    if not pinned and not problems:
+        problems.append(
+            "the bill names no distribution besides ours: an audit would look at nothing"
+        )
+    return sorted(f"{name}=={version}" for name, version in pinned.items()), problems
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="kind", required=True)
@@ -156,8 +200,17 @@ def main(argv: list[str]) -> int:
     npm = sub.add_parser("npm")
     npm.add_argument("bom", type=Path)
     npm.add_argument("version")
+    pinned = sub.add_parser("requirements")
+    pinned.add_argument("bom", type=Path)
     args = parser.parse_args(argv)
     bom = json.loads(args.bom.read_text(encoding="utf-8"))
+    if args.kind == "requirements":
+        lines, problems = requirements(bom)
+        if problems:
+            print(f"{args.bom.name}:", *problems, sep="\n  ", file=sys.stderr)
+            return 1
+        print(*lines, sep="\n")
+        return 0
     if args.kind == "python":
         problems = check_python(bom, args.wheel, args.version, args.requires)
     else:
