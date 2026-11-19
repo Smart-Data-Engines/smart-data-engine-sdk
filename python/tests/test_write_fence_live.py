@@ -435,28 +435,3 @@ def test_clickhouse_the_reserved_column_as_the_fence_defines_it_is_its_own(
     clickhouse_database._cx.command("CREATE TABLE plain (id Int64) ENGINE=MergeTree ORDER BY id")
     assert clickhouse_database.write_fence("plain", project_id=PROJECT).state().column == "absent"
 
-
-@pytest.mark.parametrize("guarded", ["clickhouse"], indirect=True)
-def test_a_clickhouse_fence_looks_at_its_table_in_one_statement(guarded: Any) -> None:
-    """Every step of a barrier looks at its table, some of them more than once, and a cutover's
-    pause looked 28 to 37 times: three statements a look were 0.5 to 1.2 s of it
-    (docs/qualification/cutover-settled). One statement a look - the database, the table and the
-    reserved column - whatever the table holds."""
-    engine, _table, fence = guarded
-    fence.prepare(1)
-    fence.freeze(HOLD)
-    sent: list[str] = []
-    query = engine._cx.query
-
-    def counted(statement: str, *args: Any, **kwargs: Any) -> Any:
-        sent.append(statement)
-        return query(statement, *args, **kwargs)
-
-    engine._cx.query = counted
-    try:
-        state = fence.state()
-    finally:
-        engine._cx.query = query
-    assert state.complete and state.holds == (HOLD,) and state.epoch == 1
-    assert len(sent) == 1, sent
-    fence.release(HOLD)

@@ -150,31 +150,24 @@ class ClickHouseFences:
         )
 
     def metadata(self, table: str) -> FenceMetadata:
-        # One statement a look: the database's engine, the table, and the reserved column. A
-        # barrier looks at its table at every step, some of them more than once, and a cutover's
-        # pause looked 28 to 37 times; at three statements a look that was 0.5 to 1.2 s of it
-        # (docs/qualification/cutover-settled). Scalar subqueries over the system tables, so that
-        # the one row comes whether the table exists or not, and the database is judged first.
-        ((database, tables, columns),) = self._query(
-            "SELECT (SELECT engine FROM system.databases WHERE name=currentDatabase()), "
-            "(SELECT groupArray((toString(uuid), engine, formatQuery(create_table_query))) "
-            "FROM system.tables WHERE database=currentDatabase() AND name={table:String}), "
-            "(SELECT groupArray((type, default_kind, default_expression)) FROM system.columns "
-            "WHERE database=currentDatabase() AND table={table:String} AND name={column:String})",
-            {"table": table, "column": EPOCH_COLUMN},
-        )
-        if database != "Atomic":
+        database = self._query("SELECT engine FROM system.databases WHERE name=currentDatabase()")
+        if database != [("Atomic",)]:
             raise MigrationRefused("write fences require a local Atomic ClickHouse database")
-        if len(tables) != 1:
+        rows = self._table(table)
+        if len(rows) != 1:
             raise EngineError(
                 "write-fence table does not exist or is detached; resume the same operation"
             )
-        identity, kind, create = tables[0]
+        identity, kind, create = rows[0]
         if kind not in ("MergeTree", "ReplacingMergeTree"):
             raise MigrationRefused(
                 "write fences support local MergeTree and ReplacingMergeTree tables"
             )
-        columns = [tuple(column) for column in columns]
+        columns = self._query(
+            "SELECT type, default_kind, default_expression FROM system.columns "
+            "WHERE database=currentDatabase() AND table={table:String} AND name={column:String}",
+            {"table": table, "column": EPOCH_COLUMN},
+        )
         valid = columns == [("Int64", "DEFAULT", "0")]
         constraints = {
             name: expression.rstrip().removesuffix(",")
