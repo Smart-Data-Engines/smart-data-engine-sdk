@@ -8,8 +8,9 @@
  *
  * The vocabulary is the C++ library's (`LOG_EVENTS` in cpp/include/sde/log.hpp), a subset of the
  * reference's `sde.logging.EVENTS`: a routing decision, a model built and a telemetry window are not
- * events here, as they are not there. A test holds the list to the `emit` calls in the sources both
- * ways, and to the C++ list.
+ * events here, as they are not there. One C++ event is not here either: `sde.schema.text_collation`,
+ * because this adapter does not check the collation of PostgreSQL indexes at all. A test holds the
+ * list to the `emit` calls in the sources both ways, and to the C++ list with that one difference.
  */
 import { guard } from './internal.js'
 
@@ -23,7 +24,6 @@ export const EVENTS = [
   'sde.map.rollback_unprotected',
   'sde.schema.applied',
   'sde.schema.extra_columns',
-  'sde.schema.text_collation',
   'sde.schema.physical_mismatch',
   'sde.write.failed',
   'sde.orderbook.flushed',
