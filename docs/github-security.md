@@ -444,7 +444,8 @@ change:
   and kept as the run's `sbom` artifact. The npm bill is identified by its purl, because npm fills
   the component's name from the directory.
 
-Attaching the bills to a release and attesting them is the release workflow's next step.
+A release attests the bill of each artefact it publishes, built from the artefact itself and
+attested before the upload ([`publishing.md` §5.6](publishing.md#56-the-bill-of-materials-of-each-artefact)).
 
 ## 8. What a reader of this repository should also find ✅
 

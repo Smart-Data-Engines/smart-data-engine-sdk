@@ -20,6 +20,7 @@ three Python matrix jobs to read a file none of them otherwise touch.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -52,6 +53,7 @@ def _tool(name: str) -> ModuleType:
 release_tag = _tool("release_tag")
 check_artefact = _tool("check_artefact")
 npm_dist_tag = _tool("npm_dist_tag")
+check_sbom = _tool("check_sbom")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -513,3 +515,172 @@ def test_the_publishing_job_says_what_it_presented_and_why_npm_refused() -> None
     assert "SDE_ID_TOKEN" in claims
     assert not re.search(r"(echo|print)\W+\$?\{?SDE_ID_TOKEN", claims)
     assert 'grep -h "oidc" "$HOME"/.npm/_logs/*-debug-0.log' in publish
+
+
+# --------------------------------------------------------------------------------------------------
+# The bill of materials of each artefact, attested beside it
+# --------------------------------------------------------------------------------------------------
+
+WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+
+
+def _bill(
+    wheel: Path,
+    *,
+    version: str = "1.2.3",
+    digest: str | None = None,
+    names: tuple[str, ...] = ("cryptography", "psycopg"),
+) -> dict[str, object]:
+    """A CycloneDX bill as `cyclonedx-py environment` writes one for an installed wheel."""
+    ours = {
+        "name": "smart-data-engine-sdk",
+        "version": version,
+        "externalReferences": [
+            {
+                "type": "distribution",
+                "url": f"file:///tmp/dist/{wheel.name}",
+                "hashes": [
+                    {
+                        "alg": "SHA-256",
+                        "content": digest or hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+        ],
+    }
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "serialNumber": "urn:uuid:41854132-0288-4d61-9540-700750fc3648",
+        "components": [ours, *({"name": name, "version": "1.0"} for name in names)],
+    }
+
+
+def test_a_bill_of_the_wheel_it_was_installed_from_has_nothing_to_complain_about(
+    tmp_path: Path,
+) -> None:
+    wheel = _wheel(tmp_path / "w.whl")
+    bill = _bill(wheel)
+    assert check_sbom.check_python(bill, wheel, "1.2.3", ["cryptography", "Psycopg"]) == []
+
+
+def test_a_bill_of_another_build_of_the_same_version_is_refused(tmp_path: Path) -> None:
+    """The version alone would let the bill of a rebuild stand for this wheel."""
+    wheel = _wheel(tmp_path / "w.whl")
+    problems = check_sbom.check_python(_bill(wheel, digest="ab" * 32), wheel, "1.2.3")
+    assert len(problems) == 1 and "another build of the same version" in problems[0]
+
+
+def test_a_bill_at_another_version_is_refused(tmp_path: Path) -> None:
+    wheel = _wheel(tmp_path / "w.whl")
+    problems = check_sbom.check_python(_bill(wheel, version="1.2.2"), wheel, "1.2.3")
+    assert problems == ["the bill has smart-data-engine-sdk at ['1.2.2'], not at 1.2.3"]
+
+
+def test_a_bill_without_a_distribution_an_extra_brings_names_it(tmp_path: Path) -> None:
+    wheel = _wheel(tmp_path / "w.whl")
+    problems = check_sbom.check_python(_bill(wheel), wheel, "1.2.3", ["clickhouse-connect"])
+    assert problems == [
+        "the bill does not hold clickhouse-connect, which the installed extras bring"
+    ]
+
+
+@pytest.mark.parametrize("broken", ["name", "digest"])
+def test_a_matcher_stuck_on_found_cannot_report_a_perfect_bill(tmp_path: Path, broken: str) -> None:
+    """The control: a name and a digest that cannot be in a bill, and a bill that has them."""
+    wheel = _wheel(tmp_path / "w.whl")
+    bill = _bill(wheel, names=("cryptography", check_sbom.CONTROL) if broken == "name" else ())
+    if broken == "digest":
+        components = bill["components"]
+        assert isinstance(components, list)
+        components[0]["externalReferences"][0]["hashes"].append(
+            {"alg": "SHA-256", "content": check_sbom.NOTHING}
+        )
+    problems = check_sbom.check_python(bill, wheel, "1.2.3")
+    assert len(problems) == 1 and problems[0].startswith("CONTROL FAILED")
+
+
+def test_the_npm_bill_is_known_by_its_package_url_and_not_by_its_name() -> None:
+    """npm fills the root component's name from the directory - `typescript` here."""
+
+    def bill(purl: str) -> dict[str, object]:
+        root = {"type": "library", "name": "typescript", "version": "1.2.3", "purl": purl}
+        return {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "serialNumber": "urn:uuid:df609b34-53be-4be5-a267-e1c7153c4e06",
+            "metadata": {"component": root},
+        }
+
+    ours = "pkg:npm/%40smart-data-engines/sde@1.2.3"
+    assert check_sbom.check_npm(bill(ours), "1.2.3") == []
+    assert check_sbom.check_npm(bill(ours + "?vcs_url=x"), "1.2.3") == []
+    for other in ("pkg:npm/%40smart-data-engines/sde@1.2.2", "pkg:npm/typescript@1.2.3", ""):
+        assert len(check_sbom.check_npm(bill(other), "1.2.3")) == 1, other
+
+
+@pytest.mark.parametrize(
+    "bill",
+    [
+        {"bomFormat": "SPDX"},
+        [],
+        {"bomFormat": "CycloneDX"},
+        # What `actions/attest` would refuse in the publishing job: no serial number.
+        {"bomFormat": "CycloneDX", "specVersion": "1.6"},
+    ],
+)
+def test_a_file_that_is_not_a_cyclonedx_bill_is_refused(tmp_path: Path, bill: object) -> None:
+    wheel = _wheel(tmp_path / "w.whl")
+    assert len(check_sbom.check_python(bill, wheel, "1.2.3")) == 1
+    assert len(check_sbom.check_npm(bill, "1.2.3")) == 1
+
+
+def _job(name: str) -> str:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    job = workflow.split(f"\n  {name}:\n", 1)[1]
+    return re.split(r"\n  [a-z][a-z-]*:\n", job, maxsplit=1)[0]
+
+
+def test_the_wheel_s_bill_holds_every_extra_a_client_may_choose_and_what_each_brings() -> None:
+    """A bill of the wheel alone would leave out what a client installs with it: the drivers.
+
+    The extras installed for the bill are the ones `pyproject.toml` offers a client, and the
+    distributions the bill must hold are the ones those extras name - so an extra added there
+    and not here fails this, rather than a release whose bill leaves it out.
+    """
+    import tomllib
+
+    project = tomllib.loads((ROOT / "python" / "pyproject.toml").read_text(encoding="utf-8"))
+    offered = {
+        extra: [re.split(r"[\[<>=!~; ]", requirement, maxsplit=1)[0] for requirement in names]
+        for extra, names in project["project"]["optional-dependencies"].items()
+        if extra != "dev"
+    }
+    build = _job("build-python")
+    installed = re.search(r'"\$wheel\[([a-z,]+)\]"', build)
+    required = re.search(r"--requires ([a-z -]+)\n", build)
+    assert installed is not None and required is not None, "the bill is no longer built here"
+    assert sorted(installed.group(1).split(",")) == sorted(offered)
+    assert sorted(required.group(1).split()) == sorted(
+        n for names in offered.values() for n in names
+    )
+    assert 'python3 tools/check_sbom.py python sbom-python.cdx.json "$wheel" "$VERSION"' in build
+
+
+@pytest.mark.parametrize(
+    ("job", "bill", "publish"),
+    [
+        ("publish-pypi", "sbom/sbom-python.cdx.json", "pypa/gh-action-pypi-publish@"),
+        ("publish-npm", "sbom/sbom-npm.cdx.json", 'npm publish "$tarball"'),
+    ],
+)
+def test_each_file_is_attested_with_its_bill_before_it_is_published(
+    job: str, bill: str, publish: str
+) -> None:
+    """After the upload an attestation that failed would leave a published file without its bill,
+    and a version number that cannot be published again."""
+    text = _job(job)
+    assert "      attestations: write\n" in text
+    attest = text.index("uses: actions/attest@")
+    assert f"sbom-path: {bill}" in text[attest:]
+    assert attest < text.index(publish)

@@ -799,3 +799,47 @@ one needs the one before it.
      Node 18.19.1 reported the registry signature and said nothing about the attestation. npm
      10.9.9 on the same Node reported the attestation verified, and so did npm 11.20.0 on Node 26.
      So the check runs npm 10 or later, which still supports Node 18, and expects both lines.
+
+### 5.6 The bill of materials of each artefact
+
+Each release attests a CycloneDX bill of materials beside every file it publishes, so that a client
+can see what an artefact brings without taking our word for it.
+
+- **Python.** The build job installs the built wheel, with every extra a client may choose
+  (`signed`, `postgres`, `clickhouse`, `orderbook`), into a fresh environment that holds nothing
+  else - it has no pip of its own, so the tools that install and describe it are not in it - and
+  describes that environment with `cyclonedx-py environment`. The bill names every distribution at
+  the version it resolved to when the release was built, and the SHA-256 of the wheel itself.
+- **npm.** `npm sbom --omit dev` describes the package and the production dependencies of its
+  lockfile: none today, since `pg` is a peer the application brings. The bill's root component is
+  known by its package URL, `pkg:npm/%40smart-data-engines/sde@<version>`; npm fills its name from
+  the directory.
+- **Checked where it is built.** `tools/check_sbom.py` refuses a bill that is not CycloneDX, has no
+  serial number (`actions/attest` refuses such a bill, and would do it after the reviewer has
+  approved), is of another wheel or another version, or lacks a distribution one of the extras
+  brings. `python/tests/test_release.py` holds the extras and the distributions to
+  `python/pyproject.toml`, so an extra added there and not here fails a pull request rather than a
+  release.
+- **Attested before the upload.** The publishing job, which alone holds the OIDC identity, attests
+  each bill with `actions/attest`, and only then publishes: an attestation failing afterwards would
+  leave a published file without its bill, under a version neither registry gives back. The bills
+  are not uploaded to the registries; the attestation carries the bill. The sdist is attested with
+  the wheel's bill, since building it yields the same wheel.
+
+Reading a bill back needs the GitHub CLI 2.49 or later:
+
+```bash
+pip download smart-data-engine-sdk==0.3.0 --no-deps -d .
+gh attestation verify smart_data_engine_sdk-0.3.0-py3-none-any.whl \
+    --repo Smart-Data-Engines/smart-data-engine-sdk --predicate-type https://cyclonedx.org/bom
+gh attestation verify smart_data_engine_sdk-0.3.0-py3-none-any.whl \
+    --repo Smart-Data-Engines/smart-data-engine-sdk --predicate-type https://cyclonedx.org/bom \
+    --format json --jq '.[0].verificationResult.statement.predicate' > bill.cdx.json
+
+npm pack @smart-data-engines/sde@0.3.0
+gh attestation verify smart-data-engines-sde-0.3.0.tgz \
+    --repo Smart-Data-Engines/smart-data-engine-sdk --predicate-type https://cyclonedx.org/bom
+```
+
+The first release with bills is the first one after this section; `0.2.0` and earlier carry
+provenance and no bill.
