@@ -123,6 +123,19 @@ jobs:
           python3 tools/check_sbom.py python sbom-python.cdx.json "$wheel" "$VERSION" \
             --requires cryptography psycopg clickhouse-connect orderbook-dbengine
 
+      - name: Every distribution in the bill has no known vulnerability
+        # The release's own audit, at the tag: the supply-chain job audits every change, and an
+        # advisory published between the merge and the tag would otherwise go out with it. What is
+        # audited is what the bill names, version for version - `check_sbom.py requirements`, our
+        # own wheel left out - with no resolution of its own, and `--strict` fails a distribution
+        # it could not look up rather than passing over it.
+        run: |
+          set -euo pipefail
+          /tmp/sbom-tools/bin/pip install -q pip-audit
+          python3 tools/check_sbom.py requirements sbom-python.cdx.json > bill-requirements.txt
+          /tmp/sbom-tools/bin/pip-audit --progress-spinner off --strict --disable-pip --no-deps \
+            --requirement bill-requirements.txt
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: python-dist
@@ -211,6 +224,12 @@ jobs:
           set -euo pipefail
           (cd typescript && npm sbom --sbom-format cyclonedx --omit dev) > sbom-npm.cdx.json
           python3 tools/check_sbom.py npm sbom-npm.cdx.json "$VERSION"
+
+      - name: The package's dependencies have no known high or critical vulnerability
+        # The supply-chain job's audit, at the tag, over what the bill holds: the production
+        # dependencies of the lockfile.
+        working-directory: typescript
+        run: npm audit --omit=dev --audit-level=high
 
       - name: The dist-tag, from what the registry already holds
         # npm 11 refuses a prerelease without `--tag`, and a fixed tag is wrong one way or the

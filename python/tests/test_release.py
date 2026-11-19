@@ -552,7 +552,10 @@ def _bill(
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
         "serialNumber": "urn:uuid:41854132-0288-4d61-9540-700750fc3648",
-        "components": [ours, *({"name": name, "version": "1.0"} for name in names)],
+        "components": [
+            ours,
+            *({"name": name, "version": "1.0", "purl": f"pkg:pypi/{name}@1.0"} for name in names),
+        ],
     }
 
 
@@ -684,3 +687,85 @@ def test_each_file_is_attested_with_its_bill_before_it_is_published(
     attest = text.index("uses: actions/attest@")
     assert f"sbom-path: {bill}" in text[attest:]
     assert attest < text.index(publish)
+
+
+def test_the_audit_reads_the_bill_s_distributions_pinned_and_not_the_release_itself(
+    tmp_path: Path,
+) -> None:
+    """What the release audits is the bill, version for version; its own wheel has no advisory
+    before it is published, and the environment the bill describes is not a distribution."""
+    bill = _bill(_wheel(tmp_path / "w.whl"), names=("Psycopg", "cryptography"))
+    bill["metadata"] = {"component": {"name": "sbom-env", "type": "application"}}
+    assert check_sbom.requirements(bill) == (["cryptography==1.0", "psycopg==1.0"], [])
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ({"version": None}, "psycopg has no version to audit"),
+        ({"purl": None}, "psycopg is not a PyPI distribution (no package URL)"),
+        (
+            {"purl": "pkg:npm/psycopg@1.0"},
+            "psycopg is not a PyPI distribution (pkg:npm/psycopg@1.0)",
+        ),
+    ],
+)
+def test_a_distribution_the_audit_could_not_look_up_by_its_pin_is_refused(
+    tmp_path: Path, change: dict[str, object], problem: str
+) -> None:
+    bill = _bill(_wheel(tmp_path / "w.whl"), names=("psycopg",))
+    components = bill["components"]
+    assert isinstance(components, list)
+    components[1].update(change)
+    assert check_sbom.requirements(bill) == ([], [problem])
+
+
+def test_a_distribution_at_two_versions_or_a_bill_of_nothing_else_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Either would pass an audit over something it did not look at."""
+    wheel = _wheel(tmp_path / "w.whl")
+    twice = _bill(wheel, names=("psycopg",))
+    components = twice["components"]
+    assert isinstance(components, list)
+    components.append({"name": "psycopg", "version": "2.0", "purl": "pkg:pypi/psycopg@2.0"})
+    assert check_sbom.requirements(twice)[1] == ["psycopg is in the bill at 1.0 and at 2.0"]
+    alone = _bill(wheel, names=())
+    assert check_sbom.requirements(alone) == (
+        [], ["the bill names no distribution besides ours: an audit would look at nothing"]
+    )
+
+
+def test_the_requirements_are_printed_one_a_line_for_the_audit_to_read(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bill = tmp_path / "bill.json"
+    bill.write_text(json.dumps(_bill(_wheel(tmp_path / "w.whl"))))
+    assert check_sbom.main(["requirements", str(bill)]) == 0
+    assert capsys.readouterr().out == "cryptography==1.0\npsycopg==1.0\n"
+    bill.write_text(json.dumps(_bill(_wheel(tmp_path / "w.whl"), names=())))
+    assert check_sbom.main(["requirements", str(bill)]) == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_each_release_audits_what_its_bill_names_after_the_bill_and_before_the_upload() -> None:
+    """The supply-chain job audits every change; an advisory published between the merge and the
+    tag would go out with the release unless the release audits too, before anything leaves the
+    job that built it."""
+    build = _job("build-python")
+    bill = build.index('tools/check_sbom.py python sbom-python.cdx.json "$wheel"')
+    pinned = build.index(
+        "python3 tools/check_sbom.py requirements sbom-python.cdx.json > bill-requirements.txt"
+    )
+    audit = build.index("pip-audit --progress-spinner off --strict --disable-pip --no-deps")
+    upload = build.index("uses: actions/upload-artifact@")
+    assert bill < pinned < audit < upload
+    assert "--requirement bill-requirements.txt" in build[audit:upload]
+    npm = _job("build-npm")
+    order = [
+        npm.index('tools/check_sbom.py npm sbom-npm.cdx.json "$VERSION"'),
+        npm.index("run: npm audit --omit=dev --audit-level=high"),
+        npm.index("uses: actions/upload-artifact@"),
+    ]
+    assert order == sorted(order)
+

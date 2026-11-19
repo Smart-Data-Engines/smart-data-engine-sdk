@@ -30,6 +30,13 @@ choose, and carries the wheel's own SHA-256; the npm bill is `npm sbom`'s. The p
 attests each with `actions/attest` before the upload, and `gh attestation verify --predicate-type
 https://cyclonedx.org/bom` reads it back. Nothing in the libraries changes.
 
+**Added: each release audits what its bill of materials names, before anything leaves the build**
+([`docs/publishing.md` §5.6](docs/publishing.md#56-the-bill-of-materials-of-each-artefact)).
+Every change is audited already; an advisory published between the merge and the tag now stops
+the release too. Python: `pip-audit --strict` over the bill's distributions, pinned, resolving
+nothing of its own. npm: `npm audit --omit=dev --audit-level=high`. Nothing in the libraries
+changes.
+
 **Added: `sde-operator settle`, and a cutover's pause over the rows written since the advance**
 (Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause)). After a
 generation advance a row below the map's generation has not been written since, on the source or

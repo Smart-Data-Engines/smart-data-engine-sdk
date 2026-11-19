@@ -604,6 +604,7 @@ upload:
 | the tagged commit is not on `main` | The ruleset protects `main` with the required checks; it does **not** stop a tag being pointed at any commit in the repository, including one on a branch nobody reviewed. Ancestry is what makes "the published artefact passed CI" a fact rather than an assumption. |
 | the artefact is missing a licence, `py.typed`, or `dist/` | All three have actually been missing, on 8 September, and none of it was visible from a green suite — the suite runs the source tree and a user runs the artefact. The worst would have put an importable-looking package with no code in it under our own scope. |
 | the artefact records a version other than the tag's | The gate agreeing with the manifest does not prove the *build* used it, and what a user installs is the number inside the file. |
+| a distribution the bill names has a known vulnerability (npm: high or critical) | The supply-chain job audits every change, and an advisory published between the merge and the tag would go out with the release unless the release audits too (§5.6). |
 
 **The npm dist-tag is chosen, not defaulted.** npm 11 refuses a prerelease without `--tag`, and it
 does so in the publishing job, after the gate and the reviewer have both said yes. A fixed tag would
@@ -820,6 +821,16 @@ can see what an artefact brings without taking our word for it.
   brings. `python/tests/test_release.py` holds the extras and the distributions to
   `python/pyproject.toml`, so an extra added there and not here fails a pull request rather than a
   release.
+- **Audited where it is built, at the tag.** The supply-chain job audits every change; the
+  release audits again, because an advisory can be published between the merge and the tag. For
+  Python, `tools/check_sbom.py requirements` writes what the bill names as pinned lines, our own
+  wheel left out (it has no advisory before it is published, and `--strict` would fail on it as
+  not on PyPI), and `pip-audit --strict --disable-pip --no-deps` reads that list and resolves
+  nothing of its own - so what is audited is the bill, version for version, and a distribution it
+  cannot look up fails the release rather than being passed over. A component without a version,
+  one that is not a PyPI distribution, a name at two versions, or a bill with nothing besides ours
+  is refused before the audit. For npm, `npm audit --omit=dev --audit-level=high`, as the
+  supply-chain job runs it. Both run before the build job uploads anything.
 - **Attested before the upload.** The publishing job, which alone holds the OIDC identity, attests
   each bill with `actions/attest`, and only then publishes: an attestation failing afterwards would
   leave a published file without its bill, under a version neither registry gives back. The bills
