@@ -61,7 +61,10 @@ this transport inactivity bound for later operations; C++ also bounds the handsh
 it, so a server that answers the handshake a byte at a time cannot hold it open. TypeScript retains
 its existing unbounded query receive default; specifying `send_receive_timeout` bounds later
 request inactivity too. This explicit difference is about the native transports, not a guarantee on
-analytical query duration.
+analytical query duration. Unbounded is said on every request, as a socket timeout of 0: Node's
+global agent keeps sockets alive from Node 19 with a socket timeout of its own, 5 seconds, and until
+the soak of the three libraries under injected faults measured it on Node 22, an answer that took
+longer than that to begin was cut, with `no answer within undefined ms`.
 The connect timeout covers establishment of a new connection. Progress can extend a receive
 inactivity timer. Configure query execution limits at the server when the workload needs them.
 The C++ adapter counts that inactivity on the socket itself and not on what libcurl has handed on:

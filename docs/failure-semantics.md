@@ -58,8 +58,9 @@ this existing at all rather than a description of one.
   the session a connection from it.
 - **No statement timeout.** Query execution limits are a workload policy. Transport timers are
   separate: Python's ClickHouse receive-inactivity bound applies to later requests too. TypeScript
-  retains unbounded query receive time by default; an explicit `send_receive_timeout` now applies
-  there as well. Neither is a total duration guarantee. See the [connection guide](engine-connections.md)
+  retains unbounded query receive time by default, on every Node version - from Node 19 the global
+  agent's own 5-second socket timeout used to cut it, and no longer does; an explicit
+  `send_receive_timeout` now applies there as well. Neither is a total duration guarantee. See the [connection guide](engine-connections.md)
   for defaults, accepted bounds and the distinction between establishment and receive inactivity.
 - **No fallback to another engine.** A read that cannot be served where the map sends it fails.
   Answering it from somewhere else would mean answering from a copy you did not ask for.

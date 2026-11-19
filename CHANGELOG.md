@@ -8,6 +8,15 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: TypeScript waits for a ClickHouse answer that is slow to begin, as documented, on Node 19
+and later** ([`docs/engine-connections.md`](docs/engine-connections.md#clickhouse-the-same-connection-intent-in-python-typescript-and-c)).
+Reading past the handshake is unbounded unless the DSN sets `send_receive_timeout`, and a request
+that set no timeout took the socket timeout of Node's global agent, 5 seconds from Node 19: an
+answer that took longer than that to begin - a server that stalled, or an aggregation whose first
+rows are a long way off - failed with `no answer within undefined ms`. Each request now says
+unbounded itself. Found by the soak of the three libraries under injected faults, which saw the
+TypeScript process alone fail 5 seconds into a frozen ClickHouse.
+
 **Changed: a generation change, and a barrier's release, are one change of each table** (all three
 libraries; [`docs/write-fences.md`](docs/write-fences.md#stored-protocol), record
 [`docs/qualification/fence-in-one-statement/`](docs/qualification/fence-in-one-statement/README.md)).
