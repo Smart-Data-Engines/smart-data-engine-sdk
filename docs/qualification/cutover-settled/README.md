@@ -196,6 +196,15 @@ So it is not added now. By what the pause measurably spends, the next steps are,
    84 to 111 statements a cutover: 0.5 to 1.2 s of every pause with a ClickHouse table here, and an
    advance's barriers read it the same way. One statement a look, and no second look where nothing
    has changed.
+
+   *Measured after this record:* one statement a look saves little. On an idle server the three
+   statements of a look took 3.3, 4.3 and 4.1 ms (the round trip alone, `SELECT 1`, 2.9), the same
+   three as scalar subqueries of one statement 11.2 ms, and one statement joining the three system
+   tables 8.0 ms: ClickHouse runs each subquery as a query of its own, so the cost follows the
+   system tables read, not the round trips. In three moves of 200 000 rows from PostgreSQL into
+   ClickHouse, one statement a look spent 390 to 413 ms of the pause on the barriers' looks,
+   against 442 to 674 ms with three. What is left to gain is in the number of looks - 24 in such a
+   move - each barrier step looking again after its change.
 2. **The reads by key on the other side**, with many rows since: two walks each look up the other
    side's rows by key, ClickHouse's under `FINAL`. Both walks read the rows that carry G on both
    sides; reading the two side by side in key order, as a cutover without a settle reads its two
