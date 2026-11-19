@@ -347,3 +347,116 @@ def test_drain_intent_is_confirmed_even_with_asynchronous_client_defaults(
     monkeypatch.setattr(backend, "_command", require_intent_before_detach)
     assert fence.freeze(HOLD).closed
     assert observed == [1]
+
+
+@pytest.fixture
+def clickhouse_database() -> Iterator[Any]:
+    """An Atomic database of this test's own, and an engine whose statements default to it."""
+    dsn = os.environ.get("SDE_CLICKHOUSE_DSN")
+    if not dsn:
+        pytest.skip("SDE_CLICKHOUSE_DSN is required for the native write-fence slice")
+    from sde.engines.clickhouse import ClickHouseEngine
+
+    namespace = "sde_fence_" + uuid4().hex[:16]
+    with ClickHouseEngine(dsn) as setup:
+        setup._cx.command(f"CREATE DATABASE {QUOTE['clickhouse'](namespace)} ENGINE=Atomic")
+    parts = urlsplit(dsn)
+    engine = ClickHouseEngine(
+        urlunsplit((parts.scheme, parts.netloc, "/" + namespace, parts.query, parts.fragment))
+    )
+    engine.connect()
+    try:
+        yield engine
+    finally:
+        engine._cx.command(f"DROP DATABASE {QUOTE['clickhouse'](namespace)} SYNC")
+        engine.close()
+
+
+def test_clickhouse_a_fence_guards_only_a_local_mergetree_table(clickhouse_database: Any) -> None:
+    cx = clickhouse_database._cx
+    cx.command("CREATE TABLE kept (id Int64) ENGINE=Memory")
+    cx.command("CREATE TABLE logged (id Int64) ENGINE=Log")
+    for table in ("kept", "logged"):
+        with pytest.raises(sde.MigrationRefused, match="local MergeTree and ReplacingMergeTree"):
+            clickhouse_database.write_fence(table, project_id=PROJECT).state()
+    with pytest.raises(sde.EngineError, match="write-fence table does not exist or is detached"):
+        clickhouse_database.write_fence("absent", project_id=PROJECT).state()
+
+
+def test_clickhouse_a_fence_needs_an_atomic_database() -> None:
+    """A database of another engine refuses a fence before any table is looked at - including a
+    table it does not have."""
+    dsn = os.environ.get("SDE_CLICKHOUSE_DSN")
+    if not dsn:
+        pytest.skip("SDE_CLICKHOUSE_DSN is required for the native write-fence slice")
+    from sde.engines.clickhouse import ClickHouseEngine
+
+    namespace = "sde_fence_" + uuid4().hex[:16]
+    with ClickHouseEngine(dsn) as setup:
+        setup._cx.command(f"CREATE DATABASE {QUOTE['clickhouse'](namespace)} ENGINE=Memory")
+    parts = urlsplit(dsn)
+    engine = ClickHouseEngine(
+        urlunsplit((parts.scheme, parts.netloc, "/" + namespace, parts.query, parts.fragment))
+    )
+    engine.connect()
+    try:
+        engine._cx.command("CREATE TABLE guarded (id Int64) ENGINE=MergeTree ORDER BY id")
+        for table in ("guarded", "absent"):
+            with pytest.raises(sde.MigrationRefused, match="a local Atomic ClickHouse database"):
+                engine.write_fence(table, project_id=PROJECT).state()
+    finally:
+        engine._cx.command(f"DROP DATABASE {QUOTE['clickhouse'](namespace)} SYNC")
+        engine.close()
+
+
+@pytest.mark.parametrize(
+    "definition", ["Int32 DEFAULT 0", "Int64 DEFAULT 1", "Int64", "Int64 MATERIALIZED 0"]
+)
+def test_clickhouse_the_reserved_column_defined_otherwise_is_refused(
+    clickhouse_database: Any, definition: str
+) -> None:
+    column = QUOTE["clickhouse"](sde.WRITE_EPOCH_COLUMN)
+    clickhouse_database._cx.command(
+        f"CREATE TABLE guarded (id Int64, {column} {definition}) ENGINE=MergeTree ORDER BY id"
+    )
+    with pytest.raises(sde.MigrationRefused, match="has an incompatible definition"):
+        clickhouse_database.write_fence("guarded", project_id=PROJECT).state()
+
+
+def test_clickhouse_the_reserved_column_as_the_fence_defines_it_is_its_own(
+    clickhouse_database: Any,
+) -> None:
+    column = QUOTE["clickhouse"](sde.WRITE_EPOCH_COLUMN)
+    clickhouse_database._cx.command(
+        f"CREATE TABLE guarded (id Int64, {column} Int64 DEFAULT 0) ENGINE=MergeTree ORDER BY id"
+    )
+    fence = clickhouse_database.write_fence("guarded", project_id=PROJECT)
+    assert fence.state().column == "valid"
+    clickhouse_database._cx.command("CREATE TABLE plain (id Int64) ENGINE=MergeTree ORDER BY id")
+    assert clickhouse_database.write_fence("plain", project_id=PROJECT).state().column == "absent"
+
+
+@pytest.mark.parametrize("guarded", ["clickhouse"], indirect=True)
+def test_a_clickhouse_fence_looks_at_its_table_in_one_statement(guarded: Any) -> None:
+    """Every step of a barrier looks at its table, some of them more than once, and a cutover's
+    pause looked 28 to 37 times: three statements a look were 0.5 to 1.2 s of it
+    (docs/qualification/cutover-settled). One statement a look - the database, the table and the
+    reserved column - whatever the table holds."""
+    engine, _table, fence = guarded
+    fence.prepare(1)
+    fence.freeze(HOLD)
+    sent: list[str] = []
+    query = engine._cx.query
+
+    def counted(statement: str, *args: Any, **kwargs: Any) -> Any:
+        sent.append(statement)
+        return query(statement, *args, **kwargs)
+
+    engine._cx.query = counted
+    try:
+        state = fence.state()
+    finally:
+        engine._cx.query = query
+    assert state.complete and state.holds == (HOLD,) and state.epoch == 1
+    assert len(sent) == 1, sent
+    fence.release(HOLD)
