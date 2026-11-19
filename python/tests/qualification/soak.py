@@ -43,7 +43,7 @@ from .soak_proxy import Proxy
 SDK = Path(__file__).resolve().parents[3]
 KINDS = ("restart", "crash", "freeze", "reset", "refuse", "partition")
 ENGINES = ("postgres", "clickhouse")
-SAMPLE_EVERY_S = 60.0
+SAMPLE_EVERY_S = 10.0  # a quiet stretch of the short mode holds several samples, not one
 # Below this much free space on the run's disk the soak stops, judges what it has and says why: a
 # machine shared with other work must not be filled by a measurement.
 MIN_FREE_BYTES = 2 * 1024**3

@@ -273,3 +273,14 @@ def test_a_run_that_ended_before_its_hours_is_a_breach() -> None:
     assert summarise(run)["breaches"] == [
         "the run ended after 3.000 of 4 hours: less than 2147483648 bytes free on the run's disk"
     ]
+
+
+def test_descriptors_of_requests_in_flight_are_not_a_leak() -> None:
+    """A process that opens a connection a request: a sample sees one in flight or none."""
+    run = clean_run()
+    noisy = copy.deepcopy(run.samples)
+    for index, sample in enumerate(noisy):
+        sample["processes"]["python-postgres"]["fds"] = 12 + 2 * (index % 2)
+    run.samples = noisy
+    assert resources(run, run.processes[0])["descriptors_passed"]
+    assert summarise(run)["passed"]

@@ -266,16 +266,26 @@ def resources(run: Run, process: Process) -> dict[str, Any]:
         )
     else:
         rss["passed"] = None  # a run shorter than three hours has no trend to judge
+    # A process that opens a connection a request holds more descriptors while a request is in
+    # flight than between two: a sample is one or the other. So the level before a fault is the
+    # most a quiet stretch before it held, and the level after it the least a quiet stretch after
+    # it held - each stretch the second half of the time between two faults. A leak raises the
+    # least; a request in flight at a sample does not.
     descriptors = []
-    starts = [f["start"] for f in run.faults if f["engine"] == process.engine]
-    for index, start in enumerate(starts):
-        horizon = starts[index + 1] if index + 1 < len(starts) else run.end
-        before = [v["fds"] for t, v in series if t <= start]
-        settled = [v["fds"] for t, v in series if start < t <= horizon]
+    bounds = [(f["start"], f["end"]) for f in run.faults]
+    for index, fault in enumerate(run.faults):
+        if fault["engine"] != process.engine:
+            continue
+        previous = bounds[index - 1][1] if index > 0 else run.zero
+        horizon = bounds[index + 1][0] if index + 1 < len(bounds) else run.end
+        quiet_before = previous + (fault["start"] - previous) // 2
+        quiet_after = fault["end"] + (horizon - fault["end"]) // 2
+        before = [v["fds"] for t, v in series if quiet_before <= t <= fault["start"]]
+        settled = [v["fds"] for t, v in series if quiet_after <= t <= horizon]
         if before and settled:
             descriptors.append(
-                {"fault_start": start, "before": before[-1], "settled": settled[-1],
-                 "passed": settled[-1] <= before[-1]}
+                {"fault_start": fault["start"], "before": max(before), "settled": min(settled),
+                 "passed": min(settled) <= max(before)}
             )  # fmt: skip
     peak = max((v["fds"] for _, v in series), default=None)
     return {
