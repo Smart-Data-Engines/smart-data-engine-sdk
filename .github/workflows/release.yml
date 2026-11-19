@@ -101,10 +101,38 @@ jobs:
           done
           python -m twine check --strict python/dist/*
 
+      - name: The bill of materials of the wheel, as a client installs it
+        # CycloneDX, of a fresh environment that holds the built wheel with every extra a client
+        # may choose and nothing else - the environment has no pip of its own, so the tools that
+        # install and describe it are not in it. It records the version each dependency resolved
+        # to when this release was built, and the wheel's own SHA-256. It is not uploaded to PyPI:
+        # `python-dist` is uploaded whole, so the bill travels apart and the publishing job attests
+        # it beside each file (`docs/publishing.md` §5.6).
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/sbom-tools
+          /tmp/sbom-tools/bin/pip install -q --upgrade pip cyclonedx-bom
+          python -m venv --without-pip /tmp/sbom-env
+          wheel=$(ls python/dist/*.whl)
+          /tmp/sbom-tools/bin/pip --python /tmp/sbom-env/bin/python install -q \
+            "$wheel[signed,postgres,clickhouse,orderbook]"
+          /tmp/sbom-tools/bin/cyclonedx-py environment /tmp/sbom-env/bin/python \
+            --output-format JSON --output-file sbom-python.cdx.json
+          python3 tools/check_sbom.py python sbom-python.cdx.json "$wheel" "$VERSION" \
+            --requires cryptography psycopg clickhouse-connect orderbook-dbengine
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: python-dist
           path: python/dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: python-sbom
+          path: sbom-python.cdx.json
           if-no-files-found: error
 
   publish-pypi:
@@ -119,6 +147,8 @@ jobs:
     permissions:
       # The whole credential. No token exists in this repository or its secrets.
       id-token: write
+      # The bill of materials attested beside each file, in this repository's attestations.
+      attestations: write
     steps:
       # Deliberately no checkout and no dependency install. This job holds the publishing identity,
       # so nothing from the repository or from a dependency's lifecycle script runs inside it - it
@@ -127,6 +157,16 @@ jobs:
         with:
           name: python-dist
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          # Beside `dist`, not in it: the upload below takes every file of `dist`.
+          name: python-sbom
+          path: sbom
+      # Before the upload, so that no file is published without its bill attested.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: dist/*
+          sbom-path: sbom/sbom-python.cdx.json
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
 
   build-npm:
@@ -161,6 +201,17 @@ jobs:
             python3 tools/check_artefact.py npm "$tarball" "$VERSION"
           done
 
+      - name: The bill of materials of the package
+        # What `npm sbom` writes for the package and the production dependencies of its lockfile -
+        # none today: `pg` is a peer the application brings. The publishing job attests it beside
+        # the tarball (`docs/publishing.md` §5.6).
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd typescript && npm sbom --sbom-format cyclonedx --omit dev) > sbom-npm.cdx.json
+          python3 tools/check_sbom.py npm sbom-npm.cdx.json "$VERSION"
+
       - name: The dist-tag, from what the registry already holds
         # npm 11 refuses a prerelease without `--tag`, and a fixed tag is wrong one way or the
         # other: `latest` would put every candidate over the last final, `next` would leave an
@@ -182,6 +233,12 @@ jobs:
           path: typescript/*.tgz
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: npm-sbom
+          path: sbom-npm.cdx.json
+          if-no-files-found: error
+
   publish-npm:
     name: publish to npm
     needs: [gate, build-npm]
@@ -191,6 +248,8 @@ jobs:
       url: https://www.npmjs.com/package/@smart-data-engines/sde/v/${{ needs.gate.outputs.version }}
     permissions:
       id-token: write
+      # The bill of materials attested beside the tarball, in this repository's attestations.
+      attestations: write
     steps:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
@@ -209,6 +268,17 @@ jobs:
         with:
           name: npm-tarball
           path: .
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: npm-sbom
+          path: sbom
+
+      # Before the publish, so that the tarball is never on the registry without its bill attested.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: ./*.tgz
+          sbom-path: sbom/sbom-npm.cdx.json
 
       - name: What the registry will be asked to trust
         # The claims npm compares with the trusted publisher configured on npmjs.com, printed so that
