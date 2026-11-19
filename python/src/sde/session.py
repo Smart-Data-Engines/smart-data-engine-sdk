@@ -46,6 +46,8 @@ from .generation import (
 )
 from .groups import Group, colocation_groups
 from .hashing import NameMap
+from .hook import OperationHook, OperationRecord, outcome_of
+from .internal import guard
 from .layout import group_columns, zone_refusal
 from .logging import log
 from .migration import precision_refusal
@@ -176,6 +178,7 @@ class Session:
         recorder: Recorder | None = None,
         names: NameMap | None = None,
         project_id: str | None = None,
+        hook: OperationHook | None = None,
     ) -> None:
         # Telemetry is optional and off by default. A library that starts measuring the moment it is
         # imported is a library people are right to be suspicious of; measurement begins when a
@@ -186,6 +189,10 @@ class Session:
         check_project_id(project_id)
         self._project_id = project_id
         self._recorder = recorder
+        # Called once per completed operation with what it was and how it ended, never with what
+        # it carried (`sde.hook`). Off by default, as telemetry is.
+        self._hook = hook
+        self._measuring = recorder is not None or hook is not None
 
         # The one place where the client's names and the hashed ones meet. When a model has been
         # hashed, everything downstream of here - the map, the shapes, the tables, the telemetry -
@@ -218,6 +225,11 @@ class Session:
                     hashed: original for original, hashed in mapping.items()
                 }
             self._declared = tuple(sorted(names.entities))
+        self._application_entities: dict[str, str] = (
+            {hashed: original for original, hashed in names.entities.items()}
+            if names is not None
+            else {}
+        )
         self._model = model
         self._placement = placement
         self._engines = dict(engines)
@@ -684,14 +696,15 @@ class Session:
         engine, materialization = self._target(shape, fresh=False)
         self._held(entity, target, shape.group, materialization.engine, (values,), batch=False)
         table = materialization.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed = False
+        error: BaseException | None = None
         try:
             engine.insert(table, stamp_values(self._placement, shape.group, values))
             self._session_usage.check()
             self._fan_out(target, shape.group, values)
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
             # In a finally block on purpose: a failed write is exactly the operation whose
@@ -704,7 +717,10 @@ class Session:
             # that it is what they pay. One consequence is worth knowing: during a migration this
             # inflates write latency against a baseline written before it, so the drift detector
             # sees a real degradation with a known cause.
-            self._observe(shape, started, rows=1, failed=failed)
+            self._observe(
+                shape, started, rows=1, failed=failed,
+                operation="save", served=materialization, error=error,
+            )
 
     @session_call
     def save_many(self, entity: str, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -753,17 +769,21 @@ class Session:
         snapshot = snapshot_rows(translated)
         stamped = tuple(stamp_values(self._placement, shape.group, row) for row in snapshot)
         table = materialization.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed = False
+        error: BaseException | None = None
         try:
             writer.insert_many(table, stamped)
             self._session_usage.check()
             self._fan_out(target, shape.group, snapshot)
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=len(snapshot), failed=failed)
+            self._observe(
+                shape, started, rows=len(snapshot), failed=failed,
+                operation="save_many", served=materialization, error=error,
+            )
 
     @session_call
     def book_stream(
@@ -832,17 +852,21 @@ class Session:
         if write is None:
             raise EngineError(f"{target} is placed on an engine that does not take a book by price")
         table = materialization.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed = False
+        error: BaseException | None = None
         try:
             write(table, symbol=symbol, exchange=exchange, side=side, timestamp_ns=timestamp_ns,
                   levels=levels)
             self._session_usage.check()
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=len(levels), failed=failed)
+            self._observe(
+                shape, started, rows=len(levels), failed=failed,
+                operation="book_stream", served=materialization, error=error,
+            )
 
     # --- dual write ----------------------------------------------------------------------------
 
@@ -960,16 +984,20 @@ class Session:
         shape = self._shape(target, "point_read", expected)
         engine, materialization = self._target(shape, fresh=fresh)
         table = materialization.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed = False
+        error: BaseException | None = None
         row: Any = None
         try:
             row = engine.get(table, key)
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=0 if row is None else 1, failed=failed)
+            self._observe(
+                shape, started, rows=0 if row is None else 1, failed=failed,
+                operation="get", served=materialization, error=error,
+            )
         return self._fields_out(entity, logical_row(self._placement, row))
 
     def _prepare_read(
@@ -1051,8 +1079,9 @@ class Session:
         self._read_projection(material, target, plan, count=False)
         reader = query_engine(engine)
         table = material.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed, returned = False, 0
+        error: BaseException | None = None
         try:
             rows = reader.select_rows(table, plan)
             self._session_usage.check()
@@ -1066,11 +1095,14 @@ class Session:
             result = tuple(self._fields_out(entity, row) for row in visible)
             returned = len(result)
             return ScanPage(result, position)
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=returned, failed=failed, plan=plan)
+            self._observe(
+                shape, started, rows=returned, failed=failed, plan=plan,
+                operation="scan", served=material, error=error,
+            )
 
     @session_call
     def book_at(
@@ -1115,8 +1147,9 @@ class Session:
                 f"engine does"
             )
         table = material.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed, returned = False, 0
+        error: BaseException | None = None
         try:
             book: dict[str, list[tuple[int, int, int]]] = read(
                 table, symbol=symbol, exchange=exchange, at_ns=at_ns, depth=depth
@@ -1124,12 +1157,15 @@ class Session:
             self._session_usage.check()
             returned = sum(len(levels) for levels in book.values())
             return book
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=returned, failed=failed,
-                          predicates={"equal": equal, "ranged": moment})
+            self._observe(
+                shape, started, rows=returned, failed=failed,
+                predicates={"equal": equal, "ranged": moment},
+                operation="book_at", served=material, error=error,
+            )
 
     @session_call
     def search(
@@ -1171,8 +1207,9 @@ class Session:
         search_engine(engine)
         indexed = text_index(engine)
         reader = None if indexed is not None else query_engine(engine)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed, examined = False, 0
+        error: BaseException | None = None
         found: list[dict[str, Any]] = []
         try:
             position: Mapping[str, Any] | None = None
@@ -1217,13 +1254,14 @@ class Session:
             return SearchPage(
                 tuple(self._fields_out(entity, row) for row in found), next_after, examined
             )
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
             self._observe(
                 shape, started, rows=0 if failed else len(found), failed=failed,
                 examined=examined, searched=chosen,
+                operation="search", served=material, error=error,
             )
 
     def _search_fields(
@@ -1270,17 +1308,21 @@ class Session:
         self._read_projection(material, target, plan, count=True)
         reader = count_engine(engine)
         table = material.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed = False
+        error: BaseException | None = None
         try:
             result = reader.count_rows(table, plan)
             self._session_usage.check()
             return result
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=0 if failed else 1, failed=failed, plan=plan)
+            self._observe(
+                shape, started, rows=0 if failed else 1, failed=failed, plan=plan,
+                operation="count", served=material, error=error,
+            )
 
     @session_call
     def measure_storage(self) -> StorageMeasurement:
@@ -1378,17 +1420,21 @@ class Session:
             raise QueryRefused("the routed materialization does not contain the summary field")
         reader = summary_engine(engine)
         table = material.layout.table_for(target)
-        started = perf_counter_ns() if self._recorder else 0
+        started = perf_counter_ns() if self._measuring else 0
         failed = False
+        error: BaseException | None = None
         try:
             raw = reader.summarize_rows(table, plan, column)
             self._session_usage.check()
             return numeric_summary(raw, column, mean_scale)
-        except BaseException:
-            failed = True
+        except BaseException as caught:
+            failed, error = True, caught
             raise
         finally:
-            self._observe(shape, started, rows=0 if failed else 1, failed=failed, plan=plan)
+            self._observe(
+                shape, started, rows=0 if failed else 1, failed=failed, plan=plan,
+                operation="summarize", served=material, error=error,
+            )
 
     def _observe(
         self,
@@ -1397,32 +1443,82 @@ class Session:
         *,
         rows: int,
         failed: bool,
+        operation: str,
+        served: Materialization,
+        error: BaseException | None,
         plan: ReadPlan | None = None,
         predicates: Mapping[str, Any] | None = None,
         examined: int = 0,
         searched: Sequence[str] | None = None,
     ) -> None:
-        """Hand one observation to the recorder, if there is one.
+        """Hand one observation to the recorder and to the hook, for each one there is.
 
-        The timing call is skipped entirely when telemetry is off, which is why `started` is
-        passed in rather than measured here: with no recorder this method is one attribute check.
+        The timing call is skipped entirely when neither is there, which is why `started` is
+        passed in rather than measured here: with neither this method is two attribute checks.
         A read without a plan - a book's - names what it filtered on as ``predicates``.
         """
-        recorder = self._recorder
-        if recorder is None:
+        recorder, hook = self._recorder, self._hook
+        if recorder is None and hook is None:
             return
-        recorder.record(
-            shape_id=shape.id,
-            group=shape.group,
-            entity=shape.entity,
-            kind=shape.kind,
-            nanoseconds=perf_counter_ns() - started,
+        nanoseconds = perf_counter_ns() - started
+        if recorder is not None:
+            recorder.record(
+                shape_id=shape.id,
+                group=shape.group,
+                entity=shape.entity,
+                kind=shape.kind,
+                nanoseconds=nanoseconds,
+                rows=rows,
+                failed=failed,
+                **(_predicates(plan) if plan is not None else dict(predicates or {})),
+                examined=examined,
+                searched=searched,
+            )
+        if hook is not None:
+            self._call_hook(
+                hook,
+                operation=operation,
+                entity=shape.entity,
+                group=shape.group,
+                shape=shape.id,
+                served=served,
+                nanoseconds=nanoseconds,
+                rows=rows,
+                error=error,
+            )
+
+    def _call_hook(
+        self,
+        hook: OperationHook,
+        *,
+        operation: str,
+        entity: str,
+        group: str,
+        shape: str,
+        served: Materialization,
+        nanoseconds: int,
+        rows: int,
+        error: BaseException | None,
+    ) -> None:
+        """Build the record and call the hook; a hook that raises is counted, never propagated."""
+        record = OperationRecord(
+            operation=operation,
+            entity=self._application_name(entity),
+            group=self._application_name(group),
+            shape=shape,
+            engine=served.engine,
+            dialect=self._engines[served.engine].dialect,
+            materialization=served.id,
+            duration_ns=nanoseconds,
             rows=rows,
-            failed=failed,
-            **(_predicates(plan) if plan is not None else dict(predicates or {})),
-            examined=examined,
-            searched=searched,
+            outcome=outcome_of(error),
         )
+        guard("session.hook", lambda: hook(record))
+
+    def _application_name(self, model_name: str) -> str:
+        """An entity's or a group's name as the application wrote it: a group is named after an
+        entity, and with hashing on both are digests in the model."""
+        return self._application_entities.get(model_name, model_name)
 
     # --- transactions ----------------------------------------------------------------------
 
@@ -1462,18 +1558,39 @@ class Session:
 
         group = self.group_of(names[0])
         with self._session_usage.transaction(group.name):
-            engine = self._engines[self._placement.placement_of(group.name).source.engine]
+            source = self._placement.placement_of(group.name).source
+            engine = self._engines[source.engine]
             previous = self._in_write_transaction
             outer = len(self._deferred)
             self._in_write_transaction = True
             committed = False
+            # The whole transaction is one record of the hook, beside a record of each operation in
+            # it: from opening to its end, committed or not.
+            hook = self._hook
+            started = perf_counter_ns() if hook is not None else 0
+            error: BaseException | None = None
             try:
                 with engine.transaction():
                     yield self
                     self._session_usage.idle()
                     self._session_usage.seal()
                 committed = True
+            except BaseException as caught:
+                error = caught
+                raise
             finally:
+                if hook is not None:
+                    self._call_hook(
+                        hook,
+                        operation="transaction",
+                        entity=names[0],
+                        group=group.name,
+                        shape="",
+                        served=source,
+                        nanoseconds=perf_counter_ns() - started,
+                        rows=0,
+                        error=error,
+                    )
                 self._in_write_transaction = previous
                 pending = self._deferred[outer:]
                 del self._deferred[outer:]
