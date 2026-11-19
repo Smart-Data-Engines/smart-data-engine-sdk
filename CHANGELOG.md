@@ -17,7 +17,11 @@ map then reads, under its pause, only the rows that carry the generation, on bot
 compares under the final barriers as before. The walk of a settle ends on a statement that finds
 no row below the generation after its last key, so it ends however fast the application writes.
 Another map, an erasure or a replaced table voids the record, and the cutover compares the whole
-group, as before.
+group, as before. Measured on a laptop: a group of two million rows paused 2.3 to 2.6 s from
+PostgreSQL into ClickHouse and 1.0 to 1.4 s the other way, against 15.3 and 14.0 to 14.1 s after a
+backfill alone, and one of four million 4.0 and 1.8 s; what still grows with the group, and with
+the rows written since the advance, is in
+[`docs/qualification/cutover-settled/`](docs/qualification/cutover-settled/README.md).
 - The operator's state keeps the records under storage contract 7, which an earlier operator
   refuses whole.
 - The PostgreSQL and ClickHouse adapters read the rows below a generation after a key

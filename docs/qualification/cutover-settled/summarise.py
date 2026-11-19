@@ -6,6 +6,8 @@ Prints, for each file of ``final/`` and each direction, size and way in it: the 
 over the runs, of its two phases that read rows, of what a settle costs before it - the advance's
 own pause and the settle's time - and of the backfill before both, with the rows written since the
 settle and the rows the pause wrote. A range is its lowest and highest run; nothing is averaged.
+For the probe of ``probe_pause_statements.py``, each run's pause and the statements it spent most
+on.
 """
 
 from __future__ import annotations
@@ -32,16 +34,60 @@ def outcome(run: dict[str, Any]) -> str:
     return f"{run['outcome']} ({run['reason']})"
 
 
+def statements(name: str, report: dict[str, Any], top: int = 6) -> None:
+    commit = report["commit"][:7] if report.get("commit") else "?"
+    print(f"\n### {name} ({commit})")
+    for run in report["results"]:
+        index = f", index created in {run['index_ms'] / 1000:.1f} s" if run["index_ms"] else ""
+        print(
+            f"\n{run['source']} → {run['target']}, {run['rows']} rows, `{run['variant']}`: "
+            f"pause {run['pause_ms'] / 1000:.2f} s, statements {run['statements_ms'] / 1000:.2f} s"
+            f"{index}\n"
+        )
+        print("| engine | statement | times | ms |")
+        print("|---|---|---|---|")
+        for row in run["statements"][:top]:
+            print(
+                f"| {row['engine']} | `{row['statement'][:90]}` | {row['count']} "
+                f"| {row['total_ms']:.0f} |"
+            )
+
+
+def side_by_side(name: str, report: dict[str, Any]) -> None:
+    """The pause of each way beside the others, a row a direction and size."""
+    ways = list(dict.fromkeys(result["way"] for result in report["results"]))
+    if len(ways) < 2:
+        return
+    pauses: dict[tuple[str, str, int], dict[str, list[int | None]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for result in report["results"]:
+        move = (result["source"], result["target"], result["rows"])
+        pauses[move][result["way"]].append(
+            result.get("pause_ms") or result.get("interrupted_after_ms")
+        )
+    print(f"\n### {name}: the pause of each way, s\n")
+    print("| move | rows | " + " | ".join(f"`{way}`" for way in ways) + " |")
+    print("|---|---|" + "---|" * len(ways))
+    for (source, target, rows), by_way in pauses.items():
+        cells = " | ".join(span(by_way.get(way, []), 1000, 2) for way in ways)
+        print(f"| {source} → {target} | {rows} | {cells} |")
+
+
 def main() -> None:
     for name in sorted((HERE / "final").glob("*.json")):
         report = json.loads(name.read_text(encoding="utf-8"))
         if "results" not in report:
             print(f"\n### {name.name}: unfinished, {len(report.get('partial', []))} runs\n")
             continue
+        if report["results"] and "variant" in report["results"][0]:
+            statements(name.name, report)
+            continue
         groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
         for result in report["results"]:
             key = (result["source"], result["target"], result["rows"], result["way"])
             groups[key].append(result)
+        side_by_side(name.name, report)
         commit = report["commit"][:7] if report.get("commit") else "?"
         print(f"\n### {name.name} ({commit})\n")
         print(

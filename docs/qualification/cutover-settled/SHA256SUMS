@@ -1,0 +1,15 @@
+658269e36b9c06b842eabaa04c05d3d08ac299fee50823ecbd0f8cf106bb5ed6  ./final/settled-4m.json
+8f51257aa4aca7732ff7b175f35a8b61f588d00d283e8041063891622529b7f3  ./final/settled-4m.log
+5a2aecafa992c10f0f34e5461a287d79a63a47d223536bef2db2653a5aee5c64  ./final/settled.json
+92a1dd84f8f653763b43196ef15b7551fb35b88d3cb52dc2f46d01348c79a856  ./final/settled.log
+227fdaba5a08469a2f2e5cc1f3f09ae71c90e361b975f25febd22aaafc233ef3  ./final/since-10.json
+e54ccc55b107e9e0a8fc7feae466b03757aa83de264f00b853b2e1308e113a11  ./final/since-10.log
+ae4ed9a15c73996fc070a7f068c0e8b00fb72cc43c557373c8e634a78e059d3a  ./final/since-50.json
+b45261066dc8e7fb89e3961672a077ad07a7e278a9d7f733072249d2fc089cba  ./final/since-50.log
+afd0476bb58bdfcc1560342eb535d7bdccf93d31b361d708150e971b2cac6b0d  ./final/statements-2m-since-50.json
+76093adef090e476b53b8064eceea5dfaa8cb32dba4973d6faedbb9f1ab2d96e  ./final/statements-2m-since-50.log
+39d4cf0c6ccc98a44273e285cdfd1e062dfcc2f23c92cb063d70d9ec72b393a7  ./final/statements-2m.json
+acfa9c2725f938db6a7ece4f65f5e4af6f9c9b7f2c7c1940647c32b5df16dfb9  ./final/statements-2m.log
+d0dc2e6d5d188f6f28efb366b0d64a10aec50ffe69fc65e20df7aa5d18037b36  ./measure_settled.py
+b095d97b7acd576725e172ab5627394953158ba107548ec7953a2987ea5ce335  ./probe_pause_statements.py
+f042ee9fe2ed6e161eca1ce50fb0a4868de768c9a9b365aeaf1fb33252aadd81  ./summarise.py

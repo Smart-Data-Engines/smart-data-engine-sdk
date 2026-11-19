@@ -415,17 +415,22 @@ visible for the pause.
   refuses it by name, and its cutover reads it whole.
 
 What still grows with the group under the pause: the counts under the final barriers, and the
-reads by generation, which find their rows by scanning the table (PostgreSQL) or its generation
-column (ClickHouse). [How large a group a move fits](#how-large-a-group-a-move-fits) gives the
-measurements of the repair before a settle; the settled pause is measured separately.
+first page of each read by generation, which scans the table. The pause also grows with the rows
+written between the advance and the freeze, by about 70 µs for each where it was measured
+([qualification/cutover-settled](qualification/cutover-settled/README.md)): a group of two million
+rows paused 2.3 to 2.6 s from PostgreSQL into ClickHouse and 1.0 to 1.4 s the other way after a
+settle, against 15.3 and 14.0 to 14.1 s after a backfill alone, and one of four million 4.0 and
+1.8 s.
 
 ## How large a group a move fits
 
 A group that does not fit its budget is not moved: the watchdog stops the pause at the budget and
 recovery aborts the cutover, with the source as it was. What the pause covers depends on whether
-the copy was filled before it. Measured on a laptop (i3-7100U, 4 threads) with PostgreSQL 15.19 and
-ClickHouse 24.8.14.39 on the same machine, rows of three integer columns and the 30 s budget of the
-live tests ([qualification/cutover-repair](qualification/cutover-repair/README.md), and
+the copy was filled before it, and whether the group was settled. Measured on a laptop (i3-7100U,
+4 threads) with PostgreSQL 15.19 and ClickHouse 24.8.14.39 on the same machine, rows of three
+integer columns and the 30 s budget of the live tests
+([qualification/cutover-settled](qualification/cutover-settled/README.md),
+[qualification/cutover-repair](qualification/cutover-repair/README.md), and
 [qualification/cutover-limits](qualification/cutover-limits/README.md) for the pause as it was):
 
 | move | the copy was | pause for 200 000 rows | rows within 30 s |
@@ -434,6 +439,8 @@ live tests ([qualification/cutover-repair](qualification/cutover-repair/README.m
 | PostgreSQL → ClickHouse | filled by `backfill` | 2.5-3.5 s | 3 million, the largest size that fitted |
 | ClickHouse → PostgreSQL | never filled: refilled in the pause | 11.5-11.9 s | about 450 000 |
 | ClickHouse → PostgreSQL | filled by `backfill` | 2.2-2.6 s | 3 million, the largest size that fitted |
+| PostgreSQL → ClickHouse | filled by `backfill`, then advanced and settled | 0.8-0.9 s (2.1 s after a backfill alone, the same day) | 4 million in 4.0 s, the largest measured |
+| ClickHouse → PostgreSQL | filled by `backfill`, then advanced and settled | 0.6 s (1.8-2.2 s after a backfill alone, the same day) | 4 million in 1.8 s, the largest measured |
 
 The budget is signed for each cutover, so a larger one moves a larger group in a longer write
 pause, and a larger `chunk_rows` moves a larger group in the same one. A wider row costs more than
@@ -452,6 +459,10 @@ interruptions. `test_operator_native_live.py` exercises actual restricted grants
 revoking SELECT leaves INSERT, a reader was not declared, or a disconnected probe is mistaken for
 a permission denial. CLI subprocess cases use fresh connections and check for connection-string
 leakage. `test_cutover_project.py` covers local I/O failure and corruption boundaries.
+`test_settle_live.py` exercises a settle and the cutover after it in both directions and for a
+relayout: no range or stream of either side read under the pause, a settle beside an application
+that keeps writing, every checkpoint of the cutover after a settle, each binding of the record
+alone, what voids it, a surplus, a write not read back and a spent pause budget.
 
 `typescript/tests/local-cutover.live.test.ts` suspends TypeScript fan-out after the PostgreSQL
 source commit, executes the Python operator, writes a newer value on the new ClickHouse source,
