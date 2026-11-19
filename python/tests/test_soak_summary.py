@@ -7,6 +7,8 @@ breach that change is, so a criterion that stops judging fails its test and noth
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 from qualification import soak_traffic as traffic
@@ -18,6 +20,7 @@ from qualification.soak_summary import (
     drift,
     fault_outcomes,
     hourly,
+    load,
     resources,
     summarise,
     suspended_ns,
@@ -284,3 +287,52 @@ def test_descriptors_of_requests_in_flight_are_not_a_leak() -> None:
     run.samples = noisy
     assert resources(run, run.processes[0])["descriptors_passed"]
     assert summarise(run)["passed"]
+
+
+def written(directory: Path, run: Run, *, ended: bool) -> Path:
+    """The run as the coordinator leaves its directory: ``run.json``, with the end once the run has
+    one, the faults, the samples and each process's events and minutes."""
+    meta: dict[str, Any] = {
+        "zero": run.zero,
+        "hours": run.hours,
+        "processes": [
+            {"name": p.name, "language": p.language, "engine": p.engine} for p in run.processes
+        ],
+    }
+    if ended:
+        meta["end"] = run.end
+    (directory / "run.json").write_text(json.dumps(meta))
+    (directory / "faults.jsonl").write_text("".join(json.dumps(f) + "\n" for f in run.faults))
+    (directory / "samples.jsonl").write_text("".join(json.dumps(s) + "\n" for s in run.samples))
+    for process in run.processes:
+        out = directory / "processes" / process.name
+        out.mkdir(parents=True)
+        (out / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in process.events))
+        (out / "minutes.jsonl").write_text("".join(json.dumps(m) + "\n" for m in process.minutes))
+    return directory
+
+
+def test_a_run_still_going_is_read_to_its_last_sample(tmp_path: Path) -> None:
+    """The coordinator writes the end when the run ends. Until then a summary of the run reaches
+    as far as its last sample and counts the errors of the faults so far: with the start taken for
+    the end, every fault's window closed before it opened, and counted none."""
+    run = clean_run()
+    run.samples = [sample for sample in run.samples if sample["t"] <= ZERO + 2 * HOUR_NS]
+    loaded = load(written(tmp_path, run, ended=False))
+    assert loaded.live
+    assert loaded.end == ZERO + 2 * HOUR_NS
+    [outcome] = fault_outcomes(loaded)
+    assert (outcome["errors"], outcome["recovery_s"]) == (1, 3.0)
+    result = summarise(loaded)
+    assert result["live"]
+    assert "the run has not ended: 2.000 of 4.0 hours so far" in result["breaches"]
+
+
+def test_a_run_that_ended_is_read_to_its_end(tmp_path: Path) -> None:
+    run = clean_run()
+    loaded = load(written(tmp_path, run, ended=True))
+    assert not loaded.live
+    assert loaded.end == run.end
+    [outcome] = fault_outcomes(loaded)
+    assert (outcome["errors"], outcome["recovery_s"]) == (1, 3.0)
+    assert not any("has not ended" in breach for breach in summarise(loaded)["breaches"])

@@ -63,6 +63,7 @@ class Run:
     samples: list[dict[str, Any]]
     processes: list[Process] = field(default_factory=list)
     stopped: str | None = None  # why the coordinator ended the run before its hours, if it did
+    live: bool = False  # not ended yet: `end` is the run's last sample, not the end of its hours
 
 
 def in_fault_window(faults: Iterable[Mapping[str, Any]], start: int, end: int) -> bool:
@@ -348,7 +349,11 @@ def summarise(run: Run) -> dict[str, Any]:
         for o in late
     )
     ran_ns = run.end - run.zero
-    if ran_ns < run.hours * HOUR_NS - MINUTE_NS:
+    if run.live:
+        breaches.append(
+            f"the run has not ended: {ran_ns / HOUR_NS:.3f} of {run.hours} hours so far"
+        )
+    elif ran_ns < run.hours * HOUR_NS - MINUTE_NS:
         breaches.append(
             f"the run ended after {ran_ns / HOUR_NS:.3f} of {run.hours} hours"
             + (f": {run.stopped}" if run.stopped else "")
@@ -356,6 +361,7 @@ def summarise(run: Run) -> dict[str, Any]:
     suspended = suspended_ns(run.samples)
     return {
         "hours": run.hours,
+        "live": run.live,
         "monotonic_hours": round((run.end - run.zero) / HOUR_NS, 3),
         "suspended_s": round(suspended / 1e9, 3),
         "faults": len(run.faults),
@@ -378,13 +384,21 @@ def suspended_ns(samples: Sequence[Mapping[str, Any]]) -> int:
 def load(directory: Path) -> Run:
     """A run from its directory, as the coordinator left it."""
     meta = json.loads((directory / "run.json").read_text())
+    samples = read_jsonl(directory / "samples.jsonl")
+    # The coordinator writes the end when the run ends. Until then the run reaches as far as its
+    # last sample: taking its start for its end, as this once did, closed every fault's window
+    # before it opened, and a run in progress read as faults that nothing failed in.
+    ended = "end" in meta
     run = Run(
         zero=int(meta["zero"]),
-        end=int(meta.get("end", meta["zero"])),
+        end=int(meta["end"])
+        if ended
+        else max((int(sample["t"]) for sample in samples), default=int(meta["zero"])),
         hours=float(meta["hours"]),
         faults=read_jsonl(directory / "faults.jsonl"),
-        samples=read_jsonl(directory / "samples.jsonl"),
+        samples=samples,
         stopped=meta.get("stopped"),
+        live=not ended,
     )
     oracle = (
         json.loads((directory / "oracle.json").read_text())
