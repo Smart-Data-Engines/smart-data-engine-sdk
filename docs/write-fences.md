@@ -79,6 +79,19 @@ observes that wait, commits the writer, and requires its row to exist before the
 See [PostgreSQL lock modes](https://www.postgresql.org/docs/15/explicit-locking.html) and
 [ALTER TABLE](https://www.postgresql.org/docs/15/sql-altertable.html).
 
+**A PostgreSQL barrier also waits for the table's autovacuum.** Adding a constraint takes the
+table's `ACCESS EXCLUSIVE` lock, which conflicts with the lock an autovacuum holds, and PostgreSQL
+cancels an autovacuum that blocks another session only once that session has waited
+`deadlock_timeout`, 1 s by default. Measured in two moves from ClickHouse into PostgreSQL, right
+after the PostgreSQL copy took 2 million rows and 90 000 more: one `ALTER TABLE … ADD CONSTRAINT …
+NOT VALID` took 1.0 and 1.1 s where it takes milliseconds otherwise, and the server logged
+`canceling autovacuum task` for that table at the same moments
+([cutover-settled](qualification/cutover-settled/README.md)). While it waits, the application's
+writes to the table queue behind it. A table vacuumed often can cost a barrier that second at any
+step that adds or drops a constraint. The waiting session's `deadlock_timeout` is what decides, and
+only a superuser can lower it, so it is the client's administrator's to do for the operator's
+login, if that second matters: `ALTER ROLE <login> SET deadlock_timeout = '100ms'`.
+
 ClickHouse's metadata-only ADD CONSTRAINT does not drain an INSERT using an older metadata snapshot.
 On 24.8.14.39, a controlled two-second INSERT finished successfully after ADD returned in 5.69 ms.
 The implemented drain uses `DETACH TABLE ... PERMANENTLY SYNC`, then ATTACH; it waited for that INSERT
