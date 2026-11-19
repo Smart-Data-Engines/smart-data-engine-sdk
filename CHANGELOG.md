@@ -8,6 +8,14 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: Python's canonical encoder writes a string with nothing to escape without walking it**
+(`sde.canonical`). A string with no control character, quote or backslash - most names,
+identifiers and instants - is its own characters between quotes, and the character loop that
+decides that is now skipped for it: 2.0 against 0.5 µs for an eight-letter name, 13.6 against 0.9 µs
+for 64 letters. The bytes are the same; the canonical vectors and a test of every code point to
+U+2FFF against the loop hold them. Found where the control plane spends its time: re-encoding
+journal entries when it validates its state.
+
 **Fixed: TypeScript waits for a ClickHouse answer that is slow to begin, as documented, on Node 19
 and later** ([`docs/engine-connections.md`](docs/engine-connections.md#clickhouse-the-same-connection-intent-in-python-typescript-and-c)).
 Reading past the handshake is unbounded unless the DSN sets `send_receive_timeout`, and a request
