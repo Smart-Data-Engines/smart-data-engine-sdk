@@ -596,6 +596,12 @@ def test_a_relayout_settled_before_its_cutover_reads_only_the_rows_since_under_i
         native.upsert_in(
             copy_table, [{"id": 3, "value": -3, sde.WRITE_EPOCH_COLUMN: 2}], key=["id"]
         )
+        # And a copy row since the advance whose source row is from before it. Only the pause's
+        # walk over the copy's rows since sees it: the comparison under the final barriers reads
+        # the rows the pause wrote, and the two counts are equal.
+        native.upsert_in(
+            copy_table, [{"id": 2, "value": -2, sde.WRITE_EPOCH_COLUMN: 2}], key=["id"]
+        )
         plan = cutover_from(after, signed, model, public, protocol=2)
         with Reads(roles) as reads:
             receipt = operator.execute(plan).as_record()
@@ -604,7 +610,8 @@ def test_a_relayout_settled_before_its_cutover_reads_only_the_rows_since_under_i
         with operator.store.lock():
             state = operator.store.read()
         repair = state["completed"][plan.plan_id]["repair"]
-        assert (repair["mode"], repair["written"]) == ("since", 1)
+        # Row 3 by the walk over the source's rows since, row 2 by the walk over the copy's.
+        assert (repair["mode"], repair["written"]) == ("since", 2)
         assert "Event" not in state["settled"]
         moved = sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
         for key in (1, 2, 3):
