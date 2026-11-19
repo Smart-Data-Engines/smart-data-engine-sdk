@@ -179,6 +179,17 @@ column type the library renders: for ClickHouse `DateTime64(6, 'UTC')` for a `ti
 
 Changelog: *Fixed: a temporal column keeps its field's zone*.
 
+### A write fence's backend of your own
+
+**A write fence's backend has one more operation.** Affected: a `FenceBackend` implemented outside
+the library; the library's own, for PostgreSQL, ClickHouse and Elasticsearch, have it. An epoch
+change and a barrier's release call `change_constraints` (Python, C++) or `changeConstraints`
+(TypeScript) with the constraints to add, as name and predicate, and the names to drop. Implement
+it: the adds, then the drops, in one statement where your engine has one, and as idempotent as your
+`add_constraint` and `drop_constraint` are.
+
+Changelog: *Changed: a generation change, and a barrier's release, are one change of each table*.
+
 ### Messages, events and alerts
 
 Affected: an alert or a script that matches on a message's text or counts an event.

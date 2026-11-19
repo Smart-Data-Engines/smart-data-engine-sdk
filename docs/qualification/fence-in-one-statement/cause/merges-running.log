@@ -1,0 +1,10 @@
+0 merging        parts= 20 waited=  0.01s total=  0.198s  0.102 0.033 0.031 0.033
+0 optimize       parts= 20 waited=  0.01s total=  0.033s  0.016 0.005 0.006 0.005
+0 merged         parts= 20 waited=  3.05s total=  0.065s  0.049 0.006 0.006 0.004
+0 stopped        parts= 15 waited=  2.55s total=  0.342s  0.166 0.042 0.066 0.067
+0 one-statement  parts= 20 waited=  0.00s total=  0.413s  0.413
+1 merging        parts= 20 waited=  0.01s total=  0.171s  0.065 0.032 0.029 0.044
+1 optimize       parts= 15 waited=  0.01s total=  0.220s  0.083 0.046 0.045 0.045
+1 merged         parts= 15 waited=  3.04s total=  0.030s  0.014 0.004 0.007 0.005
+1 stopped        parts= 15 waited=  2.54s total=  0.179s  0.077 0.027 0.028 0.046
+1 one-statement  parts= 15 waited=  0.00s total=  0.037s  0.037

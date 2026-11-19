@@ -7,7 +7,7 @@ path. Metadata is checked as well as created: an identically named, unrelated ta
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -110,6 +110,27 @@ class PostgresFences:
             f"ALTER TABLE {self._quote(table)} DROP CONSTRAINT IF EXISTS {self._quote(name)}"
         )
 
+    def change_constraints(
+        self, table: str, *, add: Sequence[tuple[str, str]], drop: Sequence[str]
+    ) -> None:
+        """One ALTER TABLE: one lock of the table, not one per constraint. PostgreSQL has no ADD
+        CONSTRAINT IF NOT EXISTS, so a constraint already there is left out, as add_constraint
+        leaves it."""
+        self._idle()
+        present = self.metadata(table).constraints
+        commands = []
+        for name, expression in add:
+            if name not in present:
+                predicate = {"1": "true", "0": "false"}.get(expression, expression)
+                commands.append(
+                    f"ADD CONSTRAINT {self._quote(name)} CHECK ({predicate}) NOT VALID"
+                )
+        commands += [
+            f"DROP CONSTRAINT IF EXISTS {self._quote(name)}" for name in drop if name in present
+        ]
+        if commands:
+            self._query(f"ALTER TABLE {self._quote(table)} " + ", ".join(commands))
+
     def drain(self, table: str, *, project_id: str, hold: str) -> None:
         self._idle()
         # Even when a hold already existed, returning from this transaction proves that every
@@ -199,6 +220,18 @@ class ClickHouseFences:
         self._command(
             f"ALTER TABLE {self._quote(table)} DROP CONSTRAINT IF EXISTS {self._quote(name)}"
         )
+
+    def change_constraints(
+        self, table: str, *, add: Sequence[tuple[str, str]], drop: Sequence[str]
+    ) -> None:
+        """One ALTER of several commands: ClickHouse writes and syncs the table's metadata once,
+        and that sync is most of an ALTER's time."""
+        commands = [
+            f"ADD CONSTRAINT IF NOT EXISTS {self._quote(name)} CHECK {expression}"
+            for name, expression in add
+        ] + [f"DROP CONSTRAINT IF EXISTS {self._quote(name)}" for name in drop]
+        if commands:
+            self._command(f"ALTER TABLE {self._quote(table)} " + ", ".join(commands))
 
     def _drain_log(self) -> None:
         self._command(
@@ -543,6 +576,37 @@ class ElasticsearchFences:
         self._write(table, lambda constraints: {
             key: value for key, value in constraints.items() if key != name
         })
+
+    def change_constraints(
+        self, table: str, *, add: Sequence[tuple[str, str]], drop: Sequence[str]
+    ) -> None:
+        """One write of the pipeline. With the last hold among those dropped, the shard-level block
+        is lifted first, as drop_constraint lifts it: the hold in the pipeline still refuses every
+        write a runtime key can make until the write that drops it."""
+        added = dict(add)
+        if drop:
+            uuid, settings = self._index(table)
+            document, _ = self._pipeline(table)
+            remaining = [
+                key for key in self._constraints(table, uuid, document) if key not in drop
+            ] + list(added)
+            last = not any(_HOLDS.fullmatch(key[len(FENCE_PREFIX):]) for key in remaining)
+            blocked = str(settings.get("blocks", {}).get("write", "false")).lower() == "true"
+            if last and blocked:
+                status, _ = self._call("PUT", f"/{table}/_settings", {"index.blocks.write": False})
+                if status != 200:
+                    raise EngineError(f"lifting the write block of {table} failed ({status})")
+
+        def change(constraints: dict[str, str]) -> dict[str, str]:
+            for name, expression in added.items():
+                if constraints.get(name, expression) != expression:
+                    raise MigrationRefused(
+                        f"write fence constraint {name} has an unexpected predicate"
+                    )
+            kept = {key: value for key, value in constraints.items() if key not in drop}
+            return {**kept, **added}
+
+        self._write(table, change)
 
     def drain(self, table: str, *, project_id: str, hold: str) -> None:
         # Repeated on a retry: the block proves that every operation already on the shards has

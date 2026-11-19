@@ -1,0 +1,50 @@
+== before 1 06:42:52 load 1.11 3.22 3.47
+quiet advance_ms median    63.8 range    61.4-   68.1
+quiet release_ms median    38.5 range    35.5-   44.9
+busy  advance_ms median   123.0 range   118.1-  200.6
+busy  release_ms median    71.8 range    66.8-  110.0
+== after 1 06:43:01 load 1.57 3.25 3.48
+quiet advance_ms median    37.3 range    33.0-   47.1
+quiet release_ms median    33.0 range    30.7-   46.4
+busy  advance_ms median    53.7 range    46.6-  928.5
+busy  release_ms median    51.5 range    45.3-  863.7
+== before 2 06:43:15 load 2.27 3.32 3.49
+quiet advance_ms median   227.3 range   184.9-  757.5
+quiet release_ms median   122.9 range    87.2-  163.4
+busy  advance_ms median   469.9 range   108.4- 4468.1
+busy  release_ms median    91.3 range    71.8- 1877.0
+== after 2 06:43:48 load 3.25 3.43 3.52
+quiet advance_ms median    42.8 range    32.8-   52.9
+quiet release_ms median    32.1 range    30.1-   41.4
+busy  advance_ms median    52.4 range    43.1-   60.8
+busy  release_ms median    44.8 range    39.4-   53.9
+== before 3 06:44:09 load 2.52 3.25 3.46 cc1plus 0
+quiet advance_ms median    72.7 range    64.7-   84.9
+quiet release_ms median    37.7 range    35.2-   45.8
+busy  advance_ms median   133.2 range   115.3-  161.8
+busy  release_ms median    69.8 range    63.2-   90.4
+== after 3 06:44:19 load 2.60 3.25 3.46 cc1plus 0
+quiet advance_ms median    35.7 range    32.6-   46.0
+quiet release_ms median    32.1 range    30.8-   39.9
+busy  advance_ms median    58.2 range    41.9- 1005.6
+busy  release_ms median    49.6 range    44.9- 1258.3
+== before 4 06:44:36 load 2.77 3.25 3.46 cc1plus 0
+quiet advance_ms median    67.8 range    62.8-   79.3
+quiet release_ms median    38.0 range    35.7-   54.1
+busy  advance_ms median   121.5 range   106.9-  159.5
+busy  release_ms median    71.6 range    64.9-   96.1
+== after 4 06:44:46 load 2.88 3.26 3.46 cc1plus 0
+quiet advance_ms median    41.3 range    34.2-   49.7
+quiet release_ms median    31.8 range    30.7-   60.0
+busy  advance_ms median    54.9 range    47.3- 1220.0
+busy  release_ms median    82.5 range    42.1- 1423.9
+== before 5 06:45:01 load 2.94 3.25 3.45 cc1plus 0
+quiet advance_ms median    72.8 range    61.4-   94.6
+quiet release_ms median    37.5 range    35.8-   48.3
+busy  advance_ms median   123.3 range   117.5-  167.0
+busy  release_ms median    69.3 range    65.3-   75.8
+== after 5 06:45:10 load 2.72 3.19 3.43 cc1plus 0
+quiet advance_ms median    41.2 range    34.3-   52.8
+quiet release_ms median    32.4 range    30.5-   41.9
+busy  advance_ms median    58.2 range    43.1- 1781.3
+busy  release_ms median    47.5 range    44.8- 1878.8

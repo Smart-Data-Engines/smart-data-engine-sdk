@@ -20,6 +20,15 @@ export interface FenceBackend {
   addColumn(table: string): Promise<void>
   addConstraint(table: string, name: string, expression: string): Promise<void>
   dropConstraint(table: string, name: string): Promise<void>
+  /**
+   * Adds and drops constraints in one change where the engine has one: one statement, whose
+   * metadata is written - and synced - once, and in which the constraints dropped give way to the
+   * ones added at one instant. Idempotent, as add and drop are.
+   */
+  changeConstraints(
+    table: string,
+    change: { add: ReadonlyArray<readonly [string, string]>; drop: readonly string[] },
+  ): Promise<void>
   drain(table: string, options: { projectId: string; hold: string }): Promise<void>
   restore(table: string, options: { projectId: string; hold: string }): Promise<void>
 }
@@ -118,6 +127,11 @@ export function fenceState(metadata: FenceMetadata): FenceState {
 }
 
 /** Serialize administrative calls per project. A partial command may leave the table closed. */
+function complete(state: FenceState): FenceState {
+  if (!state.complete) throw new MigrationRefused('the write fence is not fully provisioned')
+  return state
+}
+
 export class WriteFence {
   readonly projectId: string
   constructor(private readonly backend: FenceBackend, readonly table: string, options: { projectId: string }) {
@@ -142,9 +156,7 @@ export class WriteFence {
     return state
   }
   private async ready(): Promise<FenceState> {
-    const state = await this.state()
-    if (!state.complete) throw new MigrationRefused('the write fence is not fully provisioned')
-    return state
+    return complete(await this.state())
   }
 
   async prepare(epoch: number): Promise<FenceState> {
@@ -165,7 +177,7 @@ export class WriteFence {
     }
     await this.backend.addConstraint(this.table, SETUP, '0')
     await this.backend.addColumn(this.table)
-    await this.bounds(epoch)
+    await this.bounds(epoch, state)
     await this.backend.drain(this.table, { projectId: this.projectId, hold: 'setup' })
     await this.backend.dropConstraint(this.table, SETUP)
     return this.ready()
@@ -197,30 +209,45 @@ export class WriteFence {
     if (state.lowerEpoch !== undefined && epoch < state.lowerEpoch) {
       throw new MigrationRefused('a write epoch cannot move backwards')
     }
-    await this.bounds(epoch)
-    return this.ready()
+    return complete(await this.bounds(epoch, state))
   }
-  private async bounds(epoch: number): Promise<void> {
-    await this.backend.addConstraint(this.table, FENCE_PREFIX + 'min_' + epoch, `${EPOCH_COLUMN} >= ${epoch}`)
-    await this.backend.addConstraint(this.table, FENCE_PREFIX + 'max_' + epoch, `${EPOCH_COLUMN} <= ${epoch}`)
-    const state = await this.state()
-    if (state.lowerEpoch !== undefined && state.lowerEpoch > epoch) {
+  /**
+   * Installs `epoch`'s bounds and removes the older ones in one change of the table: on
+   * ClickHouse an ALTER writes and syncs the table's metadata, and four statements paid it four
+   * times in a pause; on PostgreSQL each took the table's lock again. Only bounds older than
+   * `epoch`, named as `before` showed them, are dropped: a stale caller never removes a newer
+   * constraint installed after that read, and the check after the change finds it. Measured:
+   * docs/qualification/fence-in-one-statement/.
+   */
+  private async bounds(epoch: number, before: FenceState): Promise<FenceState> {
+    const older = [
+      ...before.maximums.filter((old) => old < epoch).map((old) => FENCE_PREFIX + 'max_' + old),
+      ...before.minimums.filter((old) => old < epoch).map((old) => FENCE_PREFIX + 'min_' + old),
+    ]
+    await this.backend.changeConstraints(this.table, {
+      add: [
+        [FENCE_PREFIX + 'min_' + epoch, `${EPOCH_COLUMN} >= ${epoch}`],
+        [FENCE_PREFIX + 'max_' + epoch, `${EPOCH_COLUMN} <= ${epoch}`],
+      ],
+      drop: older,
+    })
+    const after = await this.state()
+    if (after.lowerEpoch !== undefined && after.lowerEpoch > epoch) {
       throw new MigrationRefused('another executor installed a newer write epoch; table stays closed')
     }
-    for (const old of state.maximums) {
-      if (old < epoch) await this.backend.dropConstraint(this.table, FENCE_PREFIX + 'max_' + old)
-    }
-    for (const old of state.minimums) {
-      if (old < epoch) await this.backend.dropConstraint(this.table, FENCE_PREFIX + 'min_' + old)
-    }
+    return after
   }
   async release(requestId: string): Promise<FenceState> {
     identity(requestId, 'request_id')
     const state = await this.ready()
     if (state.epoch === undefined) throw new MigrationRefused('cannot release a barrier with an incomplete epoch change')
     if (!state.holds.includes(requestId)) return state
-    await this.backend.addConstraint(this.table, FENCE_PREFIX + 'retired_' + requestId, '1')
-    await this.backend.dropConstraint(this.table, FENCE_PREFIX + 'hold_' + requestId)
+    // Completion is recorded no later than admission is released - in the same change - so a
+    // delayed invocation never recreates a completed hold, nor reuses its id.
+    await this.backend.changeConstraints(this.table, {
+      add: [[FENCE_PREFIX + 'retired_' + requestId, '1']],
+      drop: [FENCE_PREFIX + 'hold_' + requestId],
+    })
     return this.ready()
   }
 }

@@ -1048,29 +1048,41 @@ def test_cli_completes_cutover_with_environment_only_connections(
 
 @pytest.mark.parametrize("source", ["postgres", "clickhouse"])
 @pytest.mark.parametrize("epoch", [2, 3])
-def test_recovery_completes_a_partial_native_generation_change(
-    source: str, epoch: int, tmp_path: Path, monkeypatch: Any
+@pytest.mark.parametrize("partial", [True, False], ids=["minimum-only", "response-lost"])
+def test_recovery_completes_an_interrupted_native_generation_change(
+    source: str, epoch: int, partial: bool, tmp_path: Path, monkeypatch: Any
 ) -> None:
+    """An epoch change is one statement on each table, so it took effect or it did not; a crash can
+    still come right after it, before the response (``response-lost``). And a table can hold what an
+    earlier version of the library left when it crashed between its four statements: the new
+    minimum alone (``minimum-only``). Recovery completes either."""
     from sde.engines._write_fences import ClickHouseFences, PostgresFences
 
     with fixture(source, tmp_path) as (executor, plan, _old, roles, _, target, model, _):
         kind = ClickHouseFences if target == "clickhouse" else PostgresFences
-        original = kind.add_constraint
+        original = kind.change_constraints
         reached = []
 
-        def interrupt(backend: Any, table: str, name: str, expression: str) -> None:
-            original(backend, table, name, expression)
-            if table == "copy_events" and name.endswith("min_" + str(epoch)):
-                reached.append(name)
-                raise Crash(name)
+        def interrupt(backend: Any, table: str, *, add: Any, drop: Any) -> None:
+            first = add[0] if add else ("", "")
+            if table == "copy_events" and first[0].endswith("min_" + str(epoch)):
+                if partial:
+                    backend.add_constraint(table, *first)
+                else:
+                    original(backend, table, add=add, drop=drop)
+                reached.append(first[0])
+                raise Crash(first[0])
+            original(backend, table, add=add, drop=drop)
 
         with monkeypatch.context() as patch:
-            patch.setattr(kind, "add_constraint", interrupt)
+            patch.setattr(kind, "change_constraints", interrupt)
             with pytest.raises(Crash):
                 executor.execute(plan)
         assert len(reached) == 1
         fence = roles[target].operator.write_fence("copy_events", project_id=PROJECT).state()
-        assert fence.lower_epoch == epoch and fence.epoch is None and fence.closed
+        assert fence.lower_epoch == epoch
+        assert fence.closed
+        assert fence.epoch == (None if partial else epoch)
         receipt = executor.resume().as_record()
         assert receipt["outcome"] == ("abort" if epoch == 2 else "success")
         active = sde.Session(

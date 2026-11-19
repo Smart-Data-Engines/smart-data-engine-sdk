@@ -196,6 +196,22 @@ void MemoryFences::drop_constraint(const std::string& table, const std::string& 
   done(Json(Json::Array{"drop", table, name}));
 }
 
+void MemoryFences::change_constraints(const std::string& table,
+                                      const std::vector<std::pair<std::string, std::string>>& add,
+                                      const std::vector<std::string>& drop) {
+  Json::Array added;
+  for (const auto& [name, expression] : add) {
+    constraints.emplace(name, expression);
+    added.emplace_back(Json::Array{name, expression});
+  }
+  Json::Array dropped;
+  for (const std::string& name : drop) {
+    constraints.erase(name);
+    dropped.emplace_back(name);
+  }
+  done(Json(Json::Array{"change", table, Json(std::move(added)), Json(std::move(dropped))}));
+}
+
 void MemoryFences::drain(const std::string& table, const std::string& project_id,
                          const std::string& hold) {
   // A drain without its own hold in place would wait for nothing: the caller's protocol is wrong.

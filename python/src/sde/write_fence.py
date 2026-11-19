@@ -9,7 +9,7 @@ able to commit against a stale placement. Native CHECK constraints make that tes
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -39,6 +39,13 @@ class FenceBackend(Protocol):
     def add_column(self, table: str) -> None: ...
     def add_constraint(self, table: str, name: str, expression: str) -> None: ...
     def drop_constraint(self, table: str, name: str) -> None: ...
+    def change_constraints(
+        self, table: str, *, add: Sequence[tuple[str, str]], drop: Sequence[str]
+    ) -> None:
+        """Add and drop constraints in one change where the engine has one: one statement, whose
+        metadata is written - and synced - once, and in which the constraints dropped give way to
+        the ones added at one instant. Idempotent, as add and drop are."""
+        ...
     def drain(self, table: str, *, project_id: str, hold: str) -> None: ...
     def restore(self, table: str, *, project_id: str, hold: str) -> None: ...
 
@@ -165,6 +172,12 @@ def fence_state(metadata: FenceMetadata) -> FenceState:
     )
 
 
+def _complete(state: FenceState) -> FenceState:
+    if not state.complete:
+        raise MigrationRefused("the write fence is not fully provisioned")
+    return state
+
+
 class WriteFence:
     """A table's provisioning capability. Serialize executor commands per project state directory.
 
@@ -192,10 +205,7 @@ class WriteFence:
         return state
 
     def _ready(self) -> FenceState:
-        state = self.state()
-        if not state.complete:
-            raise MigrationRefused("the write fence is not fully provisioned")
-        return state
+        return _complete(self.state())
 
     def prepare(self, epoch: int) -> FenceState:
         epoch = check_epoch(epoch)
@@ -212,7 +222,7 @@ class WriteFence:
             self._backend.add_constraint(self.table, FENCE_PREFIX + "owner_" + self.project_id, "1")
         self._backend.add_constraint(self.table, SETUP, "0")
         self._backend.add_column(self.table)
-        self._bounds(epoch)
+        self._bounds(epoch, state)
         self._backend.drain(self.table, project_id=self.project_id, hold="setup")
         self._backend.drop_constraint(self.table, SETUP)
         return self._ready()
@@ -245,29 +255,36 @@ class WriteFence:
             raise MigrationRefused("changing a write epoch needs a named write barrier")
         if state.lower_epoch is not None and epoch < state.lower_epoch:
             raise MigrationRefused("a write epoch cannot move backwards")
-        self._bounds(epoch)
-        return self._ready()
+        return _complete(self._bounds(epoch, state))
 
-    def _bounds(self, epoch: int) -> None:
-        self._backend.add_constraint(
-            self.table, FENCE_PREFIX + "min_" + str(epoch), f"{EPOCH_COLUMN} >= {epoch}"
+    def _bounds(self, epoch: int, before: FenceState) -> FenceState:
+        """Install ``epoch``'s bounds and remove the older ones, in one change of the table.
+
+        One statement where the engine has one: on ClickHouse an ALTER writes and syncs the table's
+        metadata, and that sync is most of its time, so four statements paid it four times in a
+        pause; on PostgreSQL each took the table's lock again. Only bounds older than
+        ``epoch``, named as ``before`` showed them, are dropped: a stale caller never removes a
+        newer constraint installed after that read, and the check after the change finds it.
+        Measured: ``docs/qualification/fence-in-one-statement/``.
+        """
+        older = [
+            *(FENCE_PREFIX + "max_" + str(old) for old in before.maximums if old < epoch),
+            *(FENCE_PREFIX + "min_" + str(old) for old in before.minimums if old < epoch),
+        ]
+        self._backend.change_constraints(
+            self.table,
+            add=[
+                (FENCE_PREFIX + "min_" + str(epoch), f"{EPOCH_COLUMN} >= {epoch}"),
+                (FENCE_PREFIX + "max_" + str(epoch), f"{EPOCH_COLUMN} <= {epoch}"),
+            ],
+            drop=older,
         )
-        self._backend.add_constraint(
-            self.table, FENCE_PREFIX + "max_" + str(epoch), f"{EPOCH_COLUMN} <= {epoch}"
-        )
-        # Remove only bounds weaker/older than the one just installed, by their exact names. A
-        # stale caller must never remove a newer constraint discovered after its earlier check.
-        state = self.state()
-        if state.lower_epoch is not None and state.lower_epoch > epoch:
+        after = self.state()
+        if after.lower_epoch is not None and after.lower_epoch > epoch:
             raise MigrationRefused(
                 "another executor installed a newer write epoch; table stays closed"
             )
-        for old in state.maximums:
-            if old < epoch:
-                self._backend.drop_constraint(self.table, FENCE_PREFIX + "max_" + str(old))
-        for old in state.minimums:
-            if old < epoch:
-                self._backend.drop_constraint(self.table, FENCE_PREFIX + "min_" + str(old))
+        return after
 
     def release(self, request_id: str) -> FenceState:
         _identity(request_id, "request_id")
@@ -276,8 +293,12 @@ class WriteFence:
             raise MigrationRefused("cannot release a barrier with an incomplete epoch change")
         if request_id not in state.holds:
             return state
-        # Record completion before releasing admission. A delayed invocation must never recreate
-        # a completed hold, nor reuse its id for a later generation and inherit an old release.
-        self._backend.add_constraint(self.table, FENCE_PREFIX + "retired_" + request_id, "1")
-        self._backend.drop_constraint(self.table, FENCE_PREFIX + "hold_" + request_id)
+        # Completion is recorded no later than admission is released - in the same change - so a
+        # delayed invocation never recreates a completed hold, nor reuses its id for a later
+        # generation and inherits an old release.
+        self._backend.change_constraints(
+            self.table,
+            add=[(FENCE_PREFIX + "retired_" + request_id, "1")],
+            drop=[FENCE_PREFIX + "hold_" + request_id],
+        )
         return self._ready()

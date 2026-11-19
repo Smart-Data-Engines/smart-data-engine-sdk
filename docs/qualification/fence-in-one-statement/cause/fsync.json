@@ -1,0 +1,610 @@
+{
+ "clickhouse": "24.8.14.39",
+ "rounds": 5,
+ "results": {
+  "quiet, four statements": [
+   {
+    "client_ms": [
+     4.5,
+     5.1,
+     5.4,
+     4.2
+    ]
+   },
+   {
+    "client_ms": [
+     13.3,
+     12.5,
+     10.1,
+     8.5
+    ]
+   },
+   {
+    "client_ms": [
+     6.0,
+     5.7,
+     5.5,
+     5.2
+    ]
+   },
+   {
+    "client_ms": [
+     5.4,
+     4.5,
+     4.5,
+     4.1
+    ]
+   },
+   {
+    "client_ms": [
+     10.2,
+     10.0,
+     9.8,
+     9.2
+    ]
+   },
+   {
+    "server": [
+     {
+      "ms": 3,
+      "fsync_ms": 1.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 2.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.3,
+      "fsyncs": 1
+     },
+     {
+      "ms": 7,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 7,
+      "fsync_ms": 2.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 6,
+      "fsync_ms": 1.8,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 1.6,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.7,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 6,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     }
+    ]
+   }
+  ],
+  "quiet, one statement": [
+   {
+    "client_ms": [
+     6.5
+    ]
+   },
+   {
+    "client_ms": [
+     9.1
+    ]
+   },
+   {
+    "client_ms": [
+     9.5
+    ]
+   },
+   {
+    "client_ms": [
+     9.8
+    ]
+   },
+   {
+    "client_ms": [
+     5.9
+    ]
+   },
+   {
+    "server": [
+     {
+      "ms": 3,
+      "fsync_ms": 1.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 2.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.3,
+      "fsyncs": 1
+     },
+     {
+      "ms": 7,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 7,
+      "fsync_ms": 2.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 6,
+      "fsync_ms": 1.8,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 1.6,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.7,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 2,
+      "fsync_ms": 1.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 6,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 4,
+      "fsync_ms": 2.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.6,
+      "fsyncs": 1
+     },
+     {
+      "ms": 5,
+      "fsync_ms": 2.2,
+      "fsyncs": 1
+     },
+     {
+      "ms": 3,
+      "fsync_ms": 1.9,
+      "fsyncs": 1
+     }
+    ]
+   }
+  ],
+  "pressure, four statements": [
+   {
+    "client_ms": [
+     5.9,
+     21.6,
+     26.6,
+     29.7
+    ]
+   },
+   {
+    "client_ms": [
+     13.9,
+     24.7,
+     23.2,
+     24.1
+    ]
+   },
+   {
+    "client_ms": [
+     10.8,
+     21.9,
+     25.2,
+     23.9
+    ]
+   },
+   {
+    "client_ms": [
+     15.4,
+     24.3,
+     23.1,
+     26.3
+    ]
+   },
+   {
+    "client_ms": [
+     23.8,
+     25.0,
+     27.3,
+     22.7
+    ]
+   },
+   {
+    "server": [
+     {
+      "ms": 3,
+      "fsync_ms": 1.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 18,
+      "fsync_ms": 16.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 17.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 24,
+      "fsync_ms": 18.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 10,
+      "fsync_ms": 8.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 16.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 15.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 17.7,
+      "fsyncs": 1
+     },
+     {
+      "ms": 8,
+      "fsync_ms": 7.7,
+      "fsyncs": 1
+     },
+     {
+      "ms": 19,
+      "fsync_ms": 17.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 22,
+      "fsync_ms": 19.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 18.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 11,
+      "fsync_ms": 9.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 18,
+      "fsync_ms": 14.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 19,
+      "fsync_ms": 15.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 23,
+      "fsync_ms": 19.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 16.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 21,
+      "fsync_ms": 16.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 22,
+      "fsync_ms": 17.3,
+      "fsyncs": 1
+     },
+     {
+      "ms": 19,
+      "fsync_ms": 14.9,
+      "fsyncs": 1
+     }
+    ]
+   }
+  ],
+  "pressure, one statement": [
+   {
+    "client_ms": [
+     15.8
+    ]
+   },
+   {
+    "client_ms": [
+     16.7
+    ]
+   },
+   {
+    "client_ms": [
+     12.2
+    ]
+   },
+   {
+    "client_ms": [
+     14.1
+    ]
+   },
+   {
+    "client_ms": [
+     19.5
+    ]
+   },
+   {
+    "server": [
+     {
+      "ms": 3,
+      "fsync_ms": 1.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 18,
+      "fsync_ms": 16.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 17.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 24,
+      "fsync_ms": 18.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 10,
+      "fsync_ms": 8.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 16.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 15.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 17.7,
+      "fsyncs": 1
+     },
+     {
+      "ms": 8,
+      "fsync_ms": 7.7,
+      "fsyncs": 1
+     },
+     {
+      "ms": 19,
+      "fsync_ms": 17.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 22,
+      "fsync_ms": 19.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 18.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 11,
+      "fsync_ms": 9.0,
+      "fsyncs": 1
+     },
+     {
+      "ms": 18,
+      "fsync_ms": 14.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 19,
+      "fsync_ms": 15.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 23,
+      "fsync_ms": 19.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 20,
+      "fsync_ms": 16.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 21,
+      "fsync_ms": 16.5,
+      "fsyncs": 1
+     },
+     {
+      "ms": 22,
+      "fsync_ms": 17.3,
+      "fsyncs": 1
+     },
+     {
+      "ms": 19,
+      "fsync_ms": 14.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 13,
+      "fsync_ms": 12.1,
+      "fsyncs": 1
+     },
+     {
+      "ms": 11,
+      "fsync_ms": 7.6,
+      "fsyncs": 1
+     },
+     {
+      "ms": 7,
+      "fsync_ms": 4.9,
+      "fsyncs": 1
+     },
+     {
+      "ms": 10,
+      "fsync_ms": 8.4,
+      "fsyncs": 1
+     },
+     {
+      "ms": 16,
+      "fsync_ms": 13.4,
+      "fsyncs": 1
+     }
+    ]
+   }
+  ]
+ }
+}

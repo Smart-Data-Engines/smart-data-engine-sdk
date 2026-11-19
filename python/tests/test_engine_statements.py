@@ -42,6 +42,16 @@ CHANGING_METHODS = frozenset({"PUT", "POST", "DELETE"})
 READING_ENDPOINTS = ("/_count", "/_search", "/_has_privileges", "/_mget")
 """Requests sent with POST that read and change nothing, so the page does not list them."""
 
+CLAUSE = re.compile(r"(ADD|DROP) CONSTRAINT ")
+"""A clause of an ALTER TABLE, built apart from it: ``change_constraints`` joins a fence's adds and
+drops into one statement. It is read as the ALTER TABLE it is part of, which is how the page lists
+it."""
+
+JOINED = ("change_constraints", "ALTER TABLE … …")
+"""The statement those clauses are joined into, as a reader of literals sees it, and the one
+function that joins them. Its clauses are read where they are built, so the skeleton adds no form
+- there, and nowhere else."""
+
 STRING_METHODS = frozenset(
     {"startswith", "endswith", "replace", "find", "index", "count", "split", "removeprefix"}
 )
@@ -157,6 +167,10 @@ def _python_forms() -> dict[str, set[str]]:
                         or (isinstance(parent, ast.BinOp) and _render(parent) is not None)
                     )
                     text = _render(node)
+                    if text and CLAUSE.match(text) and outermost and not _excluded(node, parents):
+                        text = "ALTER TABLE … " + text
+                    if text and (_function(node, parents), _normal(text)) == JOINED:
+                        continue
                     statement = (
                         outermost
                         and text
@@ -275,6 +289,8 @@ def test_typescript_and_cpp_open_no_kind_of_statement_the_page_does_not_have() -
             if stripped.startswith(("//", "*", "/*")):
                 continue
             for opening in OPENING.findall(line):
+                if CLAUSE.match(opening + " "):
+                    opening = "ALTER TABLE"  # a clause, joined into one (see CLAUSE)
                 if opening not in openings and not opening.startswith(RENDERED_FOR_A_PERSON):
                     unknown.setdefault(opening, str(path.relative_to(ROOT)))
     assert not unknown, f"statement openings the page has no form for: {unknown}"

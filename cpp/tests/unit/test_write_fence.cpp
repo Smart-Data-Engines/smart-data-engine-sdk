@@ -149,6 +149,36 @@ TEST(WriteFence, RefusesWhatItCannotOwn) {
   EXPECT_THROW((void)fence.state(), sde::MigrationRefused);
 }
 
+TEST(WriteFence, ANewerEpochInstalledDuringItsChangeIsNeverDroppedAndRefuses) {
+  // Another executor installs epoch 3 while this one's change is under way: the change drops only
+  // what the state read before it showed, so epoch 3's bounds stay, and the check after it refuses,
+  // with the table closed.
+  sde::testing::MemoryFences backend;
+  sde::WriteFence fence(backend, "t", std::string(32, 'a'));
+  (void)fence.prepare(1);
+  const std::string hold(32, 'b');
+  (void)fence.freeze(hold);
+  backend.on_call = [&backend](const sde::Json& call) {
+    if (call.as_array().front().as_string() == "change") {
+      backend.constraints.emplace("__sde_f_min_3", "__sde_write_epoch >= 3");
+      backend.constraints.emplace("__sde_f_max_3", "__sde_write_epoch <= 3");
+    }
+  };
+  try {
+    (void)fence.advance(2);
+    FAIL() << "a newer epoch found after the change was not refused";
+  } catch (const sde::MigrationRefused& refused) {
+    EXPECT_NE(std::string(refused.what()).find("newer write epoch; table stays closed"),
+              std::string::npos)
+        << refused.what();
+  }
+  for (const char* name : {"__sde_f_min_3", "__sde_f_max_3", "__sde_f_min_2"}) {
+    EXPECT_TRUE(backend.constraints.contains(name)) << name;
+  }
+  EXPECT_FALSE(backend.constraints.contains("__sde_f_min_1"));
+  EXPECT_TRUE(fence.state().closed());
+}
+
 TEST(WriteFence, AFailedResponseLeavesTheTableToInspect) {
   // The DDL took effect and the response was lost: the next call reads the constraints that are
   // there, so a retry resumes rather than repeating or assuming a rollback.

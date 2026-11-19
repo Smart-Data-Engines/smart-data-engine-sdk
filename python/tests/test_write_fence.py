@@ -53,7 +53,7 @@ def test_a_retry_drains_again_and_releasing_one_hold_keeps_the_other() -> None:
     assert not fence.release(other).closed
 
 
-@pytest.mark.parametrize("boundary", range(1, 8))
+@pytest.mark.parametrize("boundary", range(1, 7))
 def test_preparation_resumes_after_every_side_effect(boundary: int) -> None:
     backend, fence = fixture()
     backend.fail_after = boundary
@@ -66,7 +66,8 @@ def test_preparation_resumes_after_every_side_effect(boundary: int) -> None:
     assert not backend.accepts(2)
 
 
-@pytest.mark.parametrize("boundary", range(1, 5))
+# An epoch change is one change of the table: it happened, or it did not.
+@pytest.mark.parametrize("boundary", range(1, 2))
 def test_epoch_change_stays_closed_after_every_interruption(boundary: int) -> None:
     backend, fence = fixture()
     fence.prepare(1)
@@ -81,6 +82,28 @@ def test_epoch_change_stays_closed_after_every_interruption(boundary: int) -> No
     fence.release(HOLD)
     assert backend.accepts(2)
     assert not backend.accepts(1)
+
+
+def test_a_newer_epoch_installed_during_the_change_is_never_dropped_and_refuses() -> None:
+    """Another executor installs epoch 3 after this one read the state and before its change: the
+    change drops only what that read showed, so epoch 3's bounds stay, and the check after it
+    refuses, with the table closed."""
+    backend, fence = fixture()
+    fence.prepare(1)
+    fence.freeze(HOLD)
+    change = backend.change_constraints
+
+    def raced(table: str, *, add: Any, drop: Any) -> None:
+        backend.constraints["__sde_f_min_3"] = "__sde_write_epoch >= 3"
+        backend.constraints["__sde_f_max_3"] = "__sde_write_epoch <= 3"
+        change(table, add=add, drop=drop)
+
+    backend.change_constraints = raced  # type: ignore[method-assign]
+    with pytest.raises(sde.MigrationRefused, match="newer write epoch; table stays closed"):
+        fence.advance(2)
+    assert {"__sde_f_min_3", "__sde_f_max_3", "__sde_f_min_2"} <= set(backend.constraints)
+    assert "__sde_f_min_1" not in backend.constraints
+    assert not any(backend.accepts(epoch) for epoch in (1, 2, 3))
 
 
 @pytest.mark.parametrize("epoch", [0, -1, True, 1.5, 2**53])

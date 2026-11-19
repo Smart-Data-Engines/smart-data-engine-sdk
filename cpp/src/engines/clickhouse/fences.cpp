@@ -159,6 +159,23 @@ void Fences::drop_constraint(const std::string& table, const std::string& name) 
   command("ALTER TABLE " + quote(table) + " DROP CONSTRAINT IF EXISTS " + quote(name));
 }
 
+// One ALTER of several commands: ClickHouse writes and syncs the table's metadata once, and that
+// sync is most of an ALTER's time.
+void Fences::change_constraints(const std::string& table,
+                                const std::vector<std::pair<std::string, std::string>>& add,
+                                const std::vector<std::string>& drop) {
+  std::string clauses;
+  for (const auto& [name, expression] : add) {
+    clauses += (clauses.empty() ? "" : ", ") + std::string("ADD CONSTRAINT IF NOT EXISTS ") +
+               quote(name) + " CHECK " + expression;
+  }
+  for (const std::string& name : drop) {
+    clauses += (clauses.empty() ? "" : ", ") + std::string("DROP CONSTRAINT IF EXISTS ") +
+               quote(name);
+  }
+  if (!clauses.empty()) command("ALTER TABLE " + quote(table) + " " + clauses);
+}
+
 void Fences::drain_log() {
   command("CREATE TABLE IF NOT EXISTS " + quote(DRAIN_TABLE) +
           " (table_name String, table_uuid UUID, project_id FixedString(32), hold String) "

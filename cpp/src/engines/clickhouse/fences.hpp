@@ -29,6 +29,9 @@ class Fences final : public FenceBackend {
   void add_constraint(const std::string& table, const std::string& name,
                       const std::string& expression) override;
   void drop_constraint(const std::string& table, const std::string& name) override;
+  void change_constraints(const std::string& table,
+                          const std::vector<std::pair<std::string, std::string>>& add,
+                          const std::vector<std::string>& drop) override;
   void drain(const std::string& table, const std::string& project_id,
              const std::string& hold) override;
   void restore(const std::string& table, const std::string& project_id,

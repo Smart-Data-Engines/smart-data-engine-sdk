@@ -236,6 +236,9 @@ tables):
   CONSTRAINT` and `DROP CONSTRAINT` statements of that step took 0.6 to 1.3 s each in ClickHouse,
   statements of milliseconds otherwise, and its `query_log` shows them waiting for no lock. Why,
   this record does not know.
+  Measured after this record ([fence-in-one-statement](../fence-in-one-statement/README.md)): each
+  such `ALTER` writes and syncs the table's metadata once, and the sync is most of its time - the
+  more so the busier the disk. The step is now one statement on each table.
   One run at a million took 5.8 s, at a load average of 11.2: 2.9 s of it writing the map's
   markers, 1.6 s raising the copy's generation.
 - **The settle.** It reads the group once, writes what differs and pauses nothing: 1.2 to 1.5 s at
