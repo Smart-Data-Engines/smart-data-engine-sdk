@@ -96,6 +96,167 @@ with the table, the index, the text columns and the remedy, a staging into a fre
 administrator's `ALTER COLUMN`. Why it is not a mismatch, and what each remedy costs, is in
 [the format contract](format-contract.md) §7a.
 
+## The operation hook
+
+A session given a hook calls it once for every operation it completes, after the operation and in
+the thread or task that ran it, with one record:
+
+| Field | What it holds |
+|---|---|
+| `operation` | the method: `save`, `save_many`, `get`, `scan`, `count`, `summarize`, `search`, `book_stream`, `book_at`, or `transaction` for a whole transaction from its opening to its end |
+| `entity`, `group` | in your own names, also when the model's identifiers are hashed |
+| `shape` | the operation shape's id, as telemetry names it; empty for a transaction |
+| `engine`, `dialect` | the engine's name in the placement map and its dialect - never its address |
+| `materialization` | the copy that served the operation |
+| `duration_ns` (`durationNs` in TypeScript) | how long it took, on the monotonic clock |
+| `rows` | rows written or returned; 1 for a count or a summary |
+| `outcome` | `ok`, the class of an error of this library's hierarchy, or `unexpected` |
+
+Nothing an operation carried reaches it: no key, no row, no filter, no statement, no connection
+string and no error message, since a driver's message can quote a key. Each library's tests put one
+value in every row, key and filter of every operation and find it nowhere in what the hook was
+given - and, as the control, in the rows the operations return (`python/tests/test_operation_hook.py`,
+`typescript/tests/operation-hook.test.ts`, `cpp/tests/unit/test_operation_hook.cpp`). There is no
+start time: the library reads the wall clock only to stamp what happened, and a span's start is the
+time the hook runs minus `duration_ns`.
+
+A hook that raises changes nothing about the operation's result; it is counted under
+`session.hook` in `internal_failures()`. A slow hook is a slow application: it runs before the
+operation returns. Pass it as `Session(..., hook=...)` in Python, `Session.open(..., { hook })` in
+TypeScript and `SessionOptions::hook` in C++.
+
+### OpenTelemetry
+
+This library depends on no tracing or metrics package and has no exporter. A span and a histogram
+value for each operation are a few lines of your own code. In Python, with the `opentelemetry-api`
+package:
+
+<!-- bridge:python -->
+```python
+import time
+from typing import Any
+
+from opentelemetry.trace import Status, StatusCode
+
+import sde
+
+def opentelemetry_hook(tracer: Any, histogram: Any) -> sde.OperationHook:
+    """A span and a histogram value for each operation the session completes."""
+
+    def hook(record: sde.OperationRecord) -> None:
+        end = time.time_ns()
+        span = tracer.start_span(
+            f"sde.{record.operation}",
+            start_time=end - record.duration_ns,
+            attributes={
+                "db.system": record.dialect,
+                "sde.entity": record.entity,
+                "sde.group": record.group,
+                "sde.shape": record.shape,
+                "sde.engine": record.engine,
+                "sde.materialization": record.materialization,
+                "sde.rows": record.rows,
+            },
+        )
+        if record.outcome != "ok":
+            span.set_status(Status(StatusCode.ERROR, record.outcome))
+        span.end(end_time=end)
+        histogram.record(
+            record.duration_ns / 1e9,
+            attributes={
+                "sde.operation": record.operation,
+                "db.system": record.dialect,
+                "sde.outcome": record.outcome,
+            },
+        )
+
+    return hook
+```
+
+with `tracer = trace.get_tracer("sde")` and `histogram = metrics.get_meter("sde").create_histogram(
+"sde.operation.duration", unit="s")`. In TypeScript, with `@opentelemetry/api`:
+
+<!-- bridge:typescript -->
+```typescript
+import { SpanStatusCode, type Histogram, type Tracer } from '@opentelemetry/api'
+import type { OperationHook } from '@smart-data-engines/sde'
+
+/** A span and a histogram value for each operation the session completes. */
+function opentelemetryHook(tracer: Tracer, histogram: Histogram): OperationHook {
+  return (record) => {
+    const end = performance.timeOrigin + performance.now()
+    const span = tracer.startSpan(`sde.${record.operation}`, {
+      startTime: end - record.durationNs / 1e6,
+      attributes: {
+        'db.system': record.dialect,
+        'sde.entity': record.entity,
+        'sde.group': record.group,
+        'sde.shape': record.shape,
+        'sde.engine': record.engine,
+        'sde.materialization': record.materialization,
+        'sde.rows': record.rows,
+      },
+    })
+    if (record.outcome !== 'ok') span.setStatus({ code: SpanStatusCode.ERROR, message: record.outcome })
+    span.end(end)
+    histogram.record(record.durationNs / 1e9, {
+      'sde.operation': record.operation,
+      'db.system': record.dialect,
+      'sde.outcome': record.outcome,
+    })
+  }
+}
+```
+
+And in C++, with opentelemetry-cpp, where a span ends on the steady clock, so it starts on both:
+
+<!-- bridge:cpp -->
+```cpp
+#include <opentelemetry/metrics/sync_instruments.h>
+#include <opentelemetry/trace/tracer.h>
+
+#include "sde/hook.hpp"
+
+/// A span and a histogram value for each operation the session completes.
+sde::OperationHook opentelemetry_hook(
+    opentelemetry::nostd::shared_ptr<opentelemetry::trace::Tracer> tracer,
+    opentelemetry::metrics::Histogram<double>* histogram) {
+  return [tracer, histogram](const sde::OperationRecord& record) {
+    const auto took = std::chrono::nanoseconds(record.duration_ns);
+    const auto end = std::chrono::steady_clock::now();
+    opentelemetry::trace::StartSpanOptions options;
+    options.start_system_time =
+        opentelemetry::common::SystemTimestamp(std::chrono::system_clock::now() - took);
+    options.start_steady_time = opentelemetry::common::SteadyTimestamp(end - took);
+    auto span = tracer->StartSpan("sde." + record.operation,
+                                  {{"db.system", record.dialect},
+                                   {"sde.entity", record.entity},
+                                   {"sde.group", record.group},
+                                   {"sde.shape", record.shape},
+                                   {"sde.engine", record.engine},
+                                   {"sde.materialization", record.materialization},
+                                   {"sde.rows", static_cast<std::int64_t>(record.rows)}},
+                                  options);
+    if (record.outcome != "ok") {
+      span->SetStatus(opentelemetry::trace::StatusCode::kError, record.outcome);
+    }
+    opentelemetry::trace::EndSpanOptions ending;
+    ending.end_steady_time = opentelemetry::common::SteadyTimestamp(end);
+    span->End(ending);
+    histogram->Record(static_cast<double>(record.duration_ns) / 1e9,
+                      {{"sde.operation", record.operation},
+                       {"db.system", record.dialect},
+                       {"sde.outcome", record.outcome}},
+                      opentelemetry::context::Context{});
+  };
+}
+```
+
+Each block is the code its language's test runs (`python/tests/test_otel_bridge.py`,
+`typescript/tests/otel-bridge.test.ts`, `cpp/tests/unit/test_otel_bridge.cpp`) against stand-ins
+with OpenTelemetry's shape, held equal to this page by the same test. Which events and which
+numbers deserve an alert is in [alerts](alerts.md).
+
 ## What is not here
 
 No log line carries one of your rows. Telemetry is keyed by the *shape* of an operation — assembled
