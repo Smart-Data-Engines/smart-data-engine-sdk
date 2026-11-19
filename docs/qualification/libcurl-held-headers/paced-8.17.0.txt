@@ -1,0 +1,18 @@
+# curlimages/curl:8.17.0 (docker exit 0)
+01:33:47.925834 > User-Agent: curl/8.17.0
+## server
+sent at  0.000s: b'HTTP/1.1 200 OK\r\n'
+sent at  1.001s: b'X-ClickHouse-Progress: {"read_rows":"0"}'
+sent at  2.001s: b'X-ClickHouse-Progress: {"read_rows":"1"}'
+sent at  3.001s: b'X-ClickHouse-Progress: {"read_rows":"2"}'
+sent at  4.002s: b'X-ClickHouse-Progress: {"read_rows":"3"}'
+sent at  4.502s: b'Content-Length: 5\r\nConnection: close\r\n\r\n'
+## client
+01:33:47.926134 < HTTP/1.1 200 OK
+01:33:48.926651 < X-ClickHouse-Progress: {"read_rows":"0"}
+01:33:49.926984 < X-ClickHouse-Progress: {"read_rows":"1"}
+01:33:50.927224 < X-ClickHouse-Progress: {"read_rows":"2"}
+01:33:51.927551 < X-ClickHouse-Progress: {"read_rows":"3"}
+01:33:52.427883 < Content-Length: 5
+01:33:52.428011 < Connection: close
+01:33:52.428120 < 

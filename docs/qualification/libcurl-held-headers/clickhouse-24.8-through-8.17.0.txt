@@ -1,0 +1,10 @@
+# curl 8.17.0 -v --trace-time against ClickHouse 24.8.14.39: SELECT count() FROM numbers(5) WHERE sleepEachRow(1) = 0,
+# with send_progress_in_http_headers=1, http_headers_progress_interval_ms=1000, wait_end_of_query=1, max_block_size=1
+01:35:38.262525 > POST /?send_progress_in_http_headers=1&http_headers_progress_interval_ms=1000&wait_end_of_qu
+01:35:39.265773 < HTTP/1.1 200 OK
+01:35:39.266672 < X-ClickHouse-Progress: {"read_rows":"2","read_bytes":"16",
+01:35:40.266286 < X-ClickHouse-Progress: {"read_rows":"3","read_bytes":"24",
+01:35:41.266883 < X-ClickHouse-Progress: {"read_rows":"4","read_bytes":"32",
+01:35:42.267598 < X-ClickHouse-Progress: {"read_rows":"5","read_bytes":"40",
+01:35:43.268853 < X-ClickHouse-Progress: {"read_rows":"5","read_bytes":"40",
+01:35:43.269494 < X-ClickHouse-Summary: {"read_rows":"5","read_bytes":"40",

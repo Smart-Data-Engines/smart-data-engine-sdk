@@ -2409,10 +2409,8 @@ is the mark a later comparison can start from.
 
 The envelope is `kind: "sde-advance"`, `protocol` 1, `advance_id`, `project_id`, `group`,
 `pause_budget_ms`, `before`, `after` and `signature`, signed and fingerprinted as the other packets
-are. Both maps are contract 4 or later with every layout written out, and here a layout that
-carries `auto` is refused whatever the member says: whether a value asks for a derived layout is
-read differently by different languages, and no signed map has a reason to carry it. A group
-without a write generation (§7k) cannot be advanced.
+are. Both maps are contract 4 or later with every layout written out. A group without a write
+generation (§7k) cannot be advanced.
 
 The three libraries load and validate the packet; `migration/201`-`230` pin three acceptances and a
 refusal for each rule, each with the fragment of the message every library gives. Loading one
@@ -2421,3 +2419,21 @@ the advance, its recovery and its abandonment before the decision.
 
 **Which number moves: neither.** The packet has a protocol of its own and no IR or map changed: a
 library that predates it has no loader for it and reads every map as before.
+
+## 7q. A map in a packet carries no `auto`
+
+Every signed packet - cutover (§7g), staging (§7h), index build (§7j), generation advance (§7p) -
+requires its maps to write every layout out, because an operator acts on the tables the maps name
+and a derived layout is derived by whichever library loads the map. The rule is on the member, not
+on its value: a layout that carries `auto` is refused, whatever `auto` says.
+
+It used to be on the value, and that was not one rule. The three older loaders refused a layout
+whose `auto` the loading library called true, and an empty array is true in JavaScript and is not
+in Python: a map with `"auto": []` beside a layout written out was taken by the Python and C++
+loaders and refused by the TypeScript ones (measured on the same signed packets, before the
+change). `migration/224`, `225` and `231`-`236` hold the rule for each packet with the value the
+languages disagreed on, `[]`, and one they agreed on, `false`.
+
+**Which number moves: neither.** A refusal was tightened and none was dropped (§11): a map with an
+`auto` member that is not `true` was never one a control plane wrote, and for the value the
+libraries disagreed on, one of the three refused the packet already.

@@ -45,7 +45,8 @@ A loader refuses the packet unless every rule holds:
 
 1. exactly these fields; `kind` `sde-index`, `protocol` 1; both ids 32 lowercase hexadecimal
    digits; the locally configured project; valid signatures on the envelope and both maps; both
-   maps contract 4 or later with explicit layouts;
+   maps contract 4 or later with explicit layouts - a layout that carries `auto` is refused
+   whatever the member says (`migration/233`, `234`);
 2. `prepared.contract` is at least `current.contract` - it may rise from 4 to 5, because an index
    method first appears here - and `prepared.map_version` is greater than `current.map_version`;
 3. the same groups; the same routing and other top-level attributes; every group but `group`
