@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "sde/errors.hpp"
+#include "sde/hashing.hpp"
 #include "sde/hook.hpp"
 #include "sde/model.hpp"
 #include "sde/placement.hpp"
@@ -228,6 +229,31 @@ TEST(OperationHook, NothingAnOperationCarriedReachesTheHook) {
   for (const sde::OperationRecord& record : fixture.records) {
     EXPECT_EQ(text(record).find(SENTINEL), std::string::npos) << text(record);
   }
+}
+
+TEST(OperationHook, AHashedModelIsNamedInTheApplicationsOwnWords) {
+  const sde::Model plain = sde::load_neutral_model(R"({"entities": [
+    {"name": "Note", "fields": [{"name": "body", "type": "string"}, {"name": "id", "type": "string"}],
+     "key": ["id"]}], "relations": [], "atomic": []})");
+  const auto [hashed, names] = sde::hash_identifiers(plain, "operation-hook-salt-for-a-test!!");
+  const std::string text = R"({"contract": 3, "model_version": ")" + hashed.version() +
+                           R"(", "map_version": 1, "groups": {")" + names.entity("Note") +
+                           R"(": {"source": {"id": "notes@pg", "engine": "pg-main",
+                           "layout": {"auto": true}}}}})";
+  sde::LoadOptions load;
+  load.model = &hashed;
+  const sde::PlacementMap map = sde::load_map(std::string_view(text), load);
+  Reader pg;
+  std::vector<sde::OperationRecord> records;
+  sde::SessionOptions options;
+  options.names = &names;
+  options.hook = [&records](const sde::OperationRecord& record) { records.push_back(record); };
+  sde::Session session(hashed, map, {{"pg-main", &pg}}, options);
+  session.save("Note", {{"id", "a"}, {"body", "one"}});
+  ASSERT_EQ(records.size(), 1U);
+  EXPECT_EQ(records[0].entity, "Note");
+  EXPECT_EQ(records[0].group, "Note");
+  EXPECT_NE(names.entity("Note"), "Note");  // the control: the model's own name is a digest
 }
 
 TEST(OperationHook, TheRecordHasTheContractsFieldsInOrder) {

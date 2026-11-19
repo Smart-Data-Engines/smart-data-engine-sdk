@@ -7,7 +7,7 @@
  * operations return, so the test cannot pass by looking at nothing.
  */
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { EngineError, enumerateShapes, internalFailures, loadMap, ModelPlanningError,
+import { EngineError, enumerateShapes, hashIdentifiers, internalFailures, loadMap, ModelPlanningError,
   OPERATION_FIELDS, OPERATIONS, outcomeOf, resetInternalFailures, Session, shapeId,
   type OperationRecord, type ReadColumn, type ReadPlan, type Row } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
@@ -152,4 +152,19 @@ it('has the contract\'s fields in order', () => {
   expect(outcomeOf(undefined)).toBe('ok')
   expect(outcomeOf(new EngineError('x'))).toBe('EngineError')
   expect(outcomeOf(new RangeError('x'))).toBe('unexpected')
+})
+
+it('names a hashed model in the application\'s own words', async () => {
+  const plain = modelFromNeutral({ entities: [{ name: 'Note', fields: [{ name: 'body', type: 'string' },
+    { name: 'id', type: 'string' }], key: ['id'] }], relations: [], atomic: [] })
+  const { model: hashed, names } = hashIdentifiers(plain, Buffer.from('operation-hook-salt-for-a-test!!'))
+  const group = Object.values(names.entities)[0]!
+  const placement = loadMap({ contract: 3, model_version: hashed.version, map_version: 1,
+    groups: { [group]: { source: { id: 'notes@pg', engine: 'pg-main', layout: { auto: true } } } } }, { model: hashed })
+  const records: OperationRecord[] = []
+  const notes = await Session.open(hashed, placement, { 'pg-main': new Reader({ name: 'pg-main' }) },
+    { names, hook: (record) => records.push(record) })
+  await notes.save('Note', { id: 'a', body: 'one' })
+  expect([records[0]!.entity, records[0]!.group]).toEqual(['Note', 'Note'])
+  expect(group).not.toBe('Note')  // the control: the model's own name is a digest
 })

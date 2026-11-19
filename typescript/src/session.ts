@@ -1405,11 +1405,11 @@ export class Session {
   /** An entity's or a group's name as the application wrote it (a group is named after an entity). */
   private applicationName(modelName: string): string {
     if (this.names === undefined) return modelName
-    for (const [original, hashed] of Object.entries(this.names.entities)) {
-      if (hashed === modelName) return original
-    }
-    return modelName
+    this.applicationNames ??= new Map(Object.entries(this.names.entities).map(([original, hashed]) => [hashed, original]))
+    return this.applicationNames.get(modelName) ?? modelName
   }
+  /** The application's name of each hashed one, built at the first record rather than per record. */
+  private applicationNames: Map<string, string> | undefined
 
   // --- transactions ------------------------------------------------------------------------
 

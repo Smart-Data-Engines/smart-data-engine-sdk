@@ -111,6 +111,9 @@ Session::Session(const Model& model, const PlacementMap& placement,
       hook_(std::move(options.hook)),
       groups_(model.groups()) {
   detail::check_project_id(project_id_);
+  if (names_ != nullptr) {
+    for (const auto& [original, hashed] : names_->entities) application_names_.emplace(hashed, original);
+  }
 
   // The one place the client's names and the hashed ones meet: everything downstream speaks
   // digests, and the application keeps saying its own names.
@@ -1139,11 +1142,8 @@ void Session::call_hook(std::string_view operation, const std::string& entity,
 }
 
 std::string Session::application_name(const std::string& model_name) const {
-  if (names_ == nullptr) return model_name;
-  for (const auto& [original, hashed] : names_->entities) {
-    if (hashed == model_name) return original;
-  }
-  return model_name;
+  const auto found = application_names_.find(model_name);
+  return found == application_names_.end() ? model_name : found->second;
 }
 
 // --- transactions -------------------------------------------------------------------------------

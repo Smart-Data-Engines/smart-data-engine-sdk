@@ -252,6 +252,8 @@ class Session {
   std::optional<std::string> project_id_;
   LogSink log_;
   OperationHook hook_;
+  /// The application's name of each hashed entity name, for the hook's records; empty unhashed.
+  std::map<std::string, std::string> application_names_;
   std::vector<Group> groups_;
   std::map<std::tuple<std::string, std::string, std::vector<std::string>>, const OperationShape*>
       shapes_;
