@@ -39,6 +39,7 @@ from qualification import soak_traffic as traffic
 from sde.testing.loader import model_from_neutral
 
 STUCK_REPORTS_S = (60, 300, 900, 3600)
+SLOW_NS = 1_000_000_000  # an operation this long is an event of its own, with its exact duration
 # The reads look at the newest writes: 150 orders (50 an account) or 10 batches of readings.
 WINDOW = {"postgres": 150, "clickhouse": 10}
 
@@ -395,6 +396,8 @@ class Worker:
             self.running = None
         ended = time.monotonic_ns()
         minute.record(kind, ended - began, began - due, error)
+        if ended - began >= SLOW_NS:
+            self.event({"slow": kind, "duration_ns": ended - began, "ok": error is None})
         if error is None:
             self.totals[kind] += 1
             if self.failures_since_success:
