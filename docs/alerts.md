@@ -3,8 +3,8 @@
 *In English because it is for whoever is on call, not for us.*
 
 This library runs in your application and reports through it: its events go to the `sde` logger in
-Python, to the sink you give a session in C++, and its operations to the hook you give a session
-([observability](observability.md)). This page says which of them should wake somebody, which
+Python and to the sink you pass in C++ and TypeScript, and its operations to the hook you give a
+session ([observability](observability.md)). This page says which of them should wake somebody, which
 should open a ticket, and which are for reading when something else went wrong. What each failure
 does to your call is in [failure semantics](failure-semantics.md); this page is what to do about it.
 

@@ -45,6 +45,15 @@ Logging goes through the standard `logging` module under the `sde` logger, at IN
 your application has configured a handler. Event names are a closed set so that an alert built on
 one keeps working; the values are in `record.sde_fields` rather than interpolated into the name.
 
+The C++ and TypeScript libraries have no logger: an event goes to a sink you pass in, a function
+of the event's name and an object of its fields (`SessionOptions::log` and the adapters' `log` in
+C++; `events` in TypeScript's `loadMap`, `Session.open`, `backfill` and the adapters'
+constructors). Without one they say nothing. Their vocabulary is a subset of the list below,
+held to it by a test: a routing decision, a model built and a telemetry window are events only
+here, and TypeScript, whose PostgreSQL adapter does not check index collations, has no
+`sde.schema.text_collation`. A sink that throws changes nothing about the operation it reports
+on; TypeScript counts it under `events.sink` in `internalFailures()`.
+
 <!-- events:begin -->
 - `sde.explain.no_query_tree`
 - `sde.internal.error`
