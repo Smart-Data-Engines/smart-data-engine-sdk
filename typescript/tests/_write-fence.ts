@@ -22,6 +22,14 @@ export class MemoryFences implements FenceBackend {
   async dropConstraint(table: string, name: string): Promise<void> {
     delete this.constraints[name]; this.done('drop', table, name)
   }
+  async changeConstraints(
+    table: string,
+    change: { add: ReadonlyArray<readonly [string, string]>; drop: readonly string[] },
+  ): Promise<void> {
+    for (const [name, expression] of change.add) this.constraints[name] ??= expression
+    for (const name of change.drop) delete this.constraints[name]
+    this.done('change', table, change.add.map(([name, expression]) => [name, expression]), [...change.drop])
+  }
   async drain(table: string, options: { projectId: string; hold: string }): Promise<void> {
     const state = fenceState(await this.metadata(table))
     expect(state.projectId).toBe(options.projectId)

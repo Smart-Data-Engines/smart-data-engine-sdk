@@ -87,6 +87,46 @@ def test_native_constraints_reject_unstamped_old_and_future_writers(guarded: Any
     assert engine.count(table) == 2
 
 
+@pytest.mark.parametrize("guarded", ["postgres", "clickhouse"], indirect=True)
+def test_an_epoch_change_and_a_release_are_one_statement_each(guarded: Any) -> None:
+    """An advance's bounds, and a barrier's release, are one ALTER TABLE of several
+    clauses - one lock of the table on PostgreSQL, one write and sync of its metadata on ClickHouse
+    - and the engine enforces what they leave."""
+    engine, table, fence = guarded
+    fence.prepare(1)
+    fence.freeze(HOLD)
+    backend = fence._backend
+    sent: list[str] = []
+    attribute = "_query" if engine.dialect == "postgres" else "_command"
+    original = getattr(backend, attribute)
+
+    def counted(query: str, *rest: Any) -> Any:
+        sent.append(query)
+        return original(query, *rest)
+
+    setattr(backend, attribute, counted)
+    state = fence.advance(2)
+    (advance,) = [query for query in sent if query.startswith("ALTER TABLE")]
+    assert "ADD CONSTRAINT" in advance and "DROP CONSTRAINT IF EXISTS" in advance
+    assert (state.lower_epoch, state.upper_epoch, state.closed) == (2, 2, True)
+    # Repeated - a retry after a lost response - it changes nothing and refuses nothing.
+    # PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS: what is already there is left out.
+    sent.clear()
+    assert fence.advance(2) == state
+    assert len([query for query in sent if query.startswith("ALTER TABLE")]) == (
+        0 if engine.dialect == "postgres" else 1
+    )
+    sent.clear()
+    released = fence.release(HOLD)
+    (release,) = [query for query in sent if query.startswith("ALTER TABLE")]
+    assert "retired_" + HOLD in release and "hold_" + HOLD in release
+    assert (released.closed, released.retired) == (False, (HOLD,))
+    with pytest.raises(sde.EngineError):
+        engine.insert(table, {"id": 1, sde.WRITE_EPOCH_COLUMN: 1})
+    engine.insert(table, {"id": 2, sde.WRITE_EPOCH_COLUMN: 2})
+    assert engine.count(table) == 1
+
+
 @pytest.mark.parametrize("guarded", ["clickhouse"], indirect=True)
 def test_an_interruption_after_detach_resumes_only_the_logged_table(
     guarded: Any, monkeypatch: pytest.MonkeyPatch

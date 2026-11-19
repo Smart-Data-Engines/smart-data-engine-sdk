@@ -1,0 +1,389 @@
+{
+  "clickhouse": "24.8.14.39",
+  "rows": 4000000,
+  "blocks": 40,
+  "results": [
+    {
+      "round": 0,
+      "case": "merging",
+      "parts_after_insert": 20,
+      "waited_before": 0.01,
+      "total_seconds": 0.1983,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.1015,
+          "merges_before": [
+            {
+              "elapsed": 0.26501421,
+              "progress": 0.6285913043478261,
+              "parts": 8,
+              "bytes": 29012415
+            },
+            {
+              "elapsed": 0.126952888,
+              "progress": 0.9016,
+              "parts": 6,
+              "bytes": 7812648
+            }
+          ]
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0326,
+          "merges_before": [
+            {
+              "elapsed": 0.372436942,
+              "progress": 0.890935652173913,
+              "parts": 8,
+              "bytes": 29012415
+            }
+          ]
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0311,
+          "merges_before": [
+            {
+              "elapsed": 0.410065244,
+              "progress": 0.9850156521739131,
+              "parts": 8,
+              "bytes": 29012415
+            }
+          ]
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0331,
+          "merges_before": []
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "case": "optimize",
+      "parts_after_insert": 20,
+      "waited_before": 0.01,
+      "total_seconds": 0.0325,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0164,
+          "merges_before": [
+            {
+              "elapsed": 0.406759322,
+              "progress": 0.9672069565217392,
+              "parts": 8,
+              "bytes": 28530523
+            },
+            {
+              "elapsed": 0.141930485,
+              "progress": 1.0,
+              "parts": 6,
+              "bytes": 7812648
+            }
+          ]
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0055,
+          "merges_before": [
+            {
+              "elapsed": 0.427904958,
+              "progress": 1.0,
+              "parts": 8,
+              "bytes": 28530523
+            }
+          ]
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0057,
+          "merges_before": [
+            {
+              "elapsed": 0.005380965,
+              "progress": 0.014043428571428571,
+              "parts": 8,
+              "bytes": 50932697
+            }
+          ]
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0049,
+          "merges_before": [
+            {
+              "elapsed": 0.015920299,
+              "progress": 0.038912,
+              "parts": 8,
+              "bytes": 50932697
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "case": "merged",
+      "parts_after_insert": 20,
+      "waited_before": 3.05,
+      "total_seconds": 0.0649,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0486,
+          "merges_before": []
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0059,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.006,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0044,
+          "merges_before": []
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "case": "stopped",
+      "parts_after_insert": 15,
+      "waited_before": 2.55,
+      "total_seconds": 0.3419,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.1662,
+          "merges_before": []
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0422,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0664,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0671,
+          "merges_before": []
+        }
+      ]
+    },
+    {
+      "round": 0,
+      "case": "one-statement",
+      "parts_after_insert": 20,
+      "waited_before": 0.0,
+      "total_seconds": 0.4129,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.4129,
+          "merges_before": [
+            {
+              "elapsed": 0.401653384,
+              "progress": 0.8944973913043478,
+              "parts": 8,
+              "bytes": 28530523
+            },
+            {
+              "elapsed": 0.131226699,
+              "progress": 1.0,
+              "parts": 6,
+              "bytes": 7812648
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "case": "merging",
+      "parts_after_insert": 20,
+      "waited_before": 0.01,
+      "total_seconds": 0.1712,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0651,
+          "merges_before": [
+            {
+              "elapsed": 0.452791789,
+              "progress": 1.0,
+              "parts": 8,
+              "bytes": 28530523
+            },
+            {
+              "elapsed": 0.147735609,
+              "progress": 1.0,
+              "parts": 6,
+              "bytes": 7812648
+            }
+          ]
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0323,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0293,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0445,
+          "merges_before": []
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "case": "optimize",
+      "parts_after_insert": 15,
+      "waited_before": 0.01,
+      "total_seconds": 0.2204,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0833,
+          "merges_before": [
+            {
+              "elapsed": 0.010640259,
+              "progress": 0.029407179487179486,
+              "parts": 8,
+              "bytes": 50932697
+            }
+          ]
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0463,
+          "merges_before": [
+            {
+              "elapsed": 0.098698598,
+              "progress": 0.186368,
+              "parts": 8,
+              "bytes": 50932697
+            }
+          ]
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0453,
+          "merges_before": [
+            {
+              "elapsed": 0.149826448,
+              "progress": 0.280576,
+              "parts": 8,
+              "bytes": 50932697
+            }
+          ]
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0455,
+          "merges_before": [
+            {
+              "elapsed": 0.200083161,
+              "progress": 0.36864,
+              "parts": 8,
+              "bytes": 50932697
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "case": "merged",
+      "parts_after_insert": 15,
+      "waited_before": 3.04,
+      "total_seconds": 0.03,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0142,
+          "merges_before": []
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0041,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0066,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0051,
+          "merges_before": []
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "case": "stopped",
+      "parts_after_insert": 15,
+      "waited_before": 2.54,
+      "total_seconds": 0.1789,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0774,
+          "merges_before": []
+        },
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_hi_2 CHECK __sde_write_",
+          "seconds": 0.0274,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_lo_2",
+          "seconds": 0.0283,
+          "merges_before": []
+        },
+        {
+          "statement": "DROP CONSTRAINT IF EXISTS __sde_f_hi_2",
+          "seconds": 0.0458,
+          "merges_before": []
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "case": "one-statement",
+      "parts_after_insert": 15,
+      "waited_before": 0.0,
+      "total_seconds": 0.0375,
+      "steps": [
+        {
+          "statement": "ADD CONSTRAINT IF NOT EXISTS __sde_f_lo_2 CHECK __sde_write_",
+          "seconds": 0.0375,
+          "merges_before": [
+            {
+              "elapsed": 0.298980307,
+              "progress": 0.7390052173913043,
+              "parts": 8,
+              "bytes": 29012415
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

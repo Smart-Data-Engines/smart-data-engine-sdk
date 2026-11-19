@@ -1,0 +1,98 @@
+{
+ "machine": "km-ThinkPad-E570",
+ "python": "3.14.4",
+ "library": "python/src/sde/__init__.py",
+ "commit": "894d96d789d50a948277c6a70764e5597ad53c06",
+ "clickhouse": "24.8.14.39",
+ "rows": 2000000,
+ "rounds": 10,
+ "load_before": [
+  2.26806640625,
+  3.318359375,
+  3.49462890625
+ ],
+ "quiet": [
+  {
+   "advance_ms": 223.0,
+   "release_ms": 124.2
+  },
+  {
+   "advance_ms": 184.9,
+   "release_ms": 151.3
+  },
+  {
+   "advance_ms": 251.6,
+   "release_ms": 103.6
+  },
+  {
+   "advance_ms": 202.0,
+   "release_ms": 163.4
+  },
+  {
+   "advance_ms": 231.7,
+   "release_ms": 119.6
+  },
+  {
+   "advance_ms": 246.3,
+   "release_ms": 146.9
+  },
+  {
+   "advance_ms": 221.4,
+   "release_ms": 138.5
+  },
+  {
+   "advance_ms": 244.0,
+   "release_ms": 87.2
+  },
+  {
+   "advance_ms": 757.5,
+   "release_ms": 105.1
+  },
+  {
+   "advance_ms": 217.8,
+   "release_ms": 121.6
+  }
+ ],
+ "busy": [
+  {
+   "advance_ms": 756.0,
+   "release_ms": 78.9
+  },
+  {
+   "advance_ms": 128.9,
+   "release_ms": 71.8
+  },
+  {
+   "advance_ms": 108.4,
+   "release_ms": 77.3
+  },
+  {
+   "advance_ms": 133.7,
+   "release_ms": 73.7
+  },
+  {
+   "advance_ms": 2798.8,
+   "release_ms": 948.4
+  },
+  {
+   "advance_ms": 3478.2,
+   "release_ms": 798.7
+  },
+  {
+   "advance_ms": 151.8,
+   "release_ms": 101.4
+  },
+  {
+   "advance_ms": 183.9,
+   "release_ms": 81.2
+  },
+  {
+   "advance_ms": 1279.7,
+   "release_ms": 1877.0
+  },
+  {
+   "advance_ms": 4468.1,
+   "release_ms": 1805.0
+  }
+ ]
+}

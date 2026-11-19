@@ -78,6 +78,25 @@ export class PostgresFences implements FenceBackend {
     this.idle()
     await this.transport.query(`ALTER TABLE ${this.quote(table)} DROP CONSTRAINT IF EXISTS ${this.quote(name)}`)
   }
+  /**
+   * One ALTER TABLE: one lock of the table, not one per constraint. PostgreSQL has no ADD
+   * CONSTRAINT IF NOT EXISTS, so a constraint already there is left out, as addConstraint leaves it.
+   */
+  async changeConstraints(
+    table: string,
+    change: { add: ReadonlyArray<readonly [string, string]>; drop: readonly string[] },
+  ): Promise<void> {
+    this.idle()
+    const present = (await this.metadata(table)).constraints
+    const clauses = [
+      ...change.add.filter(([name]) => !(name in present)).map(([name, expression]) => {
+        const predicate = expression === '1' ? 'true' : expression === '0' ? 'false' : expression
+        return `ADD CONSTRAINT ${this.quote(name)} CHECK (${predicate}) NOT VALID`
+      }),
+      ...change.drop.filter((name) => name in present).map((name) => `DROP CONSTRAINT IF EXISTS ${this.quote(name)}`),
+    ]
+    if (clauses.length > 0) await this.transport.query(`ALTER TABLE ${this.quote(table)} ${clauses.join(', ')}`)
+  }
   async drain(table: string, options: { projectId: string; hold: string }): Promise<void> {
     this.idle()
     await this.transport.transaction(async () => {
@@ -137,6 +156,20 @@ export class ClickHouseFences implements FenceBackend {
   }
   async dropConstraint(table: string, name: string): Promise<void> {
     await this.transport.command(`ALTER TABLE ${this.quote(table)} DROP CONSTRAINT IF EXISTS ${this.quote(name)}`)
+  }
+  /**
+   * One ALTER of several commands: ClickHouse writes and syncs the table's metadata once, and that
+   * sync is most of an ALTER's time.
+   */
+  async changeConstraints(
+    table: string,
+    change: { add: ReadonlyArray<readonly [string, string]>; drop: readonly string[] },
+  ): Promise<void> {
+    const clauses = [
+      ...change.add.map(([name, expression]) => `ADD CONSTRAINT IF NOT EXISTS ${this.quote(name)} CHECK ${expression}`),
+      ...change.drop.map((name) => `DROP CONSTRAINT IF EXISTS ${this.quote(name)}`),
+    ]
+    if (clauses.length > 0) await this.transport.command(`ALTER TABLE ${this.quote(table)} ${clauses.join(', ')}`)
   }
   private async drainLog(): Promise<void> {
     await this.transport.command(`CREATE TABLE IF NOT EXISTS ${this.quote(DRAIN_TABLE)} (` +
@@ -454,6 +487,41 @@ export class ElasticsearchFences implements FenceBackend {
     }
     await this.write(table, (constraints) =>
       Object.fromEntries(Object.entries(constraints).filter(([key]) => key !== name)))
+  }
+
+  /**
+   * One write of the pipeline. With the last hold among those dropped, the shard-level block is
+   * lifted first, as dropConstraint lifts it: the hold in the pipeline still refuses every write a
+   * runtime key can make until the write that drops it.
+   */
+  async changeConstraints(
+    table: string,
+    change: { add: ReadonlyArray<readonly [string, string]>; drop: readonly string[] },
+  ): Promise<void> {
+    const added = Object.fromEntries(change.add)
+    if (change.drop.length > 0) {
+      const [uuid, settings] = await this.index(table)
+      const [document] = await this.pipeline(table)
+      const remaining = [
+        ...Object.keys(this.constraintsOf(table, uuid, document)).filter((key) => !change.drop.includes(key)),
+        ...Object.keys(added),
+      ]
+      const last = !remaining.some((key) => HOLDS.test(key.slice(FENCE_PREFIX.length)))
+      const blocked = String((settings['blocks'] as Record<string, unknown> | undefined)?.['write'] ?? 'false').toLowerCase() === 'true'
+      if (last && blocked) {
+        const [status] = await this.call('PUT', `/${table}/_settings`, { 'index.blocks.write': false })
+        if (status !== 200) throw new EngineError(`lifting the write block of ${table} failed (${status})`)
+      }
+    }
+    await this.write(table, (constraints) => {
+      for (const [name, expression] of Object.entries(added)) {
+        if ((constraints[name] ?? expression) !== expression) {
+          throw new MigrationRefused(`write fence constraint ${name} has an unexpected predicate`)
+        }
+      }
+      const kept = Object.fromEntries(Object.entries(constraints).filter(([key]) => !change.drop.includes(key)))
+      return { ...kept, ...added }
+    })
   }
 
   async drain(table: string, options: { projectId: string; hold: string }): Promise<void> {

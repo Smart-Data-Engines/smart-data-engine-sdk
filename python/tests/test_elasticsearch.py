@@ -384,10 +384,17 @@ def test_a_fence_pipeline_renders_the_same_processor_in_both_languages() -> None
 class _FenceTransport:
     """An Elasticsearch that answers the fence backend's reads from a dict, and records writes."""
 
-    def __init__(self, *, final_pipeline: str | None = None, version: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        final_pipeline: str | None = None,
+        version: int | None = None,
+        constraints: dict[str, str] | None = None,
+    ) -> None:
         self.sent: list[tuple[str, str]] = []
         self.final_pipeline = final_pipeline
         self.version = version
+        self.constraints = constraints or {}
 
     def __call__(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
         self.sent.append((method, path))
@@ -406,8 +413,8 @@ class _FenceTransport:
             return 200, {"__sde_f_notes": {
                 "version": self.version,
                 "_meta": {"sde": {"contract": 1, "index": "notes", "uuid": "u1",
-                                  "constraints": {}}},
-                "processors": [fence_processor({})],
+                                  "constraints": self.constraints}},
+                "processors": [fence_processor(self.constraints)],
             }}
         return 200, {"acknowledged": True}
 
@@ -423,6 +430,8 @@ def test_a_fence_refuses_a_name_that_is_not_an_index_before_any_request(name: st
         lambda: fences.add_column(name),
         lambda: fences.add_constraint(name, "__sde_f_setup", "0"),
         lambda: fences.drop_constraint(name, "__sde_f_setup"),
+        lambda: fences.change_constraints(name, add=[("__sde_f_setup", "0")], drop=[]),
+        lambda: fences.change_constraints(name, add=[], drop=["__sde_f_setup"]),
         lambda: fences.drain(name, project_id="0" * 32, hold="setup"),
     )
     for call in calls:
@@ -436,6 +445,19 @@ def test_a_fence_is_not_installed_beside_another_final_pipeline() -> None:
 
     with pytest.raises(sde.MigrationRefused, match="runs another final pipeline"):
         ElasticsearchFences(_FenceTransport(final_pipeline="theirs")).metadata("notes")
+
+
+def test_a_combined_change_refuses_a_constraint_found_with_another_predicate() -> None:
+    """A bound is added by its name only where that name holds no other predicate: one found with
+    another is refused, and nothing is written."""
+    from sde.engines._write_fences import ElasticsearchFences
+
+    transport = _FenceTransport(version=5, constraints={"__sde_f_min_2": "__sde_write_epoch >= 3"})
+    with pytest.raises(sde.MigrationRefused, match="unexpected predicate"):
+        ElasticsearchFences(transport).change_constraints(
+            "notes", add=[("__sde_f_min_2", "__sde_write_epoch >= 2")], drop=["__sde_f_min_1"]
+        )
+    assert [path for method, path in transport.sent if method == "PUT"] == []
 
 
 def test_a_fence_change_carries_the_version_it_read() -> None:

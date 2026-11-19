@@ -16,16 +16,19 @@
     "events"
   ],
   [
-    "add",
+    "change",
     "events",
-    "__sde_f_min_1",
-    "__sde_write_epoch >= 1"
-  ],
-  [
-    "add",
-    "events",
-    "__sde_f_max_1",
-    "__sde_write_epoch <= 1"
+    [
+      [
+        "__sde_f_min_1",
+        "__sde_write_epoch >= 1"
+      ],
+      [
+        "__sde_f_max_1",
+        "__sde_write_epoch <= 1"
+      ]
+    ],
+    []
   ],
   [
     "drain",

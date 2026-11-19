@@ -1355,6 +1355,13 @@ recording backend; unlike row-migration cases, these fixtures need no `model.jso
 The primitive does not itself authorize a placement change. Session integration and the complete
 cutover gate must supply the remaining guarantees described in that document.
 
+**A change of the call ordering, 19 November 2026.** An epoch's bounds, and a barrier's release,
+are each one call of the backend, `["change", table, adds, drops]`: the adds as `[name, predicate]`
+pairs, then the names dropped. An engine with a statement for it sends one: an `ALTER TABLE` of
+several clauses, or one write of a pipeline. They had been two adds and two drops, and a release an
+add and a drop, and `migration/046`, `051`, `054` and `055` changed with them. Neither number moves:
+no IR or map contains a DDL call, and the constraints a fence ends with are the same either way.
+
 ## 7d. Generation-bearing placement maps
 
 Map contract 4 requires root `project_id` and a positive safe `write_epoch` in every group. Their

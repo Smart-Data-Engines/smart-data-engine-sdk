@@ -107,6 +107,29 @@ void Fences::drop_constraint(const std::string& table, const std::string& name) 
               "ALTER TABLE " + quote(table) + " DROP CONSTRAINT IF EXISTS " + quote(name));
 }
 
+// One ALTER TABLE: one lock of the table, not one per constraint. PostgreSQL has no ADD CONSTRAINT
+// IF NOT EXISTS, so a constraint already there is left out, as add_constraint leaves it.
+void Fences::change_constraints(const std::string& table,
+                                const std::vector<std::pair<std::string, std::string>>& add,
+                                const std::vector<std::string>& drop) {
+  idle();
+  const auto present = metadata(table).constraints;
+  std::string clauses;
+  for (const auto& [name, expression] : add) {
+    if (present.contains(name)) continue;
+    const std::string check =
+        expression == "1" ? "true" : expression == "0" ? "false" : expression;
+    clauses += (clauses.empty() ? "" : ", ") + std::string("ADD CONSTRAINT ") + quote(name) +
+               " CHECK (" + check + ") NOT VALID";
+  }
+  for (const std::string& name : drop) {
+    if (!present.contains(name)) continue;
+    clauses += (clauses.empty() ? "" : ", ") + std::string("DROP CONSTRAINT IF EXISTS ") +
+               quote(name);
+  }
+  if (!clauses.empty()) (void)query(engine_.cx(), "ALTER TABLE " + quote(table) + " " + clauses);
+}
+
 void Fences::drain(const std::string& table, const std::string& project_id,
                    const std::string& hold) {
   idle();

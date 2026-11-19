@@ -1,24 +1,20 @@
 [
   [
-    "add",
+    "change",
     "events",
-    "__sde_f_min_2",
-    "__sde_write_epoch >= 2"
-  ],
-  [
-    "add",
-    "events",
-    "__sde_f_max_2",
-    "__sde_write_epoch <= 2"
-  ],
-  [
-    "drop",
-    "events",
-    "__sde_f_max_1"
-  ],
-  [
-    "drop",
-    "events",
-    "__sde_f_min_1"
+    [
+      [
+        "__sde_f_min_2",
+        "__sde_write_epoch >= 2"
+      ],
+      [
+        "__sde_f_max_2",
+        "__sde_write_epoch <= 2"
+      ]
+    ],
+    [
+      "__sde_f_max_1",
+      "__sde_f_min_1"
+    ]
   ]
 ]

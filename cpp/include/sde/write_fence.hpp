@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "sde/json.hpp"
@@ -47,6 +48,12 @@ class FenceBackend {
   virtual void add_constraint(const std::string& table, const std::string& name,
                               const std::string& expression) = 0;
   virtual void drop_constraint(const std::string& table, const std::string& name) = 0;
+  /// Adds and drops constraints in one change where the engine has one: one statement, whose
+  /// metadata is written - and synced - once, and in which the constraints dropped give way to the
+  /// ones added at one instant. Idempotent, as add and drop are.
+  virtual void change_constraints(const std::string& table,
+                                  const std::vector<std::pair<std::string, std::string>>& add,
+                                  const std::vector<std::string>& drop) = 0;
   /// Waits until no insert admitted before the hold took effect is still running.
   virtual void drain(const std::string& table, const std::string& project_id,
                      const std::string& hold) = 0;
@@ -117,7 +124,7 @@ class WriteFence {
 
  private:
   FenceState ready();
-  void bounds(std::int64_t epoch);
+  FenceState bounds(std::int64_t epoch, const FenceState& before);
 
   FenceBackend* backend_;
   std::string table_;

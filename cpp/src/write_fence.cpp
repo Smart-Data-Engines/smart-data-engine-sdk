@@ -329,7 +329,7 @@ FenceState WriteFence::prepare(std::int64_t epoch) {
   }
   backend_->add_constraint(table_, std::string(FENCE_SETUP), "0");
   backend_->add_column(table_);
-  bounds(epoch);
+  bounds(epoch, current);
   backend_->drain(table_, project_id_, "setup");
   backend_->drop_constraint(table_, std::string(FENCE_SETUP));
   return ready();
@@ -370,32 +370,36 @@ FenceState WriteFence::advance(std::int64_t epoch) {
   if (current.lower_epoch() && epoch < *current.lower_epoch()) {
     throw MigrationRefused("a write epoch cannot move backwards");
   }
-  bounds(epoch);
-  return ready();
+  FenceState after = bounds(epoch, current);
+  if (!after.complete()) throw MigrationRefused("the write fence is not fully provisioned");
+  return after;
 }
 
-void WriteFence::bounds(std::int64_t epoch) {
+// Installs `epoch`'s bounds and removes the older ones in one change of the table: on
+// ClickHouse an ALTER writes and syncs the table's metadata, and four statements paid it four times
+// in a pause; on PostgreSQL each took the table's lock again. Only bounds older than `epoch`, named
+// as `before` showed them, are dropped: a stale caller never removes a newer constraint installed
+// after that read, and the check after the change finds it. Measured:
+// docs/qualification/fence-in-one-statement/.
+FenceState WriteFence::bounds(std::int64_t epoch, const FenceState& before) {
   const std::string number = std::to_string(epoch);
-  backend_->add_constraint(table_, std::string(FENCE_PREFIX) + "min_" + number,
-                           std::string(EPOCH_COLUMN) + " >= " + number);
-  backend_->add_constraint(table_, std::string(FENCE_PREFIX) + "max_" + number,
-                           std::string(EPOCH_COLUMN) + " <= " + number);
-  // Remove only bounds weaker or older than the one just installed, by their exact names: a stale
-  // caller must never remove a newer constraint discovered after its earlier check.
-  const FenceState current = state();
-  if (current.lower_epoch() && *current.lower_epoch() > epoch) {
+  std::vector<std::string> older;
+  for (const std::int64_t old : before.maximums) {
+    if (old < epoch) older.push_back(std::string(FENCE_PREFIX) + "max_" + std::to_string(old));
+  }
+  for (const std::int64_t old : before.minimums) {
+    if (old < epoch) older.push_back(std::string(FENCE_PREFIX) + "min_" + std::to_string(old));
+  }
+  backend_->change_constraints(
+      table_,
+      {{std::string(FENCE_PREFIX) + "min_" + number, std::string(EPOCH_COLUMN) + " >= " + number},
+       {std::string(FENCE_PREFIX) + "max_" + number, std::string(EPOCH_COLUMN) + " <= " + number}},
+      older);
+  FenceState after = state();
+  if (after.lower_epoch() && *after.lower_epoch() > epoch) {
     throw MigrationRefused("another executor installed a newer write epoch; table stays closed");
   }
-  for (const std::int64_t old : current.maximums) {
-    if (old < epoch) {
-      backend_->drop_constraint(table_, std::string(FENCE_PREFIX) + "max_" + std::to_string(old));
-    }
-  }
-  for (const std::int64_t old : current.minimums) {
-    if (old < epoch) {
-      backend_->drop_constraint(table_, std::string(FENCE_PREFIX) + "min_" + std::to_string(old));
-    }
-  }
+  return after;
 }
 
 FenceState WriteFence::release(const std::string& request_id) {
@@ -407,10 +411,12 @@ FenceState WriteFence::release(const std::string& request_id) {
   if (std::find(current.holds.begin(), current.holds.end(), request_id) == current.holds.end()) {
     return current;
   }
-  // Completion is recorded before admission is released: a delayed invocation must never recreate a
-  // completed hold, nor reuse its id for a later generation and inherit an old release.
-  backend_->add_constraint(table_, std::string(FENCE_PREFIX) + "retired_" + request_id, "1");
-  backend_->drop_constraint(table_, std::string(FENCE_PREFIX) + "hold_" + request_id);
+  // Completion is recorded no later than admission is released - in the same change - so a delayed
+  // invocation never recreates a completed hold, nor reuses its id for a later generation and
+  // inherits an old release.
+  backend_->change_constraints(table_,
+                               {{std::string(FENCE_PREFIX) + "retired_" + request_id, "1"}},
+                               {std::string(FENCE_PREFIX) + "hold_" + request_id});
   return ready();
 }
 

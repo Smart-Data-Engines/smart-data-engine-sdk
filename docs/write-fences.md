@@ -60,11 +60,20 @@ space is a different identifier; removing all whitespace before validation would
 Unknown names in `__sde_f_`, contradictory ownership and incompatible reserved columns are refused.
 The SDK's map, backfill and drain-log tables cannot be provisioned as application write targets.
 
-Epoch advancement adds the new minimum, adds the new maximum, then removes exact older maximum
-and minimum names. It never drops a newer bound discovered during the operation. Interruption can
-leave `minimum > maximum`, closing admission; resumption completes the change. Completed barrier
-ids are recorded **before** dropping their holds. Retries may repeat release, but a completed id
-cannot be used for a subsequent freeze. Use a new unpredictable id for each barrier round.
+Epoch advancement is one change of the table. It adds the new minimum and maximum and removes the
+exact older maximum and minimum names that the state read before it showed: one `ALTER TABLE` of
+several clauses on PostgreSQL and ClickHouse, one write of the pipeline on Elasticsearch. The old
+bounds give way to the new at one instant. PostgreSQL takes the table's lock once, and ClickHouse
+writes and syncs the table's metadata once: that sync is most of an `ALTER`'s time there, and next
+to a busy disk the four statements this used to be took about four times as long as one. The change
+never drops a newer bound installed after that read. The state is read again after it, and a newer
+bound found there refuses the call with the table closed. An interrupted change happened or did
+not. One interrupted in an earlier version of the library, which sent the four statements apart, can
+have left `minimum > maximum`, closing admission; resumption completes it (`migration/054`).
+
+A barrier's release is one change too: its completed id is recorded in the same change that drops
+its hold, never after it. Retries may repeat release, but a completed id cannot be used for a
+subsequent freeze. Use a new unpredictable id for each barrier round.
 
 `FenceState.as_record()` / `asRecord()` contains `identity` (the native table identity), `project_id`,
 `column` (`absent`, `valid`, or `conflict`), `lower_epoch`, `upper_epoch`, `holds`, `retired` and

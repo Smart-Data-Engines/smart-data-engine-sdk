@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from sde.write_fence import FenceMetadata, fence_state
@@ -34,6 +35,15 @@ class MemoryFences:
     def drop_constraint(self, table: str, name: str) -> None:
         self.constraints.pop(name, None)
         self.done("drop", table, name)
+
+    def change_constraints(
+        self, table: str, *, add: Sequence[tuple[str, str]], drop: Sequence[str]
+    ) -> None:
+        for name, expression in add:
+            self.constraints.setdefault(name, expression)
+        for name in drop:
+            self.constraints.pop(name, None)
+        self.done("change", table, [list(pair) for pair in add], list(drop))
 
     def drain(self, table: str, *, project_id: str, hold: str) -> None:
         state = fence_state(self.metadata(table))

@@ -8,6 +8,21 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: a generation change, and a barrier's release, are one change of each table** (all three
+libraries; [`docs/write-fences.md`](docs/write-fences.md#stored-protocol), record
+[`docs/qualification/fence-in-one-statement/`](docs/qualification/fence-in-one-statement/README.md)).
+An advance installed a table's new bounds and removed the old ones in four statements, and a
+release recorded its barrier as completed and dropped its hold in two. Each is now one: an `ALTER
+TABLE` of several clauses on PostgreSQL and ClickHouse, one write of the pipeline on
+Elasticsearch, and the old constraints give way to the new at one instant. On ClickHouse an `ALTER`
+writes and syncs the table's metadata, and the sync is most of its time. Measured on a laptop with
+ClickHouse 24.8, a fence's advance took 33 to 43 ms against 62 to 70 ms with the disk quiet, and
+50 to 58 ms against 137 to 153 ms beside a process writing and syncing (medians of five runs); its
+worst round there, 330 ms against 3.75 s. The constraints a fence ends with, and its refusals, are
+the same; the shared vectors `migration/046`, `051`, `054` and `055` record the new call (format
+contract §7c). **Breaking** for a write fence's backend implemented outside the library: it needs
+`change_constraints` (Python, C++) or `changeConstraints` (TypeScript).
+
 **Added: each release attests a CycloneDX bill of materials beside every file it publishes**
 ([`docs/publishing.md` §5.6](docs/publishing.md#56-the-bill-of-materials-of-each-artefact)).
 The Python bill describes a fresh environment holding the built wheel with every extra a client may

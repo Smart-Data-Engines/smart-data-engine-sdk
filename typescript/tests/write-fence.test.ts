@@ -39,7 +39,7 @@ describe('native generation protocol', () => {
     expect((await fence.release(other)).closed).toBe(false)
     expect((await fence.release(other)).closed).toBe(false)
   })
-  it.each([1, 2, 3, 4, 5, 6, 7])('resumes preparation after side effect %i', async (boundary) => {
+  it.each([1, 2, 3, 4, 5, 6])('resumes preparation after side effect %i', async (boundary) => {
     const { backend, fence } = fixture()
     backend.failAfter = boundary
     await expect(fence.prepare(1)).rejects.toThrow('lost the response')
@@ -49,7 +49,23 @@ describe('native generation protocol', () => {
     expect(await backend.accepts(0)).toBe(false)
     expect(await backend.accepts(2)).toBe(false)
   })
-  it.each([1, 2, 3, 4])('keeps an interrupted epoch change closed at step %i', async (boundary) => {
+  it('never drops a newer epoch installed during its change, and refuses with the table closed', async () => {
+    const { backend, fence } = fixture()
+    await fence.prepare(1)
+    await fence.freeze(HOLD)
+    const change = backend.changeConstraints.bind(backend)
+    backend.changeConstraints = async (table, request) => {
+      backend.constraints[FENCE_PREFIX + 'min_3'] = `${EPOCH_COLUMN} >= 3`
+      backend.constraints[FENCE_PREFIX + 'max_3'] = `${EPOCH_COLUMN} <= 3`
+      await change(table, request)
+    }
+    await expect(fence.advance(2)).rejects.toThrow('newer write epoch; table stays closed')
+    for (const name of ['min_3', 'max_3', 'min_2']) expect(backend.constraints).toHaveProperty(FENCE_PREFIX + name)
+    expect(backend.constraints).not.toHaveProperty(FENCE_PREFIX + 'min_1')
+    for (const epoch of [1, 2, 3]) expect(await backend.accepts(epoch)).toBe(false)
+  })
+  // An epoch change is one change of the table: it happened, or it did not.
+  it.each([1])('keeps an interrupted epoch change closed at step %i', async (boundary) => {
     const { backend, fence } = fixture()
     await fence.prepare(1); await fence.freeze(HOLD)
     backend.failAfter = backend.calls.length + boundary

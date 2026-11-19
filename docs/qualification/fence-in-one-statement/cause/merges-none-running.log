@@ -1,0 +1,9 @@
+0 merging        parts=  8 waited=  0.00s total=  0.020s  0.005 0.005 0.005 0.005
+0 merged         parts=  8 waited=  3.05s total=  0.033s  0.011 0.009 0.008 0.005
+0 stopped        parts=  8 waited=  3.05s total=  0.024s  0.010 0.005 0.005 0.005
+0 one-statement  parts=  8 waited=  0.00s total=  0.005s  0.005
+1 merging        parts=  8 waited=  0.00s total=  0.018s  0.005 0.004 0.005 0.004
+1 merged         parts=  8 waited=  3.04s total=  0.031s  0.010 0.009 0.006 0.006
+1 stopped        parts=  8 waited=  2.53s total=  0.020s  0.004 0.006 0.005 0.004
+1 one-statement  parts=  8 waited=  0.00s total=  0.006s  0.006
+exit=0

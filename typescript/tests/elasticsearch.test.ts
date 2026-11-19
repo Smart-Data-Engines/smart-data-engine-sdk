@@ -226,6 +226,27 @@ describe('the write fence', () => {
     }
   })
 
+  it('refuses, in a combined change, a constraint found with another predicate, and writes nothing', async () => {
+    const { ElasticsearchFences, fenceProcessor } = await import('../src/engines/_write-fences.js')
+    const constraints = { __sde_f_min_2: '__sde_write_epoch >= 3' }
+    const puts: string[] = []
+    const request = async (method: string, path: string): Promise<[number, unknown]> => {
+      if (method === 'GET' && path === '/notes/_settings') return [200, { notes: { settings: { index: { uuid: 'u1' } } } }]
+      if (method === 'GET' && path.startsWith('/_ingest/pipeline/')) {
+        return [200, { __sde_f_notes: {
+          version: 5, _meta: { sde: { contract: 1, index: 'notes', uuid: 'u1', constraints } },
+          processors: [fenceProcessor(constraints)],
+        } }]
+      }
+      if (method === 'PUT') puts.push(path)
+      return [200, { acknowledged: true }]
+    }
+    await expect(new ElasticsearchFences(request).changeConstraints('notes', {
+      add: [['__sde_f_min_2', '__sde_write_epoch >= 2']], drop: ['__sde_f_min_1'],
+    })).rejects.toThrow('unexpected predicate')
+    expect(puts).toEqual([])
+  })
+
   // Elasticsearch answers a conditional pipeline write whose version moved with a 400
   // `illegal_argument_exception` reading "version conflict" (measured on 9.5.5), where a 409 was
   // expected: both are another executor's. Any other refusal is the engine's error, not a race.

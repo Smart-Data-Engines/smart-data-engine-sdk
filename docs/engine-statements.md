@@ -41,7 +41,7 @@ Who sends it:
 | `INSERT INTO … (…) VALUES … ON CONFLICT (…) DO UPDATE SET …` | operator | a cutover writing a row of the frozen source over the row its copy holds with another value |
 | `ALTER TABLE … ADD COLUMN IF NOT EXISTS … bigint NOT NULL DEFAULT 0` | provisioning | fence setup: `__sde_write_epoch` |
 | `ALTER TABLE … ADD CONSTRAINT … CHECK (…) NOT VALID` | provisioning; operator | fence setup, a barrier, a generation change: `__sde_f_*` only |
-| `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only |
+| `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only. A generation change, and a barrier's release, send their adds and drops as clauses of one `ALTER TABLE`: one lock of the table |
 | `LOCK TABLE … IN SHARE ROW EXCLUSIVE MODE` | provisioning; operator | a barrier waits for the writers in flight |
 | `GRANT SELECT, INSERT ON … TO …`, `REVOKE SELECT, INSERT ON … FROM …` | operator | a cutover pauses and restores your runtime logins, and retires a source |
 | `TRUNCATE TABLE …` | operator | a cutover empties the copy it refills, after checking its identity |
@@ -66,7 +66,7 @@ Who sends it:
 | `INSERT` built by the driver from the rows; `INSERT INTO … (…) FORMAT JSONEachRow` from TypeScript | application; `sde.backfill`; operator | `save`, `save_many`, a map version, backfill progress, a copy's repair or refill, a drain's record |
 | `ALTER TABLE … ADD COLUMN IF NOT EXISTS … Int64 DEFAULT 0` | provisioning | fence setup: `__sde_write_epoch` |
 | `ALTER TABLE … ADD CONSTRAINT IF NOT EXISTS … CHECK …` | provisioning; operator | fence setup, a barrier, a generation change: `__sde_f_*` only |
-| `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only |
+| `ALTER TABLE … DROP CONSTRAINT IF EXISTS …` | provisioning; operator; departure | fence setup finishing, a barrier released, a generation changed, leaving: `__sde_f_*` only. A generation change, and a barrier's release, send their adds and drops as clauses of one `ALTER TABLE`: the table's metadata written and synced once |
 | `DETACH TABLE … PERMANENTLY SYNC`, then `ATTACH TABLE …` | provisioning; operator | a barrier waits for the writers in flight, recorded first in `__sde_fence_drains` |
 | `GRANT SELECT, INSERT ON … TO …`, `REVOKE SELECT, INSERT ON … FROM …` | operator | a cutover pauses and restores your runtime logins and retires a source; a dropped copy's grants are taken back |
 | `TRUNCATE TABLE … SYNC` | operator | a cutover empties the copy it refills, after checking its identity |

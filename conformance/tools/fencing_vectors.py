@@ -62,13 +62,32 @@ def drop(suffix: str) -> list[str]:
     return ["drop", TABLE, PREFIX + suffix]
 
 
+def change(adds: list[tuple[str, str]], drops: list[str]) -> list[Any]:
+    """Constraints added and dropped in one change of the table (§7c): one statement where the
+    engine has one, its adds first, then its drops."""
+    return [
+        "change",
+        TABLE,
+        [[PREFIX + suffix, expression] for suffix, expression in adds],
+        [PREFIX + suffix for suffix in drops],
+    ]
+
+
+def bounds(epoch: int, *older: int) -> list[Any]:
+    """An epoch's bounds installed, and the older ones named by the state read before dropped:
+    their maximums, then their minimums."""
+    return change(
+        [(f"min_{epoch}", f"{COLUMN} >= {epoch}"), (f"max_{epoch}", f"{COLUMN} <= {epoch}")],
+        [*(f"max_{old}" for old in older), *(f"min_{old}" for old in older)],
+    )
+
+
 def prepare(epoch: int) -> list[list[str]]:
     return [
         add("owner_" + P, "1"),
         add("setup", "0"),
         ["column", TABLE],
-        add(f"min_{epoch}", f"{COLUMN} >= {epoch}"),
-        add(f"max_{epoch}", f"{COLUMN} <= {epoch}"),
+        bounds(epoch),
         ["drain", TABLE, P, "setup"],
         drop("setup"),
     ]
@@ -106,12 +125,8 @@ def main() -> None:
             *prepare(1),
             add("hold_" + H, "0"),
             ["drain", TABLE, P, H],
-            add("min_2", f"{COLUMN} >= 2"),
-            add("max_2", f"{COLUMN} <= 2"),
-            drop("max_1"),
-            drop("min_1"),
-            add("retired_" + H, "1"),
-            drop("hold_" + H),
+            bounds(2, 1),
+            change([("retired_" + H, "1")], ["hold_" + H]),
         ],
     )
     case(
@@ -142,7 +157,7 @@ def main() -> None:
         "051-write-fence-releases-only-one-hold",
         metadata(1, holds=(H, OTHER)),
         [{"op": "release", "request_id": H, "state": state(1, holds=(OTHER,), retired=(H,))}],
-        [add("retired_" + H, "1"), drop("hold_" + H)],
+        [change([("retired_" + H, "1")], ["hold_" + H])],
     )
     case(
         "052-write-fence-retry-drains-again",
@@ -164,12 +179,7 @@ def main() -> None:
         "054-write-fence-resumes-a-partial-change",
         partial,
         [{"op": "advance", "epoch": 2, "state": state(2, holds=(H,))}],
-        [
-            add("min_2", f"{COLUMN} >= 2"),
-            add("max_2", f"{COLUMN} <= 2"),
-            drop("max_1"),
-            drop("min_1"),
-        ],
+        [bounds(2, 1)],
     )
     case(
         "055-write-fence-normalizes-integral-json-numbers",
