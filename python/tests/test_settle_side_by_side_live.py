@@ -204,8 +204,8 @@ def test_every_row_since_is_compared_and_written_once_whatever_order_each_engine
 
 @pytest.mark.parametrize(("source", "target"), DIRECTIONS, ids=["pg-to-ch", "ch-to-pg"])
 def test_a_pause_whose_sides_agree_looks_up_no_key(source: str, target: str) -> None:
-    """Where both engines order the key as this process does and the fan-out arrived for every
-    row, the pause reads the two sides' pages and nothing else."""
+    """Where both sides hold the same rows since the advance and both engines order the key as
+    this process does, the pause reads the two sides' pages and nothing else."""
     rows = [{"id": n, "value": n, EPOCH_COLUMN: G if n > 300 else OLD} for n in range(1, 901)]
     with pair("integer", source, target) as (view, left, right):
         left.copy_in(table_of(view, "source"), rows)

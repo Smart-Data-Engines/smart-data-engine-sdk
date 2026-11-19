@@ -394,9 +394,11 @@ their identities. Its repair, under the same barriers as before, is then:
    because the two engines order the key otherwise, a UUID on ClickHouse;
 3. under the final barriers, as before: the copy's rows that carry E+1, and both counts.
 
-Where both engines order the key as the library does and every fan-out arrived, steps 1 and 2 look
-up no row by its key: they read each side's rows that carry G once. Where the orders differ, a row
-is looked up instead, never left out.
+Where both sides hold the same rows that carry G and both engines order the key as the library
+does, steps 1 and 2 look up no row by its key: they read each side's rows that carry G once. Any
+other row is looked up, never left out: a source row the copy lacks (a fan-out that did not arrive),
+a copy row a settle or a backfill wrote under G, and a row the two engines order otherwise; a row
+written is read back by its key.
 
 The record of the completed cutover's repair says `"mode": "since"`. The record of the settle is
 removed when the cutover ends, either way: the map it was made under is not in force any more.
