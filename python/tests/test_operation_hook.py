@@ -218,3 +218,32 @@ def test_the_record_is_one_record_in_three_languages() -> None:
     assert tuple(snake(f) for f in listed(typescript, "export const FIELDS")) == FIELDS
     assert listed(cpp, r"inline constexpr std::string_view OPERATIONS\[\]") == OPERATIONS
     assert listed(cpp, r"inline constexpr std::string_view OPERATION_FIELDS\[\]") == FIELDS
+
+
+def test_a_hashed_model_is_named_in_the_applications_own_words(
+    records: list[OperationRecord],
+) -> None:
+    """With hashing on, the model and the map speak digests; the record speaks the application's."""
+    from sde.hashing import hash_identifiers
+    from sde.testing.loader import model_from_neutral
+
+    plain = model_from_neutral(
+        {"entities": [{"name": "Note", "fields": [{"name": "body", "type": "string"},
+                                                  {"name": "id", "type": "string"}],
+                       "key": ["id"]}], "relations": [], "atomic": []}
+    )  # fmt: skip
+    model, names = hash_identifiers(plain, b"operation-hook-salt-for-a-test!!")
+    [group] = sde.colocation_groups(model)
+    placement = sde.load_map(
+        {"contract": 3, "model_version": model.version, "map_version": 1,
+         "groups": {group.name: {"source": {"id": "notes@pg", "engine": "pg-main",
+                                            "layout": {"auto": True}}}}},
+        model=model,
+    )  # fmt: skip
+    session = sde.Session(
+        model, placement, {"pg-main": Reader(name="pg-main")}, names=names, hook=records.append
+    )
+    session.save("Note", {"id": "a", "body": "one"})
+    [record] = records
+    assert (record.entity, record.group) == ("Note", "Note")
+    assert group.name != "Note", "the control: the model's own name is a digest"
