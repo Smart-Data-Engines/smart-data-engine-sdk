@@ -34,6 +34,8 @@ import { type Check, checkFor, Misfit } from './admission.js'
 import type { Group } from './groups.js'
 import { colocationGroups, groupOf } from './groups.js'
 import type { NameMap } from './hashing.js'
+import { emit } from './events.js'
+import type { EventSink } from './events.js'
 import { outcomeOf } from './hook.js'
 import type { Operation, OperationHook, OperationRecord } from './hook.js'
 import { guard } from './internal.js'
@@ -129,6 +131,8 @@ export interface SessionOptions {
    * carried (`hook.ts`). Off by default, as telemetry is.
    */
   readonly hook?: OperationHook
+  /** Where this session's events go (`events.ts`); without it, it says nothing. */
+  readonly events?: EventSink
 }
 
 export interface ManagedEngine extends Engine {
@@ -213,6 +217,7 @@ export class Session {
     private readonly recorder: Recorder | undefined,
     private readonly names: NameMap | undefined,
     private readonly hook: OperationHook | undefined,
+    private readonly events: EventSink | undefined,
     /**
      * Whether an older map could be loaded over this one, and why.
      *
@@ -356,7 +361,7 @@ export class Session {
       // unsigned map - which is checked inside rather than here, because gathering the watermarks
       // first and then noticing the map was unsigned is the right answer with the promise broken.
       const physical = await validateGenerations(model, placement, engines, options.projectId)
-      const protection = await enforceForwardOnly(placement, engines)
+      const protection = await enforceForwardOnly(placement, engines, options.events)
       const session = new Session(
         model,
         placement,
@@ -364,10 +369,12 @@ export class Session {
         options.recorder,
         options.names,
         options.hook,
+        options.events,
         protection,
         options.projectId,
       )
       session.physicalFindings = Object.freeze([...physical])
+      session.reportPhysical()
       return session
 
     })
@@ -621,6 +628,8 @@ export class Session {
       if (this.placement.contract >= 4) {
         const physical = await validateGenerations(this.model, this.placement, this.engines, this.projectId)
         this.physicalFindings = Object.freeze([...physical])
+        this.reportPhysical()
+        emit(this.events, 'sde.schema.applied', { groups: this.groups.length })
         return
       }
       const findings: PhysicalFinding[] = []
@@ -637,7 +646,17 @@ export class Session {
         }
       }
       this.physicalFindings = Object.freeze(findings)
+      this.reportPhysical()
+      emit(this.events, 'sde.schema.applied', { groups: this.groups.length })
+    })
+  }
 
+  /** `sde.schema.physical_mismatch`, when existing tables differ from the declared design. */
+  private reportPhysical(): void {
+    if (this.physicalFindings.length === 0) return
+    emit(this.events, 'sde.schema.physical_mismatch', {
+      findings: this.physicalFindings.length,
+      tables: [...new Set(this.physicalFindings.map((finding) => finding.table))].sort(compareCodePoints),
     })
   }
 
@@ -746,6 +765,11 @@ export class Session {
       }
       sizes.sort((a, b) => compareCodePoints(a.group, b.group))
       const ordered = Object.keys(unavailable).sort(compareCodePoints)
+      for (const name of ordered) {
+        emit(this.events, 'sde.telemetry.storage_unavailable', {
+          engine: placementOf(this.placement, name).source.engine, reason: unavailable[name],
+        })
+      }
       return { sizes, unavailable: Object.fromEntries(ordered.map((name) => [name, unavailable[name]!])) }
     })
   }
@@ -1068,12 +1092,14 @@ export class Session {
       } else {
         await engine.insert(entry.table, stampValues(this.placement, entry.group, entry.values as Row))
       }
-    } catch {
-      // Deliberately swallowed, and the only place in this library that swallows a write failure.
-      // There is no logging channel here to record it in, which the reference has - so the
-      // divergence reaches the caller only as a fan-out failure count, and `verify` is the gate
-      // that acts on it.
+    } catch (error) {
+      // Deliberately swallowed, and the only place in this library that swallows a write failure:
+      // the row is in the source, which is the copy that counts, and `verify` is the gate that
+      // acts on it. Said as `sde.migration.divergence`, and counted as a fan-out failure.
       failed = true
+      emit(this.events, 'sde.migration.divergence', {
+        engine: entry.engine, table: entry.table, error: error instanceof Error ? error.name : 'Exception',
+      })
     }
     this.recorder?.recordFanOut({
       group: entry.group,
