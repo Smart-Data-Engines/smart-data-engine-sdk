@@ -37,7 +37,7 @@ compares it whole, as before.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from operator import itemgetter
 from typing import Any, Protocol, cast
@@ -324,7 +324,7 @@ def reconcile(
 def _repair_chunk(
     copy: _Copy,
     target: Reconcilable,
-    mirror: _Mirror | _Lookups,
+    mirror: _Mirror,
     wanted: list[dict[str, Any]],
     after: tuple[Any, ...] | None,
     epoch: int,
@@ -340,11 +340,32 @@ def _repair_chunk(
     left as it is: a settle does not write over what was written since the advance.
     """
     identity = _identity(copy)
-    several = len(copy.key) > 1
-    unconfirmed = 0
     if high is None:
         high = _key(copy, wanted[-1])
     held = {identity(row): row for row in mirror.upto(after, high)}
+    repaired, unconfirmed = _repair_against(
+        copy, target, held, wanted, epoch, call, leave_at=leave_at
+    )
+    return len(repaired), unconfirmed
+
+
+def _repair_against(
+    copy: _Copy,
+    target: Reconcilable,
+    held: dict[Any, dict[str, Any]],
+    wanted: list[dict[str, Any]],
+    epoch: int,
+    call: Callable[..., Any],
+    *,
+    leave_at: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Rows of the source against the copy's rows beside them, by identity in ``held``: the rows
+    written, and how many of them were not read back.
+
+    A source row ``held`` lacks is looked up in the copy by its key before it is called missing.
+    """
+    identity = _identity(copy)
+    several = len(copy.key) > 1
     unseen = [key for key in map(identity, wanted) if key not in held]
     if unseen:
         looked_up = call(
@@ -372,26 +393,40 @@ def _repair_chunk(
     if differing:
         call(target.upsert_in, copy.target_table, differing, key=copy.key)
     repaired = missing + differing
-    if repaired:
-        # Read back, because the second pass finds a repaired row by the generation it
-        # carries: a write that was answered and not kept would leave the old row under
-        # its old generation, where nothing would look at it again.
-        back = {
-            identity(row): row
-            for row in call(
-                target.rows_for_keys,
-                copy.target_table,
-                copy.key,
-                [_key(copy, row) for row in repaired],
-            )
-        }
-        for row in repaired:
-            kept = back.get(identity(row))
-            # There, under the generation: that is all the second pass needs to find it.
-            # What it holds is compared then, under the barriers, with every other.
-            if kept is None or kept.get(EPOCH_COLUMN) != epoch:
-                unconfirmed += 1
-    return len(repaired), unconfirmed
+    # Read back, because the second pass finds a repaired row by the generation it carries: a
+    # write that was answered and not kept would leave the old row under its old generation,
+    # where nothing would look at it again.
+    return repaired, _not_read_back(copy, target, repaired, epoch, call)
+
+
+def _not_read_back(
+    copy: _Copy,
+    target: Reconcilable,
+    written: list[dict[str, Any]],
+    epoch: int,
+    call: Callable[..., Any],
+) -> int:
+    """How many of the rows just written the copy does not hold under ``epoch`` when read back."""
+    if not written:
+        return 0
+    identity = _identity(copy)
+    back = {
+        identity(row): row
+        for row in call(
+            target.rows_for_keys,
+            copy.target_table,
+            copy.key,
+            [_key(copy, row) for row in written],
+        )
+    }
+    unconfirmed = 0
+    for row in written:
+        kept = back.get(identity(row))
+        # There, under the generation: that is all the second pass needs to find it. What it
+        # holds is compared then, under the barriers, with every other.
+        if kept is None or kept.get(EPOCH_COLUMN) != epoch:
+            unconfirmed += 1
+    return unconfirmed
 
 
 # --- settled before the pause ---------------------------------------------------------------------
@@ -545,15 +580,26 @@ def reconcile_since(
     """A cutover's first pass after a settle: the rows written since the advance, and no others.
 
     The caller holds the source frozen at ``since`` and the copy at ``epoch``, and holds a settle
-    of the group made at ``since`` under the map that is still in force. Two walks, each to an
-    answer with nothing in it:
+    of the group made at ``since`` under the map that is still in force. A row the application
+    wrote since the advance carries ``since`` on both sides - the source's from the application,
+    the copy's from the fan-out - so the two sides' rows that carry it are read beside each other,
+    each by pages in its engine's key order, and a row is looked up by its key only where the
+    other side did not show it:
 
-    - the source's rows that carry ``since``, against the copy's by key: one the copy lacks or
-      holds differently is written over it under ``epoch`` and read back;
-    - the copy's rows that carry ``since``, against the source's by key: one that differs is
-      written over, and a key the source lacks is ``surplus``. A copy row can carry ``since``
-      where the source's does not - a settle wrote it, or a backfill after the advance.
+    - each page of the source's rows that carry ``since`` is compared with the copy's rows that
+      carry it, up to the page's last key (:class:`_StampedMirror`). A source row the copy did not
+      show there is looked up by its key; one the copy lacks or holds differently is written over
+      it under ``epoch`` and read back;
+    - a copy row that carries ``since`` and that no source row beside it asked for is an orphan:
+      one a settle or a backfill after the advance wrote, whose source row is older; a key the
+      source lacks; or a row the two orders put beside another page. Orphans are looked up in the
+      source by key, a page of them at a time: one that differs is written over, and a key the
+      source lacks is ``surplus``.
 
+    Every copy row that carries ``since`` is compared once this way, and the comparison is the
+    same in both places. The pause holds both sides still, so the only rows that leave the copy's
+    pages meanwhile are those this pass writes, and it compared each first. An orphan whose row
+    this pass wrote is not compared again: what the mirror handed out is what the copy held before.
     Rows under an earlier generation are the settle's, and are not read here.
     """
     if chunk_rows < 1:
@@ -562,9 +608,7 @@ def reconcile_since(
     surplus = False
     for copy in _plan(view, group):
         source = cast(Reconcilable, copy.source)
-        target = cast(Reconcilable, copy.target)
-        identity = _identity(copy)
-        nothing = _Lookups()
+        walk = _SinceWalk(copy, since=since, epoch=epoch, chunk_rows=chunk_rows, call=call)
         after: tuple[Any, ...] | None = None
         while True:
             wanted = call(
@@ -573,63 +617,170 @@ def reconcile_since(
             )  # fmt: skip
             if not wanted:
                 break
-            done = _repair_chunk(copy, target, nothing, wanted, after, epoch, call)
-            written += done[0]
-            unconfirmed += done[1]
+            walk.chunk(wanted)
             chunks += 1
             rows += len(wanted)
             after = _key(copy, wanted[-1])
-        after = None
-        while True:
-            held = call(
-                target.stamped_range,
-                copy.target_table, copy.key, epoch=since, after=after, limit=chunk_rows,
-            )  # fmt: skip
-            if not held:
-                break
-            keys = [_key(copy, row) for row in held]
-            originals = {
-                identity(row): row
-                for row in call(source.rows_for_keys, copy.source_table, copy.key, keys)
-            }
-            differing: list[dict[str, Any]] = []
-            for there in held:
-                original = originals.get(identity(there))
-                if original is None:
-                    surplus = True
-                elif not _same_row(original, there):
-                    differing.append({**original, EPOCH_COLUMN: epoch})
-            if differing:
-                call(target.upsert_in, copy.target_table, differing, key=copy.key)
-                back = {
-                    identity(row): row
-                    for row in call(
-                        target.rows_for_keys,
-                        copy.target_table,
-                        copy.key,
-                        [_key(copy, row) for row in differing],
-                    )
-                }
-                for row in differing:
-                    kept = back.get(identity(row))
-                    if kept is None or kept.get(EPOCH_COLUMN) != epoch:
-                        unconfirmed += 1
-                written += len(differing)
-            chunks += 1
-            rows += len(held)
-            after = keys[-1]
+        walk.finish()
+        # The copy's pages are the reads the pass made of its side, as the source's are of the
+        # other: the same statements a walk of the copy alone would send, sent beside the source's.
+        chunks += walk.mirror.pages
+        rows += walk.mirror.rows
+        written += walk.written
+        unconfirmed += walk.unconfirmed
+        surplus = surplus or walk.surplus
     return Reconciliation(
         chunks=chunks, rows=rows, written=written, surplus=surplus, unconfirmed=unconfirmed
     )
 
 
-class _Lookups:
-    """A mirror that shows nothing, so that every row of a chunk is looked up by its key: the
-    rows a pass reads by generation are few and scattered, and a range of the copy beside them
-    would be the whole table."""
+class _StampedMirror:
+    """The copy's rows that carry one generation, read forward beside the source's.
 
-    def upto(self, after: tuple[Any, ...] | None, high: tuple[Any, ...]) -> list[dict[str, Any]]:
-        return []
+    By pages of :meth:`Reconcilable.stamped_range`, each after the last key of the one before, so
+    the pages split the rows in the copy's engine's own order whatever this process's is, and
+    handed out up to a chunk's last key in this process's order. Every row it reads it hands out
+    once. Neither order has to agree with the other: a row handed out beside a chunk that does not
+    ask for it is the caller's to compare by its key, and one of the chunk that is not handed out
+    is looked up by its key, as :class:`_Mirror`'s are.
+    """
+
+    def __init__(self, copy: _Copy, since: int, chunk_rows: int, call: Callable[..., Any]) -> None:
+        self._copy, self._since, self._chunk_rows, self._call = copy, since, chunk_rows, call
+        self._identity = _identity(copy)
+        self._read: list[dict[str, Any]] = []
+        self._next = 0
+        self._after: tuple[Any, ...] | None = None
+        self._ended = False
+        self.pages = 0
+        """Pages read that held a row."""
+        self.rows = 0
+
+    def _page(self) -> bool:
+        """The next page into the buffer; ``False`` once a statement answers none. A short page is
+        not taken for the end: an answer that ended early without an error would pass for it."""
+        if self._ended:
+            return False
+        copy = self._copy
+        page: list[dict[str, Any]] = self._call(
+            cast(Reconcilable, copy.target).stamped_range,
+            copy.target_table, copy.key,
+            epoch=self._since, after=self._after, limit=self._chunk_rows,
+        )  # fmt: skip
+        if not page:
+            self._ended = True
+            return False
+        self.pages += 1
+        self.rows += len(page)
+        self._read, self._next = page, 0
+        self._after = _key(copy, page[-1])
+        return True
+
+    def upto(self, high: tuple[Any, ...]) -> Iterator[dict[str, Any]]:
+        """The rows up to ``high``: to the first one after it, in this process's order."""
+        last = self._identity(dict(zip(self._copy.key, high, strict=True)))
+        while True:
+            while self._next < len(self._read):
+                row = self._read[self._next]
+                try:
+                    if self._identity(row) > last:
+                        return
+                except TypeError:
+                    pass  # Keys this process cannot order: handed out, and found by key if not.
+                self._next += 1
+                yield row
+            if not self._page():
+                return
+
+    def rest(self) -> Iterator[dict[str, Any]]:
+        """Every row not handed out yet."""
+        while True:
+            while self._next < len(self._read):
+                row = self._read[self._next]
+                self._next += 1
+                yield row
+            if not self._page():
+                return
+
+
+class _SinceWalk:
+    """One copy's part of :func:`reconcile_since`: the copy's rows beside each chunk of the
+    source's, and the orphans, and what both came to.
+
+    Holds a chunk of the source's, a page of the copy's, the copy's rows the chunk asked for and
+    fewer than a chunk of orphans: four chunks at most, however many rows the pause reads. And the
+    identity of every row it wrote, to leave out an orphan that is that row as it was before.
+    """
+
+    def __init__(
+        self, copy: _Copy, *, since: int, epoch: int, chunk_rows: int, call: Callable[..., Any]
+    ) -> None:
+        self._copy, self._epoch, self._chunk_rows, self._call = copy, epoch, chunk_rows, call
+        self._source = cast(Reconcilable, copy.source)
+        self._target = cast(Reconcilable, copy.target)
+        self._identity = _identity(copy)
+        self.mirror = _StampedMirror(copy, since, chunk_rows, call)
+        self.written = self.unconfirmed = 0
+        self.surplus = False
+        self._wrote: set[Any] = set()
+        self._orphans: list[dict[str, Any]] = []
+
+    def chunk(self, wanted: list[dict[str, Any]]) -> None:
+        identity = self._identity
+        asked = {identity(row) for row in wanted}
+        held: dict[Any, dict[str, Any]] = {}
+        for there in self.mirror.upto(_key(self._copy, wanted[-1])):
+            key = identity(there)
+            if key in asked:
+                held[key] = there
+            else:
+                self._orphan(there)
+        repaired, unconfirmed = _repair_against(
+            self._copy, self._target, held, wanted, self._epoch, self._call
+        )
+        self.written += len(repaired)
+        self.unconfirmed += unconfirmed
+        self._wrote.update(map(identity, repaired))
+
+    def finish(self) -> None:
+        """The copy's rows after the source's last key, and the orphans still held."""
+        for there in self.mirror.rest():
+            self._orphan(there)
+        self._compare_orphans()
+
+    def _orphan(self, row: dict[str, Any]) -> None:
+        self._orphans.append(row)
+        if len(self._orphans) >= self._chunk_rows:
+            self._compare_orphans()
+
+    def _compare_orphans(self) -> None:
+        copy, identity, epoch = self._copy, self._identity, self._epoch
+        # A row this pass wrote is the source's under the operation's generation, read back; the
+        # orphan is what the copy held before, read ahead of the write.
+        orphans = [row for row in self._orphans if identity(row) not in self._wrote]
+        self._orphans = []
+        if not orphans:
+            return
+        originals = {
+            identity(row): row
+            for row in self._call(
+                self._source.rows_for_keys,
+                copy.source_table,
+                copy.key,
+                [_key(copy, row) for row in orphans],
+            )
+        }
+        differing: list[dict[str, Any]] = []
+        for there in orphans:
+            original = originals.get(identity(there))
+            if original is None:
+                self.surplus = True
+            elif not _same_row(original, there):
+                differing.append({**original, EPOCH_COLUMN: epoch})
+        if differing:
+            self._call(self._target.upsert_in, copy.target_table, differing, key=copy.key)
+            self.unconfirmed += _not_read_back(copy, self._target, differing, epoch, self._call)
+            self.written += len(differing)
 
 
 def compare_stamped(
