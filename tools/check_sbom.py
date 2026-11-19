@@ -94,6 +94,12 @@ def _format(bom: Any) -> list[str]:
         return [f"not a CycloneDX bill: bomFormat is {found!r}"]
     if not isinstance(bom.get("specVersion"), str):
         return ["the bill states no CycloneDX specVersion"]
+    if not bom.get("serialNumber"):
+        # `actions/attest` takes a bill for CycloneDX only with all three of bomFormat,
+        # specVersion and serialNumber (src/sbom.ts, v4.2.2), and refuses it otherwise - in the
+        # publishing job, after the reviewer has approved. A reproducible bill leaves the serial
+        # number out (`cyclonedx-py --output-reproducible`), so this is not hypothetical.
+        return ["the bill has no serialNumber, which `actions/attest` requires of CycloneDX"]
     return []
 
 

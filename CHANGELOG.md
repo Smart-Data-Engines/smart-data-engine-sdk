@@ -8,6 +8,13 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: each release attests a CycloneDX bill of materials beside every file it publishes**
+([`docs/publishing.md` §5.6](docs/publishing.md#56-the-bill-of-materials-of-each-artefact)).
+The Python bill describes a fresh environment holding the built wheel with every extra a client may
+choose, and carries the wheel's own SHA-256; the npm bill is `npm sbom`'s. The publishing job
+attests each with `actions/attest` before the upload, and `gh attestation verify --predicate-type
+https://cyclonedx.org/bom` reads it back. Nothing in the libraries changes.
+
 **Added: `sde-operator settle`, and a cutover's pause over the rows written since the advance**
 (Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause)). After a
 generation advance a row below the map's generation has not been written since, on the source or

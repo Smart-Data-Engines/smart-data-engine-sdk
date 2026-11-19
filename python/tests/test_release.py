@@ -551,6 +551,7 @@ def _bill(
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
+        "serialNumber": "urn:uuid:41854132-0288-4d61-9540-700750fc3648",
         "components": [ours, *({"name": name, "version": "1.0"} for name in names)],
     }
 
@@ -604,7 +605,12 @@ def test_the_npm_bill_is_known_by_its_package_url_and_not_by_its_name() -> None:
 
     def bill(purl: str) -> dict[str, object]:
         root = {"type": "library", "name": "typescript", "version": "1.2.3", "purl": purl}
-        return {"bomFormat": "CycloneDX", "specVersion": "1.5", "metadata": {"component": root}}
+        return {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "serialNumber": "urn:uuid:df609b34-53be-4be5-a267-e1c7153c4e06",
+            "metadata": {"component": root},
+        }
 
     ours = "pkg:npm/%40smart-data-engines/sde@1.2.3"
     assert check_sbom.check_npm(bill(ours), "1.2.3") == []
@@ -613,7 +619,16 @@ def test_the_npm_bill_is_known_by_its_package_url_and_not_by_its_name() -> None:
         assert len(check_sbom.check_npm(bill(other), "1.2.3")) == 1, other
 
 
-@pytest.mark.parametrize("bill", [{"bomFormat": "SPDX"}, [], {"bomFormat": "CycloneDX"}])
+@pytest.mark.parametrize(
+    "bill",
+    [
+        {"bomFormat": "SPDX"},
+        [],
+        {"bomFormat": "CycloneDX"},
+        # What `actions/attest` would refuse in the publishing job: no serial number.
+        {"bomFormat": "CycloneDX", "specVersion": "1.6"},
+    ],
+)
 def test_a_file_that_is_not_a_cyclonedx_bill_is_refused(tmp_path: Path, bill: object) -> None:
     wheel = _wheel(tmp_path / "w.whl")
     assert len(check_sbom.check_python(bill, wheel, "1.2.3")) == 1
