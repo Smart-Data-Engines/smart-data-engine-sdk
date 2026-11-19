@@ -254,3 +254,12 @@ def test_the_return_is_measured_after_the_last_error_of_the_fault() -> None:
     ]  # fmt: skip
     [outcome] = fault_outcomes(run)
     assert (outcome["errors"], outcome["recovery_s"]) == (2, 15.0)
+
+
+def test_a_run_that_ended_before_its_hours_is_a_breach() -> None:
+    run = clean_run()
+    run.end = ZERO + 3 * HOUR_NS
+    run.stopped = "less than 2147483648 bytes free on the run's disk"
+    assert summarise(run)["breaches"] == [
+        "the run ended after 3.000 of 4 hours: less than 2147483648 bytes free on the run's disk"
+    ]

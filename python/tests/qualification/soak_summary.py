@@ -61,6 +61,7 @@ class Run:
     faults: list[dict[str, Any]]
     samples: list[dict[str, Any]]
     processes: list[Process] = field(default_factory=list)
+    stopped: str | None = None  # why the coordinator ended the run before its hours, if it did
 
 
 def in_fault_window(faults: Iterable[Mapping[str, Any]], start: int, end: int) -> bool:
@@ -329,6 +330,12 @@ def summarise(run: Run) -> dict[str, Any]:
         f"recovery {o['recovery_s']} s"
         for o in late
     )
+    ran_ns = run.end - run.zero
+    if ran_ns < run.hours * HOUR_NS - MINUTE_NS:
+        breaches.append(
+            f"the run ended after {ran_ns / HOUR_NS:.3f} of {run.hours} hours"
+            + (f": {run.stopped}" if run.stopped else "")
+        )
     suspended = suspended_ns(run.samples)
     return {
         "hours": run.hours,
@@ -360,6 +367,7 @@ def load(directory: Path) -> Run:
         hours=float(meta["hours"]),
         faults=read_jsonl(directory / "faults.jsonl"),
         samples=read_jsonl(directory / "samples.jsonl"),
+        stopped=meta.get("stopped"),
     )
     oracle = (
         json.loads((directory / "oracle.json").read_text())

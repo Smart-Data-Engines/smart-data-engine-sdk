@@ -44,6 +44,9 @@ SDK = Path(__file__).resolve().parents[3]
 KINDS = ("restart", "crash", "freeze", "reset", "refuse", "partition")
 ENGINES = ("postgres", "clickhouse")
 SAMPLE_EVERY_S = 60.0
+# Below this much free space on the run's disk the soak stops, judges what it has and says why: a
+# machine shared with other work must not be filled by a measurement.
+MIN_FREE_BYTES = 2 * 1024**3
 
 
 def free_port() -> int:
@@ -262,6 +265,7 @@ class Soak:
             "processes": {k: v for k, v in processes.items() if v is not None},
             "gone": sorted(k for k, v in processes.items() if v is None),
             "engines": engines,
+            "disk_free": shutil.disk_usage(self.run_dir).free,
         }
         with self.samples_log.open("a") as handle:
             handle.write(json.dumps(record, separators=(",", ":")) + "\n")
@@ -327,6 +331,10 @@ class Soak:
         """Sleep until ``deadline_ns`` on the monotonic clock; False when the run is stopped."""
         while True:
             if self.stop.is_set() or (self.run_dir / "STOP").exists():
+                self.stop.set()
+                return False
+            if shutil.disk_usage(self.run_dir).free < MIN_FREE_BYTES:
+                self.meta["stopped"] = f"less than {MIN_FREE_BYTES} bytes free on the run's disk"
                 self.stop.set()
                 return False
             left = (deadline_ns - time.monotonic_ns()) / 1e9
