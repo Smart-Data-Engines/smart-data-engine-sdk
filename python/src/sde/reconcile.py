@@ -64,10 +64,14 @@ from .verification import VerificationRequest
 __all__ = [
     "Reconcilable",
     "Reconciliation",
+    "Settlement",
     "compare_stamped",
     "copy_is_mostly_there",
     "reconcile",
+    "reconcile_since",
     "repairs_what_differs",
+    "settle",
+    "settles_before_a_pause",
 ]
 
 
@@ -90,6 +94,16 @@ class Reconcilable(Protocol):
 
     def rows_for_keys(
         self, table: str, order: Sequence[str], keys: Sequence[Sequence[Any]]
+    ) -> list[dict[str, Any]]: ...
+
+    def earlier_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -310,17 +324,26 @@ def reconcile(
 def _repair_chunk(
     copy: _Copy,
     target: Reconcilable,
-    mirror: _Mirror,
+    mirror: _Mirror | _Lookups,
     wanted: list[dict[str, Any]],
     after: tuple[Any, ...] | None,
     epoch: int,
     call: Callable[..., Any],
+    *,
+    high: tuple[Any, ...] | None = None,
+    leave_at: int | None = None,
 ) -> tuple[int, int]:
-    """One chunk of the source against the copy: rows written, and rows not read back."""
+    """One chunk of the source against the copy: rows written, and rows not read back.
+
+    ``high`` is the chunk's last key where ``wanted`` is only some of the chunk's rows, so that
+    the mirror is read as far as the chunk goes. A copy row that carries ``leave_at`` or more is
+    left as it is: a settle does not write over what was written since the advance.
+    """
     identity = _identity(copy)
     several = len(copy.key) > 1
     unconfirmed = 0
-    high = _key(copy, wanted[-1])
+    if high is None:
+        high = _key(copy, wanted[-1])
     held = {identity(row): row for row in mirror.upto(after, high)}
     unseen = [key for key in map(identity, wanted) if key not in held]
     if unseen:
@@ -338,6 +361,8 @@ def _repair_chunk(
         there = held.get(identity(row))
         if there is None:
             missing.append({**row, EPOCH_COLUMN: epoch})
+        elif leave_at is not None and there[EPOCH_COLUMN] >= leave_at:
+            continue
         elif not _same_row(row, there):
             differing.append({**row, EPOCH_COLUMN: epoch})
     # A row that is not there is copied, which is the engine's fastest write; only a row
@@ -367,6 +392,244 @@ def _repair_chunk(
             if kept is None or kept.get(EPOCH_COLUMN) != epoch:
                 unconfirmed += 1
     return len(repaired), unconfirmed
+
+
+# --- settled before the pause ---------------------------------------------------------------------
+#
+# After a generation advance every write of the group carries the map's generation, G, and the
+# engine admits no other. So a row that carries less was written before the advance and has not
+# been written since, on the source and on the copy alike. :func:`settle` compares those rows
+# while the application keeps writing, and :func:`reconcile_since` is then the cutover's first
+# pass over the rest: the rows that carry G.
+
+
+def settles_before_a_pause(view: MigrationView, group: str) -> bool:
+    """Whether both engines of every copy of the group can be read by generation and by key, and
+    the copy written over: what a settle pass and the pause after it need."""
+    if not repairs_what_differs(view, group):
+        return False
+    return all(
+        callable(getattr(copy.source, name, None))
+        for copy in _plan(view, group)
+        for name in ("stamped_range", "earlier_range", "rows_for_keys")
+    )
+
+
+@dataclass(frozen=True)
+class Settlement:
+    """What a settle pass did, in numbers: nothing here names a key or holds a value."""
+
+    chunks: int
+    rows: int
+    """Rows of the source the pass read: every row where the source streams, and those below the
+    generation where it is read by pages."""
+    earlier: int
+    """Of them, the rows that carry a generation below the map's: the ones it compared."""
+    written: int
+    unconfirmed: int = 0
+    """Rows written and then not read back under the map's generation."""
+
+    @property
+    def settled(self) -> bool:
+        return self.unconfirmed == 0
+
+    def as_record(self) -> dict[str, Any]:
+        return {
+            "chunks": self.chunks,
+            "rows": self.rows,
+            "earlier": self.earlier,
+            "written": self.written,
+            "unconfirmed": self.unconfirmed,
+        }
+
+
+def _to_the_end(
+    copy: _Copy, chunk_rows: int, epoch: int, call: Callable[..., Any]
+) -> Generator[list[dict[str, Any]], None, None]:
+    """The source's rows in key order, to the last row below ``epoch``.
+
+    The pass that reads this compares rows nothing will compare again, so "it read them all" has
+    to be a fact, and the source is being written to meanwhile: no count can say it, since an
+    insert hides a row that was not read. The rows that matter are those below the generation,
+    and no new row can be one of them, so they are a set that only stays or shrinks.
+
+    - Where the source streams, one statement reads the table as it was when it began - every
+      row, those since the advance too - and then the rows below the generation after its last
+      key are read by statements of their own, until one answers none: a stream that ended before
+      the table did is carried on, and an answer that ended early without an error is not taken
+      for the end.
+    - Otherwise every statement asks for the rows below the generation only, page after page,
+      until one answers none. A page of every row would end on a short page, and an application
+      that appends faster than pages are read would never leave one.
+
+    Either way this ends however fast the application writes.
+    """
+    after: tuple[Any, ...] | None = None
+    if callable(getattr(copy.source, "key_stream", None)) and copy.source is not copy.target:
+        chunks = source_chunks(copy, chunk_rows, call=call)
+        try:
+            for chunk in chunks:
+                yield chunk
+                after = _key(copy, chunk[-1])
+        finally:
+            chunks.close()
+    source = cast(Reconcilable, copy.source)
+    while True:
+        page: list[dict[str, Any]] = call(
+            source.earlier_range,
+            copy.source_table, copy.key, epoch=epoch, after=after, limit=chunk_rows,
+        )  # fmt: skip
+        if not page:
+            return
+        yield page
+        after = _key(copy, page[-1])
+
+
+def settle(
+    view: MigrationView,
+    group: str,
+    *,
+    epoch: int,
+    chunk_rows: int = CHUNK_ROWS,
+    call: Callable[..., Any] = _direct,
+) -> Settlement:
+    """Compare every row written before the group's last advance with the copy's, and write over
+    what differs, while the application keeps writing.
+
+    ``epoch`` is the generation of the map in force. A source row that carries it was written
+    since the advance and is left to the pause. One that carries less is compared: a row the copy
+    lacks, or holds differently under an earlier generation, is written to the copy under
+    ``epoch`` - as a fan-out would write it - and read back. A copy row that carries ``epoch``
+    already is newer than what this pass read of the source, and is left to the pause too.
+
+    A write of the application's that crosses this pass leaves both rows carrying ``epoch``, and
+    the pause compares every row that does, on both sides: no interleaving has to be excluded
+    here, only made visible there.
+    """
+    if chunk_rows < 1:
+        raise MigrationRefused(f"a chunk of {chunk_rows} rows is not a chunk")
+    chunks = rows = earlier = written = unconfirmed = 0
+    for copy in _plan(view, group):
+        target = cast(Reconcilable, copy.target)
+        after: tuple[Any, ...] | None = None
+        mirror = _Mirror(copy, chunk_rows, call)
+        try:
+            for wanted in _to_the_end(copy, chunk_rows, epoch, call):
+                before = [row for row in wanted if row[EPOCH_COLUMN] < epoch]
+                done = _repair_chunk(
+                    copy, target, mirror, before, after, epoch, call,
+                    high=_key(copy, wanted[-1]), leave_at=epoch,
+                )  # fmt: skip
+                written += done[0]
+                unconfirmed += done[1]
+                chunks += 1
+                rows += len(wanted)
+                earlier += len(before)
+                after = _key(copy, wanted[-1])
+        finally:
+            mirror.close()
+    return Settlement(
+        chunks=chunks, rows=rows, earlier=earlier, written=written, unconfirmed=unconfirmed
+    )
+
+
+def reconcile_since(
+    view: MigrationView,
+    group: str,
+    *,
+    since: int,
+    epoch: int,
+    chunk_rows: int = CHUNK_ROWS,
+    call: Callable[..., Any] = _direct,
+) -> Reconciliation:
+    """A cutover's first pass after a settle: the rows written since the advance, and no others.
+
+    The caller holds the source frozen at ``since`` and the copy at ``epoch``, and holds a settle
+    of the group made at ``since`` under the map that is still in force. Two walks, each to an
+    answer with nothing in it:
+
+    - the source's rows that carry ``since``, against the copy's by key: one the copy lacks or
+      holds differently is written over it under ``epoch`` and read back;
+    - the copy's rows that carry ``since``, against the source's by key: one that differs is
+      written over, and a key the source lacks is ``surplus``. A copy row can carry ``since``
+      where the source's does not - a settle wrote it, or a backfill after the advance.
+
+    Rows under an earlier generation are the settle's, and are not read here.
+    """
+    if chunk_rows < 1:
+        raise MigrationRefused(f"a chunk of {chunk_rows} rows is not a chunk")
+    chunks = rows = written = unconfirmed = 0
+    surplus = False
+    for copy in _plan(view, group):
+        source = cast(Reconcilable, copy.source)
+        target = cast(Reconcilable, copy.target)
+        identity = _identity(copy)
+        nothing = _Lookups()
+        after: tuple[Any, ...] | None = None
+        while True:
+            wanted = call(
+                source.stamped_range,
+                copy.source_table, copy.key, epoch=since, after=after, limit=chunk_rows,
+            )  # fmt: skip
+            if not wanted:
+                break
+            done = _repair_chunk(copy, target, nothing, wanted, after, epoch, call)
+            written += done[0]
+            unconfirmed += done[1]
+            chunks += 1
+            rows += len(wanted)
+            after = _key(copy, wanted[-1])
+        after = None
+        while True:
+            held = call(
+                target.stamped_range,
+                copy.target_table, copy.key, epoch=since, after=after, limit=chunk_rows,
+            )  # fmt: skip
+            if not held:
+                break
+            keys = [_key(copy, row) for row in held]
+            originals = {
+                identity(row): row
+                for row in call(source.rows_for_keys, copy.source_table, copy.key, keys)
+            }
+            differing: list[dict[str, Any]] = []
+            for there in held:
+                original = originals.get(identity(there))
+                if original is None:
+                    surplus = True
+                elif not _same_row(original, there):
+                    differing.append({**original, EPOCH_COLUMN: epoch})
+            if differing:
+                call(target.upsert_in, copy.target_table, differing, key=copy.key)
+                back = {
+                    identity(row): row
+                    for row in call(
+                        target.rows_for_keys,
+                        copy.target_table,
+                        copy.key,
+                        [_key(copy, row) for row in differing],
+                    )
+                }
+                for row in differing:
+                    kept = back.get(identity(row))
+                    if kept is None or kept.get(EPOCH_COLUMN) != epoch:
+                        unconfirmed += 1
+                written += len(differing)
+            chunks += 1
+            rows += len(held)
+            after = keys[-1]
+    return Reconciliation(
+        chunks=chunks, rows=rows, written=written, surplus=surplus, unconfirmed=unconfirmed
+    )
+
+
+class _Lookups:
+    """A mirror that shows nothing, so that every row of a chunk is looked up by its key: the
+    rows a pass reads by generation are few and scattered, and a range of the copy beside them
+    would be the whole table."""
+
+    def upto(self, after: tuple[Any, ...] | None, high: tuple[Any, ...]) -> list[dict[str, Any]]:
+        return []
 
 
 def compare_stamped(

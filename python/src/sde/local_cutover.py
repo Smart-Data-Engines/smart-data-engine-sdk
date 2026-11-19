@@ -38,7 +38,9 @@ from .reconcile import (
     compare_stamped,
     copy_is_mostly_there,
     reconcile,
+    reconcile_since,
     repairs_what_differs,
+    settles_before_a_pause,
 )
 from .staging import StagingPlan, StagingReceipt
 from .watermark import newer_map
@@ -252,6 +254,93 @@ class LocalCutover:
                 for group in groups
             ]
 
+    def settle(self) -> list[dict[str, Any]]:
+        """Compare the rows written before each group's last advance with its copy, while the
+        application keeps writing, and keep what was settled for the cutover that follows.
+
+        A cutover compares the whole group under its pause unless it can tell which rows changed
+        since an earlier comparison. After a generation advance (``docs/generation-advance.md``)
+        it can: a row below the map's generation has not been written since, on the source or on
+        the copy. This compares those rows, writes over a copy row that differs - under the map's
+        generation, as a fan-out would - and keeps, per group, the generation, the map and the
+        tables it settled under. A cutover of that group from that map then reads, under its
+        pause, only the rows that carry the generation (:func:`sde.reconcile.reconcile_since`).
+
+        Under the project lock, beside no staging, cutover, index build or advance. A record is
+        kept only for a pass that confirmed every row it wrote; one that did not removes the
+        group's earlier record, so that its cutover reads the group whole.
+        """
+        from .reconcile import settle
+
+        self._owner()
+        with self.store.lock():
+            state = self.store.read()
+            if state["execution"] is not None:
+                raise MigrationRefused(
+                    "an unfinished operation of this project holds its tables; resume or abandon "
+                    "it before a settle"
+                )
+            current = self.active_map()
+            groups = sorted(name for name, spot in current.groups.items() if spot.also_write)
+            if not groups:
+                raise MigrationRefused(
+                    "the map in force names no copy to settle: a settle follows a staging, its "
+                    "backfill and an advance, and precedes the cutover"
+                )
+            context = InspectionContext(self.model, current, self.engines, self.project_id)
+            tables: dict[str, list[dict[str, Any]]] = {}
+            for group in groups:
+                spot = current.groups[group]
+                rows: list[dict[str, Any]] = []
+                for material in spot.all():
+                    native = self.native.get(material.engine)
+                    if native is None:
+                        raise MigrationRefused(
+                            f"{group} has a copy in {material.engine}, which this operator is "
+                            f"not bound to: a settle needs the binding of every engine it reads "
+                            f"or writes"
+                        )
+                    for entity, table in sorted(material.layout.tables.items()):
+                        # As a cutover takes them: a table with a row policy is refused here.
+                        rows.append(
+                            {
+                                "engine": material.engine,
+                                "materialization": material.id,
+                                "entity": entity,
+                                "role": "source" if material is spot.source else "target",
+                                "identity": native.identity(table).as_record(),
+                            }
+                        )
+                if not settles_before_a_pause(context, group):
+                    raise MigrationRefused(
+                        f"{group} cannot be settled before its cutover: an engine of it has no "
+                        f"read by write generation, so its cutover compares it whole"
+                    )
+                tables[group] = rows
+            settled = dict(state.get("settled", {}))
+            records: list[dict[str, Any]] = []
+            for group in groups:
+                spot = current.groups[group]
+                assert spot.write_epoch is not None  # a group with a copy carries a generation
+                done = settle(context, group, epoch=spot.write_epoch, chunk_rows=self.chunk_rows)
+                record = {
+                    "write_epoch": spot.write_epoch,
+                    "map_version": current.map_version,
+                    "map_fingerprint": current.fingerprint,
+                    "tables": tables[group],
+                    **done.as_record(),
+                }
+                if done.settled:
+                    settled[group] = record
+                else:
+                    settled.pop(group, None)
+                records.append({"group": group, "settled": done.settled, **record})
+            for history in ("stages", "indexes", "advances"):
+                state.setdefault(history, {})
+            state["settled"] = settled
+            self.store.write(state)
+            return records
+
     def erase(
         self, request: ErasureRequest, *, execute: bool = False, at: str | None = None
     ) -> ErasurePlan | ErasureReceipt:
@@ -274,6 +363,12 @@ class LocalCutover:
             plan = plan_erasure(self, request)
             if not execute:
                 return plan
+            if state.get("settled"):
+                # Rows are about to go from every table of the map, and a settle stood on the
+                # rows it compared staying where they were: what it settled is void, before the
+                # first row goes, so that an erasure that stops halfway leaves nothing settled.
+                state["settled"] = {}
+                self.store.write(state)
             receipt = execute_erasure(self, plan, erasure_secret(self.store.root), at=at)
             write_receipt(self.store.root, receipt)
             return receipt
@@ -436,7 +531,30 @@ class LocalCutover:
             "tables": tables,
             "holds": holds,
             "verification": None,
+            "settled": self._settlement(plan, state, tables),
         }
+
+    def _settlement(
+        self, plan: CutoverPlan, state: dict[str, Any], tables: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """The settle a cutover of ``plan``'s group can stand on, or None.
+
+        Made from the map the packet starts from - the same fingerprint, so that no advance,
+        index build or other map came between - at its generation, and over the tables the
+        cutover has just qualified, by their native identities.
+        """
+        record: dict[str, Any] | None = state.get("settled", {}).get(plan.group)
+        if record is None:
+            return None
+        if (
+            record["map_fingerprint"] != plan.before.fingerprint
+            or record["write_epoch"] != plan.source_epoch
+        ):
+            return None
+        def identities(rows: list[dict[str, Any]]) -> dict[tuple[str, str], Any]:
+            return {(row["materialization"], row["entity"]): row["identity"] for row in rows}
+
+        return record if identities(record["tables"]) == identities(tables) else None
 
     def _tables(self, execution: dict[str, Any], role: str) -> list[dict[str, Any]]:
         return [row for row in execution["tables"] if row["role"] == role]
@@ -502,6 +620,29 @@ class LocalCutover:
         decides the comparison that follows: the rows this repair wrote, or every row.
         """
         context = InspectionContext(self.model, plan.before, self.engines, self.project_id)
+        if (
+            self.repair == "diff"
+            and execution.get("settled") is not None
+            and settles_before_a_pause(context, plan.group)
+        ):
+            # Settled before the pause: the rows below the generation are the copy's equal, and
+            # only those written since the advance are read here.
+            since = reconcile_since(
+                context,
+                plan.group,
+                since=plan.source_epoch,
+                epoch=plan.maintenance_epoch,
+                chunk_rows=self.chunk_rows,
+                call=self._call,
+            )
+            if since.settled:
+                execution["repair"] = {"mode": "since", **since.as_record()}
+                return since
+            # A key the source lacks or a write that could not be read back: only the whole
+            # refill and the whole comparison settle it.
+            self._refill(plan, execution)
+            execution["repair"] = {"mode": "refill", "after": since.as_record()}
+            return None
         if (
             self.repair == "diff"
             and repairs_what_differs(context, plan.group)
@@ -683,6 +824,9 @@ class LocalCutover:
             "repair": execution.get("repair"),
         }
         state["active_map"] = json.loads(plan.candidate_payload(outcome))
+        if "settled" in state:
+            # Settled under the map this cutover replaced: void now, and kept no longer.
+            state["settled"].pop(plan.group, None)
         state["execution"] = None
         self.store.write(state)
         self._after_step("completed")

@@ -343,13 +343,94 @@ The receipt does not change: its comparison carries the same counts, taken the s
 the copy was repaired, and how many rows that compared and wrote, is in the completed plan's
 `repair` record in `project.json`, numbers only.
 
+## Settling before the pause
+
+The repair above reads both sides of the group under the pause, so the pause still grows with the
+group. A [generation advance](generation-advance.md) marks a point the engines enforce: from it on
+every write of the group carries the map's generation, G, so a row below G has not been written
+since, on the source or on the copy. `sde-operator settle` compares those rows before the pause,
+while the application keeps writing, and the cutover's pause then reads only the rows that carry
+G. The order:
+
+```sh
+sde-operator --config local-operator.json --project-dir ./client-state backfill
+sde-operator --config local-operator.json --project-dir ./client-state advance --plan advance.json
+sde-operator --config local-operator.json --project-dir ./client-state settle
+sde-operator --config local-operator.json --project-dir ./client-state execute --plan cutover.json
+```
+
+The advance comes after the backfill: a backfill stamps what it copies with the generation in
+force, and the rows a settle compares are the rows below the one in force when it runs.
+
+**What a settle does**, for every group whose map names a copy:
+- it reads the source in key order and compares each row below G with the copy's: a row the copy
+  lacks is copied and one it holds with another value is written over, both under G - as a
+  session's fan-out would write them - and read back. A copy row that carries G already is newer
+  than what the settle read of the source, and is left;
+- it ends only when a fresh statement for the rows below G after the last key it read answers
+  none. A row below G cannot be written any more, so this ends however fast the application
+  writes, and no count stands in for it: a source that is being written to has no count a walk
+  could be held to. A ClickHouse source is read by one statement first, PostgreSQL by those
+  statements alone;
+- it takes no barrier and pauses nothing. It runs under the project lock, so beside no staging,
+  cutover, index build or advance, and is refused while one is unfinished;
+- it keeps, in `project.json`, a record a group: the generation, the map's version and
+  fingerprint, the native identity of every table, and its numbers - rows read, rows below G,
+  rows written, rows not read back. A pass that could not read back a write keeps no record,
+  and removes an earlier one. The command prints the records.
+
+**What the cutover's pause does then.** The cutover stands on the record when it was made from
+the map the packet starts from - the same fingerprint, so no advance, index build or other map
+came between - at the packet's generation, and over the tables the cutover has just qualified, by
+their identities. Its repair, under the same barriers as before, is then:
+1. the source's rows that carry G against the copy's, by key: a row the copy lacks or holds
+   otherwise is written under the cutover's generation, E+1 here as above, and read back;
+2. the copy's rows that carry G against the source's, by key: one that differs is written over
+   with the source's, and a key the source lacks ends in the whole refill, as above. A copy row
+   can carry G where the source's does not: a settle wrote it, or a backfill after the advance;
+3. under the final barriers, as before: the copy's rows that carry E+1, and both counts.
+
+The record of the completed cutover's repair says `"mode": "since"`. The record of the settle is
+removed when the cutover ends, either way: the map it was made under is not in force any more.
+
+**Why this is still the whole comparison.** At the decision a row of the copy carries E+1, and was
+compared under the final barriers; or carries G, and was compared under the pause with a source
+frozen since before that comparison - had it differed, it would carry E+1 now; or carries less,
+and has not changed since the advance. The settle compared that last kind with the source's row,
+which carried less too: if the source's row has changed since, it carries G now, step 1 compared
+it with the copy's, found them different and wrote it, so the copy's carries E+1. Every row of the
+source either carries less than G - and the settle found the copy's equal, or wrote it under G - or
+carries G, and step 1 visited it. Equal counts leave no room for a key the source lacks.
+
+A write of the application's that crosses a settle's - between the settle's read of a row and its
+write of it - leaves the copy's row under G with the settle's older value. Both rows carry G, and
+step 1 or 2 compares them. Nothing has to be ruled out for a settle to be right, only left
+visible for the pause.
+
+**What voids a record**, so that the cutover compares the whole group as above:
+- a map other than the one it was made under: another advance, an index build, any cutover;
+- an erasure, which removes every record before it deletes its first row;
+- a table that is not the one it settled, by its native identity;
+- a group on an engine without a read by write generation, which today is Elasticsearch: a settle
+  refuses it by name, and its cutover reads it whole.
+
+What still grows with the group under the pause: the counts under the final barriers, and the
+first page of each read by generation, which scans the table. The pause also grows with the rows
+written between the advance and the freeze, by about 70 µs for each where it was measured
+([qualification/cutover-settled](qualification/cutover-settled/README.md)): a group of two million
+rows paused 2.3 to 2.6 s from PostgreSQL into ClickHouse and 1.0 to 1.4 s the other way after a
+settle, against 15.3 and 14.0 to 14.1 s after a backfill alone, and one of four million 4.0 and
+1.8 s.
+
 ## How large a group a move fits
 
 A group that does not fit its budget is not moved: the watchdog stops the pause at the budget and
 recovery aborts the cutover, with the source as it was. What the pause covers depends on whether
-the copy was filled before it. Measured on a laptop (i3-7100U, 4 threads) with PostgreSQL 15.19 and
-ClickHouse 24.8.14.39 on the same machine, rows of three integer columns and the 30 s budget of the
-live tests ([qualification/cutover-repair](qualification/cutover-repair/README.md), and
+the copy was filled before it, and whether the group was settled. Measured on a laptop (i3-7100U,
+4 threads) with PostgreSQL 15.19 and ClickHouse 24.8.14.39 on the same machine, rows of three
+integer columns and the 30 s budget of the live tests
+([qualification/cutover-settled](qualification/cutover-settled/README.md),
+[qualification/cutover-repair](qualification/cutover-repair/README.md), and
 [qualification/cutover-limits](qualification/cutover-limits/README.md) for the pause as it was):
 
 | move | the copy was | pause for 200 000 rows | rows within 30 s |
@@ -358,6 +439,8 @@ live tests ([qualification/cutover-repair](qualification/cutover-repair/README.m
 | PostgreSQL → ClickHouse | filled by `backfill` | 2.5-3.5 s | 3 million, the largest size that fitted |
 | ClickHouse → PostgreSQL | never filled: refilled in the pause | 11.5-11.9 s | about 450 000 |
 | ClickHouse → PostgreSQL | filled by `backfill` | 2.2-2.6 s | 3 million, the largest size that fitted |
+| PostgreSQL → ClickHouse | filled by `backfill`, then advanced and settled | 0.8-0.9 s (2.1 s after a backfill alone, the same day) | 4 million in 4.0 s, the largest measured |
+| ClickHouse → PostgreSQL | filled by `backfill`, then advanced and settled | 0.6 s (1.8-2.2 s after a backfill alone, the same day) | 4 million in 1.8 s, the largest measured |
 
 The budget is signed for each cutover, so a larger one moves a larger group in a longer write
 pause, and a larger `chunk_rows` moves a larger group in the same one. A wider row costs more than
@@ -376,6 +459,10 @@ interruptions. `test_operator_native_live.py` exercises actual restricted grants
 revoking SELECT leaves INSERT, a reader was not declared, or a disconnected probe is mistaken for
 a permission denial. CLI subprocess cases use fresh connections and check for connection-string
 leakage. `test_cutover_project.py` covers local I/O failure and corruption boundaries.
+`test_settle_live.py` exercises a settle and the cutover after it in both directions and for a
+relayout: no range or stream of either side read under the pause, a settle beside an application
+that keeps writing, every checkpoint of the cutover after a settle, each binding of the record
+alone, what voids it, a surplus, a write not read back and a spent pause budget.
 
 `typescript/tests/local-cutover.live.test.ts` suspends TypeScript fan-out after the PostgreSQL
 source commit, executes the Python operator, writes a newer value on the new ClickHouse source,

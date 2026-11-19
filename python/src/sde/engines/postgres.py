@@ -1190,6 +1190,50 @@ class PostgresEngine:
             ) from exc
 
     @guarded
+    def earlier_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows whose write generation is below one, in key order, strictly after one key.
+
+        Once a group's generation was advanced every write carries the new one, so the rows below
+        it were written before the advance and have not changed since. A settle reads the source
+        whole to compare those rows with the copy, and a read that must have reached every one of
+        them ends with this answering none after its last key: no new row can be one of them,
+        however fast the application writes. A sequential scan, as ``stamped_range``.
+        """
+        cols = key_columns(order, table)
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        clauses = [f"{_quote(EPOCH_COLUMN)} < %s"]
+        params: list[Any] = [int(epoch)]
+        if after is not None:
+            same_width(after, cols, "after")
+            clauses.append(f"{tuple_expr} > ({', '.join(['%s'] * len(cols))})")
+            params.extend(after)
+        cap = ""
+        if limit is not None:
+            cap = " LIMIT %s"
+            params.append(int(limit))
+        sql = (
+            f"SELECT * FROM {_quote(table)} WHERE {' AND '.join(clauses)} "
+            f"ORDER BY {tuple_expr}{cap}"
+        )
+        try:
+            with self._cx.cursor() as cur:
+                cur.execute(sql, params)
+                names = [d.name for d in cur.description or ()]
+                return [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
+        except Exception as exc:
+            raise EngineError(
+                f"select of earlier generations from {table} failed: {self._explain(exc)}"
+            ) from exc
+
+    @guarded
     def rows_for_keys(
         self, table: str, order: Sequence[str], keys: Sequence[Sequence[Any]]
     ) -> list[dict[str, Any]]:

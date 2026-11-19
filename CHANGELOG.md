@@ -8,6 +8,25 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Added: `sde-operator settle`, and a cutover's pause over the rows written since the advance**
+(Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause)). After a
+generation advance a row below the map's generation has not been written since, on the source or
+on the copy. A settle compares those rows while the application keeps writing, writes over a copy
+row that differs as a fan-out would, and keeps a record of what it settled. A cutover from the same
+map then reads, under its pause, only the rows that carry the generation, on both sides, and
+compares under the final barriers as before. The walk of a settle ends on a statement that finds
+no row below the generation after its last key, so it ends however fast the application writes.
+Another map, an erasure or a replaced table voids the record, and the cutover compares the whole
+group, as before. Measured on a laptop: a group of two million rows paused 2.3 to 2.6 s from
+PostgreSQL into ClickHouse and 1.0 to 1.4 s the other way, against 15.3 and 14.0 to 14.1 s after a
+backfill alone, and one of four million 4.0 and 1.8 s; what still grows with the group, and with
+the rows written since the advance, is in
+[`docs/qualification/cutover-settled/`](docs/qualification/cutover-settled/README.md).
+- The operator's state keeps the records under storage contract 7, which an earlier operator
+  refuses whole.
+- The PostgreSQL and ClickHouse adapters read the rows below a generation after a key
+  (`earlier_range`).
+
 **Fixed: one signed packet, two verdicts - a map in a packet carries no `auto`, whatever the member
 says** (Python, TypeScript, C++; format contract §7q). A staging, a cutover and an index build
 refuse a map whose layout is left to be derived. They asked whether the value of `auto` was one the

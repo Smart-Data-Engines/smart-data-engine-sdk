@@ -291,8 +291,54 @@ def test_a_state_storage_contract_this_operator_does_not_know_is_refused(tmp_pat
     store.enroll({"map_version": 1}, b"map")
     payload = store.read()
     payload["stages"], payload["indexes"], payload["advances"] = {}, {}, {}
-    _rewrite(store, 6, payload)
-    assert store.read()["advances"] == {}
+    payload["settled"] = {}
     _rewrite(store, 7, payload)
+    assert store.read()["settled"] == {}
+    # The same fields under a number it does not know: refused by the number alone.
+    _rewrite(store, 8, payload)
+    with pytest.raises(MigrationRefused, match="corrupt"):
+        store.read()
+
+
+def test_a_settle_record_raises_the_state_contract_to_seven(tmp_path: Path) -> None:
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    state = store.read()
+    state["stages"], state["indexes"], state["advances"] = {}, {}, {}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 6
+    state["settled"] = {"Event": {"write_epoch": 2, "map_version": 2}}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 7
+    assert store.read()["settled"] == {"Event": {"write_epoch": 2, "map_version": 2}}
+    # A settle that is spent leaves the field, empty, and the contract with it.
+    state["settled"] = {}
+    store.write(state)
+    assert json.loads(store.path.read_bytes())["storage_contract"] == 7
+
+
+@pytest.mark.parametrize(
+    ("contract", "drop", "settled"),
+    [
+        (7, "settled", None),  # contract 7 without its records
+        (7, None, []),  # records that are not an object
+        (7, "advances", {}),  # contract 7 still carries the histories before it
+        (6, None, {}),  # settle records under a contract that does not know them
+        (5, None, {}),
+    ],
+)
+def test_the_settle_records_belong_to_contract_seven_only(
+    tmp_path: Path, contract: int, drop: str | None, settled: Any
+) -> None:
+    """What makes an operator that knows contracts 1 to 6 refuse a state a settle wrote, where it
+    would otherwise keep a record that vouches for rows it lets change."""
+    store = ProjectState(tmp_path, PROJECT, MODEL)
+    store.enroll({"map_version": 1}, b"map")
+    payload = store.read()
+    payload["stages"], payload["indexes"], payload["advances"] = {}, {}, {}
+    payload["settled"] = settled
+    if drop is not None:
+        del payload[drop]
+    _rewrite(store, contract, payload)
     with pytest.raises(MigrationRefused, match="corrupt"):
         store.read()

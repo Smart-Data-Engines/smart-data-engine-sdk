@@ -1342,6 +1342,50 @@ class ClickHouseEngine:
         return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
 
     @guarded
+    def earlier_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows whose newest version carries a write generation below one, in key order, strictly
+        after one key, with `FINAL`.
+
+        Once a group's generation was advanced every insert carries the new one, so a key whose
+        newest version is below it was written before the advance and has not changed since. A
+        settle reads the source whole to compare those rows with the copy, and a read that must
+        have reached every one of them ends with this answering none after its last key: no new
+        row can be one of them, however fast the application writes.
+        """
+        cols = key_columns(order, table)
+        tuple_expr = f"({', '.join(_quote(c) for c in cols)})"
+        parameters: dict[str, Any] = {"write_epoch": int(epoch)}
+        clauses = [f"{_quote(EPOCH_COLUMN)} < %(write_epoch)s"]
+        if after is not None:
+            same_width(after, cols, "after")
+            bound = [
+                _query_parameter(f"after_{index}", value, parameters)
+                for index, value in enumerate(after)
+            ]
+            clauses.append(f"{tuple_expr} > ({', '.join(bound)})")
+        cap = ""
+        if limit is not None:
+            cap = " LIMIT %(row_limit)s"
+            parameters["row_limit"] = int(limit)
+        sql = (
+            f"SELECT * FROM {_quote(table)} FINAL WHERE {' AND '.join(clauses)} "
+            f"ORDER BY {tuple_expr}{cap}"
+        )
+        try:
+            result = self._cx.query(sql, parameters=parameters)
+        except Exception as exc:
+            raise EngineError(f"select of earlier generations from {table} failed: {exc}") from exc
+        return [_row(result.column_names, result.column_types, row) for row in result.result_rows]
+
+    @guarded
     def rows_for_keys(
         self, table: str, order: Sequence[str], keys: Sequence[Sequence[Any]]
     ) -> list[dict[str, Any]]:

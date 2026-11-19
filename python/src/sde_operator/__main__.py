@@ -116,6 +116,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "backfill",
         help="fill the copy a staging created, before its cutover, while writes continue",
     )
+    commands.add_parser(
+        "settle",
+        help="after an advance, compare the rows from before it with the copy, while writes "
+        "continue, so that the cutover's pause reads only the rows since",
+    )
     erase = commands.add_parser(
         "erase",
         help="list, and with --execute delete, one entity's rows by key in every table of the map",
@@ -268,6 +273,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(executor.abandon().as_record()))
         elif args.command == "backfill":
             print(json.dumps([progress.as_record() for progress in executor.backfill()]))
+        elif args.command == "settle":
+            print(json.dumps(executor.settle()))
         elif args.command == "erase":
             from sde.erasure import ErasureReceipt, ErasureRequest
 
