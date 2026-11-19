@@ -363,6 +363,12 @@ export class ClickHouseEngine {
    * The handshake has a receive-inactivity default. Later queries retain their unbounded
    * default unless the caller supplies send_receive_timeout. Neither is an absolute execution
    * deadline; server-side max_execution_time can constrain the workload itself.
+   *
+   * Unbounded is said on every request, as a timeout of 0: Node's global agent keeps sockets alive
+   * from Node 19 with a socket timeout of its own, 5 seconds, which otherwise applies to a request
+   * that sets none. Measured by the soak of the three libraries under injected faults: on Node 22
+   * an answer that took longer than 5 seconds to begin was cut, with "no answer within undefined
+   * ms" (tests/failure.test.ts holds it).
    */
   private send(
     sql: string,
@@ -409,7 +415,7 @@ export class ClickHouseEngine {
               'Content-Type': 'text/plain; charset=utf-8',
               'Content-Length': Buffer.byteLength(payload),
             },
-            ...(inactivity === undefined ? {} : { timeout: inactivity }),
+            timeout: inactivity ?? 0,
           },
           (response) => {
             const chunks: Buffer[] = []

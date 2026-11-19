@@ -23,6 +23,8 @@
  * assertion.
  */
 
+import { createServer as createHttpServer } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer } from 'node:net'
 import type { AddressInfo, Server, Socket } from 'node:net'
 
@@ -187,4 +189,66 @@ describe('an operation on an engine that was never connected', () => {
     const other = new PostgresEngine('postgresql://postgres:sde@127.0.0.1:1/sde')
     await expect(other.count('anything')).rejects.toThrow('not connected')
   })
+})
+
+/**
+ * A ClickHouse that answers the handshake and then holds every later request without a byte - a
+ * server that stopped answering, or a query whose first rows are a long way off.
+ */
+async function answersOnlyTheHandshake(): Promise<{ port: number; close: () => void }> {
+  const held: ServerResponse[] = []
+  const server = createHttpServer((request: IncomingMessage, response: ServerResponse) => {
+    let body = ''
+    request.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
+    request.on('end', () => {
+      if (body.startsWith('SELECT version()')) {
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ meta: [{ name: 'version()', type: 'String' }],
+          data: [{ 'version()': '26.9.15.5' }], rows: 1 }))
+      } else {
+        held.push(response)
+      }
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    port: (server.address() as AddressInfo).port,
+    close: () => { for (const response of held) response.destroy(); server.closeAllConnections(); server.close() },
+  }
+}
+
+describe('a ClickHouse answer that is slow to begin', () => {
+  it('is waited for past the 5 seconds of Node\'s agent when no bound was asked for', async () => {
+    // Node's global agent keeps sockets alive from Node 19 with a socket timeout of 5 seconds of its
+    // own, and a request that set none had it: an answer that began after 5 seconds was cut, with
+    // "no answer within undefined ms" (measured by the soak on Node 22). Reading past the handshake
+    // is unbounded by design, so the request says so.
+    const server = await answersOnlyTheHandshake()
+    try {
+      const engine = new ClickHouseEngine(`clickhouse://default:sde@127.0.0.1:${server.port}/sde`)
+      await engine.connect()
+      let settled: string | null = null
+      engine.count('notes').then(() => { settled = 'answered' }, (error: Error) => { settled = error.message })
+      await new Promise((resolve) => setTimeout(resolve, 6_500))
+      expect(settled).toBeNull()
+    } finally {
+      server.close()
+    }
+  }, 30_000)
+
+  it('is cut at the bound the DSN asked for, and the message names it', async () => {
+    const server = await answersOnlyTheHandshake()
+    try {
+      const engine = new ClickHouseEngine(
+        `clickhouse://default:sde@127.0.0.1:${server.port}/sde?send_receive_timeout=2`)
+      await engine.connect()
+      const started = Date.now()
+      await within(10_000, 'a read against a server that stopped answering', async () => {
+        await expect(engine.count('notes')).rejects.toThrow('no answer within 2000 ms')
+      })
+      expect(Date.now() - started).toBeGreaterThan(1_500)
+    } finally {
+      server.close()
+    }
+  }, 30_000)
 })
