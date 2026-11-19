@@ -178,7 +178,7 @@ class OrderedOtherwise(Earlier):
     """A copy whose engine orders the key otherwise than this process does - 3, 1, 2, 4 - as
     ClickHouse orders a UUID otherwise than PostgreSQL and Python do."""
 
-    ORDER = {3: 0, 1: 1, 2: 2, 4: 3}
+    ORDER: dict[Any, int] = {3: 0, 1: 1, 2: 2, 4: 3}
 
     def stamped_range(
         self,
@@ -248,6 +248,27 @@ def test_rows_another_order_puts_beside_another_chunk_are_compared_and_written_o
     assert copy.asked == [[(1,), (2,)], [(1,)], [(4,)]]
     assert source.asked == [[(2,)]]
     assert compare_stamped(view, "Event", epoch=M, reconciled=done, chunk_rows=2).matched
+
+
+class Unorderable(OrderedOtherwise):
+    """An engine whose key is one this process cannot order: complex numbers stand in for it.
+    The engine has an order of its own, 1j then 2j."""
+
+    ORDER: dict[Any, int] = {1j: 0, 2j: 1}
+
+
+def test_a_key_this_process_cannot_order_is_handed_out_beside_the_chunk() -> None:
+    view, _, copy = settled_fixture(
+        {1j: ("a", G), 2j: ("b", G)},  # type: ignore[dict-item]
+        {1j: ("a", G), 2j: ("x", G)},  # type: ignore[dict-item]
+        source_engine=Unorderable,
+        copy_engine=Unorderable,
+    )
+    done = reconcile_since(view, "Event", since=G, epoch=M, chunk_rows=2)
+    assert done.settled and done.written == 1
+    assert held(copy)[2j] == ("b", M)  # type: ignore[index]
+    # Both rows handed out beside their chunk: the copy is asked only to read its write back.
+    assert copy.asked == [[(2j,)]]
 
 
 def test_orphans_are_compared_a_chunk_at_a_time_while_the_source_is_walked() -> None:

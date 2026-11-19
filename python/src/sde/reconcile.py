@@ -596,11 +596,12 @@ def reconcile_since(
       source by key, a page of them at a time: one that differs is written over, and a key the
       source lacks is ``surplus``.
 
-    Every copy row that carries ``since`` is compared once this way, and the comparison is the
-    same in both places. The pause holds both sides still, so the only rows that leave the copy's
-    pages meanwhile are those this pass writes, and it compared each first. An orphan whose row
-    this pass wrote is not compared again: what the mirror handed out is what the copy held before.
-    Rows under an earlier generation are the settle's, and are not read here.
+    Every copy row that carries ``since`` is compared, by the same comparison in both places. The
+    pause holds both sides still, so the only rows that leave the copy's pages meanwhile are those
+    this pass writes, each compared first, and the mirror hands out every other one. Where the two
+    orders differ, a row compared by its key may come back as an orphan and be compared again; one
+    this pass wrote is not, since what the mirror handed out is what the copy held before the
+    write. Rows under an earlier generation are the settle's, and are not read here.
     """
     if chunk_rows < 1:
         raise MigrationRefused(f"a chunk of {chunk_rows} rows is not a chunk")
