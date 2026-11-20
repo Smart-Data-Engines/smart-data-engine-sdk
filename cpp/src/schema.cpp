@@ -1,7 +1,10 @@
 #include "sde/schema.hpp"
 
 #include <algorithm>
+#include <array>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "physical_internal.hpp"
 #include "python_compat.hpp"
@@ -23,6 +26,89 @@ const std::vector<std::string>& rendered_dialects() {
 
 bool known_dialect(std::string_view dialect) {
   return std::find(std::begin(DIALECTS), std::end(DIALECTS), dialect) != std::end(DIALECTS);
+}
+
+/// Words a column type may be spelled with (format contract section 7a): PostgreSQL's compared in
+/// lowercase, ClickHouse's as they are spelled.
+constexpr std::array<std::string_view, 34> POSTGRES_TYPE_WORDS = {
+    "bigint", "bool", "boolean", "bytea", "char", "character", "date", "decimal", "double",
+    "float4", "float8", "int", "int2", "int4", "int8", "integer", "interval", "json", "jsonb",
+    "numeric", "precision", "real", "smallint", "text", "time", "timestamp", "timestamptz",
+    "timetz", "uuid", "varchar", "varying", "with", "without", "zone"};
+constexpr std::array<std::string_view, 32> CLICKHOUSE_TYPE_WORDS = {
+    "Array", "Bool", "Date", "Date32", "DateTime", "DateTime64", "Decimal", "Decimal128",
+    "Decimal256", "Decimal32", "Decimal64", "FixedString", "Float32", "Float64", "IPv4", "IPv6",
+    "Int128", "Int16", "Int256", "Int32", "Int64", "Int8", "LowCardinality", "Nullable",
+    "String", "UInt128", "UInt16", "UInt256", "UInt32", "UInt64", "UInt8", "UUID"};
+
+bool ascii_letter(char c) noexcept { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+bool ascii_digit(char c) noexcept { return c >= '0' && c <= '9'; }
+bool zone_character(char c) noexcept {
+  return ascii_letter(c) || ascii_digit(c) || c == '_' || c == '/' || c == '+' || c == '-';
+}
+
+bool type_word(std::string_view word) {
+  std::string lower(word);
+  for (char& c : lower) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  return std::find(POSTGRES_TYPE_WORDS.begin(), POSTGRES_TYPE_WORDS.end(), lower) !=
+             POSTGRES_TYPE_WORDS.end() ||
+         std::find(CLICKHOUSE_TYPE_WORDS.begin(), CLICKHOUSE_TYPE_WORDS.end(), word) !=
+             CLICKHOUSE_TYPE_WORDS.end();
+}
+
+/// Why `kind` is not a column type this library renders; empty when it is. A type is the one part
+/// of a statement the renderer does not quote: it writes the layout's spelling as it is, and does
+/// not read which dialect it is in (section 7a, `schema/002`). So it is read first by a grammar
+/// every library shares - words of the two vocabularies, ASCII digits, spaces, zones in single
+/// quotes, parentheses at most four deep and commas only inside them - and anything else is
+/// refused. Until 20 November 2026 a layout naming `uuid, "x" int); DROP TABLE "victim"; --`
+/// rendered that statement whole.
+std::optional<std::string> column_type_refusal(const std::string& kind) {
+  bool valid = !kind.empty() && kind.size() <= 128 && ascii_letter(kind.front());
+  int depth = 0;
+  std::size_t at = 0;
+  while (valid && at < kind.size()) {
+    const char c = kind[at];
+    if (ascii_letter(c)) {
+      std::size_t end = at + 1;
+      while (end < kind.size() && (ascii_letter(kind[end]) || ascii_digit(kind[end]))) ++end;
+      valid = type_word(std::string_view(kind).substr(at, end - at));
+      at = end;
+    } else if (ascii_digit(c)) {
+      while (at < kind.size() && ascii_digit(kind[at])) ++at;
+    } else if (c == '\'') {
+      std::size_t end = at + 1;
+      while (end < kind.size() && zone_character(kind[end])) ++end;
+      valid = end < kind.size() && kind[end] == '\'';
+      at = end + 1;
+    } else if (c == '(') {
+      valid = ++depth <= 4;
+      ++at;
+    } else if (c == ')') {
+      valid = --depth >= 0;
+      ++at;
+    } else if (c == ',') {
+      valid = depth > 0;
+      ++at;
+    } else {
+      valid = c == ' ';
+      ++at;
+    }
+  }
+  if (valid && depth == 0) return std::nullopt;
+  return python_repr(kind) +
+         " is not a column type this library renders: a type is spelled with the words of its "
+         "vocabulary, digits, spaces, zones in single quotes, parentheses and, inside them, "
+         "commas";
+}
+
+const std::string& rendered_type(const std::string& column, const std::string& kind) {
+  if (auto refusal = column_type_refusal(kind)) {
+    throw EngineError("column " + python_repr(column) + ": " + *refusal);
+  }
+  return kind;
 }
 
 /// PostgreSQL's spelling of the neutral `string`, the type that takes the reads' collation.
@@ -105,7 +191,7 @@ std::vector<std::string> postgres_statements(const PhysicalLayout& layout, const
         ordered_key("table " + python_repr(table), entity, found.key, layout);
     std::vector<std::string> definitions;
     for (const auto& [column, type] : found.columns) {
-      std::string definition = quote_ansi(column) + " " + type;
+      std::string definition = quote_ansi(column) + " " + rendered_type(column, type);
       if (type == postgres_text()) definition += " " + std::string(POSTGRES_TEXT_COLLATION);
       definitions.push_back(std::move(definition));
     }
@@ -163,7 +249,9 @@ std::vector<std::string> clickhouse_statements(const PhysicalLayout& layout, con
       }
     }
     std::vector<std::string> parts;
-    for (const auto& [column, type] : found.columns) parts.push_back(quote_backtick(column) + " " + type);
+    for (const auto& [column, type] : found.columns) {
+      parts.push_back(quote_backtick(column) + " " + rendered_type(column, type));
+    }
     // Indexes inline: `CREATE TABLE IF NOT EXISTS` never adds one to an existing table, and a
     // separate ALTER would be a mutation over every existing part.
     for (const Index* index : sorted_indexes(layout)) {

@@ -316,7 +316,7 @@ TypeScript spelled it `??`, which differ on exactly one input: `"key": []` inven
 language and stayed keyless in the other. One declaration, two model versions, and the vectors were
 silent because no vector declares an empty key.
 
-Seven refusals, all `DeclarationError`, and all of them tightenings under §11:
+Eight refusals, all `DeclarationError`, and all of them tightenings under §11:
 
 1. a model declares at least one entity;
 2. an entity declares at least one field — an entity that stores nothing cannot be placed;
@@ -334,7 +334,13 @@ Seven refusals, all `DeclarationError`, and all of them tightenings under §11:
    silently protects nothing, and §7 says the exclusion of personal data from a derived copy is meant
    to be *readable* in the library rather than taken on trust;
 7. `relations` has at most one entry per (`from`, `name`), and every `from` and `to` is a declared
-   entity.
+   entity;
+8. no entity, field or relation name holds `%`, `{` or `}` - each entity's name, then its fields',
+   entity by entity, then the relations'. They become table and column names - a field's as it is,
+   an entity's in snake case, a relation's before a key field's - and §7a says why a physical name
+   cannot hold them (`errors/147`, `148`, `149`). Refused with the model rather than when a map
+   derived from it loads: the map would be refused there too, and a layout a library derives itself
+   is never loaded as a map.
 
 **And every value has the shape this section writes, or the document is refused.** The two libraries
 coerced a value of another shape, or failed with their runtime's own error rather than this one, and
@@ -1032,6 +1038,54 @@ layout with the `postgres` dialect and expects `DateTime64(6, 'UTC')` to come ou
 renderer that mapped neutral types to dialect types would pass every other case in the family and
 fail that one, and it would be a second copy of the type mapping to keep in step with the planner's.
 
+### What a layout may name and spell
+
+A map is the control plane's, signed, and every library checks what it says before any of it reaches
+an engine. Two parts of a layout reach statements in ways quoting does not cover, and an
+independent review of the libraries, made as a compromised control plane would use them, showed
+both on 20 November 2026.
+
+**A physical name holds no `%`, `{` or `}`.** A table, a column and an index name are quoted, and
+quoting makes a name safe for the server, not for what reads a statement before it. Three readers
+did. The Python ClickHouse driver formats the whole text of a statement that has parameters with
+`%`, so a table called `payment%(k0_0).0s` became `payment` - another table - in a deletion by key.
+`{name:Type}` is a ClickHouse server-side parameter. And an Elasticsearch path is percent-decoded,
+so an index called `%5fall` addressed `_all`. A map naming one is refused when it loads, `MapError`
+with `a physical name cannot contain %, { or }`, at the table, the column or the index
+(`errors/144`, `errors/145`, `errors/146`); and since a model's names become physical ones, a model
+naming one is refused when it is declared (§4a, the eighth refusal).
+
+**A column type is read by one grammar before it is rendered.** The renderer neither quotes nor
+translates a type (above), so a type is the one part of a statement a layout writes as it is. Every
+library reads it first, with the same grammar, and refuses anything else with `EngineError` and
+`is not a column type this library renders` (`schema/021`, `schema/022`, `schema/023`):
+
+- at most 128 characters, all of them tokens, the first a word;
+- a **word** is an ASCII letter followed by ASCII letters and digits, and is one of the vocabularies
+  below: a PostgreSQL word compared in lowercase, as PostgreSQL reads it, and a ClickHouse word as
+  it is spelled;
+- a **number** is ASCII digits, and a **zone** is single quotes around ASCII letters, digits, `_`,
+  `/`, `+` and `-`;
+- `(` and `)` balance and nest at most four deep, a comma stands only inside them, and spaces stand
+  anywhere.
+
+| Vocabulary | Words |
+|---|---|
+| PostgreSQL | `bigint bool boolean bytea char character date decimal double float4 float8 int int2 int4 int8 integer interval json jsonb numeric precision real smallint text time timestamp timestamptz timetz uuid varchar varying with without zone` |
+| ClickHouse | `Array Bool Date Date32 DateTime DateTime64 Decimal Decimal128 Decimal256 Decimal32 Decimal64 FixedString Float32 Float64 IPv4 IPv6 Int128 Int16 Int256 Int32 Int64 Int8 LowCardinality Nullable String UInt128 UInt16 UInt256 UInt32 UInt64 UInt8 UUID` |
+
+The grammar knows no more of a statement's dialect than the renderer does (`schema/002`): it takes
+every type either vocabulary spells, and nothing a column definition carries after its type -
+`DEFAULT`, `MATERIALIZED`, `CODEC`, `TTL` or `COLLATE` are not words of it. Before this, a layout
+naming `uuid, "x" int); DROP TABLE "victim"; --` rendered that statement whole, and PostgreSQL runs
+several statements sent as one simple query; a ClickHouse type `String DEFAULT currentUser()` would
+have run an expression on every insert. Every PostgreSQL and ClickHouse type a library derives
+from the neutral types (§3), and every one in the vectors, is within the grammar; a test of the
+reference holds both, and holds the vocabularies of the three libraries and of this table equal.
+Elasticsearch and the orderbook engine spell a layout's types their own way, and no statement
+carries them as text: an index mapping is a JSON document, and the orderbook engine's schema is
+fixed.
+
 ### Order
 
 | What | Order |
@@ -1462,7 +1516,7 @@ depends on how the caller's JSON parser preserves keys.
 2. every relation's `from` and `to` is a declared entity, and every atomicity names declared
    entities — references before constraints, because a name that points nowhere makes every later
    check about a thing that is not there;
-3. the seven refusals of §4a, in the order they are written there.
+3. the eight refusals of §4a, in the order they are written there.
 
 **The map stage:**
 

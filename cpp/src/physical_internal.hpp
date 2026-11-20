@@ -23,6 +23,14 @@ using Columns = std::map<std::string, std::map<std::string, std::string>>;
                                                const Tables& tables, const Columns& columns,
                                                int contract);
 
+/// Why `name` cannot be a physical name - a table, a column, an index - in the reference's words;
+/// empty when it can (format contract section 7a). Quoting makes `%`, `{` and `}` safe for the
+/// server, not for what reads a statement before it: the Python ClickHouse driver formats the
+/// whole text of a statement that has parameters with `%`, `{name:Type}` is a ClickHouse
+/// server-side parameter, and an Elasticsearch path is percent-decoded. Every library refuses the
+/// same names, so a map loads in all of them or in none.
+[[nodiscard]] std::optional<std::string> physical_name_refusal(const std::string& name);
+
 /// Why a key order is not a permutation of the key, in the reference's words; empty when it is.
 /// The loader refuses with `MapError` and the DDL renderer with `EngineError`, as the reference's
 /// `effective_key(error=...)` does, so the message lives here once.

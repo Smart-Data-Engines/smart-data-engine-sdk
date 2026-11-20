@@ -8,6 +8,25 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a map cannot put a statement of its own choosing into a client's engine** (all three
+libraries; [format contract §7a](docs/format-contract.md#what-a-layout-may-name-and-spell)).
+Two parts of a map reach statements in ways quoting did not cover. A physical name - a table, a
+column, an index - holding `%`, `{` or `}`: the Python ClickHouse driver formats the whole text of a
+statement that has parameters with `%`, so a table called `payment%(k0_0).0s` became `payment` in a
+deletion by key; `{name:Type}` is a ClickHouse server-side parameter; and an Elasticsearch path is
+percent-decoded, so an index called `%5fall` addressed `_all`. A map naming one is now refused when
+it loads, and so is a model whose entity, field or relation name holds one, since those become table
+and column names. And a column type, which the renderer writes as the layout spells it: a layout naming
+`uuid, "x" int); DROP TABLE "victim"; --` rendered that statement whole, and PostgreSQL runs several
+statements in one simple query. A type is now read first by one grammar - words of two vocabularies,
+digits, spaces, zones in single quotes, parentheses four deep and commas inside them - and anything
+else is refused before a statement is rendered. Every PostgreSQL and ClickHouse type the libraries
+derive, and every one in the conformance vectors, is within it. The shared vectors `errors/144` to `149` and `schema/021` to
+`023` hold the rules. Found by an independent review of the libraries as a compromised control plane
+would use them: a signed map carries the control plane's word, and what it says is checked here
+before it reaches your engine. **Breaking** for a model or a hand-written map with such a name, and
+for a hand-written map with such a type.
+
 **Changed: Python's canonical encoder writes a string with nothing to escape without walking it**
 (`sde.canonical`). A string with no control character, quote or backslash - most names,
 identifiers and instants - is its own characters between quotes, and the character loop that

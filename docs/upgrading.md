@@ -159,7 +159,7 @@ Changelog: *Fixed: an entity the model does not declare is refused in one way*.
 
 ### Maps and declarations written by hand
 
-A map issued by the control plane is not affected by either item here.
+A map issued by the control plane is not affected by any item here. A model is, by the last.
 
 **A model and a map have the shapes the contract writes.** Affected: a hand-written declaration or
 map that relied on a coercion. Each is refused at load with the rule it breaks, alike in every
@@ -178,6 +178,18 @@ refuses such a layout when it opens, with `MapError`, since one row read as two 
 column type the library renders: for ClickHouse `DateTime64(6, 'UTC')` for a `timestamptz` field.
 
 Changelog: *Fixed: a temporal column keeps its field's zone*.
+
+**No name holds `%`, `{` or `}`, and a column type is one the grammar reads.** Affected: a model
+whose entity, field or relation name holds one of the three, refused when it is declared
+(`DeclarationError`), since those names become table and column names; a hand-written map naming a
+table, a column or an index with one, refused when it loads (`MapError`); and a hand-written layout
+whose column type the grammar of the [format contract §7a](format-contract.md#what-a-layout-may-name-and-spell)
+does not read - a clause after the type such as `DEFAULT`, `CODEC` or `COLLATE`, or a word of
+neither vocabulary - refused before a statement is rendered (`EngineError`). Write the type as the
+library renders it. A name has to change: for data already stored under it, that is a migration
+of its table or column.
+
+Changelog: *Fixed: a map cannot put a statement of its own choosing into a client's engine*.
 
 ### A write fence's backend of your own
 

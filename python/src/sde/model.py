@@ -23,6 +23,7 @@ from .canonical import canonical_bytes, digest16
 from .entity import EntityDecl, Ref, registry
 from .errors import DeclarationError
 from .logging import log
+from .physical import UNSAFE_IN_NAMES
 from .types import resolve_type
 
 __all__ = [
@@ -333,7 +334,7 @@ def _refuse_a_declaration_that_is_not_a_model(
     entities: tuple[EntitySpec, ...],
     relations: tuple[RelationSpec, ...],
 ) -> None:
-    """The seven refusals of format-contract §4a, in the order that section writes them.
+    """The eight refusals of format-contract §4a, in the order that section writes them.
 
     They live here rather than at each front door because there are two front doors - the
     decorator path and the neutral-JSON path the conformance vectors use - and until this function
@@ -413,6 +414,26 @@ def _refuse_a_declaration_that_is_not_a_model(
                 "entry that is not a field silently protects nothing, and the exclusion of "
                 "personal data from a derived copy is meant to be readable rather than trusted."
             )
+
+    # The eighth: each entity's name, then its fields', entity by entity, then the relations'.
+    for spec in entities:
+        _physical_name(f"the entity name {spec.name!r}", spec.name)
+        for field in spec.fields:
+            _physical_name(f"{spec.name}: the field name {field.name!r}", field.name)
+    for rel in relations:
+        _physical_name(f"{rel.source}: the relation name {rel.name!r}", rel.name)
+
+
+def _physical_name(what: str, name: str) -> None:
+    """An entity, field or relation name becomes a table or a column name - a field's as it is, an
+    entity's in snake case, a relation's before a key field's - and a physical name holds no ``%``,
+    ``{`` or ``}`` (format contract §7a). Refused here, when the model is declared, rather than when
+    a map derived from it is loaded."""
+    if not UNSAFE_IN_NAMES.isdisjoint(name):
+        raise DeclarationError(
+            f"{what} cannot contain %, {{ or }}: names of the model become table and column names, "
+            "and a physical name cannot hold them (format contract §7a)"
+        )
 
 
 def assemble(
