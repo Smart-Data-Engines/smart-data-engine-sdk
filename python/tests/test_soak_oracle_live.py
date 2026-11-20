@@ -14,11 +14,14 @@ from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import pytest
-from qualification.soak_oracle import DUPLICATES_SQL, DUPLICATES_SETTINGS
+from qualification.soak_oracle import DUPLICATES_SETTINGS, DUPLICATES_SQL
 
 DSN = os.environ.get("SDE_CLICKHOUSE_DSN")
 ROWS = 4_000_000
-BUDGET = {"max_memory_usage": 64 * 1024 * 1024}
+BUDGET = {"max_memory_usage": 128 * 1024 * 1024}
+"""Measured on ClickHouse 24.8 (20 November 2026): the first day's statement used 71.8 MiB for one
+million keys and 303.6 MiB for four, this one 61.7 and 62.5 MiB - buffers of its four reading
+threads, the same however many keys."""
 FIRST_DAY = (
     "SELECT at, count() FROM weather_reading WHERE station = {station:String} "
     "GROUP BY at HAVING count() > 1"
@@ -68,7 +71,7 @@ def test_the_copies_of_four_million_keys_are_counted_in_a_small_memory_budget() 
             DUPLICATES_SQL, parameters=station, settings={**DUPLICATES_SETTINGS, **BUDGET}
         ).result_rows
         assert [count for _at, count in found] == [2]
-        with pytest.raises(Exception, match="MEMORY_LIMIT_EXCEEDED|memory limit"):
+        with pytest.raises(Exception, match=r"MEMORY_LIMIT_EXCEEDED|memory limit"):
             client.query(
                 FIRST_DAY,
                 parameters=station,
