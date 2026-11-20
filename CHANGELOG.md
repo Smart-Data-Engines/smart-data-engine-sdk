@@ -8,6 +8,19 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: `sde.explain()` on PostgreSQL plans one statement and runs none of it** (Python;
+[`engine-statements.md`](docs/engine-statements.md#postgresql)). The query to plan comes from the
+control plane, and it went to PostgreSQL by the simple query protocol - psycopg's choice for a
+statement without parameters - where every statement of the string runs. A query of
+`SELECT 1; COMMIT; DELETE FROM payment; DROP TABLE audit_log; SELECT 1` ended the read-only
+transaction, and the rest ran in a new, read-write one: measured on PostgreSQL, the table was emptied
+and the other dropped while `explain` returned an ordinary plan and reported that writing was
+prevented. The query now goes as one statement by the extended protocol, which refuses a string of
+several before any of them runs, and the refusal says so. ClickHouse was not affected: each statement
+there carries `readonly=1`, and its HTTP interface takes one statement. The TypeScript and C++
+libraries have no `explain`. Found by an independent review of the libraries as a compromised control
+plane would use them.
+
 **Changed: Python's canonical encoder writes a string with nothing to escape without walking it**
 (`sde.canonical`). A string with no control character, quote or backslash - most names,
 identifiers and instants - is its own characters between quotes, and the character loop that

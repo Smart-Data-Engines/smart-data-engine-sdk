@@ -636,9 +636,16 @@ class PostgresEngine:
                     f"refused in a read-only one."
                 )
             try:
-                cursor.execute(f"EXPLAIN (FORMAT JSON) {sql}")
+                # One statement, by the extended protocol. Without parameters psycopg sends a
+                # statement by the simple protocol, where PostgreSQL runs every statement of the
+                # string: a query of `SELECT 1; COMMIT; DELETE ...` ended the read-only transaction
+                # and deleted in a new, read-write one, and the plan came back as if nothing had
+                # happened (SDE-97, measured). The extended protocol takes one statement and
+                # refuses a string of several before any of them runs; `binary=True` is what
+                # makes psycopg use it for a statement without parameters.
+                cursor.execute(f"EXPLAIN (FORMAT JSON) {sql}", binary=True)
                 raw = cursor.fetchone()
-                cursor.execute(f"EXPLAIN {sql}")
+                cursor.execute(f"EXPLAIN {sql}", binary=True)
                 text = tuple(str(row[0]) for row in cursor.fetchall())
             except Exception as exc:
                 # The refusal *is* the validation. Re-raised with the engine's own wording,
@@ -680,10 +687,11 @@ class PostgresEngine:
             ),
             findings=postgres_findings(node),
             read_only_enforced=(
-                "SET TRANSACTION READ ONLY, and the transaction is rolled back. PostgreSQL "
-                "refuses a write in such a transaction whatever the statement looks like - "
-                "measured: a data-modifying CTE fails with 'cannot execute SELECT in a read-only "
-                "transaction'."
+                "SET TRANSACTION READ ONLY, one statement sent by the extended protocol - a query "
+                "of several is refused before any of them runs - and the transaction is rolled "
+                "back. PostgreSQL refuses a write in such a transaction whatever the statement "
+                "looks like - measured: a data-modifying CTE fails with 'cannot execute SELECT in "
+                "a read-only transaction'."
             ),
         )
 
