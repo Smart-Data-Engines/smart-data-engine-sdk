@@ -1,0 +1,846 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "commit": null,
+  "project": "11111111111111111111111111111111",
+  "results": [
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 2000000,
+      "variant": "plain",
+      "rows_written_since_the_settle": 100000,
+      "index_ms": null,
+      "pause_ms": 6261,
+      "phases": {
+        "deny_target": 36,
+        "freeze_target": 190,
+        "freeze_source": 37,
+        "deny_source": 14,
+        "maintenance_epoch": 189,
+        "release_maintenance": 138,
+        "repair": 3768,
+        "verify_frozen": 1596,
+        "confirm_source_denied": 11,
+        "retire_source": 19,
+        "activate_target": 99,
+        "watermarks": 20,
+        "publish_map": 3,
+        "enable_runtime": 36,
+        "release_runtime": 63
+      },
+      "statements_ms": 5215,
+      "statements": [
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT * FROM <name> FINAL WHERE <name> = <p> AND (<name>) > (<p>) ORDER BY (<name>) LIMIT <p>",
+          "count": 100,
+          "total_ms": 1526.4,
+          "max_ms": 107.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT * FROM <name> FINAL WHERE <name> = <p> ORDER BY (<name>) LIMIT <p>",
+          "count": 2,
+          "total_ms": 772.0,
+          "max_ms": 499.1
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT * FROM <name> FINAL WHERE (<name>) IN ((<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p",
+          "count": 40,
+          "total_ms": 673.0,
+          "max_ms": 35.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT * FROM <name> WHERE <name> = <p> ORDER BY (<name>) LIMIT <p>",
+          "count": 1,
+          "total_ms": 366.0,
+          "max_ms": 366.0
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT type, default_kind, default_expression FROM system.columns WHERE database=currentDatabase() AND table=<p> AND name=<p>",
+          "count": 22,
+          "total_ms": 272.1,
+          "max_ms": 52.5
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT count(*) FROM <name>",
+          "count": 1,
+          "total_ms": 251.1,
+          "max_ms": 251.1
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT toString(uuid), engine, formatQuery(create_table_query) FROM system.tables WHERE database=currentDatabase() AND name=<p>",
+          "count": 22,
+          "total_ms": 227.0,
+          "max_ms": 29.6
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT * FROM <name> WHERE <name> = <p> AND (<name>) > (<p>) ORDER BY (<name>) LIMIT <p>",
+          "count": 100,
+          "total_ms": 204.8,
+          "max_ms": 5.1
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT engine FROM system.databases WHERE name=currentDatabase()",
+          "count": 22,
+          "total_ms": 175.0,
+          "max_ms": 40.6
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT * FROM <name> WHERE (<name>) IN ((<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<",
+          "count": 10,
+          "total_ms": 172.0,
+          "max_ms": 32.6
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "INSERT INTO <name>",
+          "count": 10,
+          "total_ms": 86.4,
+          "max_ms": 10.0
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT count() FROM <name> FINAL",
+          "count": 1,
+          "total_ms": 61.5,
+          "max_ms": 61.5
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT toString(serverUUID()), toString(uuid), name FROM system.databases WHERE name=currentDatabase()",
+          "count": 10,
+          "total_ms": 51.6,
+          "max_ms": 6.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT count() FROM system.row_policies WHERE database=<p> AND table=<p>",
+          "count": 6,
+          "total_ms": 35.0,
+          "max_ms": 6.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT toString(uuid),database,name,engine,length(dependencies_table) FROM system.tables WHERE database=currentDatabase() AND name=<p>",
+          "count": 6,
+          "total_ms": 32.9,
+          "max_ms": 6.0
+        },
+        {
+          "engine": "postgres",
+          "statement": "ALTER TABLE <name> ADD CONSTRAINT <name> CHECK (false) NOT VALID",
+          "count": 2,
+          "total_ms": 28.7,
+          "max_ms": 14.5
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT a.atttypid=<value>::regtype, a.attnotnull, a.attgenerated, pg_get_expr(d.adbin,d.adrelid) FROM pg_attribute a LEFT JOIN pg_attrdef d ",
+          "count": 15,
+          "total_ms": 22.8,
+          "max_ms": 2.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT table, name, type FROM system.columns WHERE database = currentDatabase() AND table IN <p>",
+          "count": 2,
+          "total_ms": 21.5,
+          "max_ms": 16.6
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid=to_regclass(<p>) AND contype=<value>",
+          "count": 15,
+          "total_ms": 17.9,
+          "max_ms": 1.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "INSERT INTO __sde_fence_drains",
+          "count": 2,
+          "total_ms": 16.1,
+          "max_ms": 9.5
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.oid::text, c.relkind, EXISTS (SELECT <n> FROM pg_inherits i WHERE i.inhrelid=c.oid OR i.inhparent=c.oid) FROM pg_class c WHERE c.oi",
+          "count": 15,
+          "total_ms": 16.0,
+          "max_ms": 2.7
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT count() FROM system.role_grants WHERE user_name=<p>",
+          "count": 3,
+          "total_ms": 15.1,
+          "max_ms": 5.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.oid::text,n.nspname,c.relname,c.relkind,c.relpersistence,c.relrowsecurity,c.relforcerowsecurity,EXISTS(SELECT <n> FROM pg_inherits ",
+          "count": 6,
+          "total_ms": 11.1,
+          "max_ms": 2.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT access_type FROM system.grants WHERE user_name=<p> AND database=<p> AND table=<p> AND column IS NULL AND is_partial_revoke=<n>",
+          "count": 2,
+          "total_ms": 11.0,
+          "max_ms": 5.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT max(<name>) FROM <name>",
+          "count": 2,
+          "total_ms": 10.8,
+          "max_ms": 5.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT <n> FROM <name> LIMIT <n>",
+          "count": 2,
+          "total_ms": 10.4,
+          "max_ms": 6.2
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT name,type FROM system.columns WHERE database=currentDatabase() AND table=<p> ORDER BY name",
+          "count": 2,
+          "total_ms": 10.3,
+          "max_ms": 5.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT engine FROM system.tables WHERE database=currentDatabase() AND name=<p>",
+          "count": 2,
+          "total_ms": 9.0,
+          "max_ms": 5.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.system_identifier::text, d.oid::text, current_database() FROM pg_control_system() c CROSS JOIN pg_database d WHERE d.datname=curren",
+          "count": 9,
+          "total_ms": 8.5,
+          "max_ms": 2.7
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT t.relname, ic.relname, i.indisprimary, am.amname, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY k(num, pos) JOIN pg_at",
+          "count": 1,
+          "total_ms": 8.3,
+          "max_ms": 8.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT currentUser()",
+          "count": 2,
+          "total_ms": 8.0,
+          "max_ms": 4.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT user_name,role_name,access_type,database,table FROM system.grants WHERE (database IS NULL OR database=<value> OR database=<p>) AND (t",
+          "count": 1,
+          "total_ms": 7.8,
+          "max_ms": 7.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "INSERT INTO sde_map_state",
+          "count": 1,
+          "total_ms": 7.7,
+          "max_ms": 7.7
+        },
+        {
+          "engine": "postgres",
+          "statement": "REVOKE SELECT, INSERT ON <name>.<name> FROM <name>",
+          "count": 2,
+          "total_ms": 7.4,
+          "max_ms": 5.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "EXISTS TABLE <name>",
+          "count": 2,
+          "total_ms": 6.7,
+          "max_ms": 3.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT name, sorting_key, partition_key FROM system.tables WHERE database = currentDatabase() AND name IN <p>",
+          "count": 1,
+          "total_ms": 5.9,
+          "max_ms": 5.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT user_name, access_type, is_partial_revoke, database, table, column FROM system.grants WHERE user_name IS NOT NULL",
+          "count": 1,
+          "total_ms": 5.8,
+          "max_ms": 5.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT access_type,database,table,column,is_partial_revoke,grant_option FROM system.grants WHERE user_name=<p>",
+          "count": 1,
+          "total_ms": 5.2,
+          "max_ms": 5.2
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT privilege, parent_group FROM system.privileges",
+          "count": 1,
+          "total_ms": 5.0,
+          "max_ms": 5.0
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespac",
+          "count": 2,
+          "total_ms": 4.9,
+          "max_ms": 2.6
+        },
+        {
+          "engine": "postgres",
+          "statement": "ALTER TABLE <name> ADD CONSTRAINT <name> CHECK (__sde_write_epoch >= <n>) NOT VALID, ADD CONSTRAINT <name> CHECK (__sde_write_epoch <= <n>) ",
+          "count": 1,
+          "total_ms": 4.9,
+          "max_ms": 4.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT storage,toString(id) FROM system.users WHERE name=<p>",
+          "count": 1,
+          "total_ms": 4.7,
+          "max_ms": 4.7
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT <n> FROM <name> LIMIT <n>",
+          "count": 2,
+          "total_ms": 4.5,
+          "max_ms": 3.5
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT pg_get_userbyid(a.grantee) FROM pg_class c, LATERAL aclexplode(c.relacl) a WHERE c.oid=to_regclass(<p>) AND a.grantee <> c.relowner U",
+          "count": 1,
+          "total_ms": 1.9,
+          "max_ms": 1.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "LOCK TABLE <name> IN SHARE ROW EXCLUSIVE MODE",
+          "count": 2,
+          "total_ms": 1.7,
+          "max_ms": 1.2
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT has_table_privilege(<p>,to_regclass(<p>),<value>),has_table_privilege(<p>,to_regclass(<p>),<value>)",
+          "count": 2,
+          "total_ms": 1.3,
+          "max_ms": 0.8
+        },
+        {
+          "engine": "postgres",
+          "statement": "INSERT INTO <name> (<name>, <name>) VALUES (<p>, <p>)",
+          "count": 1,
+          "total_ms": 1.3,
+          "max_ms": 1.3
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.relowner=<p>::oid,has_schema_privilege(<p>,n.oid,<value>),has_table_privilege(<p>,c.oid,<value>),has_table_privilege(<p>,c.oid,<val",
+          "count": 1,
+          "total_ms": 1.1,
+          "max_ms": 1.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT current_user,session_user,r.oid::text,r.rolsuper,r.rolcreaterole,r.rolcreatedb,r.rolreplication,r.rolbypassrls,EXISTS(SELECT <n> FROM",
+          "count": 1,
+          "total_ms": 0.9,
+          "max_ms": 0.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT count(*) FROM pg_class c, LATERAL aclexplode(c.relacl) a WHERE c.oid=to_regclass(<p>) AND (a.grantee=<n> OR (a.grantee=<p>::oid AND a",
+          "count": 1,
+          "total_ms": 0.9,
+          "max_ms": 0.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT count(*) FROM pg_attribute c, LATERAL aclexplode(c.attacl) a WHERE c.attrelid=to_regclass(<p>) AND a.grantee IN (<n>,<p>::oid)",
+          "count": 1,
+          "total_ms": 0.9,
+          "max_ms": 0.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT to_regclass(<p>)",
+          "count": 2,
+          "total_ms": 0.8,
+          "max_ms": 0.5
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT max(<name>) FROM <name>",
+          "count": 2,
+          "total_ms": 0.8,
+          "max_ms": 0.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT current_user",
+          "count": 1,
+          "total_ms": 0.3,
+          "max_ms": 0.3
+        }
+      ],
+      "run": 1,
+      "load_before": [
+        4.88,
+        4.71,
+        4.19
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 2000000,
+      "variant": "plain",
+      "rows_written_since_the_settle": 100000,
+      "index_ms": null,
+      "pause_ms": 6147,
+      "phases": {
+        "deny_target": 7,
+        "freeze_target": 16,
+        "freeze_source": 150,
+        "deny_source": 38,
+        "maintenance_epoch": 23,
+        "release_maintenance": 15,
+        "repair": 4388,
+        "verify_frozen": 1066,
+        "confirm_source_denied": 31,
+        "retire_source": 103,
+        "activate_target": 165,
+        "watermarks": 45,
+        "publish_map": 4,
+        "enable_runtime": 51,
+        "release_runtime": 24
+      },
+      "statements_ms": 3502,
+      "statements": [
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT * FROM <name> FINAL WHERE <name> = <p> AND (<name>) > (<p>) ORDER BY (<name>) LIMIT <p>",
+          "count": 100,
+          "total_ms": 1200.3,
+          "max_ms": 18.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT * FROM <name> WHERE <name> = <p> ORDER BY (<name>) LIMIT <p>",
+          "count": 2,
+          "total_ms": 351.7,
+          "max_ms": 217.6
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT * FROM <name> FINAL WHERE (<name>) IN ((<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p",
+          "count": 20,
+          "total_ms": 338.2,
+          "max_ms": 20.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT * FROM <name> WHERE (<name>) IN ((<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<p>), (<",
+          "count": 20,
+          "total_ms": 209.0,
+          "max_ms": 17.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT * FROM <name> WHERE <name> = <p> AND (<name>) > (<p>) ORDER BY (<name>) LIMIT <p>",
+          "count": 100,
+          "total_ms": 182.9,
+          "max_ms": 3.8
+        },
+        {
+          "engine": "postgres",
+          "statement": "ALTER TABLE <name> ADD CONSTRAINT <name> CHECK (__sde_write_epoch >= <n>) NOT VALID, ADD CONSTRAINT <name> CHECK (__sde_write_epoch <= <n>) ",
+          "count": 2,
+          "total_ms": 152.1,
+          "max_ms": 148.6
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT * FROM <name> FINAL WHERE <name> = <p> ORDER BY (<name>) LIMIT <p>",
+          "count": 1,
+          "total_ms": 134.0,
+          "max_ms": 134.0
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT count(*) FROM <name>",
+          "count": 1,
+          "total_ms": 126.3,
+          "max_ms": 126.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT toString(uuid), engine, formatQuery(create_table_query) FROM system.tables WHERE database=currentDatabase() AND name=<p>",
+          "count": 14,
+          "total_ms": 109.2,
+          "max_ms": 27.5
+        },
+        {
+          "engine": "postgres",
+          "statement": "ALTER TABLE <name> ADD CONSTRAINT <name> CHECK (false) NOT VALID",
+          "count": 2,
+          "total_ms": 97.2,
+          "max_ms": 95.2
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT type, default_kind, default_expression FROM system.columns WHERE database=currentDatabase() AND table=<p> AND name=<p>",
+          "count": 14,
+          "total_ms": 83.0,
+          "max_ms": 15.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT engine FROM system.databases WHERE name=currentDatabase()",
+          "count": 14,
+          "total_ms": 63.8,
+          "max_ms": 7.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "GRANT SELECT, INSERT ON <name>.<name> TO <name>",
+          "count": 1,
+          "total_ms": 45.3,
+          "max_ms": 45.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT toString(serverUUID()), toString(uuid), name FROM system.databases WHERE name=currentDatabase()",
+          "count": 10,
+          "total_ms": 42.5,
+          "max_ms": 5.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT count() FROM system.row_policies WHERE database=<p> AND table=<p>",
+          "count": 6,
+          "total_ms": 32.4,
+          "max_ms": 6.3
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT a.atttypid=<value>::regtype, a.attnotnull, a.attgenerated, pg_get_expr(d.adbin,d.adrelid) FROM pg_attribute a LEFT JOIN pg_attrdef d ",
+          "count": 26,
+          "total_ms": 31.2,
+          "max_ms": 1.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT toString(uuid),database,name,engine,length(dependencies_table) FROM system.tables WHERE database=currentDatabase() AND name=<p>",
+          "count": 6,
+          "total_ms": 30.4,
+          "max_ms": 5.3
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.oid::text, c.relkind, EXISTS (SELECT <n> FROM pg_inherits i WHERE i.inhrelid=c.oid OR i.inhparent=c.oid) FROM pg_class c WHERE c.oi",
+          "count": 26,
+          "total_ms": 25.6,
+          "max_ms": 1.9
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid=to_regclass(<p>) AND contype=<value>",
+          "count": 26,
+          "total_ms": 23.8,
+          "max_ms": 1.2
+        },
+        {
+          "engine": "postgres",
+          "statement": "INSERT INTO <name> (<name>, <name>) VALUES (<p>, <p>)",
+          "count": 1,
+          "total_ms": 18.9,
+          "max_ms": 18.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "INSERT INTO __sde_fence_drains",
+          "count": 2,
+          "total_ms": 18.0,
+          "max_ms": 9.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "ALTER TABLE <name> ADD CONSTRAINT <name> CHECK (true) NOT VALID, DROP CONSTRAINT IF EXISTS <name>",
+          "count": 2,
+          "total_ms": 16.1,
+          "max_ms": 13.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT count() FROM system.role_grants WHERE user_name=<p>",
+          "count": 3,
+          "total_ms": 15.3,
+          "max_ms": 5.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT max(<name>) FROM <name>",
+          "count": 2,
+          "total_ms": 13.1,
+          "max_ms": 8.6
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT access_type FROM system.grants WHERE user_name=<p> AND database=<p> AND table=<p> AND column IS NULL AND is_partial_revoke=<n>",
+          "count": 2,
+          "total_ms": 10.8,
+          "max_ms": 6.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.oid::text,n.nspname,c.relname,c.relkind,c.relpersistence,c.relrowsecurity,c.relforcerowsecurity,EXISTS(SELECT <n> FROM pg_inherits ",
+          "count": 6,
+          "total_ms": 9.7,
+          "max_ms": 1.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT <n> FROM <name> LIMIT <n>",
+          "count": 2,
+          "total_ms": 9.6,
+          "max_ms": 5.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT name,type FROM system.columns WHERE database=currentDatabase() AND table=<p> ORDER BY name",
+          "count": 2,
+          "total_ms": 9.4,
+          "max_ms": 5.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT count() FROM <name> FINAL",
+          "count": 1,
+          "total_ms": 9.4,
+          "max_ms": 9.4
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT engine FROM system.tables WHERE database=currentDatabase() AND name=<p>",
+          "count": 2,
+          "total_ms": 8.8,
+          "max_ms": 5.2
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "INSERT INTO sde_map_state",
+          "count": 1,
+          "total_ms": 8.7,
+          "max_ms": 8.7
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT table, name, type FROM system.columns WHERE database = currentDatabase() AND table IN <p>",
+          "count": 2,
+          "total_ms": 8.6,
+          "max_ms": 4.7
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "EXISTS TABLE <name>",
+          "count": 2,
+          "total_ms": 7.4,
+          "max_ms": 4.7
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT currentUser()",
+          "count": 2,
+          "total_ms": 6.3,
+          "max_ms": 3.3
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.system_identifier::text, d.oid::text, current_database() FROM pg_control_system() c CROSS JOIN pg_database d WHERE d.datname=curren",
+          "count": 9,
+          "total_ms": 6.0,
+          "max_ms": 1.1
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT user_name,role_name,access_type,database,table FROM system.grants WHERE (database IS NULL OR database=<value> OR database=<p>) AND (t",
+          "count": 1,
+          "total_ms": 5.1,
+          "max_ms": 5.1
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT storage,toString(id) FROM system.users WHERE name=<p>",
+          "count": 1,
+          "total_ms": 4.8,
+          "max_ms": 4.8
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT name, sorting_key, partition_key FROM system.tables WHERE database = currentDatabase() AND name IN <p>",
+          "count": 1,
+          "total_ms": 4.7,
+          "max_ms": 4.7
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT access_type,database,table,column,is_partial_revoke,grant_option FROM system.grants WHERE user_name=<p>",
+          "count": 1,
+          "total_ms": 4.2,
+          "max_ms": 4.2
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT t.relname, ic.relname, i.indisprimary, am.amname, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY k(num, pos) JOIN pg_at",
+          "count": 1,
+          "total_ms": 4.1,
+          "max_ms": 4.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespac",
+          "count": 2,
+          "total_ms": 3.9,
+          "max_ms": 2.3
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT user_name, access_type, is_partial_revoke, database, table, column FROM system.grants WHERE user_name IS NOT NULL",
+          "count": 1,
+          "total_ms": 3.9,
+          "max_ms": 3.9
+        },
+        {
+          "engine": "clickhouse",
+          "statement": "SELECT privilege, parent_group FROM system.privileges",
+          "count": 1,
+          "total_ms": 3.3,
+          "max_ms": 3.3
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT <n> FROM <name> LIMIT <n>",
+          "count": 2,
+          "total_ms": 1.8,
+          "max_ms": 1.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "REVOKE SELECT, INSERT ON <name>.<name> FROM <name>",
+          "count": 1,
+          "total_ms": 1.7,
+          "max_ms": 1.7
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT pg_get_userbyid(a.grantee) FROM pg_class c, LATERAL aclexplode(c.relacl) a WHERE c.oid=to_regclass(<p>) AND a.grantee <> c.relowner U",
+          "count": 1,
+          "total_ms": 1.4,
+          "max_ms": 1.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT max(<name>) FROM <name>",
+          "count": 2,
+          "total_ms": 1.4,
+          "max_ms": 1.1
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT has_table_privilege(<p>,to_regclass(<p>),<value>),has_table_privilege(<p>,to_regclass(<p>),<value>)",
+          "count": 2,
+          "total_ms": 1.2,
+          "max_ms": 0.6
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT current_user,session_user,r.oid::text,r.rolsuper,r.rolcreaterole,r.rolcreatedb,r.rolreplication,r.rolbypassrls,EXISTS(SELECT <n> FROM",
+          "count": 1,
+          "total_ms": 1.0,
+          "max_ms": 1.0
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT c.relowner=<p>::oid,has_schema_privilege(<p>,n.oid,<value>),has_table_privilege(<p>,c.oid,<value>),has_table_privilege(<p>,c.oid,<val",
+          "count": 1,
+          "total_ms": 1.0,
+          "max_ms": 1.0
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT count(*) FROM pg_class c, LATERAL aclexplode(c.relacl) a WHERE c.oid=to_regclass(<p>) AND (a.grantee=<n> OR (a.grantee=<p>::oid AND a",
+          "count": 1,
+          "total_ms": 0.8,
+          "max_ms": 0.8
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT to_regclass(<p>)",
+          "count": 2,
+          "total_ms": 0.8,
+          "max_ms": 0.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT count(*) FROM pg_attribute c, LATERAL aclexplode(c.attacl) a WHERE c.attrelid=to_regclass(<p>) AND a.grantee IN (<n>,<p>::oid)",
+          "count": 1,
+          "total_ms": 0.7,
+          "max_ms": 0.7
+        },
+        {
+          "engine": "postgres",
+          "statement": "LOCK TABLE <name> IN SHARE ROW EXCLUSIVE MODE",
+          "count": 2,
+          "total_ms": 0.7,
+          "max_ms": 0.4
+        },
+        {
+          "engine": "postgres",
+          "statement": "SELECT current_user",
+          "count": 1,
+          "total_ms": 0.3,
+          "max_ms": 0.3
+        }
+      ],
+      "run": 1,
+      "load_before": [
+        6.59,
+        5.15,
+        4.39
+      ]
+    }
+  ]
+}

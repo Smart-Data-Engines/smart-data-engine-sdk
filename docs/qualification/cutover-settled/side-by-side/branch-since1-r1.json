@@ -1,0 +1,602 @@
+{
+  "machine": {
+    "node": "km-ThinkPad-E570",
+    "processor": "",
+    "cpus": 4,
+    "python": "3.14.4"
+  },
+  "sde_version": "0.2.1.dev0",
+  "commit": null,
+  "results": [
+    {
+      "source": "postgres",
+      "target": "clickhouse",
+      "rows": 2000000,
+      "way": "settled-written",
+      "chunk_rows": 1000,
+      "rows_written_since_the_settle": 2000,
+      "backfill_ms": 54440,
+      "advance": {
+        "outcome": "advanced",
+        "pause_ms": 1928,
+        "wall_ms": 2088,
+        "phases": {
+          "advance_freeze_source": 31,
+          "advance_freeze_copy": 627,
+          "advance_held": 228,
+          "advance_source": 136,
+          "advance_copy": 695,
+          "advance_watermarks": 82,
+          "advance_publish": 6,
+          "advance_release_copy": 79,
+          "advance_release_source": 15
+        },
+        "steps": [
+          [
+            "advance_prepared",
+            158
+          ],
+          [
+            "advance_freeze_source:intent",
+            159
+          ],
+          [
+            "advance_freeze_source:done",
+            190
+          ],
+          [
+            "advance_freeze_copy:intent",
+            190
+          ],
+          [
+            "advance_freeze_copy:done",
+            817
+          ],
+          [
+            "advance_held:intent",
+            818
+          ],
+          [
+            "advance_held:done",
+            1046
+          ],
+          [
+            "advance_decision:advanced",
+            1047
+          ],
+          [
+            "advance_source:intent",
+            1049
+          ],
+          [
+            "advance_source:done",
+            1184
+          ],
+          [
+            "advance_copy:intent",
+            1185
+          ],
+          [
+            "advance_copy:done",
+            1880
+          ],
+          [
+            "advance_watermarks:intent",
+            1881
+          ],
+          [
+            "advance_watermarks:done",
+            1963
+          ],
+          [
+            "advance_publish:intent",
+            1964
+          ],
+          [
+            "advance_publish:done",
+            1970
+          ],
+          [
+            "advance_release_copy:intent",
+            1973
+          ],
+          [
+            "advance_release_copy:done",
+            2051
+          ],
+          [
+            "advance_release_source:intent",
+            2052
+          ],
+          [
+            "advance_release_source:done",
+            2067
+          ],
+          [
+            "advance_complete",
+            2088
+          ]
+        ]
+      },
+      "settle_ms": 15237,
+      "settle": {
+        "chunks": 2000,
+        "rows": 2000000,
+        "earlier": 2000000,
+        "written": 0,
+        "unconfirmed": 0
+      },
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 2931,
+      "within_budget": true,
+      "repair_ms": 540,
+      "verify_frozen_ms": 1338,
+      "phases": {
+        "deny_target": 33,
+        "freeze_target": 299,
+        "freeze_source": 39,
+        "deny_source": 18,
+        "maintenance_epoch": 262,
+        "release_maintenance": 138,
+        "repair": 540,
+        "verify_frozen": 1338,
+        "confirm_source_denied": 18,
+        "retire_source": 25,
+        "activate_target": 83,
+        "watermarks": 19,
+        "publish_map": 2,
+        "enable_runtime": 35,
+        "release_runtime": 34
+      },
+      "steps": [
+        [
+          "prepared",
+          178
+        ],
+        [
+          "deny_target:intent",
+          179
+        ],
+        [
+          "deny_target:done",
+          211
+        ],
+        [
+          "freeze_target:intent",
+          212
+        ],
+        [
+          "freeze_target:done",
+          511
+        ],
+        [
+          "freeze_source:intent",
+          513
+        ],
+        [
+          "freeze_source:done",
+          553
+        ],
+        [
+          "deny_source:intent",
+          555
+        ],
+        [
+          "deny_source:done",
+          573
+        ],
+        [
+          "maintenance_epoch:intent",
+          575
+        ],
+        [
+          "maintenance_epoch:done",
+          837
+        ],
+        [
+          "release_maintenance:intent",
+          843
+        ],
+        [
+          "release_maintenance:done",
+          980
+        ],
+        [
+          "repair:intent",
+          984
+        ],
+        [
+          "repair:done",
+          1524
+        ],
+        [
+          "verify_frozen:intent",
+          1525
+        ],
+        [
+          "verify_frozen:done",
+          2863
+        ],
+        [
+          "decision:success",
+          2865
+        ],
+        [
+          "confirm_source_denied:intent",
+          2867
+        ],
+        [
+          "confirm_source_denied:done",
+          2884
+        ],
+        [
+          "retire_source:intent",
+          2888
+        ],
+        [
+          "retire_source:done",
+          2913
+        ],
+        [
+          "activate_target:intent",
+          2916
+        ],
+        [
+          "activate_target:done",
+          2999
+        ],
+        [
+          "watermarks:intent",
+          3000
+        ],
+        [
+          "watermarks:done",
+          3019
+        ],
+        [
+          "publish_map:intent",
+          3020
+        ],
+        [
+          "publish_map:done",
+          3022
+        ],
+        [
+          "enable_runtime:intent",
+          3023
+        ],
+        [
+          "enable_runtime:done",
+          3058
+        ],
+        [
+          "release_runtime:intent",
+          3059
+        ],
+        [
+          "release_runtime:done",
+          3093
+        ],
+        [
+          "completed",
+          3110
+        ]
+      ],
+      "repair": {
+        "chunks": 4,
+        "mode": "since",
+        "partial": false,
+        "rows": 3800,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 2002000,
+      "rows_target": 2002000,
+      "chunks_compared": 5,
+      "wall_ms": 3110,
+      "run": 1,
+      "load_before": [
+        4.37,
+        3.89,
+        3.42
+      ]
+    },
+    {
+      "source": "clickhouse",
+      "target": "postgres",
+      "rows": 2000000,
+      "way": "settled-written",
+      "chunk_rows": 1000,
+      "rows_written_since_the_settle": 2000,
+      "backfill_ms": 31854,
+      "advance": {
+        "outcome": "advanced",
+        "pause_ms": 773,
+        "wall_ms": 919,
+        "phases": {
+          "advance_freeze_source": 131,
+          "advance_freeze_copy": 15,
+          "advance_held": 40,
+          "advance_source": 64,
+          "advance_copy": 24,
+          "advance_watermarks": 28,
+          "advance_publish": 3,
+          "advance_release_copy": 20,
+          "advance_release_source": 414
+        },
+        "steps": [
+          [
+            "advance_prepared",
+            144
+          ],
+          [
+            "advance_freeze_source:intent",
+            145
+          ],
+          [
+            "advance_freeze_source:done",
+            275
+          ],
+          [
+            "advance_freeze_copy:intent",
+            276
+          ],
+          [
+            "advance_freeze_copy:done",
+            292
+          ],
+          [
+            "advance_held:intent",
+            292
+          ],
+          [
+            "advance_held:done",
+            332
+          ],
+          [
+            "advance_decision:advanced",
+            333
+          ],
+          [
+            "advance_source:intent",
+            333
+          ],
+          [
+            "advance_source:done",
+            398
+          ],
+          [
+            "advance_copy:intent",
+            398
+          ],
+          [
+            "advance_copy:done",
+            422
+          ],
+          [
+            "advance_watermarks:intent",
+            423
+          ],
+          [
+            "advance_watermarks:done",
+            451
+          ],
+          [
+            "advance_publish:intent",
+            452
+          ],
+          [
+            "advance_publish:done",
+            456
+          ],
+          [
+            "advance_release_copy:intent",
+            457
+          ],
+          [
+            "advance_release_copy:done",
+            476
+          ],
+          [
+            "advance_release_source:intent",
+            477
+          ],
+          [
+            "advance_release_source:done",
+            892
+          ],
+          [
+            "advance_complete",
+            919
+          ]
+        ]
+      },
+      "settle_ms": 15345,
+      "settle": {
+        "chunks": 2000,
+        "rows": 2000000,
+        "earlier": 2000000,
+        "written": 0,
+        "unconfirmed": 0
+      },
+      "outcome": "success",
+      "reason": "matched",
+      "pause_ms": 1228,
+      "within_budget": true,
+      "repair_ms": 303,
+      "verify_frozen_ms": 489,
+      "phases": {
+        "deny_target": 9,
+        "freeze_target": 22,
+        "freeze_source": 123,
+        "deny_source": 45,
+        "maintenance_epoch": 29,
+        "release_maintenance": 13,
+        "repair": 303,
+        "verify_frozen": 489,
+        "confirm_source_denied": 39,
+        "retire_source": 77,
+        "activate_target": 19,
+        "watermarks": 18,
+        "publish_map": 2,
+        "enable_runtime": 7,
+        "release_runtime": 13
+      },
+      "steps": [
+        [
+          "prepared",
+          176
+        ],
+        [
+          "deny_target:intent",
+          177
+        ],
+        [
+          "deny_target:done",
+          185
+        ],
+        [
+          "freeze_target:intent",
+          187
+        ],
+        [
+          "freeze_target:done",
+          209
+        ],
+        [
+          "freeze_source:intent",
+          210
+        ],
+        [
+          "freeze_source:done",
+          333
+        ],
+        [
+          "deny_source:intent",
+          335
+        ],
+        [
+          "deny_source:done",
+          380
+        ],
+        [
+          "maintenance_epoch:intent",
+          381
+        ],
+        [
+          "maintenance_epoch:done",
+          409
+        ],
+        [
+          "release_maintenance:intent",
+          411
+        ],
+        [
+          "release_maintenance:done",
+          424
+        ],
+        [
+          "repair:intent",
+          425
+        ],
+        [
+          "repair:done",
+          727
+        ],
+        [
+          "verify_frozen:intent",
+          729
+        ],
+        [
+          "verify_frozen:done",
+          1218
+        ],
+        [
+          "decision:success",
+          1220
+        ],
+        [
+          "confirm_source_denied:intent",
+          1221
+        ],
+        [
+          "confirm_source_denied:done",
+          1260
+        ],
+        [
+          "retire_source:intent",
+          1262
+        ],
+        [
+          "retire_source:done",
+          1338
+        ],
+        [
+          "activate_target:intent",
+          1339
+        ],
+        [
+          "activate_target:done",
+          1358
+        ],
+        [
+          "watermarks:intent",
+          1359
+        ],
+        [
+          "watermarks:done",
+          1377
+        ],
+        [
+          "publish_map:intent",
+          1378
+        ],
+        [
+          "publish_map:done",
+          1380
+        ],
+        [
+          "enable_runtime:intent",
+          1381
+        ],
+        [
+          "enable_runtime:done",
+          1388
+        ],
+        [
+          "release_runtime:intent",
+          1388
+        ],
+        [
+          "release_runtime:done",
+          1401
+        ],
+        [
+          "completed",
+          1406
+        ]
+      ],
+      "repair": {
+        "chunks": 4,
+        "mode": "since",
+        "partial": false,
+        "rows": 3800,
+        "surplus": false,
+        "unconfirmed": 0,
+        "written": 200
+      },
+      "rows_source": 2002000,
+      "rows_target": 2002000,
+      "chunks_compared": 5,
+      "wall_ms": 1406,
+      "run": 1,
+      "load_before": [
+        14.9,
+        6.39,
+        4.3
+      ]
+    }
+  ]
+}
