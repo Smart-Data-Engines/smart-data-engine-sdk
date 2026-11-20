@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "sde/errors.hpp"
+#include "sde/ownership.hpp"
 #include "sde/schema.hpp"
 
 namespace {
@@ -155,6 +156,34 @@ TEST(SchemaIsFixed, RefusesADialectItHasNeverHeardOf) {
             "unknown dialect ''; this library renders ['clickhouse', 'orderbook', 'postgres']. "
             "Answering False would say 'that engine takes DDL from us' about an engine it has "
             "never heard of.");
+}
+
+
+// The public half of format contract section 7r, for an adapter of your own: the same marks as the
+// reference library computes (python/src/sde/ownership.py), and the rule they are taken by.
+
+TEST(CopyMark, IsTheReferencesMarkAndTakesOnlyItsOwnGroupAndTable) {
+  const std::string project(32, '1');
+  const std::string mark = sde::copy_marker(project, "Event", "copy_events");
+  EXPECT_EQ(mark, "sde.copy1.11111111111111111111111111111111.4e1f49a9c8ae8a15.d956589b44907f75");
+  EXPECT_TRUE(sde::owned_copy_marker(project, "Event", "copy_events", mark));
+  EXPECT_FALSE(sde::owned_copy_marker(project, "Payment", "copy_events", mark));
+  EXPECT_FALSE(sde::owned_copy_marker(project, "Event", "other_events", mark));
+  EXPECT_FALSE(sde::owned_copy_marker(project, "Event", "copy_events", std::nullopt));
+  EXPECT_THROW((void)sde::copy_marker("NOT-A-PROJECT", "Event", "copy_events"),
+               sde::MigrationRefused);
+}
+
+TEST(CopyMark, ASourcesMarkIsNeverACopysAndIsRefusedByName) {
+  const std::string project(32, '1');
+  const std::string source =
+      "sde.source1.11111111111111111111111111111111.4e1f49a9c8ae8a15.d956589b44907f75";
+  EXPECT_FALSE(sde::owned_copy_marker(project, "Event", "copy_events", source));
+  const std::string refusal = sde::copy_refusal("copy_events", source);
+  EXPECT_NE(refusal.find("is not one this library created for it"), std::string::npos) << refusal;
+  EXPECT_NE(refusal.find("carries a source's mark"), std::string::npos) << refusal;
+  EXPECT_NE(sde::copy_refusal("copy_events", std::nullopt).find("carries no mark"),
+            std::string::npos);
 }
 
 }  // namespace

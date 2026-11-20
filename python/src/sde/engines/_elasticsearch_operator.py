@@ -189,27 +189,73 @@ class ElasticsearchOperator:
         return TableIdentity(DIALECT, cluster, stream, str(settings["uuid"]), "", table)
 
     def object_keys(self, table: str) -> frozenset[tuple[str, str, str, str]]:
-        """The indexes a name reaches, as :attr:`TableIdentity.physical_key`; empty when none.
+        """The indexes a name reaches, as :attr:`TableIdentity.physical_key`; empty when none."""
+        return self.object_keys_many([table])[table]
+
+    def object_keys_many(
+        self, tables: Sequence[str]
+    ) -> dict[str, frozenset[tuple[str, str, str, str]]]:
+        """The indexes each name reaches, as :attr:`TableIdentity.physical_key`; empty when none.
 
         An alias reaches the indexes behind it, under their own names, and each is one of the
         name's keys: a map's other name for an index - another engine name bound to this cluster,
-        or an alias - is found by the index it reaches. Nothing is refused here.
+        or an alias - is found by the index it reaches. The endpoint is read once; nothing is
+        refused here.
         """
+        names = sorted(set(tables))
+        if not names:
+            return {}
         cluster, stream, _ = self.endpoint()
-        status, body = self._call(self.engine, "GET", self.engine._path(table, "_settings"))
-        if status == 404:
-            return frozenset()
-        if status != 200 or not isinstance(body, Mapping):
-            raise EngineError(f"the settings of {table} could not be read ({status})")
-        keys = set()
-        for index in body.values():
-            settings = (
-                index.get("settings", {}).get("index") if isinstance(index, Mapping) else None
-            )
-            if not isinstance(settings, Mapping) or not isinstance(settings.get("uuid"), str):
-                raise EngineError(f"the settings of {table} carry no index identity")
-            keys.add((DIALECT, cluster, stream, str(settings["uuid"])))
-        return frozenset(keys)
+        found: dict[str, frozenset[tuple[str, str, str, str]]] = {}
+        for table in names:
+            status, body = self._call(self.engine, "GET", self.engine._path(table, "_settings"))
+            if status == 404:
+                found[table] = frozenset()
+                continue
+            if status != 200 or not isinstance(body, Mapping):
+                raise EngineError(f"the settings of {table} could not be read ({status})")
+            keys = set()
+            for index in body.values():
+                settings = (
+                    index.get("settings", {}).get("index") if isinstance(index, Mapping) else None
+                )
+                if not isinstance(settings, Mapping) or not isinstance(settings.get("uuid"), str):
+                    raise EngineError(f"the settings of {table} carry no index identity")
+                keys.add((DIALECT, cluster, stream, str(settings["uuid"])))
+            found[table] = frozenset(keys)
+        return found
+
+    def mark_source(self, tables: Sequence[TableIdentity], marks: Mapping[str, str]) -> None:
+        """A source's mark in each index a cutover made the source, in place of the copy's.
+
+        ``_meta`` is replaced whole by a mapping update, so the index's own ``_meta.sde`` - its
+        entity and key - is read and written back with ``source`` in place of ``copy`` and
+        ``stage`` (format contract §7r). Idempotent.
+        """
+        from ..ownership import SOURCE_MARKER
+
+        for table in tables:
+            if self.identity(table.name).physical_key != table.physical_key:
+                raise MigrationRefused("physical target identity changed before its source mark")
+            mark = marks[table.name]
+            if SOURCE_MARKER.fullmatch(mark) is None:
+                raise MigrationRefused(f"{mark!r} is not a source's mark")
+            path = self.engine._path(table.name, "_mapping")
+            status, body = self._call(self.engine, "GET", path)
+            if status != 200 or not isinstance(body, Mapping) or set(body) != {table.name}:
+                raise EngineError(f"the mapping of {table.name} could not be read ({status})")
+            mappings = body[table.name].get("mappings") or {}
+            meta = dict(mappings.get("_meta") or {})
+            sde = {
+                key: value
+                for key, value in dict(meta.get("sde") or {}).items()
+                if key not in ("copy", "stage")
+            }
+            sde["source"] = mark
+            meta["sde"] = sde
+            status, _ = self._call(self.engine, "PUT", path, {"_meta": meta})
+            if status != 200:
+                raise EngineError(f"the source's mark on {table.name} was not written ({status})")
 
     def _blocked(self, table: str, kind: str) -> bool:
         blocks = self._settings(table).get("blocks")
@@ -451,9 +497,12 @@ class ElasticsearchStaging:
             raise MigrationRefused("staging index name has an ambiguous native identity")
         meta = body[table].get("mappings", {}).get("_meta", {})
         sde = meta.get("sde") if isinstance(meta, Mapping) else None
-        # A staging's mark, or a copy's that prepare_schema wrote (format contract §7r): either
-        # names who created the index, and neither is the other's.
-        stage = sde.get("stage", sde.get("copy")) if isinstance(sde, Mapping) else None
+        # A staging's mark, or a copy's that prepare_schema wrote, or the source's a cutover wrote
+        # in place of either (format contract §7r): each says what the index is, and none is
+        # another's.
+        stage = None
+        if isinstance(sde, Mapping):
+            stage = sde.get("stage", sde.get("copy", sde.get("source")))
         uuid = str(self.native._settings(table)["uuid"])
         return uuid, stage if isinstance(stage, str) else None
 

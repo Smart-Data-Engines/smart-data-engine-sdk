@@ -26,7 +26,7 @@ import { UsageGate } from '../_usage.js'
 import { canonicalString, compareCodePoints } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError, MigrationRefused } from '../errors.js'
-import { COPY_MARKER, copyRefusal, ownedCopyMarker } from '../ownership.js'
+import { COPY_MARKER, copyRefusal, ownedCopyMarker, SOURCE_MARKER } from '../ownership.js'
 import { loopback } from './_transport.js'
 import type { PhysicalLayout } from '../placement.js'
 import { keyColumns, sameWidth } from '../migration.js'
@@ -463,7 +463,7 @@ export class ElasticsearchEngine {
     }
     const mappings = (body as Record<string, { mappings?: { _meta?: { sde?: Record<string, unknown> } } }>)[index]?.mappings
     const sde = mappings?._meta?.sde ?? {}
-    const mark = sde['copy'] ?? sde['stage']
+    const mark = sde['copy'] ?? sde['stage'] ?? sde['source']
     return typeof mark === 'string' ? mark : null
   }
 
@@ -515,7 +515,7 @@ export class ElasticsearchEngine {
     const document = body as Record<string, { mappings?: Record<string, unknown> }> | null
     const mapping = status === 200 ? document?.[name]?.mappings : undefined
     if (mapping === undefined) throw new EngineError(`the mapping of ${name} could not be read: ${errorOf(status, body)}`)
-    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown; stage?: unknown; copy?: unknown } } | undefined)?.sde
+    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown; stage?: unknown; copy?: unknown; source?: unknown } } | undefined)?.sde
     const key = meta?.key
     if (mapping['dynamic'] !== 'strict' || !Array.isArray(key) || key.length === 0) {
       throw new EngineError(
@@ -550,6 +550,11 @@ export class ElasticsearchEngine {
     if (copy !== undefined && (typeof copy !== 'string' || !COPY_MARKER.test(copy))) {
       throw new EngineError(`index ${name} carries a copy's mark that is not one`)
     }
+    // And a cutover that made the copy the source wrote a source's mark in place of either.
+    const source = meta?.source
+    if (source !== undefined && (typeof source !== 'string' || !SOURCE_MARKER.test(source))) {
+      throw new EngineError(`index ${name} carries a source's mark that is not one`)
+    }
     // The whole mapping, not only each field's type: a normalizer, a null_value, an ignore_above, a
     // token field mapped as text or a disabled _source would each change an answer while every type
     // still matched. It is what this library creates or nothing.
@@ -561,6 +566,7 @@ export class ElasticsearchEngine {
     if (fenced) rendered.properties[EPOCH_COLUMN] = { type: 'long' }
     if (stage !== undefined) rendered._meta.sde['stage'] = stage
     if (copy !== undefined) rendered._meta.sde['copy'] = copy
+    if (source !== undefined) rendered._meta.sde['source'] = source
     if (!sameJson(rendered, mapping)) {
       throw new EngineError(
         `index ${name} has a mapping this library would not create: something beyond each ` +

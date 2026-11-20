@@ -19,6 +19,9 @@ export const COPY_MARKER = /^sde\.copy1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16
 /** What a staging writes on the table it creates: its project, its stage and the table's name. */
 export const STAGE_MARKER = /^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
 
+/** What a cutover writes on the copy it makes the source, in place of the copy's mark. */
+export const SOURCE_MARKER = /^sde\.source1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}$/
+
 const STAGED_NAME = /^sde_m_([0-9a-f]{32})_[0-9]{6}$/
 const PROJECT = /^[0-9a-f]{32}$/
 
@@ -41,6 +44,13 @@ export function stageMarker(projectId: string, stageId: string, table: string): 
 
 /** Why `table` is not taken as a copy's: what every library says, with what it found. */
 export function copyRefusal(table: string, found: string | null): string {
+  if (found && SOURCE_MARKER.test(found)) {
+    return (
+      `the copy's table '${table}' exists and is not one this library created for it: it carries ` +
+      "a source's mark. A cutover made it the source, and a table that has been a source holds " +
+      "the application's rows: it is never a copy again."
+    )
+  }
   const what = found ? 'another mark' : 'no mark'
   return (
     `the copy's table '${table}' exists and is not one this library created for it: it carries ` +

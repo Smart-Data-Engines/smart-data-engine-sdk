@@ -55,7 +55,7 @@ from ..errors import EngineError, MigrationRefused
 from ..layout import index_name_refusal
 from ..logging import log
 from ..migration import key_columns, same_width
-from ..ownership import COPY_MARKER, copy_refusal, owned_copy_marker
+from ..ownership import COPY_MARKER, SOURCE_MARKER, copy_refusal, owned_copy_marker
 from ..physical import PhysicalFinding
 from ..placement import BACKFILL_TABLE, PhysicalLayout
 from ..query import ReadFilter, ReadPlan, read_row
@@ -842,7 +842,7 @@ class ElasticsearchEngine:
             )
         mappings = body[index].get("mappings") or {}
         meta = (mappings.get("_meta") or {}).get("sde") or {}
-        mark = meta.get("copy", meta.get("stage"))
+        mark = meta.get("copy", meta.get("stage", meta.get("source")))
         return mark if isinstance(mark, str) else None
 
     def _index(self, name: str) -> _Index:
@@ -892,6 +892,12 @@ class ElasticsearchEngine:
         copy = meta.get("copy")
         if copy is not None and (not isinstance(copy, str) or COPY_MARKER.fullmatch(copy) is None):
             raise EngineError(f"index {name} carries a copy's mark that is not one")
+        # And a cutover that made the copy the source wrote a source's mark in place of either.
+        source = meta.get("source")
+        if source is not None and (
+            not isinstance(source, str) or SOURCE_MARKER.fullmatch(source) is None
+        ):
+            raise EngineError(f"index {name} carries a source's mark that is not one")
         # The whole mapping, not only each field's type: a normalizer, a null_value, an
         # ignore_above, a token field mapped as text or a disabled _source would each change an
         # answer while every type still matched. It is what this library creates or nothing.
@@ -906,6 +912,8 @@ class ElasticsearchEngine:
             rendered["_meta"]["sde"]["stage"] = stage
         if copy is not None:
             rendered["_meta"]["sde"]["copy"] = copy
+        if source is not None:
+            rendered["_meta"]["sde"]["source"] = source
         if not _same_json(rendered, mapping):
             raise EngineError(
                 f"index {name} has a mapping this library would not create: something beyond each "

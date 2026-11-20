@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -51,6 +51,12 @@ class NativeOperations(Protocol):
     def identity(self, table: str, *, engine: Any = None) -> TableIdentity: ...
 
     def object_keys(self, table: str) -> frozenset[tuple[str, str, str, str]]: ...
+
+    def object_keys_many(
+        self, tables: Sequence[str]
+    ) -> dict[str, frozenset[tuple[str, str, str, str]]]: ...
+
+    def mark_source(self, tables: Sequence[TableIdentity], marks: Mapping[str, str]) -> None: ...
 
     def qualify(
         self,
@@ -215,34 +221,67 @@ class NativeOperator:
         return TableIdentity(self.dialect, server, database, str(oid), str(namespace), str(actual))
 
     def object_keys(self, table: str) -> frozenset[tuple[str, str, str, str]]:
-        """The table a name reaches, as :attr:`TableIdentity.physical_key`; empty when none.
+        """The table a name reaches, as :attr:`TableIdentity.physical_key`; empty when none."""
+        return self.object_keys_many([table])[table]
+
+    def object_keys_many(
+        self, tables: Sequence[str]
+    ) -> dict[str, frozenset[tuple[str, str, str, str]]]:
+        """The table each name reaches, as :attr:`TableIdentity.physical_key`; empty when none.
 
         For telling two names of a map apart - through two engine names bound to one database -
-        so with none of a cutover's conditions on the table, and nothing refused when it is not
-        there. A ClickHouse database that is not Atomic gives every table the nil uuid, so there
-        the table is its name.
+        so with none of a cutover's conditions on a table, and nothing refused when one is not
+        there. One look-up of the endpoint and one of the catalogue for all the names: a check of
+        every copy against every other name of a map was a quadratic count of round trips before.
+        A ClickHouse database that is not Atomic gives every table the nil uuid, so there the
+        table is its name.
         """
+        names = sorted(set(tables))
+        found: dict[str, set[tuple[str, str, str, str]]] = {name: set() for name in names}
+        if not names:
+            return {}
         server, database, database_name = self.endpoint()
         if self.dialect == "postgres":
+            quoted = {self.quote(name): name for name in names}
             rows = self.rows(
-                "SELECT c.oid::text FROM pg_class c WHERE c.oid=to_regclass(%s)",
-                [self.quote(table)],
+                "SELECT q.name, c.oid::text FROM unnest(%s::text[]) AS q(name) "
+                "JOIN pg_class c ON c.oid = to_regclass(q.name)",
+                [sorted(quoted)],
             )
-            return frozenset((self.dialect, server, database, str(row[0])) for row in rows)
-        rows = self.rows(
-            "SELECT toString(uuid),name FROM system.tables "
-            "WHERE database=currentDatabase() AND name={table:String}",
-            {"table": table},
-        )
-        return frozenset(
-            (
-                self.dialect,
-                server,
-                database,
-                str(uuid) if str(uuid) != NIL_UUID else f"{database_name}.{name}",
+            for name, oid in rows:
+                found[quoted[str(name)]].add((self.dialect, server, database, str(oid)))
+        else:
+            rows = self.rows(
+                "SELECT name, toString(uuid) FROM system.tables "
+                "WHERE database=currentDatabase() AND has({names:Array(String)}, name)",
+                {"names": names},
             )
-            for uuid, name in rows
-        )
+            for name, uuid in rows:
+                key = str(uuid) if str(uuid) != NIL_UUID else f"{database_name}.{name}"
+                found[str(name)].add((self.dialect, server, database, key))
+        return {name: frozenset(keys) for name, keys in found.items()}
+
+    def mark_source(self, tables: Sequence[TableIdentity], marks: Mapping[str, str]) -> None:
+        """A source's mark on each table a cutover made the source, in place of the copy's.
+
+        A copy's mark says the library created the table as a copy; left on a table that now
+        holds the application's rows, it would let a later map name that table as a copy again,
+        and the operator empty or refill it (format contract §7r). Idempotent: a resumed cutover
+        writes the same mark again.
+        """
+        from ..ownership import SOURCE_MARKER
+
+        for table in tables:
+            if self.identity(table.name).physical_key != table.physical_key:
+                raise MigrationRefused("physical target identity changed before its source mark")
+            mark = marks[table.name]
+            if SOURCE_MARKER.fullmatch(mark) is None:
+                raise MigrationRefused(f"{mark!r} is not a source's mark")
+            name = self.quote(table.namespace) + "." + self.quote(table.name)
+            if self.dialect == "postgres":
+                self.command(f"COMMENT ON TABLE {name} IS '{mark}'")
+            else:
+                self.command(f"ALTER TABLE {name} MODIFY COMMENT '{mark}'")
 
     def qualify(
         self,

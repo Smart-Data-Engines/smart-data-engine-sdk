@@ -1,4 +1,5 @@
 #include "ownership_internal.hpp"
+#include "sde/ownership.hpp"
 
 #include <regex>
 
@@ -48,6 +49,13 @@ bool owned_copy_marker(std::string_view project, std::string_view group, std::st
 }
 
 std::string copy_refusal(std::string_view table, const std::optional<std::string>& found) {
+  static const std::regex source(R"(sde\.source1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16})");
+  if (found && std::regex_match(*found, source)) {
+    return "the copy's table " + python_repr(table) +
+           " exists and is not one this library created for it: it carries a source's mark. A "
+           "cutover made it the source, and a table that has been a source holds the "
+           "application's rows: it is never a copy again.";
+  }
   const char* what = found && !found->empty() ? "another mark" : "no mark";
   return "the copy's table " + python_repr(table) +
          " exists and is not one this library created for it: it carries " + what +
@@ -57,3 +65,21 @@ std::string copy_refusal(std::string_view table, const std::optional<std::string
 }
 
 }  // namespace sde::detail
+
+namespace sde {
+
+std::string copy_marker(std::string_view project_id, std::string_view group,
+                        std::string_view table) {
+  return detail::copy_marker(project_id, group, table);
+}
+
+bool owned_copy_marker(std::string_view project_id, std::string_view group, std::string_view table,
+                       const std::optional<std::string>& found) {
+  return detail::owned_copy_marker(project_id, group, table, found);
+}
+
+std::string copy_refusal(std::string_view table, const std::optional<std::string>& found) {
+  return detail::copy_refusal(table, found);
+}
+
+}  // namespace sde

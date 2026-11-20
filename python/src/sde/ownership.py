@@ -12,6 +12,11 @@ Two marks make a copy's table ours. ``prepare_schema`` writes
 provisions; a staging writes ``sde.stage1.<project>.<stage>.<sha256(table)[:16]>`` on the copy it
 creates, which it names ``sde_m_<stage>_<NNNNNN>``. Both are computed from the project, the map and
 the table name alone, so any path can check them without local state.
+
+A cutover that makes a copy the source writes, in place of the copy's mark,
+``sde.source1.<project>.<sha256(group)[:16]>.<sha256(table)[:16]>``: a copy's mark says the library
+created the table as a copy, and left there it would still say so of a table holding the
+application's rows. A table with a source's mark is never taken for a copy again.
 """
 
 from __future__ import annotations
@@ -27,11 +32,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COPY_MARKER",
+    "SOURCE_MARKER",
     "STAGE_MARKER",
     "MarksCopies",
     "copy_marker",
     "copy_refusal",
     "owned_copy_marker",
+    "source_marker",
     "stage_marker",
 ]
 
@@ -40,6 +47,9 @@ COPY_MARKER: Final = re.compile(r"sde\.copy1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-
 
 STAGE_MARKER: Final = re.compile(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}")
 """What a staging writes on the table it creates: its project, its stage and the table's name."""
+
+SOURCE_MARKER: Final = re.compile(r"sde\.source1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}")
+"""What a cutover writes on the copy it makes the source, in place of the copy's mark."""
 
 _STAGED_NAME: Final = re.compile(r"sde_m_([0-9a-f]{32})_[0-9]{6}")
 _PROJECT: Final = re.compile(r"[0-9a-f]{32}")
@@ -56,6 +66,13 @@ def copy_marker(project_id: str, group: str, table: str) -> str:
     return f"sde.copy1.{project_id}.{_digest(group, 16)}.{_digest(table, 16)}"
 
 
+def source_marker(project_id: str, group: str, table: str) -> str:
+    """The mark a cutover writes on ``table`` when it makes that copy of ``group`` the source."""
+    if _PROJECT.fullmatch(project_id) is None:
+        raise ValueError("a source's mark needs the project's id: 32 lowercase hexadecimal digits")
+    return f"sde.source1.{project_id}.{_digest(group, 16)}.{_digest(table, 16)}"
+
+
 def stage_marker(project_id: str, stage_id: str, table: str) -> str:
     """The mark a staging writes on ``table``, the copy it creates for stage ``stage_id``."""
     return f"sde.stage1.{project_id}.{stage_id}.{_digest(table, 16)}"
@@ -63,6 +80,12 @@ def stage_marker(project_id: str, stage_id: str, table: str) -> str:
 
 def copy_refusal(table: str, found: str | None) -> str:
     """Why ``table`` is not taken as a copy's: what every library says, with what it found."""
+    if found and SOURCE_MARKER.fullmatch(found):
+        return (
+            f"the copy's table {table!r} exists and is not one this library created for it: it "
+            f"carries a source's mark. A cutover made it the source, and a table that has been a "
+            f"source holds the application's rows: it is never a copy again."
+        )
     what = "no mark" if not found else "another mark"
     return (
         f"the copy's table {table!r} exists and is not one this library created for it: it "

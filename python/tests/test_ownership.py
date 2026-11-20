@@ -10,9 +10,12 @@ import pytest
 
 from sde.ownership import (
     COPY_MARKER,
+    SOURCE_MARKER,
     STAGE_MARKER,
     copy_marker,
+    copy_refusal,
     owned_copy_marker,
+    source_marker,
     stage_marker,
 )
 
@@ -60,3 +63,19 @@ def test_a_staged_copy_is_ours_by_its_stage_mark_under_its_stage_name() -> None:
 def test_a_mark_needs_the_project_s_id() -> None:
     with pytest.raises(ValueError, match="32 lowercase hexadecimal"):
         copy_marker("not-a-project", "Order", "order_copy")
+
+
+def test_a_cutover_s_source_mark_is_never_a_copy_s() -> None:
+    """A copy a cutover made the source carries a source's mark (format contract §7r): the same
+    project, group and table, and no longer taken for the copy - its rows are the application's."""
+    project = "1" * 32
+    mark = source_marker(project, "Event", "copy_events")
+    assert mark == "sde.source1.11111111111111111111111111111111.4e1f49a9c8ae8a15.d956589b44907f75"
+    assert SOURCE_MARKER.fullmatch(mark)
+    assert not owned_copy_marker(project, "Event", "copy_events", mark)
+    refusal = copy_refusal("copy_events", mark)
+    assert "is not one this library created for it" in refusal
+    assert "carries a source's mark" in refusal
+    with pytest.raises(ValueError):
+        source_marker("NOT-A-PROJECT", "Event", "copy_events")
+

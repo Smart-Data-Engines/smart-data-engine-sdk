@@ -349,10 +349,11 @@ class PostgresEngine:
     def _mark(self, table: str) -> tuple[str, str | None] | None:
         """A table's object id and its comment, or ``None`` when no table has the name.
 
-        Looked for where ``CREATE TABLE`` puts it, in ``current_schema()``, by its exact name, as
+        Looked for where ``CREATE TABLE`` puts it, in ``current_schema()``, by its name, as
         TypeScript and C++ do. Resolved through the search path instead, the mark of a copy in a
-        later schema was taken for one ``ensure_schema`` then made unmarked in the first; a name
-        PostgreSQL truncates is found by none of the three and refused, after it was created.
+        later schema was taken for one ``ensure_schema`` then made unmarked in the first. A name
+        longer than 63 bytes is compared as PostgreSQL truncates it, so the table is found; the
+        check of its columns, which reads it by the whole name, then refuses it in all three.
         """
         with self._cx.cursor() as cur:
             cur.execute(

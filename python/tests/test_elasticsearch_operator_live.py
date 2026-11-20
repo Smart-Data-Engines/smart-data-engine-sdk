@@ -28,6 +28,7 @@ from test_staging_operator_live import cutover
 import sde
 from sde.engines._write_fences import fence_pipeline
 from sde.engines.elasticsearch import ElasticsearchEngine
+from sde.ownership import source_marker
 
 PROJECT = "1" * 32
 DSN = os.environ.get("SDE_ELASTICSEARCH_DSN")
@@ -291,6 +292,13 @@ def test_a_group_moves_onto_elasticsearch_and_the_copy_is_repaired_from_the_froz
             cutover(move.stage, move.signed, move.model, move.public)).as_record()
         assert (final["outcome"], final["reason"]) == ("success", "matched")
         assert final["verification"]["matched"] is True
+        # The staging's mark gives way to a source's (format contract §7r); the rest of the
+        # index's own _meta.sde - its entity and key, which a session reads - stays.
+        status, body = move.es.operator._request("GET", f"/{move.copy}/_mapping")
+        sde_meta = body[move.copy]["mappings"]["_meta"]["sde"]
+        assert sde_meta["source"] == source_marker(PROJECT, "Event", move.copy)
+        assert "stage" not in sde_meta and "copy" not in sde_meta
+        assert {"entity", "key"} <= set(sde_meta)
         moved = move.session()
         for key, row in ROWS.items():
             assert moved.get("Event", {"id": key}) == row
