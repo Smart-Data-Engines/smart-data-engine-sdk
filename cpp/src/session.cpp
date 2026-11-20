@@ -13,6 +13,7 @@
 #include "python_compat.hpp"
 #include "session_use.hpp"
 #include "storage_internal.hpp"
+#include "table_marks_internal.hpp"
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
 #include "sde/migration.hpp"
@@ -256,6 +257,11 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // On the path every start takes - a rolled-back map file is read at process start - and costing
   // nothing for an unsigned map.
   physical_ = detail::validate_generations(model, placement, engines_, project_id_);
+  // What the fan-out writes to: a copy's table carries its own mark, a source's no copy's, and no
+  // two names of the map reach one table (format contract section 7r).
+  if (placement.contract() >= GENERATIONS_SINCE && project_id_) {
+    detail::check_table_marks(placement, engines_, *project_id_);
+  }
   report_physical();
   forward_only_ = enforce_forward_only(placement, engines_, log_);
 }
@@ -466,6 +472,7 @@ void Session::ensure_schema() {
   const Use use(*this);
   if (placement_.contract() >= 4) {
     physical_ = detail::validate_generations(model_, placement_, engines_, project_id_);
+    if (project_id_) detail::check_table_marks(placement_, engines_, *project_id_);
     report_physical();
     return;
   }

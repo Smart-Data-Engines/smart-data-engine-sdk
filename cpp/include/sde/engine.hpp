@@ -144,6 +144,22 @@ class MarksCopies {
                                                    const std::string& group) = 0;
 };
 
+/// A name's table as a connection reaches it (format contract section 7r): its identities, each a
+/// JSON tuple, empty when the name reaches no table, and the mark it carries, if any.
+struct TableFacts {
+  std::vector<std::string> keys;
+  std::optional<std::string> mark;
+};
+
+/// What each name of a map reaches, one look-up of the catalogue for all of them: what a session
+/// and `prepare_schema` read to refuse a copy's table without its own mark, a source's table with a
+/// copy's mark, and a copy's table another name of the map reaches.
+class ReadsTableFacts {
+ public:
+  virtual ~ReadsTableFacts() = default;
+  virtual std::map<std::string, TableFacts> table_facts(const std::vector<std::string>& tables) = 0;
+};
+
 /// Each named table's total and secondary-index bytes, from the engine's catalogue. A table it does
 /// not report is absent from the answer.
 class StorageMeasurable {
@@ -232,6 +248,7 @@ struct Capabilities {
   Fencable* fences = nullptr;
   SchemaValidator* schema = nullptr;
   MarksCopies* copies = nullptr;
+  ReadsTableFacts* facts = nullptr;
   StorageMeasurable* storage = nullptr;
   TemporalBounded* temporal = nullptr;
   BookWritable* books = nullptr;

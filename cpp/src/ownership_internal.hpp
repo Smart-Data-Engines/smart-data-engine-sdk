@@ -26,6 +26,9 @@ namespace sde::detail {
 [[nodiscard]] bool owned_copy_marker(std::string_view project_id, std::string_view group,
                                      std::string_view table, const std::optional<std::string>& found);
 
+/// Why a source's table that carries a copy's mark is not taken as `group`'s source.
+[[nodiscard]] std::string source_refusal(std::string_view table, std::string_view group);
+
 /// Why `table` is not taken as a copy's: what every library says, with what it found.
 [[nodiscard]] std::string copy_refusal(std::string_view table,
                                        const std::optional<std::string>& found);

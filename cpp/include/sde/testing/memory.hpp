@@ -114,6 +114,7 @@ class MemoryEngine final : public Engine,
                            public Migratable,
                            public Fencable,
                            public SchemaValidator,
+                           public ReadsTableFacts,
                            public TemporalBounded {
  public:
   explicit MemoryEngine(MemoryEngineOptions options = {});
@@ -128,6 +129,9 @@ class MemoryEngine final : public Engine,
   /// Gives the engine write fences, one backend per table, and a schema check that finds nothing:
   /// what a generation-bearing vector configures. Without it the engine offers neither.
   void bind_fences(std::map<std::string, std::shared_ptr<MemoryFences>> backends);
+  /// The marks its tables carry (format contract section 7r), by table: what a provisioned
+  /// deployment holds. Offered with the fences, as `table_facts`.
+  void bind_marks(std::map<std::string, std::string> marks) { marks_ = std::move(marks); }
 
   // Engine
   [[nodiscard]] std::string_view dialect() const noexcept override { return dialect_; }
@@ -162,10 +166,11 @@ class MemoryEngine final : public Engine,
   // TemporalBounded: the range a case declares (format contract 8b)
   [[nodiscard]] std::optional<TemporalRange> temporal_range() override { return temporal_range_; }
 
-  // Fencable and SchemaValidator, once bound
+  // Fencable, SchemaValidator and ReadsTableFacts, once bound
   WriteFence write_fence(const std::string& table, const std::string& project_id) override;
   std::vector<PhysicalFinding> validate_schema(const PhysicalLayout& layout,
                                                const Keys& keys) override;
+  std::map<std::string, TableFacts> table_facts(const std::vector<std::string>& tables) override;
 
  private:
   bool fail_insert(const std::string& table);
@@ -180,6 +185,7 @@ class MemoryEngine final : public Engine,
   std::map<std::pair<std::string, std::string>, std::vector<std::int64_t>> markers_;
   std::map<std::string, std::int64_t> fail_inserts_;
   std::map<std::string, std::shared_ptr<MemoryFences>> fences_;
+  std::map<std::string, std::string> marks_;
   std::optional<TemporalRange> temporal_range_;
 };
 

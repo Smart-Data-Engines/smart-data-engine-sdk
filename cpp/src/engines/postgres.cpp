@@ -217,6 +217,7 @@ Capabilities PostgresEngine::capabilities() noexcept {
   offered.fences = this;
   offered.schema = this;
   offered.copies = this;
+  offered.facts = this;
   offered.storage = this;
   return offered;
 }
@@ -263,6 +264,45 @@ std::vector<PhysicalFinding> PostgresEngine::ensure_schema(const PhysicalLayout&
   fields.set("statements", static_cast<std::int64_t>(tables.size() + indexes.size()));
   detail::emit(options_.log, "sde.schema.applied", fields);
   return physical_findings(layout, keys);
+}
+
+std::map<std::string, TableFacts> PostgresEngine::table_facts(
+    const std::vector<std::string>& tables) {
+  const Use use(*this);
+  std::map<std::string, TableFacts> found;
+  for (const std::string& table : tables) found.try_emplace(table);
+  if (found.empty()) return found;
+  try {
+    const Result server = cx().execute(
+        "SELECT c.system_identifier::text, d.oid::text FROM pg_control_system() c "
+        "CROSS JOIN pg_database d WHERE d.datname = current_database()");
+    // Every name in one statement, each as the session's statements resolve it: the search path.
+    std::string values;
+    Parameters quoted;
+    std::map<std::string, std::string> names;
+    for (const auto& [table, unused] : found) {
+      quoted.emplace_back(quote_ansi(table));
+      names.emplace(quote_ansi(table), table);
+      values += (values.empty() ? "($" : ", ($") + std::to_string(quoted.size()) + "::text)";
+    }
+    const Result result = cx().execute(
+        "SELECT q.name, c.oid::text, obj_description(c.oid, 'pg_class') FROM (VALUES " + values +
+            ") AS q(name) JOIN pg_class c ON c.oid = to_regclass(q.name)",
+        quoted);
+    for (std::size_t row = 0; row < result.rows(); ++row) {
+      Json key = Json::array();
+      key.as_array().emplace_back("postgres");
+      key.as_array().emplace_back(std::string(server.text(0, 0)));
+      key.as_array().emplace_back(std::string(server.text(0, 1)));
+      key.as_array().emplace_back(std::string(result.text(row, 1)));
+      TableFacts& fact = found[names.at(std::string(result.text(row, 0)))];
+      fact.keys = {dump_json(key)};
+      if (!result.is_null(row, 2)) fact.mark = std::string(result.text(row, 2));
+    }
+  } catch (const ServerError& error) {
+    throw EngineError("reading the tables of a map failed: " + explain(error.what()));
+  }
+  return found;
 }
 
 std::vector<PhysicalFinding> PostgresEngine::ensure_copy(const PhysicalLayout& layout,
