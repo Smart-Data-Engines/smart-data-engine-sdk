@@ -13,6 +13,7 @@
 #include "sde/model.hpp"
 #include "sde/placement.hpp"
 #include "sde/routing.hpp"
+#include "support/vectors.hpp"
 
 namespace {
 
@@ -431,6 +432,79 @@ TEST(LoadMap, AWriteShapeRoutedAtACopyIsRefused) {
   for (const sde::OperationShape& shape : model.shapes()) {
     EXPECT_EQ(sde::resolve(map, shape).id, "Event@pg");
   }
+}
+
+
+// From contract 4, a copy's table is named by nothing else in the map (format contract section 7,
+// 7r). The refusal itself is the shared vector errors/151; these are the variants around it, as in
+// the reference's test_copy_named_twice.py.
+
+const std::string kNamedTwice =
+    std::string(SDE_VECTORS_DIR) + "/errors/151-a-copy-named-like-another-groups-source";
+
+sde::Model named_twice_model() {
+  return sde::load_neutral_model(sde::testing_support::read_text(kNamedTwice + "/model.json"));
+}
+
+std::string named_twice_map(bool generations, const std::string& event, const std::string& line) {
+  const std::string epoch = generations ? R"("write_epoch": 1, )" : "";
+  return std::string(generations ? R"({"contract": 4, "project_id": "11111111111111111111111111111111", )"
+                                 : R"({"contract": 3, )") +
+         R"("model_version": "d342947c3bf04095", "map_version": 1, "groups": {"Event": {)" +
+         epoch + event + R"(}, "Line": {)" + epoch + line + "}}}";
+}
+
+const std::string kEventWithACopy =
+    R"("source": {"id": "Event@ch", "engine": "ch-main", "layout": {"tables": {"Event": "event"}}},)"
+    R"( "derived": [{"id": "Event@pg", "engine": "pg-main", "layout": {"tables": {"Event": "order"}},)"
+    R"( "lag_budget_ms": 30000}], "also_write": ["Event@pg"])";
+const std::string kLineSource =
+    R"("source": {"id": "Line@pg", "engine": "pg-main",)"
+    R"( "layout": {"tables": {"Line": "line", "Order": "order"}}})";
+
+TEST(LoadMap, ACopysTableNamedForAnotherGroupsSourceIsRefusedFromContractFour) {
+  const sde::Model model = named_twice_model();
+  EXPECT_REFUSED(named_twice_map(true, kEventWithACopy, kLineSource), with(model),
+                 "of engine 'pg-main' is named twice in the map");
+  // Below contract 4 the map is taken as it was: such maps list every entity in every group.
+  EXPECT_NO_THROW((void)sde::load_map(
+      std::string_view(named_twice_map(false, kEventWithACopy, kLineSource)), with(model)));
+}
+
+TEST(LoadMap, TwoSourcesNamingOneTableLoadAsTheyDid) {
+  const sde::Model model = named_twice_model();
+  const std::string event =
+      R"("source": {"id": "Event@pg", "engine": "pg-main", "layout": {"tables": {"Event": "order"}}})";
+  EXPECT_NO_THROW(
+      (void)sde::load_map(std::string_view(named_twice_map(true, event, kLineSource)), with(model)));
+}
+
+TEST(LoadMap, ACopyNamedLikeAnotherGroupsCopyIsRefused) {
+  const sde::Model model = named_twice_model();
+  const std::string line =
+      R"("source": {"id": "Line@ch", "engine": "ch-main",)"
+      R"( "layout": {"tables": {"Line": "line", "Order": "order_source"}}},)"
+      R"( "derived": [{"id": "Line@pg", "engine": "pg-main",)"
+      R"( "layout": {"tables": {"Line": "line_copy", "Order": "order"}}, "lag_budget_ms": 30000}],)"
+      R"( "also_write": ["Line@pg"])";
+  EXPECT_REFUSED(named_twice_map(true, kEventWithACopy, line), with(model),
+                 "by group 'Event', materialisation 'Event@pg'");
+}
+
+TEST(LoadMap, ACopyNamingOneTableForTwoEntitiesIsRefused) {
+  const sde::Model model = named_twice_model();
+  const std::string event =
+      R"("source": {"id": "Event@ch", "engine": "ch-main", "layout": {"tables": {"Event": "event"}}},)"
+      R"( "derived": [{"id": "Event@pg", "engine": "pg-main",)"
+      R"( "layout": {"tables": {"Event": "event_copy"}}, "lag_budget_ms": 30000}],)"
+      R"( "also_write": ["Event@pg"])";
+  const std::string line =
+      kLineSource +
+      R"(, "derived": [{"id": "Line@pg2", "engine": "pg-copy",)"
+      R"( "layout": {"tables": {"Line": "lines", "Order": "lines"}}, "lag_budget_ms": 30000}],)"
+      R"( "also_write": ["Line@pg2"])";
+  EXPECT_REFUSED(named_twice_map(true, event, line), with(model),
+                 "materialisation 'Line@pg2' (entity 'Line'), and by");
 }
 
 }  // namespace
