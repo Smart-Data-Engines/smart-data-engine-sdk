@@ -25,12 +25,20 @@ import { isAbsolute } from 'node:path'
 import { UsageGate } from '../_usage.js'
 import { canonicalString, compareCodePoints } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
-import { EngineError } from '../errors.js'
+import { EngineError, MigrationRefused } from '../errors.js'
+import { COPY_MARKER, copyRefusal, ownedCopyMarker } from '../ownership.js'
 import { loopback } from './_transport.js'
 import type { PhysicalLayout } from '../placement.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import { readRow, type ReadFilter, type ReadPlan } from '../query.js'
-import { elasticsearchMapping, elasticsearchProperty, indexNameRefusal, schemaStatements, TOKENS_FIELD } from '../schema.js'
+import {
+  copyStatements,
+  elasticsearchMapping,
+  elasticsearchProperty,
+  indexNameRefusal,
+  schemaStatements,
+  TOKENS_FIELD,
+} from '../schema.js'
 import type { Row } from '../session.js'
 import { Timestamp } from '../timestamp.js'
 import { verifiedTlsOptions } from './_clickhouse-connection.js'
@@ -402,6 +410,63 @@ export class ElasticsearchEngine {
     })
   }
 
+  /**
+   * A copy's indexes: created here and marked, or found with the mark they were made with (format
+   * contract §7r). The mark is in `_meta.sde.copy` of the request that creates the index, as a
+   * staging writes its own in `_meta.sde.stage`. An index that is there is this copy's only if it
+   * carries its mark (or a staging's on the copy it named); one without it is refused before
+   * anything is written to it. Then what `ensureSchema` does.
+   */
+  async ensureCopy(
+    layout: PhysicalLayout,
+    options: {
+      readonly keys: Readonly<Record<string, readonly string[]>>
+      readonly projectId: string
+      readonly group: string
+    },
+  ): Promise<readonly []> {
+    for (const entity of Object.keys(layout.tables).sort(compareCodePoints)) {
+      const index = layout.tables[entity]!
+      let found = await this.usage.operation(() => this.mark(index))
+      if (found === undefined) {
+        const [statement] = copyStatements(
+          { ...layout, tables: { [entity]: index } },
+          { keys: options.keys, dialect: this.dialect, projectId: options.projectId, group: options.group },
+        )
+        const parsed = JSON.parse(statement!) as { index: string; mappings: unknown }
+        const [status, body] = await this.usage.operation(() =>
+          this.request('PUT', this.path(index), { mappings: parsed.mappings }),
+        )
+        if (status !== 200 && !alreadyExists(status, body)) {
+          throw new EngineError(`creating the copy's index ${index} failed: ${errorOf(status, body)}`)
+        }
+        found = await this.usage.operation(() => this.mark(index))
+      }
+      const mark = found === undefined ? null : found
+      if (!ownedCopyMarker(options.projectId, options.group, index, mark)) {
+        throw new MigrationRefused(copyRefusal(index, mark))
+      }
+    }
+    return this.ensureSchema(layout, { keys: options.keys })
+  }
+
+  /**
+   * The copy's or the staging's mark an index carries: a string, `null` when it has none, and
+   * `undefined` when there is no index. An alias answers under its index's name and is refused.
+   */
+  private async mark(index: string): Promise<string | null | undefined> {
+    const [status, body] = await this.request('GET', this.path(index, '_mapping'))
+    if (status === 404) return undefined
+    const entries = typeof body === 'object' && body !== null ? Object.keys(body) : []
+    if (status !== 200 || entries.length !== 1 || entries[0] !== index) {
+      throw new EngineError(`the mapping of ${index} could not be read as one index's: ${errorOf(status, body)}`)
+    }
+    const mappings = (body as Record<string, { mappings?: { _meta?: { sde?: Record<string, unknown> } } }>)[index]?.mappings
+    const sde = mappings?._meta?.sde ?? {}
+    const mark = sde['copy'] ?? sde['stage']
+    return typeof mark === 'string' ? mark : null
+  }
+
   /** Check the existing indexes without creating anything. */
   async validateSchema(
     layout: PhysicalLayout,
@@ -450,7 +515,7 @@ export class ElasticsearchEngine {
     const document = body as Record<string, { mappings?: Record<string, unknown> }> | null
     const mapping = status === 200 ? document?.[name]?.mappings : undefined
     if (mapping === undefined) throw new EngineError(`the mapping of ${name} could not be read: ${errorOf(status, body)}`)
-    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown; stage?: unknown } } | undefined)?.sde
+    const meta = (mapping['_meta'] as { sde?: { key?: unknown; entity?: unknown; stage?: unknown; copy?: unknown } } | undefined)?.sde
     const key = meta?.key
     if (mapping['dynamic'] !== 'strict' || !Array.isArray(key) || key.length === 0) {
       throw new EngineError(
@@ -480,6 +545,11 @@ export class ElasticsearchEngine {
     if (stage !== undefined && (typeof stage !== 'string' || !CREATION_MARKER.test(stage))) {
       throw new EngineError(`index ${name} carries a staging marker that is not one`)
     }
+    // A copy's index says, the same way, that this library created it for the copy (§7r).
+    const copy = meta?.copy
+    if (copy !== undefined && (typeof copy !== 'string' || !COPY_MARKER.test(copy))) {
+      throw new EngineError(`index ${name} carries a copy's mark that is not one`)
+    }
     // The whole mapping, not only each field's type: a normalizer, a null_value, an ignore_above, a
     // token field mapped as text or a disabled _source would each change an answer while every type
     // still matched. It is what this library creates or nothing.
@@ -490,6 +560,7 @@ export class ElasticsearchEngine {
     }
     if (fenced) rendered.properties[EPOCH_COLUMN] = { type: 'long' }
     if (stage !== undefined) rendered._meta.sde['stage'] = stage
+    if (copy !== undefined) rendered._meta.sde['copy'] = copy
     if (!sameJson(rendered, mapping)) {
       throw new EngineError(
         `index ${name} has a mapping this library would not create: something beyond each ` +

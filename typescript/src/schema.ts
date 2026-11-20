@@ -22,6 +22,7 @@
 
 import { canonicalString, compareCodePoints } from './canonical.js'
 import { EngineError } from './errors.js'
+import { copyMarker } from './ownership.js'
 import {
   CLICKHOUSE_METHODS,
   POSTGRES_METHODS,
@@ -527,6 +528,59 @@ export function schemaStatements(
     )
   }
   return build(layout, options)
+}
+
+/**
+ * What creates a copy's tables with their creator's mark (format contract §7r), table by table in
+ * code point order of the entity, as `schemaStatements` orders them: PostgreSQL `CREATE TABLE …` -
+ * without `IF NOT EXISTS`, since a table of the name is not taken for a copy - and
+ * `COMMENT ON TABLE … IS '<mark>'`, which the adapter runs in one transaction; ClickHouse one
+ * `CREATE TABLE … COMMENT '<mark>'`; Elasticsearch the index's document with `_meta.sde.copy`. The
+ * mark is `copyMarker`: fixed ASCII, so it is written between quotes as it is.
+ */
+export function copyStatements(
+  layout: PhysicalLayout,
+  options: SchemaOptions & { readonly projectId: string; readonly group: string },
+): readonly string[] {
+  if (FIXED_SCHEMA.has(options.dialect)) {
+    throw new EngineError(
+      `a copy in ${options.dialect} has no table to create: the engine's schema is fixed (§7a)`,
+    )
+  }
+  const out: string[] = []
+  for (const entity of Object.keys(layout.tables).sort(compareCodePoints)) {
+    const table = layout.tables[entity]!
+    const mark = copyMarker(options.projectId, options.group, table)
+    const order = layout.keyOrder ?? {}
+    const single: PhysicalLayout = {
+      ...layout,
+      tables: { [entity]: table },
+      columns: Object.hasOwn(layout.columns, entity) ? { [entity]: layout.columns[entity]! } : {},
+      partitionBy: Object.hasOwn(layout.partitionBy, entity)
+        ? { [entity]: layout.partitionBy[entity]! }
+        : {},
+      keyOrder: Object.hasOwn(order, entity) ? { [entity]: order[entity]! } : {},
+      indexes: layout.indexes.filter(
+        (index) => options.dialect === 'clickhouse' && String(index['entity']) === entity,
+      ),
+    }
+    const statement = schemaStatements(single, options).find(
+      (s) => options.dialect === 'elasticsearch' || s.startsWith('CREATE TABLE '),
+    )!
+    if (options.dialect === 'postgres') {
+      out.push(statement.replace('CREATE TABLE IF NOT EXISTS ', 'CREATE TABLE '))
+      out.push(`COMMENT ON TABLE ${quoteAnsi(table)} IS '${mark}'`)
+    } else if (options.dialect === 'clickhouse') {
+      out.push(`${statement.replace('CREATE TABLE IF NOT EXISTS ', 'CREATE TABLE ')} COMMENT '${mark}'`)
+    } else {
+      const document = JSON.parse(statement) as {
+        mappings: { _meta: { sde: Record<string, unknown> } }
+      }
+      document.mappings._meta.sde['copy'] = mark
+      out.push(canonicalString(document))
+    }
+  }
+  return out
 }
 
 /**

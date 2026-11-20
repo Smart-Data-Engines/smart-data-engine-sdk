@@ -38,14 +38,16 @@ import type { PeerCertificate } from 'node:tls'
 import { UsageGate } from '../_usage.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
-import { EngineError } from '../errors.js'
+import { compareCodePoints } from '../canonical.js'
+import { EngineError, MigrationRefused } from '../errors.js'
+import { copyRefusal, ownedCopyMarker } from '../ownership.js'
 import { loopback } from './_transport.js'
 import { exactBytes } from '../telemetry.js'
 import type { PhysicalFinding } from '../physical.js'
 import { declaredTables } from '../physical.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
-import { QUOTE, schemaStatements } from '../schema.js'
+import { copyStatements, QUOTE, schemaStatements } from '../schema.js'
 import type { Row } from '../session.js'
 import { keyColumns, sameWidth } from '../migration.js'
 import { Timestamp } from '../timestamp.js'
@@ -439,6 +441,61 @@ export class PostgresEngine {
       // or a report (a running session) is the caller's decision. Columns and types refuse above.
       return this.physicalFindings(layout, options.keys)
     })
+  }
+
+  /**
+   * A copy's tables: created here and marked, or found with the mark they were made with (format
+   * contract §7r). A table that is not there is created by `copyStatements` - `CREATE TABLE`
+   * without `IF NOT EXISTS` and `COMMENT ON TABLE` in one transaction. A table that is there is this
+   * copy's only if it carries its mark (or a staging's on the copy it named); one without it is
+   * refused before anything is written to it. Then what `ensureSchema` does.
+   */
+  async ensureCopy(
+    layout: PhysicalLayout,
+    options: {
+      readonly keys: Readonly<Record<string, readonly string[]>>
+      readonly projectId: string
+      readonly group: string
+    },
+  ): Promise<PhysicalFinding[]> {
+    for (const entity of Object.keys(layout.tables).sort(compareCodePoints)) {
+      const table = layout.tables[entity]!
+      let found = await this.mark(table)
+      if (found === null) {
+        const [create, comment] = copyStatements(
+          { ...layout, tables: { [entity]: table } },
+          { keys: options.keys, dialect: this.dialect, projectId: options.projectId, group: options.group },
+        )
+        try {
+          await this.transaction(async () => {
+            await this.run(create!)
+            await this.run(comment!)
+          })
+        } catch (error) {
+          // 42P07, duplicate_table: created meanwhile; the mark below says whose it is.
+          if ((error as { code?: string }).code !== '42P07') {
+            throw new EngineError(`creating the copy's table '${table}' failed: ${message(error)}`)
+          }
+        }
+        found = await this.mark(table)
+      }
+      if (found === null || !ownedCopyMarker(options.projectId, options.group, table, found.comment)) {
+        throw new MigrationRefused(copyRefusal(table, found === null ? null : found.comment))
+      }
+    }
+    return this.ensureSchema(layout, { keys: options.keys })
+  }
+
+  /** A table's object id and its comment, or `null` when no table has the name. */
+  private async mark(table: string): Promise<{ object: string; comment: string | null } | null> {
+    const result = await this.run(
+      "SELECT c.oid::text AS object, obj_description(c.oid, 'pg_class') AS comment FROM pg_class c " +
+        'JOIN pg_namespace n ON n.oid = c.relnamespace ' +
+        "WHERE n.nspname = current_schema() AND c.relname = $1 AND c.relkind = 'r'",
+      [table],
+    )
+    const row = result.rows[0] as { object: string; comment: string | null } | undefined
+    return row === undefined ? null : { object: String(row.object), comment: row.comment ?? null }
   }
 
   private async execute(statements: readonly string[]): Promise<void> {

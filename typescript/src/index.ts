@@ -137,6 +137,7 @@ export { resolve } from './routing.js'
 export type { CompatibilityViews, Dialect, SchemaOptions, ViewOptions } from './schema.js'
 export {
   compatibilityViews,
+  copyStatements,
   DIALECTS,
   FIXED_SCHEMA,
   QUOTE,
