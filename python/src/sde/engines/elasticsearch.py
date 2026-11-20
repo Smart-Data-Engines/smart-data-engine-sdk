@@ -43,7 +43,7 @@ import stat
 import struct
 import urllib.parse
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
@@ -55,12 +55,13 @@ from ..errors import EngineError, MigrationRefused
 from ..layout import index_name_refusal
 from ..logging import log
 from ..migration import key_columns, same_width
-from ..ownership import COPY_MARKER, copy_marker, copy_refusal, owned_copy_marker
+from ..ownership import COPY_MARKER, copy_refusal, owned_copy_marker
 from ..physical import PhysicalFinding
 from ..placement import BACKFILL_TABLE, PhysicalLayout
 from ..query import ReadFilter, ReadPlan, read_row
 from ..schema import (
     TOKENS_FIELD,
+    copy_statements,
     elasticsearch_mapping,
     elasticsearch_property,
     schema_statements,
@@ -802,14 +803,17 @@ class ElasticsearchEngine:
         a staging's on the copy it named); one without it is refused before anything is written to
         it (format contract §7r). Then what :meth:`ensure_schema` does.
         """
-        for statement in schema_statements(layout, keys=keys, dialect=self.dialect):
-            document = json.loads(statement)
-            index = str(document["index"])
+        for entity, index in sorted(layout.tables.items()):
             found = self._mark(index)
             if found is None:
-                mappings = document["mappings"]
-                mappings["_meta"]["sde"]["copy"] = copy_marker(project_id, group, index)
-                status, body = self._request("PUT", self._path(index), {"mappings": mappings})
+                one = replace(layout, tables={entity: index})
+                (statement,) = copy_statements(
+                    one, keys=keys, dialect=self.dialect, project_id=project_id, group=group
+                )
+                document = json.loads(statement)
+                status, body = self._request(
+                    "PUT", self._path(index), {"mappings": document["mappings"]}
+                )
                 exists = (
                     status == 400
                     and isinstance(body, Mapping)

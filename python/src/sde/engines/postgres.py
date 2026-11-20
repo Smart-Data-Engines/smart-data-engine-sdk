@@ -36,11 +36,11 @@ from ..generation import EPOCH_COLUMN
 from ..layout import POSTGRES_TYPES
 from ..logging import log
 from ..migration import key_columns, same_width
-from ..ownership import copy_marker, copy_refusal, owned_copy_marker
+from ..ownership import copy_refusal, owned_copy_marker
 from ..physical import DeclaredTable, PhysicalFinding, declared_tables
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
-from ..schema import QUOTE, schema_statements
+from ..schema import QUOTE, copy_statements, schema_statements
 from ..write_fence import WriteFence
 from ._transport import loopback
 from ._write_fences import PostgresFences
@@ -327,38 +327,18 @@ class PostgresEngine:
         client had for something else (format contract §7r). Then what :meth:`ensure_schema` does.
         """
         from psycopg import errors as pg_errors
-        from psycopg import sql
 
         for entity, table in sorted(layout.tables.items()):
-            mark = copy_marker(project_id, group, table)
             found = self._mark(table)
             if found is None:
-                single = replace(
-                    layout,
-                    tables={entity: table},
-                    columns={entity: layout.columns[entity]},
-                    partition_by={entity: layout.partition_by[entity]}
-                    if entity in layout.partition_by
-                    else {},
-                    key_order={entity: layout.key_order[entity]}
-                    if entity in layout.key_order
-                    else {},
-                    indexes=(),
+                one = replace(layout, tables={entity: table})
+                create, comment = copy_statements(
+                    one, keys=keys, dialect=self.dialect, project_id=project_id, group=group
                 )
-                (statement,) = (
-                    s
-                    for s in schema_statements(single, keys=keys, dialect=self.dialect)
-                    if s.startswith("CREATE TABLE ")
-                )
-                create = statement.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
                 try:
                     with self._cx.transaction():
                         self._cx.execute(create)
-                        self._cx.execute(
-                            sql.SQL("COMMENT ON TABLE {} IS {}").format(
-                                sql.Identifier(table), sql.Literal(mark)
-                            )
-                        )
+                        self._cx.execute(comment)
                 except pg_errors.DuplicateTable:
                     pass  # created meanwhile; the mark below says whose it is
                 found = self._mark(table)

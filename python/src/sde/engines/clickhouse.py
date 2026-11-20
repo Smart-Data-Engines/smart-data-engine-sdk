@@ -76,7 +76,7 @@ from ..explain import (
 from ..generation import EPOCH_COLUMN
 from ..logging import log
 from ..migration import key_columns, same_width
-from ..ownership import COPY_MARKER, copy_marker, copy_refusal, owned_copy_marker
+from ..ownership import copy_refusal, owned_copy_marker
 from ..physical import (
     PhysicalFinding,
     declared_tables,
@@ -85,7 +85,7 @@ from ..physical import (
 )
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
-from ..schema import QUOTE, schema_statements
+from ..schema import QUOTE, copy_statements, schema_statements
 from ..temporal_range import RANGE_SQL, TemporalRange, from_engine_text
 from ..write_fence import WriteFence
 from ._clickhouse_connection import (
@@ -645,30 +645,14 @@ class ClickHouseEngine:
         (format contract §7r). Then what :meth:`ensure_schema` does.
         """
         for entity, table in sorted(layout.tables.items()):
-            mark = copy_marker(project_id, group, table)
-            if COPY_MARKER.fullmatch(mark) is None:
-                raise MigrationRefused("a copy's mark is not the protocol's metadata")
             found = self._mark(table)
             if found is None:
-                single = replace(
-                    layout,
-                    tables={entity: table},
-                    columns={entity: layout.columns[entity]},
-                    partition_by={entity: layout.partition_by[entity]}
-                    if entity in layout.partition_by
-                    else {},
-                    key_order={entity: layout.key_order[entity]}
-                    if entity in layout.key_order
-                    else {},
-                    indexes=tuple(
-                        index for index in layout.indexes if str(index["entity"]) == entity
-                    ),
+                one = replace(layout, tables={entity: table})
+                (create,) = copy_statements(
+                    one, keys=keys, dialect=self.dialect, project_id=project_id, group=group
                 )
-                (statement,) = schema_statements(single, keys=keys, dialect=self.dialect)
-                create = statement.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
                 try:
-                    # The mark is fixed ASCII protocol metadata, checked above, never a value.
-                    self._cx.command(create + " COMMENT '" + mark + "'")
+                    self._cx.command(create)
                 except Exception as exc:
                     if "already exists" not in str(exc).lower():
                         raise EngineError(

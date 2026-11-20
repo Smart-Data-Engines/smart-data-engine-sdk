@@ -54,6 +54,9 @@ class Runnable(NamedTuple):
     case: str
     statements: tuple[str, ...]
     declared: dict[str, tuple[str, ...]]
+    copy: bool = False
+    """A copy's statements (§7r): not idempotent on purpose. They run once, a second run is
+    refused by the server, and each table reads back with its mark."""
 
 
 def _layout_of(document: dict[str, Any], materialization: str) -> dict[str, Any]:
@@ -96,6 +99,7 @@ def _runnable(dialect: str) -> list[Runnable]:
                         table: tuple(sorted(columns.get(entity, {})))
                         for entity, table in layout.get("tables", {}).items()
                     },
+                    copy="copy" in expectation,
                 )
             )
     return out
@@ -165,7 +169,7 @@ def test_every_postgres_case_runs_and_creates_the_names_it_declared() -> None:
                 # why they are all IF NOT EXISTS or OR REPLACE - and an application restarting
                 # reapplies them. A statement that is correct once and fails twice is a deployment
                 # that works until the first restart.
-                for _ in range(2):
+                for _ in range(1 if runnable.copy else 2):
                     for statement in runnable.statements:
                         try:
                             cursor.execute(statement)  # type: ignore[arg-type]
@@ -175,6 +179,22 @@ def test_every_postgres_case_runs_and_creates_the_names_it_declared() -> None:
                                 f"family says every implementation must produce.\n  {statement}"
                                 f"\n  {exc}"
                             ) from exc
+                if runnable.copy:
+                    # Created once: a second CREATE TABLE of a copy's name is the server's refusal,
+                    # which is what keeps a table the client had from being taken for the copy.
+                    with pytest.raises(psycopg.errors.DuplicateTable):
+                        cursor.execute(runnable.statements[0])  # type: ignore[arg-type]
+                    marks = {
+                        str(table): str(mark)
+                        for table, mark in cursor.execute(
+                            "SELECT c.relname, obj_description(c.oid, 'pg_class') FROM pg_class c "
+                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                            "WHERE n.nspname = %s AND c.relkind = 'r'",
+                            (schema,),
+                        )
+                    }
+                    assert all(mark.startswith("sde.copy1.") for mark in marks.values()), marks
+                    assert set(marks) == set(runnable.declared)
                 found: dict[str, set[str]] = {}
                 for table, column in cursor.execute(
                     "SELECT table_name, column_name FROM information_schema.columns "
@@ -205,7 +225,7 @@ def test_every_clickhouse_case_runs_and_creates_the_names_it_declared() -> None:
             client.command(f"CREATE DATABASE {database}")
             scoped = clickhouse_connect.get_client(dsn=CH_DSN, database=database)
             try:
-                for _ in range(2):  # idempotence, same argument as above
+                for _ in range(1 if runnable.copy else 2):  # idempotence, as above
                     for statement in runnable.statements:
                         try:
                             scoped.command(statement)
@@ -215,6 +235,17 @@ def test_every_clickhouse_case_runs_and_creates_the_names_it_declared() -> None:
                                 f"family says every implementation must produce.\n  {statement}"
                                 f"\n  {exc}"
                             ) from exc
+                if runnable.copy:
+                    with pytest.raises(Exception, match="TABLE_ALREADY_EXISTS"):
+                        scoped.command(runnable.statements[0])
+                    marks = dict(
+                        scoped.query(
+                            "SELECT name, comment FROM system.tables WHERE database = %(db)s",
+                            parameters={"db": database},
+                        ).result_rows
+                    )
+                    assert all(str(m).startswith("sde.copy1.") for m in marks.values()), marks
+                    assert set(marks) == set(runnable.declared)
                 found: dict[str, set[str]] = {}
                 for table, column in scoped.query(
                     "SELECT table, name FROM system.columns WHERE database = %(db)s",

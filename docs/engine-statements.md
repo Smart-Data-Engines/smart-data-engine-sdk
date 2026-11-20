@@ -45,7 +45,8 @@ Who sends it:
 | `LOCK TABLE … IN SHARE ROW EXCLUSIVE MODE` | provisioning; operator | a barrier waits for the writers in flight |
 | `GRANT SELECT, INSERT ON … TO …`, `REVOKE SELECT, INSERT ON … FROM …` | operator | a cutover pauses and restores your runtime logins, and retires a source |
 | `TRUNCATE TABLE …` | operator | a cutover empties the copy it refills, after checking its identity |
-| `CREATE TABLE …`, then `COMMENT ON TABLE … IS …` | operator | a staging creates a copy with the first statement of this table, without `IF NOT EXISTS`, and marks it its own |
+| `CREATE TABLE …`, then `COMMENT ON TABLE … IS …` | provisioning; operator | `prepare_schema` creates a copy's table, a staging its copy, without `IF NOT EXISTS`, in one transaction with the mark that makes it the copy ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)) |
+| `COMMENT ON TABLE … IS '…'` | operator | `sde-operator adopt-copy --confirm` marks a copy provisioned before copies were marked |
 | `CREATE INDEX …` | operator | a staging builds its copy's indexes |
 | `DROP TABLE …` | operator | an abandoned staging drops its own marked copy |
 | `CREATE INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY IF EXISTS …` | operator | an index change in place |
@@ -70,7 +71,8 @@ Who sends it:
 | `DETACH TABLE … PERMANENTLY SYNC`, then `ATTACH TABLE …` | provisioning; operator | a barrier waits for the writers in flight, recorded first in `__sde_fence_drains` |
 | `GRANT SELECT, INSERT ON … TO …`, `REVOKE SELECT, INSERT ON … FROM …` | operator | a cutover pauses and restores your runtime logins and retires a source; a dropped copy's grants are taken back |
 | `TRUNCATE TABLE … SYNC` | operator | a cutover empties the copy it refills, after checking its identity |
-| `CREATE TABLE …`, `CREATE TABLE … COMMENT '…'` | operator | a staging creates a copy with the first statement of this table, without `IF NOT EXISTS`, marked as its own |
+| `CREATE TABLE …`, `CREATE TABLE … COMMENT '…'` | provisioning; operator | `prepare_schema` creates a copy's table, a staging its copy, with the first statement of this table, without `IF NOT EXISTS`, marked as the copy (§7r) |
+| `ALTER TABLE … MODIFY COMMENT '…'` | operator | `sde-operator adopt-copy --confirm` marks a copy provisioned before copies were marked |
 | `DROP TABLE …` | operator | an abandoned staging drops its own marked copy, with `SYNC` |
 | `ALTER TABLE … ADD …`, `ALTER TABLE … MATERIALIZE INDEX …` | operator | an index change builds a data-skipping index |
 | `ALTER TABLE … DROP INDEX … SETTINGS alter_sync = 0` | operator | an index change removes one |
@@ -88,7 +90,7 @@ Requests, in console syntax:
 | `PUT /…/_doc/…?refresh=wait_for`, `POST /_bulk?refresh=wait_for` | application | `save`, `save_many`, a map version |
 | `POST /…/_doc?refresh=true` | `sde.backfill` | its progress, into `sde_backfill_state` |
 | `POST /_bulk?refresh=true` | `sde.backfill`; operator | a backfill, or a cutover refilling the copy |
-| `PUT /…/_mapping` | provisioning | fence setup: `__sde_write_epoch` |
+| `PUT /…/_mapping` | provisioning; operator | fence setup: `__sde_write_epoch`; `sde-operator adopt-copy --confirm`: a copy's mark in `_meta` |
 | `PUT /_ingest/pipeline/…` | provisioning; operator | fence setup, a barrier, a generation change: the fence pipeline `__sde_f_<index>`, conditional on its version |
 | `PUT /…/_settings` | provisioning; operator; departure | the index's final pipeline set to its fence or unset when leaving, a write block lifted |
 | `PUT /…/_block/write`, `POST /…/_refresh` | provisioning; operator | a barrier waits for the writes in flight |

@@ -126,7 +126,13 @@ from .query import (
     Summarizable,
 )
 from .routing import Router, resolve
-from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
+from .schema import (
+    CompatibilityViews,
+    compatibility_views,
+    copy_statements,
+    schema_is_fixed,
+    schema_statements,
+)
 from .search import SearchPage, SearchRefused
 from .session import Engine, ManagedEngine, Session
 from .shapes import SHAPE_KINDS, SOURCE_ONLY_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
@@ -298,6 +304,7 @@ __all__ = [
     "clear_registry",
     "colocation_groups",
     "compatibility_views",
+    "copy_statements",
     "default_layout",
     "denormalized_layout",
     "departure",

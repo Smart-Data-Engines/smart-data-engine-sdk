@@ -2500,3 +2500,51 @@ languages disagreed on, `[]`, and one they agreed on, `false`.
 **Which number moves: neither.** A refusal was tightened and none was dropped (§11): a map with an
 `auto` member that is not `true` was never one a control plane wrote, and for the value the
 libraries disagreed on, one of the three refused the packet already.
+
+## 7r. A copy's table carries its creator's mark
+
+A copy is the table the library and the operator write to beside a group's source: an application
+writes each row to it, a backfill and a settle write over its rows, a cutover repairs it or empties
+and refills it, and an erasure deletes from it. A map names that table, and a map is the control
+plane's word. So a table is a copy because the library created it as one and marked it, not because
+a map names it: a map naming a copy like a table the client already has, of the same shape - another
+group's, or one outside SDE - would otherwise have that table written over.
+
+**The mark.** `prepare_schema` writes, on each table of a copy of a group that carries a write
+generation (§7d), in the statement that creates the table:
+
+```
+sde.copy1.<project_id>.<sha256(group)[:16]>.<sha256(table)[:16]>
+```
+
+`project_id` is the locally configured project (§7d), the group is the colocation group's name, and
+each digest is of the name's UTF-8 bytes, in lowercase hexadecimal. Where it is written:
+
+| Engine | Where | How |
+|---|---|---|
+| PostgreSQL | the table's comment | `CREATE TABLE …` and `COMMENT ON TABLE … IS '<mark>'` in one transaction |
+| ClickHouse | the table's comment | `CREATE TABLE … COMMENT '<mark>'` |
+| Elasticsearch | `mappings._meta.sde.copy` | in the `PUT /<index>` that creates the index |
+
+A staging (§7f) marks the copy it creates `sde.stage1.<project_id>.<stage_id>.<sha256(table)[:16]>`
+and names it `sde_m_<stage_id>_<NNNNNN>`; that mark makes the table a copy too.
+
+**Whose it is.** A table is a copy of group G in project P when its mark is the `copy1` mark of P, G
+and its name, or the `stage1` mark of P, the stage in its name, and its name. The operator, which
+keeps each staging it completed, also checks that the stage was for G.
+
+**What each side does.**
+
+- `prepare_schema` creates a copy's table without `IF NOT EXISTS`, with its mark. A table of the
+  name that carries the copy's mark is taken, as on a second run; one without it, or with another
+  mark, is refused, with `MigrationRefused` and `is not one this library created for it`, before any
+  statement writes to it - its write generation (§7c) included. A source is taken as before.
+- The operator reads the mark of each copy table before a backfill, a settle, a cutover and an
+  erasure write to it, and refuses the same way.
+- `sde-operator adopt-copy --group G` marks a copy provisioned before this section existed: it
+  lists the copy's tables with their native identity and a digest of the listing, and writes the
+  marks only with `--confirm` equal to the digest of the listing as it is then.
+
+Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
+marks - the mark included, so its computation is held with them - and a case of the schema family
+carries the project and group of the copy in `copy`.
