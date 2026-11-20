@@ -228,6 +228,19 @@ port found it*.
 place a group on Elasticsearch without a write generation. Elasticsearch is not in 0.2.0, and no
 release wrote such a map.
 
+### A copy provisioned before
+
+**A copy's table carries its creator's mark, and the operator writes only to a table that does.**
+Affected: a deployment whose map has a copy - the initial handoff of [`local-cutover.md`](local-cutover.md)
+provisions one - made by `prepare_schema` before this release. Its tables have no mark, so
+`prepare_schema` and every operator command that writes to the copy refuse it, by name. Run
+`sde-operator adopt-copy --group <group>`: it lists the copy's tables with their native identity
+and a digest, and with `--confirm <digest>` marks exactly those tables. A copy a staging created is
+marked already. A source is taken as before ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
+
+Changelog: *Fixed: a copy's table is one the library created and marked, and only such a table is
+written to as a copy*.
+
 ### After the upgrade
 
 Open a session on each service's map in a staging environment first: every refusal above that a map,

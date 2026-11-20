@@ -83,6 +83,7 @@ add_library(sde
   src/recorder.cpp
   src/bignum.cpp
   src/value.cpp
+  src/ownership.cpp
   src/schema.cpp
   src/query.cpp
   src/admission.cpp

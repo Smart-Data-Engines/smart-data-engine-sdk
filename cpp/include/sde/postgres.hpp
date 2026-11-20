@@ -52,6 +52,7 @@ class PostgresEngine final : public Engine,
                              public Migratable,
                              public Fencable,
                              public SchemaValidator,
+                             public MarksCopies,
                              public StorageMeasurable {
  public:
   /// Nothing is opened until `connect`.
@@ -75,6 +76,10 @@ class PostgresEngine final : public Engine,
   /// as another type; returns how keys and indexes differ from the design.
   std::vector<PhysicalFinding> ensure_schema(const PhysicalLayout& layout,
                                              const Keys& keys) override;
+  /// A copy's tables, created marked or found with their mark (format contract section 7r).
+  std::vector<PhysicalFinding> ensure_copy(const PhysicalLayout& layout, const Keys& keys,
+                                           const std::string& project_id,
+                                           const std::string& group) override;
   void insert(const std::string& table, const Row& values) override;
   std::optional<Row> get(const std::string& table, const Row& key) override;
   /// One transaction of this engine, nested ones as savepoints. A transaction the server aborted

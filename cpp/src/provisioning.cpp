@@ -58,7 +58,17 @@ void prepare_schema(const Model& model, const PlacementMap& placement,
       }
     }
     for (const auto& [name, spot] : placement.groups()) {
-      if (spot.write_epoch) continue;
+      if (spot.write_epoch) {
+        for (const Materialization& material : spot.derived) {
+          if (engines.at(material.engine)->capabilities().copies == nullptr) {
+            throw MigrationRefused(
+                "group " + name + " has a copy in " + material.engine +
+                ", whose adapter cannot mark the tables it creates for a copy (format contract "
+                "§7r); a copy's table that is not marked is not one the operator writes to");
+          }
+        }
+        continue;
+      }
       for (const Materialization* material : spot.all()) {
         detail::refuse_a_fencing_engine(name, material->engine, *engines.at(material->engine));
       }
@@ -70,7 +80,14 @@ void prepare_schema(const Model& model, const PlacementMap& placement,
     for (const std::string& member : group.members) keys[member] = model.entity(member).key;
     for (const Materialization* material : spot.all()) {
       Engine& engine = *engines.at(material->engine);
-      refuse_findings(engine.ensure_schema(material->layout, keys));
+      // A copy's tables are created here and marked, or found with their mark: a table of a copy's
+      // name and shape the client already has is not taken for it (section 7r).
+      if (spot.write_epoch && material != &spot.source) {
+        refuse_findings(engine.capabilities().copies->ensure_copy(material->layout, keys,
+                                                                  *local_project, group.name));
+      } else {
+        refuse_findings(engine.ensure_schema(material->layout, keys));
+      }
       if (!spot.write_epoch) continue;
       std::vector<std::string> tables;
       for (const auto& [entity, table] : material->layout.tables) tables.push_back(table);

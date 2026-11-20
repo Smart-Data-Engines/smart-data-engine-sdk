@@ -111,6 +111,16 @@ TEST_P(SchemaVector, RendersEveryCase) {
                      error->as_string(), expectation.find("match")->as_string());
       continue;
     }
+    if (const sde::Json* copy = expectation.find("copy")) {
+      // A copy's tables, created with their creator's mark (section 7r): its own statements.
+      EXPECT_EQ(sde::copy_statements(layout, keys, dialect,
+                                     copy->find("project_id")->as_string(),
+                                     copy->find("group")->as_string()),
+                strings(*expectation.find("statements")))
+          << "the statements that create a copy's tables differ from the vector, and with them "
+             "its mark.";
+      continue;
+    }
     EXPECT_EQ(sde::schema_statements(layout, keys, dialect),
               strings(*expectation.find("statements")))
         << "the DDL differs from the vector. Two libraries that agree on a map and disagree here "

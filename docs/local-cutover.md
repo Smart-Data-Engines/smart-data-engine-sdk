@@ -166,7 +166,12 @@ connections must resolve the same schema/search path. Engine binding names must 
 cover every engine the application's signed sessions use for watermark protection.
 
 Before enrollment, provision the signed before-map with `sde.prepare_schema` using operator
-connections, including an otherwise unused supplied engine's bookkeeping. Set up the restricted
+connections, including an otherwise unused supplied engine's bookkeeping. It creates the copy's
+tables with their mark (format contract §7r) and refuses a table of a copy's name that does not
+carry it: a map naming a copy like a table you already have does not make that table the copy. The
+operator reads the mark again before every command that writes to the copy. A copy provisioned
+before copies were marked is adopted once with `sde-operator adopt-copy --group <group>`, which
+lists the tables and marks them only with `--confirm` and the digest of that listing. Set up the restricted
 runtime grants described in [runtime roles](runtime-roles.md). Enrollment only records the exact
 signed map; it does not provision databases or grant runtime access. It takes one input snapshot
 and applies the map contract's integral-JSON normalization before both verification and publication,
