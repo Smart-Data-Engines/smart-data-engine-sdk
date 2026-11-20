@@ -17,17 +17,19 @@ table the copy, and the operator then wrote over its rows (`backfill`, `settle`)
 refilled it (a cutover's refill) and deleted rows from it (`erase`). Now `prepare_schema` creates a
 copy's table with its mark - `sde.copy1.<project>.<group>.<table>`, as a comment in PostgreSQL and
 ClickHouse and in the index mapping's `_meta` in Elasticsearch, in the statement that creates it -
-and refuses a table of the copy's name without it before anything is written to it; and every
-operator path that writes to a copy reads the mark first, accepting a staging's on the copy that
-staging created for the same group, and refuses a copy that another name of the map reaches through
-its bindings - two engine names bound to one database, or an alias. A source is taken as before: it is often your own table from
-before SDE. From contract 4, a map naming a copy's table for anything else too - another group's
-source or copy - is refused when it loads (`errors/151`), since the mark cannot tell two namings of
-one project apart. What is not closed yet, and §7r says so: the application's session and `sde.backfill`
-do not read the mark, `prepare_schema` takes a staging's mark without the stage's group, and a map
-below contract 4 is taken without fences or marks, as before, also where a project is configured. Found
-by an independent review of `sde-operator`. **Breaking** for a copy provisioned before this release:
-it has no mark, and is made again ([upgrading](docs/upgrading.md)).
+and refuses a table of the copy's name without it before anything is written to it. Every operator
+path that writes to a copy reads the mark first, accepting a staging's on the copy that staging
+created for the same group, and refuses a copy that another name of the map reaches through its
+bindings: two engine names bound to one database, or an alias. A source is taken as before: it is
+often your own table from before SDE. From contract 4, a map naming a copy's table for anything else
+too - another group's source or copy - is refused when it loads (`errors/151`), since the mark
+cannot tell two namings of one project apart. What is not closed yet, and §7r says so: the
+application's session and `sde.backfill` do not read the mark, `prepare_schema` takes a staging's
+mark without the stage's group, and a map below contract 4 is taken without fences or marks, as
+before, also where a project is configured. Found by an independent review of `sde-operator`, and
+the fix reviewed again. **Breaking** for a copy provisioned before this release: it has no mark, and
+is made again ([upgrading](docs/upgrading.md)); for an adapter of your own that holds such a copy,
+which implements `ensure_copy`; and for a map written by hand that names a copy's table twice.
 
 **Fixed: a map cannot put a statement of its own choosing into a client's engine** (all three
 libraries; [format contract §7a](docs/format-contract.md#what-a-layout-may-name-and-spell)).
