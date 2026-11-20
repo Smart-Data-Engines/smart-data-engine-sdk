@@ -233,8 +233,9 @@ release wrote such a map.
 **A copy's table carries its creator's mark, and the operator writes to no other.** Affected: a
 deployment whose map has a copy - the initial handoff of [`local-cutover.md`](local-cutover.md)
 provisions one - made by `prepare_schema` before this release. Its tables have no mark, so
-`prepare_schema` and every operator command that writes to the copy refuse it, by name. Make the copy
-again: it holds only rows of its source. The simplest way is to stage a new copy
+`prepare_schema`, every operator command that writes to the copy and every session of the map refuse
+it, by name - a session when it opens, so make the copy again before the application's library is
+upgraded. It holds only rows of its source. The simplest way is to stage a new copy
 ([staging](staging.md)): its tables are created marked, under new names, and its backfill starts
 from nothing. To keep the map you have, make sure the table is the copy you provisioned, then drop
 it, delete the copy's backfill progress - the rows (in Elasticsearch, documents) of
@@ -248,13 +249,17 @@ An engine adapter of your own that holds a copy of a group with a write generati
 tables `copy_statements` / `copyStatements` gives - without `IF NOT EXISTS`, the mark in the
 statement that creates each - and refuse a table of the name whose mark `owned_copy_marker` /
 `ownedCopyMarker` does not take (in C++, `sde/ownership.hpp`). Without it, `prepare_schema` refuses
-such a copy, by name, before any statement.
+such a copy, by name, before any statement. It also says what each name of a map reaches -
+`table_facts` (Python), `tableFacts` (TypeScript, `ReadsTableFacts`) or `ReadsTableFacts` (C++):
+each name's table as the adapter's statements reach it, by an identity that is the same however it
+is reached, and the mark it carries. Without it a session refuses a map with a copy on its engine,
+when it opens.
 
 A map you write by hand, of contract 4 or later, may not name a copy's table for anything else too
 - another group's source or copy, or another entity of the copy: `load_map` refuses it.
 
 Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
-no other*.
+no other* and *Fixed: a session reads the marks of its map's tables when it opens*.
 
 ### After the upgrade
 

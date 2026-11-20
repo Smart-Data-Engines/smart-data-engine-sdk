@@ -8,6 +8,21 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a session reads the marks of its map's tables when it opens** (all three libraries;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). The
+operator read a copy's mark before it wrote to a copy, and the application's session - its fan-out,
+and `sde.backfill` through it - did not, so a forged map could still direct the application's writes
+to a table of the project of a copy's shape: a marked copy a previous map named as another group's
+source, or a copy that a second engine name bound to the same database reaches as another group's
+table, which `prepare_schema` marked and took both ways. A session of a map with write generations
+now reads every table of its map through its bindings when it opens, one look-up a binding, and
+refuses before it writes a copy's table without its own mark, a source's table with a copy's mark,
+and a copy's table another name of the map reaches; `prepare_schema` refuses the same, before its
+first statement and after its last. Found by the second independent review of copy ownership.
+**Breaking** for a copy made before copies were marked, which a session now refuses too (make it
+again before the application's library is upgraded), and for an adapter of your own holding a copy,
+which says what each name reaches ([upgrading](docs/upgrading.md)).
+
 **Fixed: a copy's table is one the library created and marked, and the operator writes to no
 other** (all three libraries' `prepare_schema`, and the operator;
 [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
