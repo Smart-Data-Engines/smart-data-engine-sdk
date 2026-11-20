@@ -103,6 +103,7 @@ from .migration import (
     verify,
 )
 from .model import CONTRACT, LogicalModel, build_model, neutral_declaration
+from .ownership import MarksCopies, copy_marker, owned_copy_marker
 from .physical import PHYSICAL_DESIGN_SINCE, PhysicalFinding
 from .placement import (
     ALSO_WRITE_SINCE,
@@ -249,6 +250,7 @@ __all__ = [
     "ManagedEngine",
     "MapError",
     "MapRolledBack",
+    "MarksCopies",
     "Materialization",
     "Migratable",
     "MigrationRefused",
@@ -304,6 +306,7 @@ __all__ = [
     "clear_registry",
     "colocation_groups",
     "compatibility_views",
+    "copy_marker",
     "copy_statements",
     "default_layout",
     "denormalized_layout",
@@ -334,6 +337,7 @@ __all__ = [
     "load_staging_plan",
     "members_of",
     "neutral_declaration",
+    "owned_copy_marker",
     "precision",
     "precision_refusal",
     "prepare_schema",

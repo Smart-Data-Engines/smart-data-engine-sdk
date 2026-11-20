@@ -239,6 +239,16 @@ copy you provisioned, then drop it and run `prepare_schema`, which creates it ma
 copy, whose tables the staging marks. A source is taken as before, and so is a copy a staging
 created ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
 
+An engine adapter of your own that holds a copy of a group with a write generation implements
+`ensure_copy` (Python, C++) or `ensureCopy` (TypeScript), the protocol `MarksCopies`: create the
+tables `copy_statements` / `copyStatements` gives - without `IF NOT EXISTS`, the mark in the
+statement that creates each - and refuse a table of the name whose mark `owned_copy_marker` /
+`ownedCopyMarker` does not take. Without it, `prepare_schema` refuses such a copy, by name, before
+any statement.
+
+A map you write by hand, of contract 4 or later, may not name a copy's table for anything else too
+- another group's source or copy, or another entity of the copy: `load_map` refuses it.
+
 Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
 no other*.
 

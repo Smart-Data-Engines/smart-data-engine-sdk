@@ -132,6 +132,8 @@ export {
   watermarkRecord,
 } from './watermark.js'
 export { MIGRATABLE_MEMBERS, satisfies, WATERMARK_MEMBERS } from './capabilities.js'
+export type { MarksCopies } from './ownership.js'
+export { copyMarker, ownedCopyMarker } from './ownership.js'
 export type { ResolveOptions } from './routing.js'
 export { resolve } from './routing.js'
 export type { CompatibilityViews, Dialect, SchemaOptions, ViewOptions } from './schema.js'
