@@ -53,7 +53,8 @@ import { parseDsn, verifiedTls, type ConnectionParameters } from './_clickhouse-
 import { compareCodePoints } from '../canonical.js'
 import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
-import { EngineError } from '../errors.js'
+import { EngineError, MigrationRefused } from '../errors.js'
+import { copyRefusal, ownedCopyMarker } from '../ownership.js'
 import { exactBytes } from '../telemetry.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
@@ -63,7 +64,7 @@ import type { PhysicalFinding } from '../physical.js'
 import { declaredTables, parseIdentifierList, parsePartitionKey } from '../physical.js'
 import type { PhysicalLayout } from '../placement.js'
 import { BACKFILL_TABLE, WATERMARK_TABLE } from '../placement.js'
-import { QUOTE, schemaStatements } from '../schema.js'
+import { copyStatements, QUOTE, schemaStatements } from '../schema.js'
 import type { Row } from '../session.js'
 import { fromEngineText, RANGE_SQL, type TemporalRange } from '../temporal-range.js'
 
@@ -520,6 +521,55 @@ export class ClickHouseEngine {
   }
 
   // --- schema ------------------------------------------------------------------------------
+
+  /**
+   * A copy's tables: created here and marked, or found with the mark they were made with (format
+   * contract §7r). A table that is not there is created by one `CREATE TABLE … COMMENT '<mark>'`
+   * from `copyStatements`, so no moment holds it without its mark. A table that is there is this
+   * copy's only if it carries its mark (or a staging's on the copy it named); one without it is
+   * refused before anything is written to it. Then what `ensureSchema` does.
+   */
+  async ensureCopy(
+    layout: PhysicalLayout,
+    options: {
+      readonly keys: Readonly<Record<string, readonly string[]>>
+      readonly projectId: string
+      readonly group: string
+    },
+  ): Promise<PhysicalFinding[]> {
+    for (const entity of Object.keys(layout.tables).sort(compareCodePoints)) {
+      const table = layout.tables[entity]!
+      let found = await this.usage.operation(() => this.mark(table))
+      if (found === null) {
+        const [create] = copyStatements(
+          { ...layout, tables: { [entity]: table } },
+          { keys: options.keys, dialect: this.dialect, projectId: options.projectId, group: options.group },
+        )
+        try {
+          await this.usage.operation(() => this.command(create!))
+        } catch (error) {
+          if (!/already exists/i.test(message(error))) {
+            throw new EngineError(`creating the copy's table '${table}' failed: ${message(error)}`)
+          }
+        }
+        found = await this.usage.operation(() => this.mark(table))
+      }
+      if (found === null || !ownedCopyMarker(options.projectId, options.group, table, found.comment)) {
+        throw new MigrationRefused(copyRefusal(table, found === null ? null : found.comment))
+      }
+    }
+    return this.ensureSchema(layout, { keys: options.keys })
+  }
+
+  /** A table's uuid and its comment (empty when it has none), or `null` without a table. */
+  private async mark(table: string): Promise<{ object: string; comment: string } | null> {
+    const rows = await this.query(
+      'SELECT toString(uuid) AS object, comment FROM system.tables ' +
+        `WHERE database = currentDatabase() AND name = ${literal(table)}`,
+    )
+    const row = rows[0]
+    return row === undefined ? null : { object: String(row['object']), comment: String(row['comment']) }
+  }
 
   async ensureSchema(
     layout: PhysicalLayout,

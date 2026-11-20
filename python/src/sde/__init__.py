@@ -103,6 +103,7 @@ from .migration import (
     verify,
 )
 from .model import CONTRACT, LogicalModel, build_model, neutral_declaration
+from .ownership import MarksCopies, copy_marker, owned_copy_marker
 from .physical import PHYSICAL_DESIGN_SINCE, PhysicalFinding
 from .placement import (
     ALSO_WRITE_SINCE,
@@ -126,7 +127,13 @@ from .query import (
     Summarizable,
 )
 from .routing import Router, resolve
-from .schema import CompatibilityViews, compatibility_views, schema_is_fixed, schema_statements
+from .schema import (
+    CompatibilityViews,
+    compatibility_views,
+    copy_statements,
+    schema_is_fixed,
+    schema_statements,
+)
 from .search import SearchPage, SearchRefused
 from .session import Engine, ManagedEngine, Session
 from .shapes import SHAPE_KINDS, SOURCE_ONLY_KINDS, WRITE_KINDS, OperationShape, enumerate_shapes
@@ -243,6 +250,7 @@ __all__ = [
     "ManagedEngine",
     "MapError",
     "MapRolledBack",
+    "MarksCopies",
     "Materialization",
     "Migratable",
     "MigrationRefused",
@@ -298,6 +306,8 @@ __all__ = [
     "clear_registry",
     "colocation_groups",
     "compatibility_views",
+    "copy_marker",
+    "copy_statements",
     "default_layout",
     "denormalized_layout",
     "departure",
@@ -327,6 +337,7 @@ __all__ = [
     "load_staging_plan",
     "members_of",
     "neutral_declaration",
+    "owned_copy_marker",
     "precision",
     "precision_refusal",
     "prepare_schema",

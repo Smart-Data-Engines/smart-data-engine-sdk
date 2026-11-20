@@ -20,9 +20,10 @@ disagree on the DDL place the same entity in tables with different columns.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final
 
 from .canonical import canonical_str
@@ -565,6 +566,65 @@ class CompatibilityViews:
         """Whether every table of the group got one. False is ordinary - see the class docstring."""
         return not self.not_possible
 
+
+
+def copy_statements(
+    layout: PhysicalLayout,
+    *,
+    keys: Mapping[str, Sequence[str]],
+    dialect: str,
+    project_id: str,
+    group: str,
+) -> tuple[str, ...]:
+    """What creates a copy's tables with their creator's mark (format contract §7r).
+
+    Table by table in code point order of the entity, as :func:`schema_statements` orders them:
+    PostgreSQL ``CREATE TABLE …`` - without ``IF NOT EXISTS``, since a table of the name is not
+    taken for a copy - and ``COMMENT ON TABLE … IS '<mark>'``, which the adapter runs in one
+    transaction; ClickHouse one ``CREATE TABLE … COMMENT '<mark>'``; Elasticsearch the index's
+    document with ``_meta.sde.copy``. The mark is :func:`sde.ownership.copy_marker`: fixed ASCII,
+    so it is written between quotes as it is. Indexes are not here: a copy's PostgreSQL indexes are
+    the ones :func:`schema_statements` gives, created after its tables.
+    """
+    from .ownership import copy_marker
+
+    if dialect in FIXED_SCHEMA:
+        raise EngineError(
+            f"a copy in {dialect} has no table to create: the engine's schema is fixed (§7a)"
+        )
+    out: list[str] = []
+    for entity, table in sorted(layout.tables.items()):
+        mark = copy_marker(project_id, group, table)
+        single = replace(
+            layout,
+            tables={entity: table},
+            columns={entity: layout.columns[entity]} if entity in layout.columns else {},
+            partition_by={entity: layout.partition_by[entity]}
+            if entity in layout.partition_by
+            else {},
+            key_order={entity: layout.key_order[entity]} if entity in layout.key_order else {},
+            indexes=tuple(
+                index
+                for index in layout.indexes
+                if dialect == "clickhouse" and str(index["entity"]) == entity
+            ),
+        )
+        (statement,) = (
+            s
+            for s in schema_statements(single, keys=keys, dialect=dialect)
+            if dialect == "elasticsearch" or s.startswith("CREATE TABLE ")
+        )
+        if dialect == "postgres":
+            out.append(statement.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1))
+            out.append(f"COMMENT ON TABLE {_quote_ansi(table)} IS '{mark}'")
+        elif dialect == "clickhouse":
+            create = statement.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
+            out.append(f"{create} COMMENT '{mark}'")
+        else:
+            document = json.loads(statement)
+            document["mappings"]["_meta"]["sde"]["copy"] = mark
+            out.append(canonical_str(document))
+    return tuple(out)
 
 def compatibility_views(
     layout: PhysicalLayout, *, was: Mapping[str, str], dialect: str

@@ -736,6 +736,18 @@ where data is written:
   to it would silently be a read of the source (`errors/101`). Checked whenever the tables are known
   - after `{"auto": true}` layouts are derived, with a model, and on explicit layouts without one -
   where Python had checked it only with a model and TypeScript before the copies' fan-out.
+- **From contract 4, a copy's table is named by nothing else in the map.** A table one engine holds
+  for a derived copy may not be named by another materialisation too - a source or a copy, of any
+  group - nor for another entity of the same copy (`errors/151`). Names are compared as the map
+  spells them: two PostgreSQL names that differ only after their 63rd byte, which the server
+  truncates to one, are not caught here; `prepare_schema` refuses a table whose name the server
+  truncated, and the operator looks every name up as the server resolves it (§7r). Named twice, the application's
+  writes, a backfill, a cutover's refill and an erasure meant for the one land in the other, and the
+  copy's mark (§7r) cannot tell them apart, since both are this project's. Two sources naming one
+  table are left as they were: a source is taken as the map names it, and the maps of contracts 1
+  and 2 list every entity's table in every group. Found by an independent review, where a forged map
+  named one group's source as another group's copy and that group's backfill and erasure rewrote
+  and deleted the first group's rows.
 - **A derived materialisation is meant to carry an explicit layout.** `auto` derives the *normalised*
   layout, which is the source's shape - so a derived copy asking for it is a second copy of the source
   in another engine, paying for storage and lag to answer questions the source already answers. The
@@ -1541,7 +1553,10 @@ depends on how the caller's JSON parser preserves keys.
    (§7i);
 4. the shape of `routing`, when it says anything;
 5. with a model, group coverage, both directions (§7); without one, a layout asking to be derived;
-6. a copy that is the source under another name, groups in name order;
+6. a copy that is the source under another name, groups in name order; then, from contract 4,
+   a copy's table named by another materialisation too, or for two entities of the copy: groups in
+   name order, materialisations in document order, entities in name order, the second naming
+   refused (§7);
 7. the physical design rules that need the model (§7i): groups in name order, materialisations in
    document order within a group, entities in name order within a layout - the key permutation
    before the partition rules for one entity;
@@ -2500,3 +2515,91 @@ languages disagreed on, `[]`, and one they agreed on, `false`.
 **Which number moves: neither.** A refusal was tightened and none was dropped (§11): a map with an
 `auto` member that is not `true` was never one a control plane wrote, and for the value the
 libraries disagreed on, one of the three refused the packet already.
+
+## 7r. A copy's table carries its creator's mark
+
+A copy is the table the library and the operator write to beside a group's source: an application
+writes each row to it, a backfill and a settle write over its rows, a cutover repairs it or empties
+and refills it, and an erasure deletes from it. A map names that table, and a map is the control
+plane's word. So a table is a copy because the library created it as one and marked it, not because
+a map names it: a map naming a copy like a table the client already has, of the same shape - another
+group's, or one outside SDE - would otherwise have that table written over.
+
+**The mark.** `prepare_schema` writes, on each table of a copy of a group that carries a write
+generation (§7d), in the statement that creates the table:
+
+```
+sde.copy1.<project_id>.<sha256(group)[:16]>.<sha256(table)[:16]>
+```
+
+`project_id` is the locally configured project (§7d), the group is the colocation group's name, and
+each digest is of the name's UTF-8 bytes, in lowercase hexadecimal. Where it is written:
+
+| Engine | Where | How |
+|---|---|---|
+| PostgreSQL | the table's comment | `CREATE TABLE …` and `COMMENT ON TABLE … IS '<mark>'` in one transaction |
+| ClickHouse | the table's comment | `CREATE TABLE … COMMENT '<mark>'` |
+| Elasticsearch | `mappings._meta.sde.copy` | in the `PUT /<index>` that creates the index |
+
+A staging (§7h) marks the copy it creates `sde.stage1.<project_id>.<stage_id>.<sha256(table)[:16]>`
+and names it `sde_m_<stage_id>_<NNNNNN>`; that mark makes the table a copy too.
+
+**After a cutover.** A copy's mark says the library created the table as a copy, and left on a
+table a cutover made the source it would go on saying so: a later map could name that table, which
+now holds the application's rows, as a copy again, and the operator would empty or refill it. So the
+cutover that makes a copy the source writes, after its decision and before it publishes the map,
+in place of the copy's or the staging's mark,
+
+```
+sde.source1.<project_id>.<sha256(group)[:16]>.<sha256(table)[:16]>
+```
+
+It is written in PostgreSQL with `COMMENT ON TABLE`, in ClickHouse with `ALTER TABLE … MODIFY
+COMMENT`, and in Elasticsearch as `mappings._meta.sde.source`, the rest of `_meta.sde` kept as it
+was. A table that carries a source's mark is never taken for a copy. A library reading an
+Elasticsearch index's mapping accepts `_meta.sde.source` of that form beside the entity and the key.
+
+**Whose it is.** A table is a copy of group G in project P when its mark is the `copy1` mark of P, G
+and its name, or the `stage1` mark of P, the stage in its name, and its name. The operator, which
+keeps each staging it completed, also checks that the stage was for G.
+
+**What each side does.**
+
+- `prepare_schema` creates a copy's table without `IF NOT EXISTS`, with its mark. A table of the
+  name that carries the copy's mark is taken, as on a second run; one without it, or with another
+  mark, is refused, with `MigrationRefused` and `is not one this library created for it`, before any
+  statement writes to it - its write generation (§7c) included. A source is taken as before.
+- The operator reads the mark of each copy table before a backfill, a settle, a cutover and an
+  erasure write to it, and refuses the same way. It also looks up, once a command and once a
+  binding, the table every name of the map reaches through the binding of its engine, and refuses
+  a copy that another name reaches: two engine names bound to one database, or an Elasticsearch
+  alias, name one table twice where `load_map` sees two.
+- A copy provisioned before this section existed carries no mark and is refused; it is made
+  again. A mark is never written on an existing table: it would say the library created what a map
+  merely named, and the name is the one thing in a map a library cannot check.
+- From contract 4 a map that names a copy's table for anything else too - another group's source
+  or copy - is refused when it loads (§7, `errors/151`). The mark cannot refuse it: the table is
+  this project's, and one of the two namings is its own.
+- The application's session does not read the marks when it opens, and `sde.backfill`, which
+  runs on a session, does not read them either. A session writes to the copies of a map whose
+  tables carry this project's write generation (§7d), so a forged map can still direct its writes
+  to a table of this project of the same shape: another group's staged copy, a table an earlier map
+  placed, a copy this map names as another group's source through a second engine name bound to
+  the same database (`prepare_schema` marks it, and only the operator looks the names up), or a
+  copy one map named as a group's source and the next names as a copy again. And a copy a map
+  makes the source without a cutover - a newer map published with the copy as the source, which
+  no release of the control plane writes - keeps its copy's mark. `prepare_schema` takes a
+  staging's mark without the stage's group, which only the operator keeps. The next steps of this
+  section: a session, `sde.backfill` and `prepare_schema` read the marks - a copy's own on each
+  copy, none of a copy or a staging on a source - and look every name up through the bindings, and
+  a staging's mark carries its group.
+- A map below contract 4 carries no project and no write generation, so neither a fence nor a mark
+  applies to it, and the libraries take it as they always did - also where a project is configured,
+  since the verification protocol (§7b) is pinned on such maps. A forged map of an older contract
+  therefore reaches tables the mark would have refused, through a session's fan-out and
+  `sde.backfill`; the operator takes no map below contract 4. Refusing an older contract where a
+  project is configured, with §7b's vectors on contract 4, is the third step.
+
+Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
+marks - the mark included, so its computation is held with them - and a case of the schema family
+carries the project and group of the copy in `copy`.

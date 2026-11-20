@@ -16,6 +16,7 @@ from test_runtime_privileges_live import runtime_roles
 
 import sde
 from sde.local_cutover import CutoverRecoveryRequired, LocalCutover
+from sde.ownership import copy_marker, source_marker
 from sde.placement import WATERMARK_TABLE
 
 PROJECT = "1" * 32
@@ -461,6 +462,7 @@ AFTER_DECISION = ["decision:success"] + [
         "confirm_source_denied",
         "retire_source",
         "activate_target",
+        "mark_target_source",
         "watermarks",
         "publish_map",
         "enable_runtime",
@@ -517,6 +519,15 @@ def test_restart_obeys_the_durable_decision(checkpoint: str, tmp_path: Path) -> 
         table = "source_events" if expected == "success" else "copy_events"
         with pytest.raises(sde.EngineError):
             roles[retired].runtime.get(table, {"id": 1})
+        # A copy made the source carries a source's mark from the completed cutover on, however
+        # the cutover was interrupted; a copy an abort kept carries its own (format contract §7r).
+        found = roles[target].operator._mark("copy_events")
+        assert found is not None
+        assert found[1] == (
+            source_marker(PROJECT, "Event", "copy_events")
+            if expected == "success"
+            else copy_marker(PROJECT, "Event", "copy_events")
+        )
 
 
 @pytest.mark.parametrize("repair", ["diff", "refill"])

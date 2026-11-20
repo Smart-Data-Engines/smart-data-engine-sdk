@@ -587,8 +587,16 @@ TEST_F(ClickHouseSchema, EverySchemaVectorIsCreatedByThisAdapterAndVerifiesClean
       }
       const ClickHouseScope scope(dsn_);
       const auto ch = engine(scope.dsn());
-      EXPECT_EQ(ch->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
-      EXPECT_EQ(ch->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
+      if (const sde::Json* copy = expectation.find("copy")) {
+        // A copy's case (section 7r): created with its mark, then found with it, as a restart does.
+        const std::string& project = copy->find("project_id")->as_string();
+        const std::string& group = copy->find("group")->as_string();
+        EXPECT_EQ(ch->ensure_copy(layout, keys, project, group), std::vector<sde::PhysicalFinding>{});
+        EXPECT_EQ(ch->ensure_copy(layout, keys, project, group), std::vector<sde::PhysicalFinding>{});
+      } else {
+        EXPECT_EQ(ch->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
+        EXPECT_EQ(ch->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
+      }
       std::map<std::string, std::set<std::string>> found;
       for (const sde::Json& row : scope.admin().rows(
                "SELECT table, name FROM system.columns WHERE database = currentDatabase()")) {

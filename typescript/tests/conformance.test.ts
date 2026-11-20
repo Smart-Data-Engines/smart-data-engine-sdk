@@ -48,6 +48,7 @@ import {
   resolve,
   schemaIsFixed,
   schemaStatements,
+  copyStatements,
   SHAPE_KINDS,
   shapeId,
   shapeIr,
@@ -548,6 +549,7 @@ interface SchemaCase {
   readonly match?: string
   readonly keys?: Readonly<Record<string, readonly string[]>>
   readonly layout_columns?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  readonly copy?: { readonly project_id: string; readonly group: string }
   readonly views?: {
     readonly was: Readonly<Record<string, string>>
     readonly create: readonly string[]
@@ -626,6 +628,23 @@ describe('schema vectors', () => {
             expectation.error,
             expectation.match!,
           )
+          continue
+        }
+
+        if (expectation.copy !== undefined) {
+          // A copy's tables, created with their creator's mark (§7r): its own statements.
+          expect(
+            [
+              ...copyStatements(layout, {
+                keys,
+                dialect,
+                projectId: expectation.copy.project_id,
+                group: expectation.copy.group,
+              }),
+            ],
+            `${found.id} as ${dialect}, a copy: the statements that create a copy's tables ` +
+              'differ from the vector, and with them its mark.',
+          ).toEqual(expectation.statements)
           continue
         }
 

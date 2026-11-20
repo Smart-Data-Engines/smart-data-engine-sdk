@@ -191,6 +191,22 @@ def test_schema_vector(case: Path) -> None:
                 sde.schema_statements(layout, keys=keys, dialect=dialect)
             continue
 
+        copy = expectation.get("copy")
+        if copy is not None:
+            # A copy's tables, created with their creator's mark (§7r): its own statements.
+            made = sde.copy_statements(
+                layout,
+                keys=keys,
+                dialect=dialect,
+                project_id=copy["project_id"],
+                group=copy["group"],
+            )
+            assert list(made) == expectation["statements"], (
+                f"{_ident(case)} [{materialization.id} as {dialect}, a copy]: the statements that "
+                f"create a copy's tables differ from the vector, and with them its mark."
+            )
+            continue
+
         statements = list(sde.schema_statements(layout, keys=keys, dialect=dialect))
         assert statements == expectation["statements"], (
             f"{_ident(case)} [{materialization.id} as {dialect}]: the DDL differs from the "

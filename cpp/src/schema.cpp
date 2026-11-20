@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "physical_internal.hpp"
+#include "ownership_internal.hpp"
 #include "python_compat.hpp"
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
@@ -338,6 +339,55 @@ std::vector<std::string> schema_statements(const PhysicalLayout& layout, const K
                     python_repr(rendered_dialects()) +
                     ". Refusing rather than falling back to ANSI: a statement that looks right on "
                     "the wrong engine creates a table with the wrong storage semantics.");
+}
+
+std::vector<std::string> copy_statements(const PhysicalLayout& layout, const Keys& keys,
+                                         std::string_view dialect, std::string_view project_id,
+                                         std::string_view group) {
+  if (dialect != "postgres" && dialect != "clickhouse") {
+    if (schema_is_fixed(dialect)) {
+      throw EngineError("a copy in " + std::string(dialect) +
+                        " has no table to create: the engine's schema is fixed (§7a)");
+    }
+    (void)schema_statements(layout, keys, dialect);  // refuses an unknown dialect by name
+  }
+  constexpr std::string_view ifnot = "CREATE TABLE IF NOT EXISTS ";
+  std::vector<std::string> out;
+  for (const auto& [entity, table] : layout.tables) {  // std::map: code point (byte) order
+    const std::string mark = detail::copy_marker(project_id, group, table);
+    PhysicalLayout single;
+    single.tables = {{entity, table}};
+    if (const auto columns = layout.columns.find(entity); columns != layout.columns.end()) {
+      single.columns = {{entity, columns->second}};
+    }
+    if (const auto partition = layout.partition_by.find(entity);
+        partition != layout.partition_by.end()) {
+      single.partition_by = {{entity, partition->second}};
+    }
+    if (const auto order = layout.key_order.find(entity); order != layout.key_order.end()) {
+      single.key_order = {{entity, order->second}};
+    }
+    if (dialect == "clickhouse") {
+      for (const Index& index : layout.indexes) {
+        if (index.entity == entity) single.indexes.push_back(index);
+      }
+    }
+    std::string create;
+    for (const std::string& statement : schema_statements(single, keys, dialect)) {
+      if (statement.starts_with("CREATE TABLE ")) {
+        create = statement;
+        break;
+      }
+    }
+    if (create.starts_with(ifnot)) create = "CREATE TABLE " + create.substr(ifnot.size());
+    if (dialect == "postgres") {
+      out.push_back(create);
+      out.push_back("COMMENT ON TABLE " + quote_ansi(table) + " IS '" + mark + "'");
+    } else {
+      out.push_back(create + " COMMENT '" + mark + "'");
+    }
+  }
+  return out;
 }
 
 std::string postgres_index_target(const Index& index, std::string_view table,

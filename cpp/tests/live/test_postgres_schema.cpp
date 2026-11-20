@@ -437,8 +437,16 @@ TEST_F(PostgresSchema, EverySchemaVectorIsCreatedByThisAdapterAndVerifiesClean) 
       }
       const Scope scope(dsn_);
       const auto db = engine(scope.dsn());
-      EXPECT_EQ(db->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
-      EXPECT_EQ(db->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
+      if (const sde::Json* copy = expectation.find("copy")) {
+        // A copy's case (section 7r): created with its mark, then found with it, as a restart does.
+        const std::string& project = copy->find("project_id")->as_string();
+        const std::string& group = copy->find("group")->as_string();
+        EXPECT_EQ(db->ensure_copy(layout, keys, project, group), std::vector<sde::PhysicalFinding>{});
+        EXPECT_EQ(db->ensure_copy(layout, keys, project, group), std::vector<sde::PhysicalFinding>{});
+      } else {
+        EXPECT_EQ(db->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
+        EXPECT_EQ(db->ensure_schema(layout, keys), std::vector<sde::PhysicalFinding>{});
+      }
       std::map<std::string, std::set<std::string>> found;
       for (const auto& row : Admin(scope.dsn()).rows(
                "SELECT table_name, column_name FROM information_schema.columns "
