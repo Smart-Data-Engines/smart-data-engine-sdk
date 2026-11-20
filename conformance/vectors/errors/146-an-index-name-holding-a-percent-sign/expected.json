@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a physical name cannot contain %, { or }",
+  "stage": "map",
+  "why": "An index is named in statements too - CREATE INDEX, DROP INDEX, the catalogue reads - and on Elasticsearch an index name is a path: percent-decoded, %5fall addresses _all. The rule that refuses a table and a column name refuses an index name, in every library, when the map is loaded."
+}

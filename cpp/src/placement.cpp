@@ -250,6 +250,9 @@ detail::Tables read_tables(const Json& tables, const std::string& where) {
       throw MapError(where + ": tables[" + python_repr(entity) + "] must be a table name, not " +
                      python_repr(*table));
     }
+    if (auto refusal = detail::physical_name_refusal(table->as_string())) {
+      throw MapError(where + ": tables[" + python_repr(entity) + "]: " + *refusal);
+    }
     out.emplace(entity, table->as_string());
   }
   return out;
@@ -269,6 +272,9 @@ detail::Columns read_columns(const Json* columns, const std::string& where) {
     }
     auto& entity_columns = out[entity];
     for (const auto& [column, type] : by_name(*types)) {
+      if (auto refusal = detail::physical_name_refusal(column)) {
+        throw MapError(where + ": columns[" + python_repr(entity) + "]: " + *refusal);
+      }
       if (!type->is_string() || type->as_string().empty()) {
         throw MapError(where + ": columns[" + python_repr(entity) + "][" + python_repr(column) +
                        "] must be a type name, not " + python_repr(*type));

@@ -102,6 +102,11 @@ std::vector<DeclaredTable> declared_tables(
 
 namespace detail {
 
+std::optional<std::string> physical_name_refusal(const std::string& name) {
+  if (name.find_first_of("%{}") == std::string::npos) return std::nullopt;
+  return "a physical name cannot contain %, { or }, and " + python_repr(name) + " does";
+}
+
 std::optional<std::string> key_order_refusal(std::string_view where, std::string_view entity,
                                              const std::vector<std::string>& key,
                                              const std::vector<std::string>& ordered) {
@@ -260,6 +265,9 @@ std::vector<Index> parse_indexes(const Json* raw, const std::string& where, cons
     if (name == nullptr || !name->is_string() || name->as_string().empty()) {
       throw MapError(at + " needs a non-empty name");
     }
+    if (auto refusal = detail::physical_name_refusal(name->as_string())) {
+      throw MapError(at + ": " + *refusal);
+    }
     if (!names.insert(name->as_string()).second) {
       throw MapError(at + " reuses the index name " + python_repr(*name));
     }
@@ -274,6 +282,10 @@ std::vector<Index> parse_indexes(const Json* raw, const std::string& where, cons
       valid = valid && distinct.size() == column_names.size();
     }
     if (!valid) throw MapError(at + " needs a non-empty list of distinct column names");
+    // Checked here as well as with the layout's columns, which an entity may not have.
+    for (const std::string& column : column_names) {
+      if (auto refusal = detail::physical_name_refusal(column)) throw MapError(at + ": " + *refusal);
+    }
     const auto declared = columns.find(entity->as_string());
     if (declared != columns.end() && !declared->second.empty()) {
       std::vector<std::string> missing;

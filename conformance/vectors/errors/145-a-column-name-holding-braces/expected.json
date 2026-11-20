@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a physical name cannot contain %, { or }",
+  "stage": "map",
+  "why": "The same rule for a column: {k0:String} inside a backtick-quoted name is where a ClickHouse statement with server-side parameters takes one. Columns are read in name order, so this is the first refusal of the document."
+}

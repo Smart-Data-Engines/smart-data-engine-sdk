@@ -64,7 +64,19 @@ Json string_array(const std::vector<std::string>& names) {
   return Json(std::move(out));
 }
 
-/// The seven refusals of section 4a, in the order that section writes them - here and not at each
+/// An entity, field or relation name becomes a table or a column name - a field's as it is, an
+/// entity's in snake case, a relation's before a key field's - and a physical name holds no `%`,
+/// `{` or `}` (format contract section 7a). Refused when the model is declared, rather than when a
+/// map derived from it is loaded.
+void physical_name(const std::string& what, const std::string& name) {
+  if (name.find_first_of("%{}") != std::string::npos) {
+    throw DeclarationError(what +
+                           " cannot contain %, { or }: names of the model become table and column "
+                           "names, and a physical name cannot hold them (format contract §7a)");
+  }
+}
+
+/// The eight refusals of section 4a, in the order that section writes them - here and not at each
 /// front door, because a rule enforced at one of two doors holds for one of two callers.
 void refuse_a_declaration_that_is_not_a_model(const std::vector<Entity>& entities,
                                               const std::vector<Relation>& relations) {
@@ -150,6 +162,16 @@ void refuse_a_declaration_that_is_not_a_model(const std::vector<Entity>& entitie
                              "the exclusion of personal data from a derived copy is meant to be "
                              "readable rather than trusted.");
     }
+  }
+  // The eighth: each entity's name, then its fields', entity by entity, then the relations'.
+  for (const Entity& entity : entities) {
+    physical_name("the entity name " + in_quotes(entity.name), entity.name);
+    for (const Field& field : entity.fields) {
+      physical_name(entity.name + ": the field name " + in_quotes(field.name), field.name);
+    }
+  }
+  for (const Relation& relation : relations) {
+    physical_name(relation.from + ": the relation name " + in_quotes(relation.name), relation.name);
   }
 }
 

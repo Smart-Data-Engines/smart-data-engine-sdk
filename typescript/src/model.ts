@@ -16,6 +16,7 @@
 
 import { canonicalBytes, compareCodePoints, digest16 } from './canonical.js'
 import { DeclarationError } from './errors.js'
+import { UNSAFE_IN_NAMES } from './physical.js'
 import type { FieldType, NeutralType } from './types.js'
 import { checkType } from './types.js'
 
@@ -91,6 +92,24 @@ export function entity(name: string, declaration: EntityDeclaration): Entity {
 }
 
 /** Declare a relation target. `relations: { user: ref('User') }`. */
+
+/**
+ * An entity, field or relation name becomes a table or a column name - a field's as it is, an
+ * entity's in snake case, a relation's before a key field's - and a physical name holds no `%`, `{`
+ * or `}` (format contract §7a). Refused when the model is declared, rather than when a map derived
+ * from it is loaded.
+ */
+function physicalName(what: string, name: string): void {
+  for (const character of name) {
+    if (UNSAFE_IN_NAMES.has(character)) {
+      throw new DeclarationError(
+        `${what} cannot contain %, { or }: names of the model become table and column names, ` +
+          'and a physical name cannot hold them (format contract §7a)',
+      )
+    }
+  }
+}
+
 export function ref(to: string): { readonly to: string } {
   return { to }
 }
@@ -174,7 +193,7 @@ function normaliseAtomic(entities: readonly Entity[]): readonly (readonly string
 
 /** Assemble already-resolved specs into a model. Shared by `buildModel` and the vector loader. */
 /**
- * The seven refusals of format-contract §4a, in the order that section writes them.
+ * The eight refusals of format-contract §4a, in the order that section writes them.
  *
  * Here rather than at each front door, because there are two - `buildModel` and the neutral-JSON
  * loader the conformance vectors use - and each of them enforced a different subset. The vectors
@@ -274,6 +293,13 @@ function refuseADeclarationThatIsNotAModel(
       )
     }
   }
+
+  // The eighth: each entity's name, then its fields', entity by entity, then the relations'.
+  for (const spec of entities) {
+    physicalName(`the entity name '${spec.name}'`, spec.name)
+    for (const field of spec.fields) physicalName(`${spec.name}: the field name '${field.name}'`, field.name)
+  }
+  for (const rel of relations) physicalName(`${rel.source}: the relation name '${rel.name}'`, rel.name)
 }
 
 export function assemble(

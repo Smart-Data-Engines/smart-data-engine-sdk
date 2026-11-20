@@ -17,6 +17,28 @@
 import { MapError } from './errors.js'
 import { compareCodePoints } from './canonical.js'
 
+/**
+ * What no physical name - a table, a column, an index - may hold (format contract §7a).
+ *
+ * Quoting makes such a name safe for the server, not for what reads the statement before it: the
+ * Python ClickHouse driver formats the whole text of a statement that has parameters with `%`, so a
+ * table called `payment%(k0_0).0s` became `payment` in a deletion by key; `{name:Type}` is a
+ * ClickHouse server-side parameter; and an Elasticsearch path is percent-decoded, so an index
+ * called `%5fall` addressed `_all`. Every library refuses the same names, so a map loads in all of
+ * them or in none. Found by an independent review on 20 November 2026.
+ */
+export const UNSAFE_IN_NAMES: ReadonlySet<string> = new Set(['%', '{', '}'])
+
+/** Why `name` cannot be a physical name, or `null` when it can. */
+export function physicalNameRefusal(name: string): string | null {
+  for (const character of name) {
+    if (UNSAFE_IN_NAMES.has(character)) {
+      return `a physical name cannot contain %, { or }, and '${name}' does`
+    }
+  }
+  return null
+}
+
 export const PHYSICAL_DESIGN_SINCE = 5
 /** The placement map contract that introduced `key_order`, `partition_by` and index methods. */
 
@@ -218,10 +240,17 @@ export function parseIndexes(
       )
     }
     if (typeof name !== 'string' || name.length === 0) throw new MapError(`${at} needs a non-empty name`)
+    const refusal = physicalNameRefusal(name)
+    if (refusal !== null) throw new MapError(`${at}: ${refusal}`)
     if (names.has(name)) throw new MapError(`${at} reuses the index name '${name}'`)
     names.add(name)
     if (!nonEmptyNames(cols) || new Set(cols).size !== cols.length) {
       throw new MapError(`${at} needs a non-empty list of distinct column names`)
+    }
+    // Checked here as well as with the layout's columns, which an entity may not have.
+    for (const column of cols) {
+      const unsafe = physicalNameRefusal(column)
+      if (unsafe !== null) throw new MapError(`${at}: ${unsafe}`)
     }
     const declared = Object.hasOwn(columns, entity) ? columns[entity] : undefined
     if (declared !== undefined && Object.keys(declared).length > 0) {

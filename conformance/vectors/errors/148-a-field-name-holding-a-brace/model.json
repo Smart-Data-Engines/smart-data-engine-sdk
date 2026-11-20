@@ -1,0 +1,20 @@
+{
+  "entities": [
+    {
+      "name": "Payment",
+      "fields": [
+        {
+          "name": "id",
+          "type": "int64"
+        },
+        {
+          "name": "amount{k0:String}",
+          "type": "int64"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ]
+}
