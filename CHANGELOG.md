@@ -21,7 +21,7 @@ and column names. And a column type, which the renderer writes as the layout spe
 statements in one simple query. A type is now read first by one grammar - words of two vocabularies,
 digits, spaces, zones in single quotes, parentheses four deep and commas inside them - and anything
 else is refused before a statement is rendered. Every PostgreSQL and ClickHouse type the libraries
-derive, and every one in the conformance vectors, is within it. The shared vectors `errors/144` to `149` and `schema/021` to
+derive, and every one in the conformance vectors, is within it. The shared vectors `errors/144` to `150` and `schema/021` to
 `023` hold the rules. Found by an independent review of the libraries as a compromised control plane
 would use them: a signed map carries the control plane's word, and what it says is checked here
 before it reaches your engine. **Breaking** for a model or a hand-written map with such a name, and

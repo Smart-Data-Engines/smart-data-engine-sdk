@@ -247,6 +247,11 @@ export function parseIndexes(
     if (!nonEmptyNames(cols) || new Set(cols).size !== cols.length) {
       throw new MapError(`${at} needs a non-empty list of distinct column names`)
     }
+    // Checked here as well as with the layout's columns, which an entity may not have.
+    for (const column of cols) {
+      const unsafe = physicalNameRefusal(column)
+      if (unsafe !== null) throw new MapError(`${at}: ${unsafe}`)
+    }
     const declared = Object.hasOwn(columns, entity) ? columns[entity] : undefined
     if (declared !== undefined && Object.keys(declared).length > 0) {
       const missing = cols.filter((column) => !Object.hasOwn(declared, column))

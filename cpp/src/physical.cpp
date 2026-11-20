@@ -282,6 +282,10 @@ std::vector<Index> parse_indexes(const Json* raw, const std::string& where, cons
       valid = valid && distinct.size() == column_names.size();
     }
     if (!valid) throw MapError(at + " needs a non-empty list of distinct column names");
+    // Checked here as well as with the layout's columns, which an entity may not have.
+    for (const std::string& column : column_names) {
+      if (auto refusal = detail::physical_name_refusal(column)) throw MapError(at + ": " + *refusal);
+    }
     const auto declared = columns.find(entity->as_string());
     if (declared != columns.end() && !declared->second.empty()) {
       std::vector<std::string> missing;

@@ -1051,8 +1051,8 @@ did. The Python ClickHouse driver formats the whole text of a statement that has
 `%`, so a table called `payment%(k0_0).0s` became `payment` - another table - in a deletion by key.
 `{name:Type}` is a ClickHouse server-side parameter. And an Elasticsearch path is percent-decoded,
 so an index called `%5fall` addressed `_all`. A map naming one is refused when it loads, `MapError`
-with `a physical name cannot contain %, { or }`, at the table, the column or the index
-(`errors/144`, `errors/145`, `errors/146`); and since a model's names become physical ones, a model
+with `a physical name cannot contain %, { or }`, at the table, the column, the index or an index's
+column (`errors/144`, `145`, `146`, `150`); and since a model's names become physical ones, a model
 naming one is refused when it is declared (§4a, the eighth refusal).
 
 **A column type is read by one grammar before it is rendered.** The renderer neither quotes nor
@@ -1060,7 +1060,9 @@ translates a type (above), so a type is the one part of a statement a layout wri
 library reads it first, with the same grammar, and refuses anything else with `EngineError` and
 `is not a column type this library renders` (`schema/021`, `schema/022`, `schema/023`):
 
-- at most 128 characters, all of them tokens, the first a word;
+- at most 128 characters, all of them tokens, the first a word (the vectors hold 129; exactly 128,
+  which no type of the two vocabularies reaches without spaces its server drops, is held by each
+  library's own tests);
 - a **word** is an ASCII letter followed by ASCII letters and digits, and is one of the vocabularies
   below: a PostgreSQL word compared in lowercase, as PostgreSQL reads it, and a ClickHouse word as
   it is spelled;

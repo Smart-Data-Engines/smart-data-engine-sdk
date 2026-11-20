@@ -256,6 +256,11 @@ def parse_indexes(
             or len(set(cols)) != len(cols)
         ):
             raise MapError(f"{at} needs a non-empty list of distinct column names")
+        for column in cols:
+            # Checked here as well as with the layout's columns, which an entity may not have.
+            refusal = physical_name_refusal(column)
+            if refusal:
+                raise MapError(f"{at}: {refusal}")
         declared = columns.get(entity)
         if declared:
             missing = [column for column in cols if column not in declared]

@@ -139,6 +139,15 @@ def test_every_type_the_vectors_render_in_sql_is_within_the_grammar() -> None:
     assert {"keyword", "long/timestamptz", "char*", "int64_t"} <= other
 
 
+def test_a_type_of_128_characters_is_the_longest() -> None:
+    """The bound, at its edge. Not a vector: no type of the two vocabularies is 128 characters long
+    without spaces its server would not keep, and a vector's statement is one a server runs."""
+    longest = "character" + " " * 107 + "varying(255)"
+    assert len(longest) == 128
+    assert column_type_refusal(longest) is None
+    assert column_type_refusal(longest + " ") is not None  # the control: one more is refused
+
+
 @pytest.mark.parametrize("character", sorted(UNSAFE_IN_NAMES))
 def test_a_physical_name_holding_any_of_the_three_is_refused(character: str) -> None:
     assert physical_name_refusal(f"order{character}line") is not None
