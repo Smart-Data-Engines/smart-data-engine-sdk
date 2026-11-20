@@ -18,11 +18,17 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Final
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Final, Protocol
+
+if TYPE_CHECKING:
+    from .physical import PhysicalFinding
+    from .placement import PhysicalLayout
 
 __all__ = [
     "COPY_MARKER",
     "STAGE_MARKER",
+    "MarksCopies",
     "copy_marker",
     "copy_refusal",
     "owned_copy_marker",
@@ -81,3 +87,21 @@ def owned_copy_marker(
         return True
     staged = _STAGED_NAME.fullmatch(table)
     return staged is not None and found == stage_marker(project_id, staged.group(1), table)
+
+
+class MarksCopies(Protocol):
+    """An adapter that creates a copy's tables marked and refuses one without its mark (§7r).
+
+    A protocol of its own rather than an argument of ``ensure_schema``, because ``Engine`` is what
+    a third party implements to plug a database in: growing it would break each of those adapters on
+    upgrade. ``prepare_schema`` asks for this by name and refuses a copy whose adapter has none.
+    """
+
+    def ensure_copy(
+        self,
+        layout: PhysicalLayout,
+        *,
+        keys: Mapping[str, Sequence[str]],
+        project_id: str,
+        group: str,
+    ) -> tuple[PhysicalFinding, ...]: ...
