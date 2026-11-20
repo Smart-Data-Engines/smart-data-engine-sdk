@@ -216,6 +216,23 @@ def read_postgres(dsn: str, namespace: str, language: str) -> tuple[list[dict[st
     return [dict(row) for row in orders], [dict(row) for row in fills]
 
 
+DUPLICATES_SQL = (
+    "SELECT at, count() FROM weather_reading WHERE station = {station:String} "
+    "GROUP BY station, at HAVING count() > 1"
+)
+"""Each reading key stored as more than one physical row: a write sent twice."""
+
+DUPLICATES_SETTINGS = {
+    # On 20 November 2026 the first day-long soak's judge died here: every key of a language's
+    # 3.4 million readings counted at once was more than the soak's own ClickHouse, capped at 0.3
+    # of the machine's memory, would hold - and the verdict was lost. The table is ordered by
+    # (station, at), so the keys are counted in that order as they are read, holding one at a
+    # time; and an aggregation the order cannot serve spills to disk instead of failing.
+    "optimize_aggregation_in_order": 1,
+    "max_bytes_before_external_group_by": 256 * 1024 * 1024,
+}
+
+
 def read_clickhouse(
     dsn: str, database: str, language: str
 ) -> tuple[list[dict[str, Any]], dict[int, int]]:
@@ -244,9 +261,7 @@ def read_clickhouse(
             dict(zip(logical.column_names, values, strict=True)) for values in logical.result_rows
         ]
         physical = client.query(
-            "SELECT at, count() FROM weather_reading WHERE station = {station:String} "
-            "GROUP BY at HAVING count() > 1",
-            parameters={"station": station},
+            DUPLICATES_SQL, parameters={"station": station}, settings=DUPLICATES_SETTINGS
         )
         copies = {
             traffic.reading_number({"at": _utc(at)}): int(count)

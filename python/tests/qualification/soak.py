@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -497,7 +498,14 @@ class Soak:
                 self.stop_processes()
                 self.sample()
                 self.write_meta()
-                verdicts = self.judge(configured)
+                try:
+                    verdicts = self.judge(configured)
+                except Exception:
+                    # Written down, and the engines kept for a judge run again by hand: on
+                    # 20 November 2026 the judge died at the end of a day and the cleanup below
+                    # removed the only copy of what it was judging.
+                    (self.run_dir / "judge-error.txt").write_text(traceback.format_exc())
+                    raise
                 (self.run_dir / "oracle.json").write_text(json.dumps(verdicts, indent=1) + "\n")
             result = summary.summarise(summary.load(self.run_dir))
             (self.run_dir / "summary.json").write_text(json.dumps(result, indent=1) + "\n")
@@ -515,9 +523,16 @@ class Soak:
             for private in self.engines.values():
                 with contextlib.suppress(Exception):
                     private.stop()
-            if not args.keep_engines:
+            judged = (self.run_dir / "oracle.json").exists()
+            if not args.keep_engines and judged:
                 for name in self.engines:
                     shutil.rmtree(self.run_dir / "engines" / name / "data", ignore_errors=True)
+            elif not judged and self.engines:
+                print(
+                    f"the engines' data is kept in {self.run_dir / 'engines'}: no verdict was "
+                    f"written",
+                    file=sys.stderr,
+                )
 
 
 def main() -> int:
