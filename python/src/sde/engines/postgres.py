@@ -347,12 +347,19 @@ class PostgresEngine:
         return self.ensure_schema(layout, keys=keys)
 
     def _mark(self, table: str) -> tuple[str, str | None] | None:
-        """A table's object id and its comment, or ``None`` when no table has the name."""
+        """A table's object id and its comment, or ``None`` when no table has the name.
+
+        Looked for where ``CREATE TABLE`` puts it, in ``current_schema()``, by its exact name, as
+        TypeScript and C++ do. Resolved through the search path instead, the mark of a copy in a
+        later schema was taken for one ``ensure_schema`` then made unmarked in the first; a name
+        PostgreSQL truncates is found by none of the three and refused, after it was created.
+        """
         with self._cx.cursor() as cur:
             cur.execute(
                 "SELECT c.oid::text, obj_description(c.oid, 'pg_class') FROM pg_class c "
-                "WHERE c.oid = to_regclass(%s) AND c.relkind = 'r'",
-                [QUOTE[self.dialect](table)],
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = %s AND c.relkind = 'r'",
+                [table],
             )
             rows = cur.fetchall()
         if not rows:

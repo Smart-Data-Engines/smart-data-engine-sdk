@@ -153,3 +153,32 @@ def test_a_source_the_client_has_is_still_taken_as_the_source(source: str) -> No
         _create(operators[source], "source_events", source)
         sde.prepare_schema(model, parsed, operators, project_id=PROJECT)
         assert _rows(operators[source], "source_events", source) == [(7, 70)]
+
+
+def test_a_marked_copy_in_a_later_schema_of_the_search_path_is_not_taken_for_this_one() -> None:
+    """PostgreSQL creates a table in the first schema of the search path, and every statement finds
+    the name there first, so the mark is looked for there. Resolved through the search path, the
+    mark of a copy in a later schema was taken for this one, and ``ensure_schema`` then made an
+    unmarked table in the first schema - the one the fence, the sessions and the operator use."""
+    with provisioning("clickhouse") as (model, parsed, operators, copy):
+        operator = operators[copy]
+        sde.prepare_schema(model, parsed, operators, project_id=PROJECT)
+        with operator._cx.cursor() as cursor:
+            cursor.execute("SELECT current_schema()")
+            schema = str(cursor.fetchone()[0])
+        first = schema + "_first"
+        operator._cx.execute(f'CREATE SCHEMA "{first}"')
+        try:
+            operator._cx.execute(f'SET search_path TO "{first}", "{schema}"')
+            sde.prepare_schema(model, parsed, operators, project_id=PROJECT)
+            with operator._cx.cursor() as cursor:
+                cursor.execute(
+                    "SELECT n.nspname, obj_description(c.oid, 'pg_class') FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE c.oid = to_regclass('\"copy_events\"')"
+                )
+                resolved = cursor.fetchone()
+            assert resolved == (first, copy_marker(PROJECT, "Event", "copy_events"))
+        finally:
+            operator._cx.execute(f'SET search_path TO "{schema}"')
+            operator._cx.execute(f'DROP SCHEMA "{first}" CASCADE')
