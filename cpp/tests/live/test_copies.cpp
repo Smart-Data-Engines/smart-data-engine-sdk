@@ -274,6 +274,46 @@ INSTANTIATE_TEST_SUITE_P(Directions, Copies, ::testing::ValuesIn(directions()), 
 
 class MomentKeyedCopies : public ::testing::TestWithParam<Direction> {};
 
+TEST_P(MomentKeyedCopies, AClientsTableOfTheCopysNameIsRefusedAndKept) {
+  // Format contract section 7r: `prepare_schema` created a copy's tables with IF NOT EXISTS, so a
+  // map naming a copy like a table the client already had, of the same shape, made it the copy.
+  // The table here is exactly the copy's shape, made by `ensure_schema` - unmarked, as a client's
+  // would be. The control is the test below: the same map provisions the copy it creates itself.
+  const std::unique_ptr<Side> source = side_of(GetParam().source);
+  SDE_REQUIRE_SIDE(source, GetParam().source);
+  const std::unique_ptr<Side> target = side_of(GetParam().target);
+  SDE_REQUIRE_SIDE(target, GetParam().target);
+  const sde::Model model = sde::load_neutral_model(R"({"entities": [{"name": "Reading", "fields": [
+      {"name": "station", "type": "string"}, {"name": "at", "type": "timestamptz"},
+      {"name": "value", "type": "int32"}], "key": ["station", "at"]}]})");
+  const auto material = [&](const Side& side, const std::string& name) {
+    return R"({"id": ")" + name + R"(", "engine": ")" + name + R"(", "layout": {"tables": {"Reading": ")" +
+           name + R"(_readings"}, "columns": {"Reading": {"station": ")" + type_of(side, "string") +
+           R"(", "at": ")" + type_of(side, "timestamptz") + R"(", "value": ")" + type_of(side, "int32") +
+           R"("}}}})";
+  };
+  std::string copy = material(*target, "copy");
+  copy.pop_back();
+  copy += R"(, "lag_budget_ms": 1000})";
+  sde::LoadOptions options;
+  options.model = &model;
+  const sde::PlacementMap map = sde::load_map(
+      R"({"contract": 4, "project_id": ")" + kProject + R"(", "model_version": ")" + model.version() +
+          R"(", "map_version": 1, "groups": {"Reading": {"source": )" + material(*source, "source") +
+          R"(, "write_epoch": 1, "derived": [)" + copy + R"(], "also_write": ["copy"]}}})",
+      options);
+  const std::map<std::string, sde::Engine*> engines{{"source", &source->engine()},
+                                                    {"copy", &target->engine()}};
+  const sde::Materialization& derived = map.placement_of("Reading").derived.front();
+  sde::Keys keys{{"Reading", {"station", "at"}}};
+  (void)target->engine().ensure_schema(derived.layout, keys);
+  target->engine().insert("copy_readings", {{"station", std::string("theirs")},
+                                            {"at", *sde::TimestampTz::from_micros(1)},
+                                            {"value", std::int64_t{7}}});
+  EXPECT_THROW(sde::prepare_schema(model, map, engines, kProject), sde::MigrationRefused);
+  EXPECT_EQ(target->migration().count("copy_readings"), 1U);
+}
+
 TEST_P(MomentKeyedCopies, ABackfillResumesAndVerifiesExactMoments) {
   // The reference's temporal backfill: readings keyed by a hostile station and a moment four
   // microseconds wide, copied a row a chunk, stopped after two and resumed, then compared - each

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "bulk.hpp"
+#include "ownership_internal.hpp"
 #include "engines/clickhouse/dsn.hpp"
 #include "engines/clickhouse/fences.hpp"
 #include "engines/clickhouse/http.hpp"
@@ -287,6 +288,7 @@ Capabilities ClickHouseEngine::capabilities() noexcept {
   offered.migration = this;
   offered.fences = this;
   offered.schema = this;
+  offered.copies = this;
   offered.storage = this;
   offered.temporal = this;
   return offered;
@@ -327,6 +329,46 @@ std::vector<PhysicalFinding> ClickHouseEngine::ensure_schema(const PhysicalLayou
     verify_schema(layout);
     return physical_findings(layout, keys);
   });
+}
+
+std::vector<PhysicalFinding> ClickHouseEngine::ensure_copy(const PhysicalLayout& layout,
+                                                           const Keys& keys,
+                                                           const std::string& project_id,
+                                                           const std::string& group) {
+  // The comment of each table of the copy: present and this copy's, or the table is not taken.
+  const auto mark = [&](const std::string& table) -> std::optional<std::string> {
+    const Use use(*this);
+    const std::vector<std::vector<Value>> rows =
+        answer("SELECT toString(uuid), comment FROM system.tables "
+               "WHERE database = currentDatabase() AND name = " +
+               literal(Value(table)))
+            .rows;
+    if (rows.empty()) return std::nullopt;
+    return text_at(rows.front(), 1);
+  };
+  for (const auto& [entity, table] : layout.tables) {
+    std::optional<std::string> found = mark(table);
+    if (!found) {
+      PhysicalLayout one = layout;
+      one.tables = {{entity, table}};
+      const std::vector<std::string> statements =
+          copy_statements(one, keys, "clickhouse", project_id, group);
+      try {
+        const Use use(*this);
+        command(statements.front());
+      } catch (const ServerError& error) {
+        if (error.code() != 57) {  // TABLE_ALREADY_EXISTS: created meanwhile, the mark says whose
+          throw EngineError("creating the copy's table " + python_repr(table) +
+                            " failed: " + failure(error));
+        }
+      }
+      found = mark(table);
+    }
+    if (!found || !detail::owned_copy_marker(project_id, group, table, found)) {
+      throw MigrationRefused(detail::copy_refusal(table, found));
+    }
+  }
+  return ensure_schema(layout, keys);
 }
 
 std::vector<PhysicalFinding> ClickHouseEngine::validate_schema(const PhysicalLayout& layout,

@@ -228,6 +228,34 @@ port found it*.
 place a group on Elasticsearch without a write generation. Elasticsearch is not in 0.2.0, and no
 release wrote such a map.
 
+### A copy provisioned before
+
+**A copy's table carries its creator's mark, and the operator writes to no other.** Affected: a
+deployment whose map has a copy - the initial handoff of [`local-cutover.md`](local-cutover.md)
+provisions one - made by `prepare_schema` before this release. Its tables have no mark, so
+`prepare_schema` and every operator command that writes to the copy refuse it, by name. Make the copy
+again: it holds only rows of its source. The simplest way is to stage a new copy
+([staging](staging.md)): its tables are created marked, under new names, and its backfill starts
+from nothing. To keep the map you have, make sure the table is the copy you provisioned, then drop
+it, delete the copy's backfill progress - the rows (in Elasticsearch, documents) of
+`sde_backfill_state` in the copy's engine whose `materialization` is the copy's id; left there, a backfill would count the new copy as filled and
+copy nothing - and run `prepare_schema`, which creates the table marked. A source is taken as
+before, and so is a copy a staging created
+([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
+
+An engine adapter of your own that holds a copy of a group with a write generation implements
+`ensure_copy` (Python, C++) or `ensureCopy` (TypeScript), the protocol `MarksCopies`: create the
+tables `copy_statements` / `copyStatements` gives - without `IF NOT EXISTS`, the mark in the
+statement that creates each - and refuse a table of the name whose mark `owned_copy_marker` /
+`ownedCopyMarker` does not take (in C++, `sde/ownership.hpp`). Without it, `prepare_schema` refuses
+such a copy, by name, before any statement.
+
+A map you write by hand, of contract 4 or later, may not name a copy's table for anything else too
+- another group's source or copy, or another entity of the copy: `load_map` refuses it.
+
+Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
+no other*.
+
 ### After the upgrade
 
 Open a session on each service's map in a staging environment first: every refusal above that a map,

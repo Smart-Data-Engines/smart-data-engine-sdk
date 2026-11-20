@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "of engine 'pg-main' is named twice in the map",
+  "stage": "map",
+  "why": "One group's copy named like another group's source: the application's writes, a backfill, a cutover's refill and an erasure meant for the copy would land in the other group's table, and a copy's mark cannot tell the two apart, since both are this project's. From contract 4 a copy's table is named by no other materialisation, of any group. Found by the independent review of copy ownership on 20 November 2026."
+}

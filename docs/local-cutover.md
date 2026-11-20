@@ -166,8 +166,16 @@ connections must resolve the same schema/search path. Engine binding names must 
 cover every engine the application's signed sessions use for watermark protection.
 
 Before enrollment, provision the signed before-map with `sde.prepare_schema` using operator
-connections, including an otherwise unused supplied engine's bookkeeping. Set up the restricted
-runtime grants described in [runtime roles](runtime-roles.md). Enrollment only records the exact
+connections, including an otherwise unused supplied engine's bookkeeping. It creates the copy's
+tables with their mark (format contract §7r) and refuses a table of a copy's name that does not
+carry it: a map naming a copy like a table you already have does not make that table the copy. The
+operator reads the mark again before every command that writes to the copy, and refuses a copy that
+another name of the map reaches - two engine bindings to one database, or an Elasticsearch alias -
+so bind each engine name of the map to the database it names. A cutover that makes the copy the
+source writes a source's mark in place of the copy's, so no later map takes that table for a copy
+again. A copy provisioned before copies were marked is made again ([upgrading](upgrading.md)); a
+copy's mark is never written on a table after the fact.
+Set up the restricted runtime grants described in [runtime roles](runtime-roles.md). Enrollment only records the exact
 signed map; it does not provision databases or grant runtime access. It takes one input snapshot
 and applies the map contract's integral-JSON normalization before both verification and publication,
 so caller changes after verification cannot replace the document being persisted.

@@ -131,6 +131,19 @@ class SchemaValidator {
                                                        const Keys& keys) = 0;
 };
 
+/// A copy's tables, created marked and refused without the mark (format contract section 7r): a
+/// table that is not there is created by `copy_statements`; one that is there is the copy's only if
+/// it carries the copy's mark (or a staging's on the copy it named), and one without it is refused
+/// (`MigrationRefused`) before anything is written to it. Then what `ensure_schema` does. A shape of
+/// its own rather than a member of `Engine`, which a third party implements.
+class MarksCopies {
+ public:
+  virtual ~MarksCopies() = default;
+  virtual std::vector<PhysicalFinding> ensure_copy(const PhysicalLayout& layout, const Keys& keys,
+                                                   const std::string& project_id,
+                                                   const std::string& group) = 0;
+};
+
 /// Each named table's total and secondary-index bytes, from the engine's catalogue. A table it does
 /// not report is absent from the answer.
 class StorageMeasurable {
@@ -218,6 +231,7 @@ struct Capabilities {
   Migratable* migration = nullptr;
   Fencable* fences = nullptr;
   SchemaValidator* schema = nullptr;
+  MarksCopies* copies = nullptr;
   StorageMeasurable* storage = nullptr;
   TemporalBounded* temporal = nullptr;
   BookWritable* books = nullptr;

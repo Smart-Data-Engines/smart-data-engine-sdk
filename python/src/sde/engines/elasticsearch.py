@@ -43,7 +43,7 @@ import stat
 import struct
 import urllib.parse
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final
@@ -51,15 +51,17 @@ from uuid import UUID
 
 from .._usage import UsageGate, guarded
 from ..canonical import CanonicalError, canonical_bytes
-from ..errors import EngineError
+from ..errors import EngineError, MigrationRefused
 from ..layout import index_name_refusal
 from ..logging import log
 from ..migration import key_columns, same_width
+from ..ownership import COPY_MARKER, SOURCE_MARKER, copy_refusal, owned_copy_marker
 from ..physical import PhysicalFinding
 from ..placement import BACKFILL_TABLE, PhysicalLayout
 from ..query import ReadFilter, ReadPlan, read_row
 from ..schema import (
     TOKENS_FIELD,
+    copy_statements,
     elasticsearch_mapping,
     elasticsearch_property,
     schema_statements,
@@ -784,6 +786,65 @@ class ElasticsearchEngine:
                     f"Elasticsearch changes no field in place."
                 )
 
+    @guarded
+    def ensure_copy(
+        self,
+        layout: PhysicalLayout,
+        *,
+        keys: Mapping[str, Sequence[str]],
+        project_id: str,
+        group: str,
+    ) -> tuple[PhysicalFinding, ...]:
+        """A copy's indexes: created here and marked, or found with the mark they were made with.
+
+        The mark is :func:`sde.ownership.copy_marker` of the project, the group and the index, in
+        ``_meta.sde.copy`` of the request that creates the index, as a staging writes its own in
+        ``_meta.sde.stage``. An index that is there is this copy's only if it carries its mark (or
+        a staging's on the copy it named); one without it is refused before anything is written to
+        it (format contract §7r). Then what :meth:`ensure_schema` does.
+        """
+        for entity, index in sorted(layout.tables.items()):
+            found = self._mark(index)
+            if found is None:
+                one = replace(layout, tables={entity: index})
+                (statement,) = copy_statements(
+                    one, keys=keys, dialect=self.dialect, project_id=project_id, group=group
+                )
+                document = json.loads(statement)
+                status, body = self._request(
+                    "PUT", self._path(index), {"mappings": document["mappings"]}
+                )
+                exists = (
+                    status == 400
+                    and isinstance(body, Mapping)
+                    and isinstance(body.get("error"), Mapping)
+                    and body["error"].get("type") == "resource_already_exists_exception"
+                )
+                if status != 200 and not exists:
+                    raise EngineError(
+                        f"creating the copy's index {index} failed: {self._error(status, body)}"
+                    )
+                found = self._mark(index)
+            if found is None or not owned_copy_marker(project_id, group, index, found):
+                raise MigrationRefused(copy_refusal(index, found))
+        return self.ensure_schema(layout, keys=keys)
+
+    def _mark(self, index: str) -> str | None:
+        """The copy's or the staging's mark an index carries; ``None`` when it has none or is not
+        there. An alias answers under its index's name and is refused: a copy is one index."""
+        status, body = self._request("GET", self._path(index, "_mapping"))
+        if status == 404:
+            return None
+        if status != 200 or not isinstance(body, Mapping) or set(body) != {index}:
+            raise EngineError(
+                f"the mapping of {index} could not be read as one index's: "
+                f"{self._error(status, body)}"
+            )
+        mappings = body[index].get("mappings") or {}
+        meta = (mappings.get("_meta") or {}).get("sde") or {}
+        mark = meta.get("copy", meta.get("stage", meta.get("source")))
+        return mark if isinstance(mark, str) else None
+
     def _index(self, name: str) -> _Index:
         """The index as its own mapping describes it, read once per connection."""
         known = self._indexes.get(name)
@@ -827,6 +888,16 @@ class ElasticsearchEngine:
             not isinstance(stage, str) or CREATION_MARKER.fullmatch(stage) is None
         ):
             raise EngineError(f"index {name} carries a staging marker that is not one")
+        # A copy's index says, the same way, that this library created it for the copy (§7r).
+        copy = meta.get("copy")
+        if copy is not None and (not isinstance(copy, str) or COPY_MARKER.fullmatch(copy) is None):
+            raise EngineError(f"index {name} carries a copy's mark that is not one")
+        # And a cutover that made the copy the source wrote a source's mark in place of either.
+        source = meta.get("source")
+        if source is not None and (
+            not isinstance(source, str) or SOURCE_MARKER.fullmatch(source) is None
+        ):
+            raise EngineError(f"index {name} carries a source's mark that is not one")
         # The whole mapping, not only each field's type: a normalizer, a null_value, an
         # ignore_above, a token field mapped as text or a disabled _source would each change an
         # answer while every type still matched. It is what this library creates or nothing.
@@ -839,6 +910,10 @@ class ElasticsearchEngine:
             rendered["properties"][EPOCH_COLUMN] = {"type": "long"}
         if stage is not None:
             rendered["_meta"]["sde"]["stage"] = stage
+        if copy is not None:
+            rendered["_meta"]["sde"]["copy"] = copy
+        if source is not None:
+            rendered["_meta"]["sde"]["source"] = source
         if not _same_json(rendered, mapping):
             raise EngineError(
                 f"index {name} has a mapping this library would not create: something beyond each "
