@@ -129,6 +129,38 @@ def _local_status(
         }
 
 
+
+def refuse_another_name(
+    current: PlacementMap,
+    natives: Mapping[str, Any],
+    group: str,
+    material: str,
+    table: str,
+    identity: TableIdentity,
+) -> None:
+    """Refuse a copy's table that another name of the map reaches (format contract §7r).
+
+    ``load_map`` refuses a copy's table named twice in one engine. Two engine names bound to one
+    database - or an alias in Elasticsearch - reach one table by two names, which only the
+    bindings can tell: every other table the map names is looked up through its binding, when
+    that binding is of the copy's dialect, and a copy that is one of them is refused. A table that
+    is not there reaches nothing.
+    """
+    for name, other in sorted(current.groups.items()):
+        for candidate in other.all():
+            native = natives.get(candidate.engine)
+            if native is None or native.dialect != identity.dialect:
+                continue
+            for entity, named in sorted(candidate.layout.tables.items()):
+                if (name, candidate.id, named) == (group, material, table):
+                    continue
+                if identity.physical_key in native.object_keys(named):
+                    raise MigrationRefused(
+                        f"the copy's table {table!r} of {group} is also {name}'s table {named!r} "
+                        f"for {entity} in {candidate.engine}: a copy's table holds that copy "
+                        f"alone, and two names of the map reach this one"
+                    )
+
 class LocalCutover:
     """One local POSIX project directory and dedicated operator/runtime-probe connections.
 
@@ -186,18 +218,33 @@ class LocalCutover:
             raise MigrationRefused("create fresh operator connections after fork")
 
     def _copy_owned(
-        self, native: Any, group: str, table: str, state: Mapping[str, Any]
+        self,
+        current: PlacementMap,
+        material: str,
+        group: str,
+        table: str,
+        state: Mapping[str, Any],
     ) -> TableIdentity:
-        """``table``'s identity once its mark says it is a copy of ``group`` (§7r)."""
+        """``table``'s identity once its mark says it is a copy of ``group`` (§7r), and the map
+        names that table for nothing else.
+
+        ``load_map`` refuses a copy's table named twice in one engine; only the bindings know that
+        two engine names reach one database, so the operator looks up every other table the map
+        names, through the bindings of the copy's dialect, and refuses a copy that is one of them.
+        """
         from .engines._ownership import copy_owned
 
-        return copy_owned(
-            native,
+        spot = current.groups[group]
+        engine = spot.by_id(material).engine
+        identity = copy_owned(
+            self.native[engine],
             project_id=self.project_id,
             group=group,
             table=table,
             stages=state.get("stages", {}),
         )
+        refuse_another_name(current, self.native, group, material, table, identity)
+        return identity
 
     def enroll(self, current: Mapping[str, Any]) -> None:
         self._owner()
@@ -266,7 +313,7 @@ class LocalCutover:
                         else:
                             # A backfill writes the copy's rows: its table is one this project
                             # created and marked for this group, or nothing is written (§7r).
-                            self._copy_owned(native, group, table, state)
+                            self._copy_owned(current, material.id, group, table, state)
             context = InspectionContext(self.model, current, self.engines, self.project_id)
             return [
                 backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
@@ -325,7 +372,7 @@ class LocalCutover:
                         identity = (
                             native.identity(table)
                             if material is spot.source
-                            else self._copy_owned(native, group, table, state)
+                            else self._copy_owned(current, material.id, group, table, state)
                         )
                         rows.append(
                             {
@@ -387,13 +434,14 @@ class LocalCutover:
                 )
             # Rows go from every copy of the entity first: each copy's table is one this project
             # created and marked for its group (§7r), checked before anything is read or deleted.
-            for name, spot in sorted(self.active_map().groups.items()):
+            erased = self.active_map()
+            for name, spot in sorted(erased.groups.items()):
                 if spot.write_epoch is None or request.entity not in spot.source.layout.tables:
                     continue
                 for material in spot.derived:
                     if material.engine in self.native:
                         table = material.layout.tables[request.entity]
-                        self._copy_owned(self.native[material.engine], name, table, state)
+                        self._copy_owned(erased, material.id, name, table, state)
             plan = plan_erasure(self, request)
             if not execute:
                 return plan
@@ -538,7 +586,7 @@ class LocalCutover:
                 identity = (
                     self.native[material.engine].identity(table)
                     if material is spot.source
-                    else self._copy_owned(self.native[material.engine], plan.group, table, state)
+                    else self._copy_owned(plan.before, material.id, plan.group, table, state)
                 )
                 fence = self.engines[material.engine].write_fence(table, project_id=self.project_id)
                 observed = fence.state()

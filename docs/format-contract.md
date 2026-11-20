@@ -2551,19 +2551,29 @@ keeps each staging it completed, also checks that the stage was for G.
   mark, is refused, with `MigrationRefused` and `is not one this library created for it`, before any
   statement writes to it - its write generation (§7c) included. A source is taken as before.
 - The operator reads the mark of each copy table before a backfill, a settle, a cutover and an
-  erasure write to it, and refuses the same way.
+  erasure write to it, and refuses the same way. It then looks up every other table the map names,
+  through the binding of its engine when that binding is of the copy's dialect, and refuses a copy
+  that another name reaches: two engine names bound to one database, or an Elasticsearch alias,
+  name one table twice where `load_map` sees two.
 - A copy provisioned before this section existed carries no mark and is refused; it is made
   again. A mark is never written on an existing table: it would say the library created what a map
   merely named, and the name is the one thing in a map a library cannot check.
 - From contract 4 a map that names a copy's table for anything else too - another group's source
   or copy - is refused when it loads (§7, `errors/151`). The mark cannot refuse it: the table is
   this project's, and one of the two namings is its own.
-- The application's session does not read the mark when it opens. It writes to the copies of a map
-  whose tables carry this project's write generation (§7d), so a forged map can still name as one
+- The application's session does not read the mark when it opens, and `sde.backfill`, which runs
+  on a session, does not read it either. A session writes to the copies of a map whose tables carry
+  this project's write generation (§7d), so a forged map can still name as one
   group's copy a table of this project, of the same shape, that it names for nothing else - another
   group's staged copy, or a table an earlier map placed. `prepare_schema` takes a staging's mark
   without the stage's group, which only the operator keeps. Reading the mark when a session opens,
   and the group in a staging's mark, are the next steps of this section.
+- A map below contract 4 carries no project and no write generation, so neither a fence nor a mark
+  applies to it, and the libraries take it as they always did - also where a project is configured,
+  since the verification protocol (§7b) is pinned on such maps. A forged map of an older contract
+  therefore reaches tables the mark would have refused, through a session's fan-out and
+  `sde.backfill`; the operator takes no map below contract 4. Refusing an older contract where a
+  project is configured, with §7b's vectors on contract 4, is the third step.
 
 Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
 marks - the mark included, so its computation is held with them - and a case of the schema family

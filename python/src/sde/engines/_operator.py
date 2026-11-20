@@ -10,6 +10,8 @@ from ..errors import EngineError, MigrationRefused
 from ..schema import QUOTE
 from ._storage import STORAGE_COLUMNS
 
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
 
 @dataclass(frozen=True)
 class TableIdentity:
@@ -47,6 +49,8 @@ class NativeOperations(Protocol):
     def endpoint(self, engine: Any = None) -> tuple[str, str, str]: ...
 
     def identity(self, table: str, *, engine: Any = None) -> TableIdentity: ...
+
+    def object_keys(self, table: str) -> frozenset[tuple[str, str, str, str]]: ...
 
     def qualify(
         self,
@@ -209,6 +213,36 @@ class NativeOperator:
             )[0][0]:
                 raise MigrationRefused("cutover does not transfer row policies")
         return TableIdentity(self.dialect, server, database, str(oid), str(namespace), str(actual))
+
+    def object_keys(self, table: str) -> frozenset[tuple[str, str, str, str]]:
+        """The table a name reaches, as :attr:`TableIdentity.physical_key`; empty when none.
+
+        For telling two names of a map apart - through two engine names bound to one database -
+        so with none of a cutover's conditions on the table, and nothing refused when it is not
+        there. A ClickHouse database that is not Atomic gives every table the nil uuid, so there
+        the table is its name.
+        """
+        server, database, database_name = self.endpoint()
+        if self.dialect == "postgres":
+            rows = self.rows(
+                "SELECT c.oid::text FROM pg_class c WHERE c.oid=to_regclass(%s)",
+                [self.quote(table)],
+            )
+            return frozenset((self.dialect, server, database, str(row[0])) for row in rows)
+        rows = self.rows(
+            "SELECT toString(uuid),name FROM system.tables "
+            "WHERE database=currentDatabase() AND name={table:String}",
+            {"table": table},
+        )
+        return frozenset(
+            (
+                self.dialect,
+                server,
+                database,
+                str(uuid) if str(uuid) != NIL_UUID else f"{database_name}.{name}",
+            )
+            for uuid, name in rows
+        )
 
     def qualify(
         self,

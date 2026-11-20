@@ -188,6 +188,29 @@ class ElasticsearchOperator:
             )
         return TableIdentity(DIALECT, cluster, stream, str(settings["uuid"]), "", table)
 
+    def object_keys(self, table: str) -> frozenset[tuple[str, str, str, str]]:
+        """The indexes a name reaches, as :attr:`TableIdentity.physical_key`; empty when none.
+
+        An alias reaches the indexes behind it, under their own names, and each is one of the
+        name's keys: a map's other name for an index - another engine name bound to this cluster,
+        or an alias - is found by the index it reaches. Nothing is refused here.
+        """
+        cluster, stream, _ = self.endpoint()
+        status, body = self._call(self.engine, "GET", self.engine._path(table, "_settings"))
+        if status == 404:
+            return frozenset()
+        if status != 200 or not isinstance(body, Mapping):
+            raise EngineError(f"the settings of {table} could not be read ({status})")
+        keys = set()
+        for index in body.values():
+            settings = (
+                index.get("settings", {}).get("index") if isinstance(index, Mapping) else None
+            )
+            if not isinstance(settings, Mapping) or not isinstance(settings.get("uuid"), str):
+                raise EngineError(f"the settings of {table} carry no index identity")
+            keys.add((DIALECT, cluster, stream, str(settings["uuid"])))
+        return frozenset(keys)
+
     def _blocked(self, table: str, kind: str) -> bool:
         blocks = self._settings(table).get("blocks")
         return isinstance(blocks, Mapping) and _true(blocks.get(kind))
