@@ -67,8 +67,8 @@ def copy_refusal(table: str, found: str | None) -> str:
     return (
         f"the copy's table {table!r} exists and is not one this library created for it: it "
         f"carries {what}. A copy is written over, emptied and refilled, so a table of its name and "
-        f"shape is not taken for it. If it is this copy, made before copies were marked, run "
-        f"`sde-operator adopt-copy`; otherwise give the copy another name."
+        f"shape is not taken for it. A copy provisioned before copies were marked is made again "
+        f"(docs/upgrading.md); a table of yours is given another name in the map."
     )
 
 

@@ -21,7 +21,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..errors import EngineError, MigrationRefused
-from ..ownership import COPY_MARKER
 from ..placement import PhysicalLayout
 from ..schema import schema_statements
 from ..watermark import WATERMARK_TABLE
@@ -482,31 +481,6 @@ class ElasticsearchStaging:
         if identity is not None:
             return identity if present[0] == identity.object else None
         return self.native.identity(table)
-
-    def adopt(self, table: str, mark: str) -> None:
-        """Write a copy's mark on index ``table``, which carries none (``adopt-copy``, §7r)."""
-        if COPY_MARKER.fullmatch(mark) is None:
-            raise MigrationRefused("a copy's mark is not the protocol's metadata")
-        present = self.marker(table)
-        if present is None or present[1]:
-            raise MigrationRefused(f"the copy's index {table!r} is gone or carries a mark already")
-        status, body = self.native._call(self.engine, "GET", self.engine._path(table, "_mapping"))
-        if status != 200 or not isinstance(body, Mapping) or set(body) != {table}:
-            raise EngineError(f"the mapping of {table} could not be read ({status})")
-        meta = body[table].get("mappings", {}).get("_meta", {})
-        sde = dict(meta.get("sde") or {}) if isinstance(meta, Mapping) else {}
-        # `_meta` is replaced whole by a mapping update: what it held, with the mark beside it.
-        status, body = self.native._call(
-            self.engine,
-            "PUT",
-            self.engine._path(table, "_mapping"),
-            {"_meta": {**dict(meta), "sde": {**sde, "copy": mark}}},
-        )
-        if status != 200:
-            raise EngineError(f"the copy's mark could not be written on {table} ({status})")
-        found = self.marker(table)
-        if found is None or found[1] != mark or found[0] != present[0]:
-            raise MigrationRefused(f"the copy's mark is not on the index {table!r} that was listed")
 
     def drop_owned(self, table: TableIdentity, marker: str) -> None:
         """Delete this staging's own index, then its write fence's pipeline."""

@@ -2541,9 +2541,13 @@ keeps each staging it completed, also checks that the stage was for G.
   statement writes to it - its write generation (§7c) included. A source is taken as before.
 - The operator reads the mark of each copy table before a backfill, a settle, a cutover and an
   erasure write to it, and refuses the same way.
-- `sde-operator adopt-copy --group G` marks a copy provisioned before this section existed: it
-  lists the copy's tables with their native identity and a digest of the listing, and writes the
-  marks only with `--confirm` equal to the digest of the listing as it is then.
+- A copy provisioned before this section existed carries no mark and is refused; it is made
+  again. A mark is never written on an existing table: it would say the library created what a map
+  merely named, and the name is the one thing in a map a library cannot check.
+- The application's session does not read the mark when it opens. It writes to the copies of a map
+  whose tables carry this project's write generation (§7d), so a forged map can still name, as one
+  group's copy, another group's table of the same shape in the same project; reading the mark at
+  open is the next step of this section.
 
 Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
 marks - the mark included, so its computation is held with them - and a case of the schema family

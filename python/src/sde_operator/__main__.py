@@ -121,15 +121,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="after an advance, compare the rows from before it with the copy, while writes "
         "continue, so that the cutover's pause reads only the rows since",
     )
-    adopt = commands.add_parser(
-        "adopt-copy",
-        help="list a group's copy tables made before copies were marked, and with --confirm mark "
-        "them as this project's copy",
-    )
-    adopt.add_argument("--group", required=True)
-    adopt.add_argument(
-        "--confirm", help="the digest the listing printed: mark exactly the tables listed"
-    )
     erase = commands.add_parser(
         "erase",
         help="list, and with --execute delete, one entity's rows by key in every table of the map",
@@ -284,8 +275,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps([progress.as_record() for progress in executor.backfill()]))
         elif args.command == "settle":
             print(json.dumps(executor.settle()))
-        elif args.command == "adopt-copy":
-            print(json.dumps(executor.adopt_copy(args.group, confirm=args.confirm)))
         elif args.command == "erase":
             from sde.erasure import ErasureReceipt, ErasureRequest
 

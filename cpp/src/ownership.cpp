@@ -52,8 +52,8 @@ std::string copy_refusal(std::string_view table, const std::optional<std::string
   return "the copy's table " + python_repr(table) +
          " exists and is not one this library created for it: it carries " + what +
          ". A copy is written over, emptied and refilled, so a table of its name and shape is "
-         "not taken for it. If it is this copy, made before copies were marked, run "
-         "`sde-operator adopt-copy`; otherwise give the copy another name.";
+         "not taken for it. A copy provisioned before copies were marked is made again "
+         "(docs/upgrading.md); a table of yours is given another name in the map.";
 }
 
 }  // namespace sde::detail

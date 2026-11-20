@@ -230,16 +230,17 @@ release wrote such a map.
 
 ### A copy provisioned before
 
-**A copy's table carries its creator's mark, and the operator writes only to a table that does.**
-Affected: a deployment whose map has a copy - the initial handoff of [`local-cutover.md`](local-cutover.md)
+**A copy's table carries its creator's mark, and the operator writes to no other.** Affected: a
+deployment whose map has a copy - the initial handoff of [`local-cutover.md`](local-cutover.md)
 provisions one - made by `prepare_schema` before this release. Its tables have no mark, so
-`prepare_schema` and every operator command that writes to the copy refuse it, by name. Run
-`sde-operator adopt-copy --group <group>`: it lists the copy's tables with their native identity
-and a digest, and with `--confirm <digest>` marks exactly those tables. A copy a staging created is
-marked already. A source is taken as before ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
+`prepare_schema` and every operator command that writes to the copy refuse it, by name. Make the copy
+again: it holds only rows of its source, and a backfill fills a new one. Make sure the table is the
+copy you provisioned, then drop it and run `prepare_schema`, which creates it marked - or stage a new
+copy, whose tables the staging marks. A source is taken as before, and so is a copy a staging
+created ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
 
-Changelog: *Fixed: a copy's table is one the library created and marked, and only such a table is
-written to as a copy*.
+Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
+no other*.
 
 ### After the upgrade
 

@@ -8,8 +8,7 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
-**Fixed: a copy's table is one the library created and marked, and only such a table is written to as
-a copy** (all three libraries' `prepare_schema`, and the operator; [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
+**Fixed: a copy's table is one the library created and marked, and the operator writes to no other** (all three libraries' `prepare_schema`, and the operator; [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
 `prepare_schema` created a copy's tables with `CREATE TABLE IF NOT EXISTS`, so a map naming a copy
 like a table you already had, of the same shape - another group's, or one outside SDE - made that
 table the copy, and the operator then wrote over its rows (`backfill`, `settle`), emptied and
@@ -19,9 +18,10 @@ ClickHouse and in the index mapping's `_meta` in Elasticsearch, in the statement
 and refuses a table of the copy's name without it before anything is written to it; and every
 operator path that writes to a copy reads the mark first, accepting a staging's on the copy that
 staging created for the same group. A source is taken as before: it is often your own table from
-before SDE. Found by an independent review of `sde-operator`. **Breaking** for a copy provisioned
-before this release: it has no mark, and `sde-operator adopt-copy` marks it once you have looked at
-the table it names.
+before SDE. A map naming one table in two of its materializations is refused when it loads. The
+application's session does not read the mark yet: §7r says what that leaves. Found by an independent
+review of `sde-operator`. **Breaking** for a copy provisioned before this release: it has no mark,
+and is made again ([upgrading](docs/upgrading.md)).
 
 **Fixed: a map cannot put a statement of its own choosing into a client's engine** (all three
 libraries; [format contract §7a](docs/format-contract.md#what-a-layout-may-name-and-spell)).
