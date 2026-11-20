@@ -55,6 +55,9 @@ import { batchColumns } from '../bulk.js'
 import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '../query.js'
 import { EngineError, MigrationRefused } from '../errors.js'
 import { copyRefusal, ownedCopyMarker } from '../ownership.js'
+import type { TableFacts } from '../table-marks.js'
+
+const NIL_UUID = '00000000-0000-0000-0000-000000000000'
 import { exactBytes } from '../telemetry.js'
 import { Timestamp } from '../timestamp.js'
 import { WriteFence } from '../write-fence.js'
@@ -559,6 +562,38 @@ export class ClickHouseEngine {
       }
     }
     return this.ensureSchema(layout, { keys: options.keys })
+  }
+
+  /**
+   * Each name's table as this connection's statements reach it: its identity and its mark, for the
+   * check of a map's tables (format contract §7r). One look-up of the catalogue for all the names; a
+   * name that reaches no table has no keys and no mark.
+   */
+  async tableFacts(tables: readonly string[]): Promise<Record<string, TableFacts>> {
+    return this.usage.operation(async () => {
+      const names = [...new Set(tables)].sort()
+      const found: Record<string, TableFacts> = {}
+      for (const name of names) found[name] = { keys: [], mark: null }
+      if (names.length === 0) return found
+      const [database] = await this.query(
+        'SELECT toString(serverUUID()) AS server, toString(uuid) AS uuid, name FROM system.databases ' +
+          'WHERE name = currentDatabase()',
+      )
+      const rows = await this.query(
+        'SELECT name, toString(uuid) AS uuid, comment FROM system.tables WHERE database = currentDatabase() ' +
+          `AND has([${names.map(literal).join(', ')}], name)`,
+      )
+      for (const row of rows) {
+        const uuid = String(row['uuid'])
+        // A database that is not Atomic gives every table the nil uuid: there the name is it.
+        const key = uuid !== NIL_UUID ? uuid : `${String(database!['name'])}.${String(row['name'])}`
+        found[String(row['name'])] = {
+          keys: [JSON.stringify(['clickhouse', String(database!['server']), String(database!['uuid']), key])],
+          mark: String(row['comment']) === '' ? null : String(row['comment']),
+        }
+      }
+      return found
+    })
   }
 
   /** A table's uuid and its comment (empty when it has none), or `null` without a table. */

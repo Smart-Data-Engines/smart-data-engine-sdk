@@ -41,6 +41,7 @@ import { readRow, readSql, summarySql, type ReadColumn, type ReadPlan } from '..
 import { compareCodePoints } from '../canonical.js'
 import { EngineError, MigrationRefused } from '../errors.js'
 import { copyRefusal, ownedCopyMarker } from '../ownership.js'
+import type { TableFacts } from '../table-marks.js'
 import { loopback } from './_transport.js'
 import { exactBytes } from '../telemetry.js'
 import type { PhysicalFinding } from '../physical.js'
@@ -484,6 +485,37 @@ export class PostgresEngine {
       }
     }
     return this.ensureSchema(layout, { keys: options.keys })
+  }
+
+  /**
+   * Each name's table as this connection's statements reach it: its identity and its mark, for the
+   * check of a map's tables (format contract §7r). One look-up of the catalogue for all the names; a
+   * name that reaches no table has no keys and no mark.
+   */
+  async tableFacts(tables: readonly string[]): Promise<Record<string, TableFacts>> {
+    return this.usage.operation(async () => {
+      const names = [...new Set(tables)].sort()
+      const found: Record<string, TableFacts> = {}
+      for (const name of names) found[name] = { keys: [], mark: null }
+      if (names.length === 0) return found
+      const quoted = new Map(names.map((name) => [QUOTE['postgres']!(name), name]))
+      const server = (await this.run(
+        'SELECT c.system_identifier::text AS server, d.oid::text AS database FROM pg_control_system() c ' +
+          'CROSS JOIN pg_database d WHERE d.datname = current_database()',
+      )).rows[0] as { server: string; database: string }
+      const result = await this.run(
+        "SELECT q.name AS name, c.oid::text AS object, obj_description(c.oid, 'pg_class') AS comment " +
+          'FROM unnest($1::text[]) AS q(name) JOIN pg_class c ON c.oid = to_regclass(q.name)',
+        [[...quoted.keys()]],
+      )
+      for (const row of result.rows as { name: string; object: string; comment: string | null }[]) {
+        found[quoted.get(String(row.name))!] = {
+          keys: [JSON.stringify(['postgres', String(server.server), String(server.database), String(row.object)])],
+          mark: row.comment ?? null,
+        }
+      }
+      return found
+    })
   }
 
   /** A table's object id and its comment, or `null` when no table has the name. */

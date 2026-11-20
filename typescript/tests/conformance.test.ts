@@ -4,7 +4,7 @@ import { indexBuildName, loadIndexPlan } from '../src/in-place-index.js'
 import { MigrationRefused as StagingRefused } from '../src/errors.js'
 import { loadCutoverPlan } from '../src/cutover.js'
 import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
-import { bindGenerationMetadata } from './_generation.js'
+import { bindGenerationMetadata, copyMarks } from './_generation.js'
 import { WriteFence as NativeWriteFence, type ColumnState, type FenceState } from '../src/write-fence.js'
 import { MemoryFences } from './_write-fence.js'
 import { VerificationRequest } from '../src/verification.js'
@@ -1294,7 +1294,7 @@ async function driveGenerationVector(directory: string, model: LogicalModel, map
   const want = readJson<{ project_id?: string; error?: string; match?: string; actions: Action[]; tables: unknown;
     engine_generations: Record<string, Record<string, {project_id: string; epoch: number}>>;
   }>(join(directory, 'generation.json'))
-  bindGenerationMetadata(engines, want.engine_generations)
+  bindGenerationMetadata(engines, want.engine_generations, false, copyMarks(map))
   const open = () => Session.open(model, map, engines, want.project_id === undefined ? {} : {projectId: want.project_id})
   if (want.error !== undefined) await refusesAsync(open, want.error, want.match as string)
   else {
@@ -1330,7 +1330,7 @@ async function driveFrozenVector(directory: string, model: LogicalModel, map: Pl
     epochs: Record<string, number>; at: string; retry?: boolean; report?: unknown; error?: string; match?: string;
     engine_generations: Record<string, Record<string, {project_id: string; epoch: number}>>;
   }>(join(directory, 'frozen.json'))
-  bindGenerationMetadata(engines, want.engine_generations, true)
+  bindGenerationMetadata(engines, want.engine_generations, true, copyMarks(map))
   const context = new InspectionContext(model, map, engines, {projectId: want.project_id})
   const request = VerificationRequest.fromRecord(want.request)
   const invoke = () => verifyFrozen(context, want.group, { request, holdId: want.hold_id,

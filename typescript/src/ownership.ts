@@ -60,6 +60,15 @@ export function copyRefusal(table: string, found: string | null): string {
   )
 }
 
+/** Why a source's table that carries a copy's mark is not taken as `group`'s source. */
+export function sourceRefusal(table: string, group: string): string {
+  return (
+    `the source's table '${table}' of ${group} carries a copy's mark: a copy becomes the source only ` +
+    "through a cutover, which writes a source's mark in place of the copy's, so this is a copy a " +
+    'map names as a source (format contract §7r)'
+  )
+}
+
 /**
  * Whether `found`, the mark read on `table`, makes it a copy of `group` in this project: the mark
  * `prepareSchema` writes for exactly this group and table, or the one a staging of this project
