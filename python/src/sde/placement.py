@@ -43,6 +43,7 @@ from .physical import (
     parse_indexes,
     parse_key_order,
     parse_partition_by,
+    physical_name_refusal,
 )
 
 __all__ = [
@@ -317,6 +318,9 @@ def _layout(raw: Mapping[str, Any], where: str, *, contract: int) -> PhysicalLay
         table = tables[entity]
         if not isinstance(table, str) or not table:
             raise MapError(f"{where}: tables[{entity!r}] must be a table name, not {table!r}")
+        refusal = physical_name_refusal(table)
+        if refusal:
+            raise MapError(f"{where}: tables[{entity!r}]: {refusal}")
     for name, holds in RESERVED_TABLES.items():
         reserved = sorted(entity for entity, table in tables.items() if str(table) == name)
         if reserved:
@@ -384,6 +388,9 @@ def _columns(raw: Any, where: str) -> dict[str, dict[str, str]]:
             )
         for column in sorted(types):
             kind = types[column]
+            refusal = physical_name_refusal(column)
+            if refusal:
+                raise MapError(f"{where}: columns[{entity!r}]: {refusal}")
             if not isinstance(kind, str) or not kind:
                 raise MapError(
                     f"{where}: columns[{entity!r}][{column!r}] must be a type name, not {kind!r}"

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a physical name cannot contain %, { or }",
+  "stage": "map",
+  "why": "Quoting makes such a name safe for the server and not for what reads the statement before it. The Python ClickHouse driver formats the whole text of a statement that has parameters with %, so a table called payment%(k0_0).0s became payment in a deletion by key - another group's source table - and the receipt said the copy was erased. {name:Type} is a ClickHouse server-side parameter, and an Elasticsearch path is percent-decoded, so an index called %5fall addressed _all. Found by an independent review on 20 November 2026; every library refuses the name when the map is loaded."
+}

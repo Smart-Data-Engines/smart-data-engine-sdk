@@ -1,0 +1,10 @@
+[
+  {
+    "materialization": "Order@pg",
+    "dialect": "postgres",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A type is the one part of a statement the renderer does not quote: it writes the layout's spelling as it is (schema/002). Until 20 November 2026 this layout rendered CREATE TABLE IF NOT EXISTS \"order\" (\"id\" uuid, \"x\" int); DROP TABLE \"victim\"; CREATE TABLE \"z\" (\"y\" int, ...), and PostgreSQL runs several statements in one simple query. A signed map is ours, and the threat model promises that even one from a compromised control plane cannot make the client's provisioning run SQL of its choosing. So every type is read first by one grammar: words of the two vocabularies, ASCII digits, spaces, zones in single quotes, parentheses at most four deep and commas only inside them."
+  }
+]

@@ -1,0 +1,63 @@
+{
+  "entities": [
+    {
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "placed_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "tenant",
+          "type": "uuid"
+        },
+        {
+          "name": "total",
+          "type": "decimal(12,2)"
+        }
+      ],
+      "key": [
+        "tenant",
+        "id"
+      ],
+      "residency": "EU"
+    },
+    {
+      "name": "Payment",
+      "fields": [
+        {
+          "name": "amount",
+          "type": "decimal(12,2)"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "paid_at",
+          "type": "timestamp"
+        }
+      ],
+      "key": [
+        "id"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "order",
+      "from": "Payment",
+      "to": "Order"
+    }
+  ],
+  "atomic": [
+    [
+      "Order",
+      "Payment"
+    ]
+  ]
+}

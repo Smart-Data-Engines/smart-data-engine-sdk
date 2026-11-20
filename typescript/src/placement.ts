@@ -27,6 +27,7 @@ import {
   parseIndexes,
   parseKeyOrder,
   parsePartitionBy,
+  physicalNameRefusal,
 } from './physical.js'
 import { enumerateShapes, shapeId, SOURCE_ONLY_KINDS, WRITE_KINDS } from './shapes.js'
 
@@ -262,6 +263,8 @@ function readColumns(raw: unknown, where: string): Record<string, Record<string,
     }
     for (const column of Object.keys(types).sort(compareCodePoints)) {
       const kind = types[column]
+      const refusal = physicalNameRefusal(column)
+      if (refusal !== null) throw new MapError(`${where}: columns['${entity}']: ${refusal}`)
       if (typeof kind !== 'string' || kind.length === 0) {
         throw new MapError(
           `${where}: columns['${entity}']['${column}'] must be a type name, not ${describe(kind)}`,
@@ -299,6 +302,8 @@ function readLayout(raw: unknown, where: string, contract: number): MaybeLayout 
     if (typeof table !== 'string' || table.length === 0) {
       throw new MapError(`${where}: tables['${entity}'] must be a table name, not ${describe(table)}`)
     }
+    const refusal = physicalNameRefusal(table)
+    if (refusal !== null) throw new MapError(`${where}: tables['${entity}']: ${refusal}`)
   }
   for (const [name, holds] of RESERVED_TABLES) {
     const reserved = Object.entries(tables as Record<string, string>)
