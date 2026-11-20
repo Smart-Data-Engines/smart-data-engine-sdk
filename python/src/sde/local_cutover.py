@@ -185,6 +185,20 @@ class LocalCutover:
         if os.getpid() != self._pid:
             raise MigrationRefused("create fresh operator connections after fork")
 
+    def _copy_owned(
+        self, native: Any, group: str, table: str, state: Mapping[str, Any]
+    ) -> TableIdentity:
+        """``table``'s identity once its mark says it is a copy of ``group`` (§7r)."""
+        from .engines._ownership import copy_owned
+
+        return copy_owned(
+            native,
+            project_id=self.project_id,
+            group=group,
+            table=table,
+            stages=state.get("stages", {}),
+        )
+
     def enroll(self, current: Mapping[str, Any]) -> None:
         self._owner()
         document = json_numbers(deepcopy(dict(current)))
@@ -247,7 +261,12 @@ class LocalCutover:
                             f"reads or fills"
                         )
                     for table in sorted(material.layout.tables.values()):
-                        native.identity(table)
+                        if material is spot.source:
+                            native.identity(table)
+                        else:
+                            # A backfill writes the copy's rows: its table is one this project
+                            # created and marked for this group, or nothing is written (§7r).
+                            self._copy_owned(native, group, table, state)
             context = InspectionContext(self.model, current, self.engines, self.project_id)
             return [
                 backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
@@ -301,14 +320,20 @@ class LocalCutover:
                             f"or writes"
                         )
                     for entity, table in sorted(material.layout.tables.items()):
-                        # As a cutover takes them: a table with a row policy is refused here.
+                        # As a cutover takes them: a table with a row policy is refused here, and a
+                        # copy's table without its creator's mark (§7r) before a row is written.
+                        identity = (
+                            native.identity(table)
+                            if material is spot.source
+                            else self._copy_owned(native, group, table, state)
+                        )
                         rows.append(
                             {
                                 "engine": material.engine,
                                 "materialization": material.id,
                                 "entity": entity,
                                 "role": "source" if material is spot.source else "target",
-                                "identity": native.identity(table).as_record(),
+                                "identity": identity.as_record(),
                             }
                         )
                 if not settles_before_a_pause(context, group):
@@ -341,6 +366,82 @@ class LocalCutover:
             self.store.write(state)
             return records
 
+    def adopt_copy(self, group: str, *, confirm: str | None = None) -> dict[str, Any]:
+        """Mark the tables of ``group``'s copies in the map in force as this project's (§7r).
+
+        For a copy provisioned before copies were marked: every path that writes to a copy refuses
+        a table without its creator's mark, and this is how a client says, once, that a table is
+        the copy. Without ``confirm`` it lists the tables with their native identity and the
+        digest of that listing, and changes nothing; with ``confirm`` equal to the digest of the
+        listing as it is now, it writes each table's mark. So what is marked is exactly what was
+        looked at: a table replaced or renamed between the two runs changes the digest. A table
+        carrying another mark - another group's copy, a staging's - is refused, not re-marked.
+        A local command, never an instruction from the control plane.
+        """
+        import hashlib
+
+        from .engines._staging import native_staging
+        from .ownership import copy_marker, owned_copy_marker
+
+        self._owner()
+        with self.store.lock():
+            state = self.store.read()
+            if state["execution"] is not None:
+                raise MigrationRefused(
+                    "an unfinished operation of this project holds its tables; resume or abandon "
+                    "it before adopting a copy"
+                )
+            spot = self.active_map().groups.get(group)
+            if spot is None or spot.write_epoch is None or not spot.derived:
+                raise MigrationRefused(
+                    f"the map in force has no copy of {group} that carries a write generation"
+                )
+            listing: list[dict[str, Any]] = []
+            for material in spot.derived:
+                native = self.native.get(material.engine)
+                if native is None:
+                    raise MigrationRefused(
+                        f"{group} has a copy in {material.engine}, which this operator is not "
+                        f"bound to"
+                    )
+                for entity, table in sorted(material.layout.tables.items()):
+                    found = native_staging(native).marker(table)
+                    if found is None:
+                        raise MigrationRefused(f"the copy's table {table!r} is not there")
+                    mark = found[1] or None
+                    if mark is not None and not owned_copy_marker(
+                        self.project_id, group, table, mark
+                    ):
+                        raise MigrationRefused(
+                            f"the copy's table {table!r} carries another mark: it was created for "
+                            f"something else, and adopting it would take it from there"
+                        )
+                    listing.append(
+                        {
+                            "engine": material.engine,
+                            "materialization": material.id,
+                            "entity": entity,
+                            "table": table,
+                            "identity": native.identity(table).as_record(),
+                            "marked": mark is not None,
+                        }
+                    )
+            digest = hashlib.sha256(canonical_bytes(listing)).hexdigest()
+            if confirm is None:
+                return {"group": group, "tables": listing, "confirm": digest, "adopted": False}
+            if confirm != digest:
+                raise MigrationRefused(
+                    "the copy's tables are not the ones listed with that digest: list them again "
+                    "and look before adopting"
+                )
+            for row in listing:
+                if not row["marked"]:
+                    native = self.native[row["engine"]]
+                    mark = copy_marker(self.project_id, group, row["table"])
+                    native_staging(native).adopt(row["table"], mark)
+                    self._copy_owned(native, group, row["table"], state)
+            return {"group": group, "tables": listing, "confirm": digest, "adopted": True}
+
     def erase(
         self, request: ErasureRequest, *, execute: bool = False, at: str | None = None
     ) -> ErasurePlan | ErasureReceipt:
@@ -360,6 +461,15 @@ class LocalCutover:
                     "an unfinished operation of this project holds its tables; resume or abandon "
                     "it before an erasure"
                 )
+            # Rows go from every copy of the entity first: each copy's table is one this project
+            # created and marked for its group (§7r), checked before anything is read or deleted.
+            for name, spot in sorted(self.active_map().groups.items()):
+                if spot.write_epoch is None or request.entity not in spot.source.layout.tables:
+                    continue
+                for material in spot.derived:
+                    if material.engine in self.native:
+                        table = material.layout.tables[request.entity]
+                        self._copy_owned(self.native[material.engine], name, table, state)
             plan = plan_erasure(self, request)
             if not execute:
                 return plan
@@ -499,7 +609,13 @@ class LocalCutover:
         tables = []
         for material in spot.all():
             for entity, table in sorted(material.layout.tables.items()):
-                identity = self.native[material.engine].identity(table)
+                # The cutover repairs, empties and refills the copy: its table is one this project
+                # created and marked for this group (§7r), checked before anything is recorded.
+                identity = (
+                    self.native[material.engine].identity(table)
+                    if material is spot.source
+                    else self._copy_owned(self.native[material.engine], plan.group, table, state)
+                )
                 fence = self.engines[material.engine].write_fence(table, project_id=self.project_id)
                 observed = fence.state()
                 if not observed.complete or observed.epoch != plan.source_epoch or observed.holds:

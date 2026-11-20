@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..errors import EngineError, MigrationRefused
+from ..ownership import COPY_MARKER
 from ..physical import POSTGRES_METHODS, index_method
 from ..placement import PhysicalLayout
 from ..schema import postgres_index_target, schema_statements
@@ -162,6 +163,22 @@ class NativeStaging:
         self.native.command(f"DROP TABLE {self.quote(table.name)}{suffix}")
         if self.marker(table.name) is not None:
             raise MigrationRefused("an abandoned staging table is still in the catalogue")
+
+    def adopt(self, table: str, mark: str) -> None:
+        """Write a copy's mark on ``table``, which carries none (``sde-operator adopt-copy``)."""
+        if COPY_MARKER.fullmatch(mark) is None:
+            raise MigrationRefused("a copy's mark is not the protocol's metadata")
+        present = self.marker(table)
+        if present is None or present[1]:
+            raise MigrationRefused(f"the copy's table {table!r} is gone or carries a mark already")
+        # The mark is fixed ASCII protocol metadata, checked above, never a value.
+        if self.dialect == "postgres":
+            self.native.command(f"COMMENT ON TABLE {self.quote(table)} IS '{mark}'")
+        else:
+            self.native.command(f"ALTER TABLE {self.quote(table)} MODIFY COMMENT '{mark}'")
+        found = self.marker(table)
+        if found is None or found[1] != mark or found[0] != present[0]:
+            raise MigrationRefused(f"the copy's mark is not on the table {table!r} that was listed")
 
     def revoke_runtime(self, tables: Sequence[TableIdentity], principals: Sequence[str]) -> None:
         """Take back the runtime grants on dropped tables; ClickHouse keeps them after DROP TABLE.
