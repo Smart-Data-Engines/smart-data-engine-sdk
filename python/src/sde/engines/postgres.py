@@ -25,7 +25,7 @@ from typing import Any
 
 from .._usage import UsageGate, guarded
 from ..bulk import batch_columns
-from ..errors import EngineError
+from ..errors import EngineError, MigrationRefused
 from ..explain import (
     Cost,
     QueryPlan,
@@ -36,6 +36,7 @@ from ..generation import EPOCH_COLUMN
 from ..layout import POSTGRES_TYPES
 from ..logging import log
 from ..migration import key_columns, same_width
+from ..ownership import copy_marker, copy_refusal, owned_copy_marker
 from ..physical import DeclaredTable, PhysicalFinding, declared_tables
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
@@ -304,6 +305,79 @@ class PostgresEngine:
         self._execute(indexes)
         log("sde.schema.applied", engine=self.dialect, statements=len(tables) + len(indexes))
         return self._physical_findings(layout, keys)
+
+    @guarded
+    def ensure_copy(
+        self,
+        layout: PhysicalLayout,
+        *,
+        keys: Mapping[str, Sequence[str]],
+        project_id: str,
+        group: str,
+    ) -> tuple[PhysicalFinding, ...]:
+        """A copy's tables: created here and marked, or found with the mark they were made with.
+
+        Each table's mark is :func:`sde.ownership.copy_marker` of the project, the group and the
+        table; a staging's mark on the copy it named is the copy's too. A table that is not
+        there is created - ``CREATE TABLE`` without ``IF NOT EXISTS`` - and marked with ``COMMENT
+        ON TABLE`` in the same transaction. A table that is there is this copy's only if it carries
+        its mark; one without it is refused before anything is written to it. ``CREATE TABLE IF
+        NOT EXISTS`` took any table of the name and shape as the copy, and every path that writes to
+        a copy - a backfill, a repair, an emptying refill, an erasure - then wrote to a table the
+        client had for something else (format contract §7r). Then what :meth:`ensure_schema` does.
+        """
+        from psycopg import errors as pg_errors
+        from psycopg import sql
+
+        for entity, table in sorted(layout.tables.items()):
+            mark = copy_marker(project_id, group, table)
+            found = self._mark(table)
+            if found is None:
+                single = replace(
+                    layout,
+                    tables={entity: table},
+                    columns={entity: layout.columns[entity]},
+                    partition_by={entity: layout.partition_by[entity]}
+                    if entity in layout.partition_by
+                    else {},
+                    key_order={entity: layout.key_order[entity]}
+                    if entity in layout.key_order
+                    else {},
+                    indexes=(),
+                )
+                (statement,) = (
+                    s
+                    for s in schema_statements(single, keys=keys, dialect=self.dialect)
+                    if s.startswith("CREATE TABLE ")
+                )
+                create = statement.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
+                try:
+                    with self._cx.transaction():
+                        self._cx.execute(create)
+                        self._cx.execute(
+                            sql.SQL("COMMENT ON TABLE {} IS {}").format(
+                                sql.Identifier(table), sql.Literal(mark)
+                            )
+                        )
+                except pg_errors.DuplicateTable:
+                    pass  # created meanwhile; the mark below says whose it is
+                found = self._mark(table)
+            if found is None or not owned_copy_marker(project_id, group, table, found[1]):
+                raise MigrationRefused(copy_refusal(table, None if found is None else found[1]))
+        return self.ensure_schema(layout, keys=keys)
+
+    def _mark(self, table: str) -> tuple[str, str | None] | None:
+        """A table's object id and its comment, or ``None`` when no table has the name."""
+        with self._cx.cursor() as cur:
+            cur.execute(
+                "SELECT c.oid::text, obj_description(c.oid, 'pg_class') FROM pg_class c "
+                "WHERE c.oid = to_regclass(%s) AND c.relkind = 'r'",
+                [QUOTE[self.dialect](table)],
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return None
+        return str(rows[0][0]), None if rows[0][1] is None else str(rows[0][1])
 
     def _execute(self, statements: Sequence[str]) -> None:
         with self._cx.cursor() as cur:

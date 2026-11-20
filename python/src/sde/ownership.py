@@ -24,6 +24,7 @@ __all__ = [
     "COPY_MARKER",
     "STAGE_MARKER",
     "copy_marker",
+    "copy_refusal",
     "owned_copy_marker",
     "stage_marker",
 ]
@@ -52,6 +53,17 @@ def copy_marker(project_id: str, group: str, table: str) -> str:
 def stage_marker(project_id: str, stage_id: str, table: str) -> str:
     """The mark a staging writes on ``table``, the copy it creates for stage ``stage_id``."""
     return f"sde.stage1.{project_id}.{stage_id}.{_digest(table, 16)}"
+
+
+def copy_refusal(table: str, found: str | None) -> str:
+    """Why ``table`` is not taken as a copy's: what every library says, with what it found."""
+    what = "no mark" if not found else "another mark"
+    return (
+        f"the copy's table {table!r} exists and is not one this library created for it: it "
+        f"carries {what}. A copy is written over, emptied and refilled, so a table of its name and "
+        f"shape is not taken for it. If it is this copy, made before copies were marked, run "
+        f"`sde-operator adopt-copy`; otherwise give the copy another name."
+    )
 
 
 def owned_copy_marker(

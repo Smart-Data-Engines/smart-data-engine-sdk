@@ -58,6 +58,7 @@ import ssl
 import stat
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import replace
 from importlib.metadata import version
 from types import MappingProxyType
 from typing import Any, Final, cast
@@ -65,7 +66,7 @@ from urllib.parse import parse_qsl, urlencode
 
 from .._usage import UsageGate, guarded
 from ..bulk import batch_columns
-from ..errors import EngineError
+from ..errors import EngineError, MigrationRefused
 from ..explain import (
     Cost,
     QueryPlan,
@@ -75,6 +76,7 @@ from ..explain import (
 from ..generation import EPOCH_COLUMN
 from ..logging import log
 from ..migration import key_columns, same_width
+from ..ownership import COPY_MARKER, copy_marker, copy_refusal, owned_copy_marker
 from ..physical import (
     PhysicalFinding,
     declared_tables,
@@ -623,6 +625,70 @@ class ClickHouseEngine:
         log("sde.schema.applied", engine=self.dialect, statements=len(statements))
         self._verify_schema(layout)
         return self._physical_findings(layout, keys)
+
+    @guarded
+    def ensure_copy(
+        self,
+        layout: PhysicalLayout,
+        *,
+        keys: Mapping[str, Sequence[str]],
+        project_id: str,
+        group: str,
+    ) -> tuple[PhysicalFinding, ...]:
+        """A copy's tables: created here and marked, or found with the mark they were made with.
+
+        Each table's mark is :func:`sde.ownership.copy_marker` of the project, the group and the
+        table; a staging's mark on the copy it named is the copy's too. A table that is not
+        there is created by one ``CREATE TABLE`` without ``IF NOT EXISTS``, whose ``COMMENT`` is
+        the mark, so no moment holds the table without it. A table that is there is this copy's
+        only if it carries its mark; one without it is refused before anything is written to it
+        (format contract §7r). Then what :meth:`ensure_schema` does.
+        """
+        for entity, table in sorted(layout.tables.items()):
+            mark = copy_marker(project_id, group, table)
+            if COPY_MARKER.fullmatch(mark) is None:
+                raise MigrationRefused("a copy's mark is not the protocol's metadata")
+            found = self._mark(table)
+            if found is None:
+                single = replace(
+                    layout,
+                    tables={entity: table},
+                    columns={entity: layout.columns[entity]},
+                    partition_by={entity: layout.partition_by[entity]}
+                    if entity in layout.partition_by
+                    else {},
+                    key_order={entity: layout.key_order[entity]}
+                    if entity in layout.key_order
+                    else {},
+                    indexes=tuple(
+                        index for index in layout.indexes if str(index["entity"]) == entity
+                    ),
+                )
+                (statement,) = schema_statements(single, keys=keys, dialect=self.dialect)
+                create = statement.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
+                try:
+                    # The mark is fixed ASCII protocol metadata, checked above, never a value.
+                    self._cx.command(create + " COMMENT '" + mark + "'")
+                except Exception as exc:
+                    if "already exists" not in str(exc).lower():
+                        raise EngineError(
+                            f"creating the copy's table {table!r} failed: {exc}"
+                        ) from exc
+                found = self._mark(table)
+            if found is None or not owned_copy_marker(project_id, group, table, found[1]):
+                raise MigrationRefused(copy_refusal(table, None if found is None else found[1]))
+        return self.ensure_schema(layout, keys=keys)
+
+    def _mark(self, table: str) -> tuple[str, str] | None:
+        """A table's uuid and its comment (empty when it has none), or ``None`` without a table."""
+        rows = self._cx.query(
+            "SELECT toString(uuid), comment FROM system.tables "
+            "WHERE database = currentDatabase() AND name = {table:String}",
+            parameters={"table": table},
+        ).result_rows
+        if not rows:
+            return None
+        return str(rows[0][0]), str(rows[0][1])
 
     @guarded
     def validate_schema(
