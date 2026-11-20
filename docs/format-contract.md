@@ -736,6 +736,15 @@ where data is written:
   to it would silently be a read of the source (`errors/101`). Checked whenever the tables are known
   - after `{"auto": true}` layouts are derived, with a model, and on explicit layouts without one -
   where Python had checked it only with a model and TypeScript before the copies' fan-out.
+- **From contract 4, a copy's table is named by nothing else in the map.** A table one engine holds
+  for a derived copy may not be named by another materialisation too - a source or a copy, of any
+  group - nor for another entity of the same copy (`errors/151`). Named twice, the application's
+  writes, a backfill, a cutover's refill and an erasure meant for the one land in the other, and the
+  copy's mark (§7r) cannot tell them apart, since both are this project's. Two sources naming one
+  table are left as they were: a source is taken as the map names it, and the maps of contracts 1
+  and 2 list every entity's table in every group. Found by an independent review, where a forged map
+  named one group's source as another group's copy and that group's backfill and erasure rewrote
+  and deleted the first group's rows.
 - **A derived materialisation is meant to carry an explicit layout.** `auto` derives the *normalised*
   layout, which is the source's shape - so a derived copy asking for it is a second copy of the source
   in another engine, paying for storage and lag to answer questions the source already answers. The
@@ -1541,7 +1550,9 @@ depends on how the caller's JSON parser preserves keys.
    (§7i);
 4. the shape of `routing`, when it says anything;
 5. with a model, group coverage, both directions (§7); without one, a layout asking to be derived;
-6. a copy that is the source under another name, groups in name order;
+6. a copy that is the source under another name, groups in name order; then, from contract 4,
+   a copy's table named by another materialisation too: groups in name order, materialisations
+   in document order, entities in name order, the second naming refused (§7);
 7. the physical design rules that need the model (§7i): groups in name order, materialisations in
    document order within a group, entities in name order within a layout - the key permutation
    before the partition rules for one entity;
@@ -2544,10 +2555,15 @@ keeps each staging it completed, also checks that the stage was for G.
 - A copy provisioned before this section existed carries no mark and is refused; it is made
   again. A mark is never written on an existing table: it would say the library created what a map
   merely named, and the name is the one thing in a map a library cannot check.
+- From contract 4 a map that names a copy's table for anything else too - another group's source
+  or copy - is refused when it loads (§7, `errors/151`). The mark cannot refuse it: the table is
+  this project's, and one of the two namings is its own.
 - The application's session does not read the mark when it opens. It writes to the copies of a map
-  whose tables carry this project's write generation (§7d), so a forged map can still name, as one
-  group's copy, another group's table of the same shape in the same project; reading the mark at
-  open is the next step of this section.
+  whose tables carry this project's write generation (§7d), so a forged map can still name as one
+  group's copy a table of this project, of the same shape, that it names for nothing else - another
+  group's staged copy, or a table an earlier map placed. `prepare_schema` takes a staging's mark
+  without the stage's group, which only the operator keeps. Reading the mark when a session opens,
+  and the group in a staging's mark, are the next steps of this section.
 
 Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
 marks - the mark included, so its computation is held with them - and a case of the schema family
