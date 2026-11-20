@@ -1,0 +1,10 @@
+[
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "Inside one statement too: a ClickHouse column definition takes DEFAULT, MATERIALIZED, CODEC and TTL after its type, so a type that carried one would run an expression of the map's choosing on every insert. DEFAULT is not a word of the vocabulary, and neither is anything that follows a type in a column definition."
+  }
+]

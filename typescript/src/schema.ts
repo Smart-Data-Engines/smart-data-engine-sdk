@@ -142,8 +142,69 @@ export const POSTGRES_TEXT_COLLATION = 'COLLATE "C"'
 /** The PostgreSQL type a neutral `string` maps to: the one type that takes the collation. */
 const POSTGRES_TEXT = 'text'
 
+/** Words a column type may be spelled with, compared in lowercase (format contract §7a). */
+export const POSTGRES_TYPE_WORDS: ReadonlySet<string> = new Set([
+  'bigint', 'bool', 'boolean', 'bytea', 'char', 'character', 'date', 'decimal', 'double',
+  'float4', 'float8', 'int', 'int2', 'int4', 'int8', 'integer', 'interval', 'json', 'jsonb',
+  'numeric', 'precision', 'real', 'smallint', 'text', 'time', 'timestamp', 'timestamptz',
+  'timetz', 'uuid', 'varchar', 'varying', 'with', 'without', 'zone',
+])
+
+/** Words a column type may be spelled with, compared as they are spelled (format contract §7a). */
+export const CLICKHOUSE_TYPE_WORDS: ReadonlySet<string> = new Set([
+  'Array', 'Bool', 'Date', 'Date32', 'DateTime', 'DateTime64', 'Decimal', 'Decimal128',
+  'Decimal256', 'Decimal32', 'Decimal64', 'FixedString', 'Float32', 'Float64', 'IPv4', 'IPv6',
+  'Int128', 'Int16', 'Int256', 'Int32', 'Int64', 'Int8', 'LowCardinality', 'Nullable',
+  'String', 'UInt128', 'UInt16', 'UInt256', 'UInt32', 'UInt64', 'UInt8', 'UUID',
+])
+
+const TYPE_TOKEN = /[A-Za-z][A-Za-z0-9]*|[0-9]+|'[A-Za-z0-9_/+-]*'|[(), ]/g
+const WORD = /^[A-Za-z]/
+
+/**
+ * Why `kind` is not a column type this library renders, or `null`.
+ *
+ * A type is the one part of a statement the renderer does not quote: it writes the layout's
+ * spelling as it is, and does not read which dialect it is in (§7a, `schema/002`). So it is read
+ * first by a grammar every library shares - words of the two vocabularies above, ASCII digits,
+ * spaces, zones in single quotes, parentheses at most four deep and commas only inside them - and
+ * anything else is refused. Until 20 November 2026 a layout naming
+ * `uuid, "x" int); DROP TABLE "victim"; --` rendered that statement whole.
+ */
+export function columnTypeRefusal(kind: string): string | null {
+  const tokens = kind.match(TYPE_TOKEN) ?? []
+  let valid = tokens.length > 0 && tokens.join('') === kind && kind.length <= 128
+  valid = valid && WORD.test(tokens[0] ?? '')
+  let depth = 0
+  for (const token of tokens) {
+    if (WORD.test(token)) {
+      valid = valid && (POSTGRES_TYPE_WORDS.has(token.toLowerCase()) || CLICKHOUSE_TYPE_WORDS.has(token))
+    } else if (token === '(') {
+      depth += 1
+      valid = valid && depth <= 4
+    } else if (token === ')') {
+      depth -= 1
+      valid = valid && depth >= 0
+    } else if (token === ',') {
+      valid = valid && depth > 0
+    }
+  }
+  if (valid && depth === 0) return null
+  return (
+    `'${kind}' is not a column type this library renders: a type is spelled with the words of ` +
+    'its vocabulary, digits, spaces, zones in single quotes, parentheses and, inside them, commas'
+  )
+}
+
+function renderedType(column: string, kind: string): string {
+  const refusal = columnTypeRefusal(kind)
+  if (refusal !== null) throw new EngineError(`column '${column}': ${refusal}`)
+  return kind
+}
+
 function postgresColumn(column: string, type: string): string {
-  return `${quoteAnsi(column)} ${type}${type === POSTGRES_TEXT ? ' ' + POSTGRES_TEXT_COLLATION : ''}`
+  const kind = renderedType(column, type)
+  return `${quoteAnsi(column)} ${kind}${kind === POSTGRES_TEXT ? ' ' + POSTGRES_TEXT_COLLATION : ''}`
 }
 
 /** Indexes in code point order of their name (§7a), whatever order the document gave. */
@@ -242,7 +303,7 @@ function clickhouseStatements(layout: PhysicalLayout, options: SchemaOptions): s
     const ordered = effectiveKey(where, entity, key, layout.keyOrder ?? {}, EngineError)
     const spec = Object.hasOwn(layout.partitionBy, entity) ? layout.partitionBy[entity] : undefined
     const partition = partitionExpression(where, entity, key, spec, EngineError)
-    const parts = columns.map((c) => `${quoteBacktick(c)} ${typeOf(layout, entity, c)}`)
+    const parts = columns.map((c) => `${quoteBacktick(c)} ${renderedType(c, typeOf(layout, entity, c))}`)
     // Indexes inline: `CREATE TABLE IF NOT EXISTS` never adds one to an existing table, and a
     // separate ALTER would be a mutation over every existing part.
     for (const index of sortedIndexes(layout)) {

@@ -108,7 +108,73 @@ scan by a text key's prefix read the whole table.
 """
 
 
+POSTGRES_TYPE_WORDS: Final = frozenset(
+    {
+        "bigint", "bool", "boolean", "bytea", "char", "character", "date", "decimal", "double",
+        "float4", "float8", "int", "int2", "int4", "int8", "integer", "interval", "json", "jsonb",
+        "numeric", "precision", "real", "smallint", "text", "time", "timestamp", "timestamptz",
+        "timetz", "uuid", "varchar", "varying", "with", "without", "zone",
+    }
+)  # fmt: skip
+"""Words a column type may be spelled with, compared in lowercase (format contract §7a)."""
+
+CLICKHOUSE_TYPE_WORDS: Final = frozenset(
+    {
+        "Array", "Bool", "Date", "Date32", "DateTime", "DateTime64", "Decimal", "Decimal128",
+        "Decimal256", "Decimal32", "Decimal64", "FixedString", "Float32", "Float64", "IPv4", "IPv6",
+        "Int128", "Int16", "Int256", "Int32", "Int64", "Int8", "LowCardinality", "Nullable",
+        "String", "UInt128", "UInt16", "UInt256", "UInt32", "UInt64", "UInt8", "UUID",
+    }
+)  # fmt: skip
+"""Words a column type may be spelled with, compared as they are spelled (format contract §7a)."""
+
+_TYPE_TOKEN: Final = re.compile(r"[A-Za-z][A-Za-z0-9]*|[0-9]+|'[A-Za-z0-9_/+-]*'|[(), ]")
+
+
+def column_type_refusal(kind: str) -> str | None:
+    """Why ``kind`` is not a column type this library renders, or ``None``.
+
+    A type is the one part of a statement the renderer does not quote: it writes the layout's
+    spelling as it is, and does not read which dialect it is in (§7a, ``schema/002``). So it is read
+    first by a grammar every library shares - words of the two vocabularies above, ASCII digits,
+    spaces, zones in single quotes, parentheses at most four deep and commas only inside them - and
+    anything else is refused. Until 20 November 2026 a layout naming
+    ``uuid, "x" int); DROP TABLE "victim"; --`` rendered that statement whole.
+    """
+    tokens = _TYPE_TOKEN.findall(kind)
+    valid = bool(tokens) and "".join(tokens) == kind and len(kind) <= 128
+    valid = valid and tokens[0][0].isalpha()
+    depth = 0
+    for token in tokens:
+        if token[0].isalpha():
+            known = token.lower() in POSTGRES_TYPE_WORDS or token in CLICKHOUSE_TYPE_WORDS
+            valid = valid and known
+        elif token == "(":
+            depth += 1
+            valid = valid and depth <= 4
+        elif token == ")":
+            depth -= 1
+            valid = valid and depth >= 0
+        elif token == ",":
+            valid = valid and depth > 0
+    if valid and depth == 0:
+        return None
+    return (
+        f"{kind!r} is not a column type this library renders: a type is spelled with the words of "
+        "its vocabulary, digits, spaces, zones in single quotes, parentheses and, inside them, "
+        "commas"
+    )
+
+
+def _rendered_type(column: str, kind: str) -> str:
+    refusal = column_type_refusal(kind)
+    if refusal:
+        raise EngineError(f"column {column!r}: {refusal}")
+    return kind
+
+
 def _postgres_column(column: str, kind: str) -> str:
+    kind = _rendered_type(column, kind)
     collation = f" {POSTGRES_TEXT_COLLATION}" if kind == POSTGRES_TYPES["string"] else ""
     return f"{_quote_ansi(column)} {kind}{collation}"
 
@@ -248,7 +314,10 @@ def _clickhouse_statements(
             partition=layout.partition_by.get(entity),
             error=EngineError,
         )
-        parts = [f"{_quote_backtick(c)} {t}" for c, t in sorted(cols.items())]
+        parts = [
+            f"{_quote_backtick(c)} {_rendered_type(c, t)}"
+            for c, t in sorted(cols.items())
+        ]
         # Indexes inline: `CREATE TABLE IF NOT EXISTS` never adds one to an existing table, and a
         # separate ALTER would be a mutation over every existing part.
         for index in _sorted_indexes(layout):

@@ -51,7 +51,7 @@ Who sends it:
 | `CREATE INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY IF EXISTS …` | operator | an index change in place |
 | `ALTER TABLE … DROP COLUMN IF EXISTS …`, `DROP TABLE IF EXISTS …` | departure | leaving, with `--cleanup`: the generation column and the bookkeeping tables |
 | `WITH gone AS (DELETE FROM … WHERE … RETURNING 1) SELECT count(*) FROM gone` | erasure | the rows of the keys named, in each table of the entity, copies first |
-| `SET TRANSACTION READ ONLY` | application | explaining a query's plan, in a transaction that is rolled back |
+| `SET TRANSACTION READ ONLY` | application | explaining a query's plan: the query goes as one statement, by the extended protocol, in a transaction that is read only and rolled back |
 | `SET DateStyle TO ISO` | application, C++ | on connecting, so that dates are read in one format |
 | `SET row_security = off` | operator | on connecting: a statement a row-level security policy would narrow is refused instead of answered in part |
 

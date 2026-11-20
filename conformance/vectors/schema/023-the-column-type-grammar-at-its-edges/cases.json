@@ -1,0 +1,351 @@
+[
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "uuid",
+        "placed_at": "TIMESTAMP WITH TIME ZONE",
+        "tenant": "uuid",
+        "total": "character varying(255)"
+      },
+      "Payment": {
+        "amount": "double precision",
+        "id": "uuid",
+        "order_id": "uuid",
+        "order_tenant": "uuid",
+        "paid_at": "timestamp"
+      }
+    },
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"order\" (\"id\" uuid, \"placed_at\" TIMESTAMP WITH TIME ZONE, \"tenant\" uuid, \"total\" character varying(255), PRIMARY KEY (\"tenant\", \"id\"))",
+      "CREATE TABLE IF NOT EXISTS \"payment\" (\"amount\" double precision, \"id\" uuid, \"order_id\" uuid, \"order_tenant\" uuid, \"paid_at\" timestamp, PRIMARY KEY (\"id\"))"
+    ],
+    "why": "PostgreSQL words are compared in lowercase, as PostgreSQL reads them, and a type may be several words: `character varying(255)`, `TIMESTAMP WITH TIME ZONE` and `double precision` render as the layout spells them."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'America/Argentina/Buenos_Aires')",
+        "tenant": "UUID",
+        "total": "LowCardinality(Nullable(String))"
+      },
+      "Payment": {
+        "amount": "Array(Array(Array(Array(UInt8))))",
+        "id": "UUID",
+        "paid_at": "DateTime64(6, 'Etc/GMT+1')",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS `order` (`id` UUID, `placed_at` DateTime64(6, 'America/Argentina/Buenos_Aires'), `tenant` UUID, `total` LowCardinality(Nullable(String))) ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`)",
+      "CREATE TABLE IF NOT EXISTS `payment` (`amount` Array(Array(Array(Array(UInt8)))), `id` UUID, `order_id` UUID, `order_tenant` UUID, `paid_at` DateTime64(6, 'Etc/GMT+1')) ENGINE = ReplacingMergeTree ORDER BY (`id`)"
+    ],
+    "why": "ClickHouse words are compared as they are spelled. Parentheses nest four deep, and a zone in single quotes holds letters, digits, `_`, `/`, `+` and `-`: every zone name of the tz database is spelled with those."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "Decimal(12, 2)"
+      },
+      "Payment": {
+        "amount": "Array(Array(Array(Array(Array(UInt8)))))",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "Five parentheses deep is one more than the grammar takes. No type either vocabulary renders in a layout needs more, and a bound is what keeps a reader of the grammar from being a parser."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "uuid, uuid"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A comma stands only inside parentheses. Outside them it ends the column definition, and what follows is a column of the map's choosing - the first half of the injection schema/021 refuses."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "Decimal(12, 2"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "Parentheses balance. An open one would swallow the rest of the statement."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "Decimal)12, 2("
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A parenthesis closed before one is open ends the column list early."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "(numeric)"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A type begins with a word."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "String CODEC(ZSTD)"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "CODEC, like DEFAULT, MATERIALIZED, ALIAS and TTL, is no type: it is what a column definition takes after its type, and so no word of either vocabulary."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "INT32"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A ClickHouse word is compared as it is spelled and a PostgreSQL word in lowercase: `INT32` is neither `Int32` nor a PostgreSQL word."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'U TC')",
+        "tenant": "UUID",
+        "total": "Decimal(12, 2)"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A zone in single quotes holds no space - nor a quote, so it cannot end early and leave the rest of the type outside it."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "text COLLATE \"C\""
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A double quote is an identifier delimiter in PostgreSQL: the collation is syntax the renderer supplies, never part of a layout's type."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "numeric;"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "PostgreSQL runs several statements in one simple query, so a semicolon is where an injection would begin."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "numeric\n"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "Whitespace is a space and nothing else: a newline starts a line a comment could hide."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "téxt"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "Words are ASCII, so a letter that looks like one cannot spell another word."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "layout_columns": {
+      "Order": {
+        "id": "UUID",
+        "placed_at": "DateTime64(6, 'UTC')",
+        "tenant": "UUID",
+        "total": "double double double double double double double double double double double double double double double double double double int"
+      },
+      "Payment": {
+        "amount": "Decimal(12, 2)",
+        "id": "UUID",
+        "paid_at": "DateTime64(6)",
+        "order_tenant": "UUID",
+        "order_id": "UUID"
+      }
+    },
+    "error": "EngineError",
+    "match": "is not a column type this library renders",
+    "why": "A type is at most 128 characters; this one is 129, each of them a word or a space. Exactly 128 is accepted, and held by each library's own tests rather than here: no type of the two vocabularies is that long without spaces its server would not keep, and a statement here is one a server runs and gives back as written."
+  }
+]
