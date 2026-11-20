@@ -113,6 +113,28 @@ def test_the_read_only_transaction_would_stop_it_if_planning_did_not(pg: Postgre
 
 
 @postgres
+def test_a_query_of_several_statements_is_refused_before_any_of_them_runs(
+    pg: PostgresEngine,
+) -> None:
+    """The query to plan comes from the control plane, and it was sent by the simple protocol.
+
+    Without parameters psycopg sends a statement that way, and PostgreSQL runs every statement of
+    such a string: a ``COMMIT`` among them ended the read-only transaction and what followed ran in
+    a new one, read-write - the table below was emptied and dropped while ``explain`` returned an
+    ordinary plan and said writing was prevented. Found by an independent review on 20 November
+    2026 (SDE-97). One statement, by the extended protocol, is refused before anything runs.
+    """
+    before = _rows(pg)
+    assert before == 200
+    issued = f'SELECT 1; COMMIT; DELETE FROM "{TABLE}"; DROP TABLE "{TABLE}"; SELECT 1'
+    with pytest.raises(QueryPlanRefused, match="cannot insert multiple commands"):
+        sde.explain(pg, issued)
+    assert _rows(pg) == before
+    # The control: the same table, one statement, is planned.
+    assert sde.explain(pg, f'SELECT count(*) FROM "{TABLE}"').plan
+
+
+@postgres
 def test_planning_does_not_call_a_volatile_function(pg: PostgresEngine) -> None:
     """``pg_sleep(3)`` in the target list costs nothing, so the plan is not the query."""
     started = time.perf_counter()
