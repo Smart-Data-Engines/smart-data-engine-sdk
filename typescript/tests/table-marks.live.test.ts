@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { buildModel, entity, loadMap, prepareSchema, Session, T } from '../src/index.js'
+import { checkTableMarks } from '../src/table-marks.js'
 import { fixture as engineFixture, type Database, type Dialect } from './_generation-engines.js'
 
 const LIVE = process.env['SDE_POSTGRES_DSN'] !== undefined && process.env['SDE_CLICKHOUSE_DSN'] !== undefined
@@ -190,4 +191,12 @@ describe.skipIf(!LIVE)("a session reads the marks of its map's tables", () => {
       await expect(Session.open(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(refused)
     })
   })
+})
+
+it("a copy its adapter gives no answer for is not there", async () => {
+  // An adapter of one's own whose tableFacts leaves a copy's name out: the name reaches no table.
+  const built = model()
+  const placement = map(built, 'postgres', { Account: [['e', 'acct'], [['e', 'acct_copy']]], Event: [['e', 'ev'], null] })
+  const silent = { tableFacts: async () => ({}) }
+  await expect(checkTableMarks(placement, { e: silent }, PROJECT)).rejects.toThrow(/is not there/)
 })

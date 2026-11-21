@@ -201,14 +201,15 @@ def native_staging_marker(native: Any, table: str) -> str | None:
 
 
 @pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+@pytest.mark.parametrize("other", ["another group", "another entity of the group"])
 def test_an_erasure_refuses_a_source_another_name_reaches(
-    source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    source: str, other: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One group's source named as another group's table - two engine names bound to one database
-    - would have an erasure delete the other group's rows: the erasure refuses a source's table
-    another name of the map reaches, before anything is read or deleted (§7r). The other name is
-    added to what the map's names reach, as a binding would show it; the control is the same
-    erasure without it."""
+    - or as another entity's of its own group would have an erasure delete the other's rows: the
+    erasure refuses a source's table another name of the map reaches, before anything is read or
+    deleted (§7r). The other name is added to what the map's names reach, as a binding would show
+    it; the control is the same erasure without it."""
     with fixture(source, tmp_path) as (executor, _plan, _old, roles, _src, target, model, _key):
         real = local_cutover.map_reach
 
@@ -218,7 +219,11 @@ def test_an_erasure_refuses_a_source_another_name_reaches(
             table = spot.source.layout.tables["Event"]
             for names in reach.values():
                 if any((n[0], n[1], n[3]) == ("Event", spot.source.id, table) for n in names):
-                    names.append(("Payment", "Payment@source", "Payment", "payments", "other"))
+                    names.append(
+                        ("Payment", "Payment@source", "Payment", "payments", "other")
+                        if other == "another group"
+                        else ("Event", spot.source.id, "Payment", table, spot.source.engine)
+                    )
             return reach
 
         request = ErasureRequest.build(model, "Event", [{"id": 1}])

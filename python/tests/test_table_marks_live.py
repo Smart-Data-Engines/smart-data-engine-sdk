@@ -22,6 +22,7 @@ from test_runtime_privileges_live import runtime_roles
 
 import sde
 from sde.errors import MigrationRefused
+from sde.table_marks import check_table_marks
 
 PROJECT = "3" * 32
 SHAPE = {
@@ -337,3 +338,33 @@ def test_a_session_s_ensure_schema_reads_the_marks_again(dialect: str) -> None:
         _unmark(operator, dialect, "acct_copy")
         with pytest.raises(MigrationRefused, match="is not one this library created for it"):
             session.ensure_schema()
+
+
+def test_a_copy_its_adapter_gives_no_answer_for_is_not_there() -> None:
+    """An adapter of one's own whose ``table_facts`` leaves a copy's name out: the name reaches no
+    table, and the copy is refused as not there - as the other libraries do - rather than with an
+    error from the missing answer."""
+    sde.clear_registry()
+
+    @sde.entity
+    class Account:
+        id: int
+        value: sde.Int32
+
+    @sde.entity
+    class Event:
+        id: int
+        value: sde.Int32
+
+    model = sde.build_model(Account, Event)
+    placement = _map(
+        model, "postgres",
+        {"Account": (("e", "acct"), ("e", "acct_copy")), "Event": (("e", "ev"), None)},
+    )
+
+    class Silent:
+        def table_facts(self, tables: Any) -> dict[str, Any]:
+            return {}
+
+    with pytest.raises(MigrationRefused, match="is not there"):
+        check_table_marks(placement, {"e": Silent()}, PROJECT)
