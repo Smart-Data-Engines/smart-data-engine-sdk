@@ -46,7 +46,8 @@ sde::Model two_groups() {
 }
 
 sde::PlacementMap place(const sde::Model& model, const Side& side,
-                        const std::map<std::string, Placed>& groups, int version = 1) {
+                        const std::map<std::string, Placed>& groups, int version = 1,
+                        int epoch = 1) {
   const std::string columns = R"({"id": ")" + sde::column_type("int64", side.dialect()) +
                               R"(", "value": ")" + sde::column_type("int32", side.dialect()) + R"("})";
   const auto material = [&](const std::string& engine, const std::string& id,
@@ -59,7 +60,8 @@ sde::PlacementMap place(const sde::Model& model, const Side& side,
                      R"(, "groups": {)";
   bool first = true;
   for (const auto& [group, placed] : groups) {
-    body += std::string(first ? "" : ", ") + "\"" + group + R"(": {"write_epoch": 1, "source": )" +
+    body += std::string(first ? "" : ", ") + "\"" + group + R"(": {"write_epoch": )" +
+            std::to_string(epoch) + R"(, "source": )" +
             material(placed.source.first, group + "@source", group, placed.source.second);
     first = false;
     if (!placed.copies.empty()) {
@@ -103,6 +105,17 @@ std::string refusal_of(const std::function<void()>& body) {
     return refused.what();
   }
   return "(no refusal)";
+}
+
+std::string definition(Side& side, const std::string& table) {
+  // What a statement of prepare_schema could change on the table: its constraints, its definition.
+  if (side.dialect() == "postgres") {
+    return side.scalar(
+        "SELECT coalesce(string_agg(conname || ':' || pg_get_constraintdef(oid), ';' ORDER BY "
+        "conname), '') FROM pg_constraint WHERE conrelid = to_regclass('\"" + table + "\"')");
+  }
+  return side.scalar("SELECT create_table_query FROM system.tables WHERE database = "
+                     "currentDatabase() AND name = '" + table + "'");
 }
 
 class TableMarks : public ::testing::TestWithParam<std::string> {};
@@ -190,7 +203,7 @@ TEST_P(TableMarks, TwoGroupsSourcesReachingOneTableAreRefused) {
   const sde::Model model = two_groups();
   const std::map<std::string, sde::Engine*> engines{{"a", &side->engine()}, {"b", &side->engine()}};
   const std::string refused =
-      "a source's table holds its group alone, and two names of the map reach this one";
+      "a source's table holds one entity of its group alone, and two names of the map reach this one";
   for (const std::string other : {"b", "a"}) {
     const sde::PlacementMap map =
         place(model, *side, {{"Account", {{"a", "shared"}, {}}}, {"Event", {{other, "shared"}, {}}}});
@@ -202,6 +215,68 @@ TEST_P(TableMarks, TwoGroupsSourcesReachingOneTableAreRefused) {
               std::string::npos)
         << other;
   }
+}
+
+TEST_P(TableMarks, PrepareSchemaRefusesAMarkedCopyNamedAsASourceBeforeItsFirstStatement) {
+  // The next map names Account's marked copy as Event's source, at a new generation: refused
+  // before Event's fence is written on the table.
+  const std::unique_ptr<Side> side = side_of(GetParam());
+  SDE_REQUIRE_SIDE(side, GetParam());
+  const sde::Model model = two_groups();
+  const std::map<std::string, sde::Engine*> engines{{"e", &side->engine()}};
+  const sde::PlacementMap first = place(model, *side, {{"Account", {{"e", "acct"}, {{"e", "shared"}}}},
+                                                       {"Event", {{"e", "ev"}, {}}}});
+  sde::prepare_schema(model, first, engines, kProject);
+  const std::string before = definition(*side, "shared");
+  const sde::PlacementMap second = place(
+      model, *side, {{"Account", {{"e", "acct"}, {}}}, {"Event", {{"e", "shared"}, {}}}}, 2, 2);
+  EXPECT_NE(refusal_of([&] { sde::prepare_schema(model, second, engines, kProject); })
+                .find("carries a copy's mark"),
+            std::string::npos);
+  EXPECT_EQ(definition(*side, "shared"), before);
+}
+
+TEST_P(TableMarks, ASessionsEnsureSchemaReadsTheMarksAgain) {
+  const std::unique_ptr<Side> side = side_of(GetParam());
+  SDE_REQUIRE_SIDE(side, GetParam());
+  const sde::Model model = two_groups();
+  const std::map<std::string, sde::Engine*> engines{{"e", &side->engine()}};
+  const sde::PlacementMap map = place(model, *side, {{"Account", {{"e", "acct"}, {{"e", "acct_copy"}}}},
+                                                     {"Event", {{"e", "ev"}, {}}}});
+  sde::prepare_schema(model, map, engines, kProject);
+  sde::Session session(model, map, engines, with_project());
+  unmark(*side, "acct_copy");
+  EXPECT_NE(refusal_of([&] { session.ensure_schema(); }).find("is not one this library created for it"),
+            std::string::npos);
+}
+
+TEST_P(TableMarks, TwoEntitiesOfOneGroupInOneSourceTableAreRefused) {
+  // Event's writes would replace Account's rows, and an erasure of one entity's subject would delete
+  // the other's.
+  const std::unique_ptr<Side> side = side_of(GetParam());
+  SDE_REQUIRE_SIDE(side, GetParam());
+  const sde::Model model = sde::load_neutral_model(R"({"atomic": [["Account", "Event"]], "entities": [
+      {"name": "Account", "fields": [{"name": "id", "type": "int64"}, {"name": "value", "type": "int32"}],
+       "key": ["id"]},
+      {"name": "Event", "fields": [{"name": "id", "type": "int64"}, {"name": "value", "type": "int32"}],
+       "key": ["id"]}]})");
+  const std::string columns = R"({"id": ")" + sde::column_type("int64", side->dialect()) +
+                              R"(", "value": ")" + sde::column_type("int32", side->dialect()) + R"("})";
+  sde::LoadOptions options;
+  options.model = &model;
+  const sde::PlacementMap map = sde::load_map(
+      R"({"contract": 4, "project_id": ")" + kProject + R"(", "model_version": ")" + model.version() +
+          R"(", "map_version": 1, "groups": {"Account": {"write_epoch": 1, "source": {"engine": "e",
+          "id": "Account@source", "layout": {"tables": {"Account": "shared", "Event": "shared"},
+          "columns": {"Account": )" + columns + R"(, "Event": )" + columns + "}}}}}}",
+      options);
+  const std::map<std::string, sde::Engine*> engines{{"e", &side->engine()}};
+  const std::string refused = "a source's table holds one entity of its group alone";
+  EXPECT_NE(refusal_of([&] { sde::prepare_schema(model, map, engines, kProject); }).find(refused),
+            std::string::npos);
+  EXPECT_NE(refusal_of([&] { const sde::Session session(model, map, engines, with_project()); })
+                .find(refused),
+            std::string::npos);
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, TableMarks, ::testing::Values("postgres", "clickhouse"),

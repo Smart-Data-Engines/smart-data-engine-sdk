@@ -365,9 +365,13 @@ class PostgresEngine:
             return found
         quoted = {_quote(name): name for name in names}
         with self._cx.cursor() as cur:
+            # A server is its system identifier and the start of its postmaster: servers cloned
+            # from one data directory share the identifier, and their OIDs come from one counter.
             cur.execute(
-                "SELECT c.system_identifier::text, d.oid::text FROM pg_control_system() c "
-                "CROSS JOIN pg_database d WHERE d.datname = current_database()"
+                "SELECT c.system_identifier::text || '@' || to_char(pg_postmaster_start_time() "
+                "AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US'), d.oid::text "
+                "FROM pg_control_system() c CROSS JOIN pg_database d "
+                "WHERE d.datname = current_database()"
             )
             server, database = (str(value) for value in cur.fetchall()[0])
             cur.execute(

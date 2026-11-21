@@ -48,13 +48,23 @@ void check_table_marks(const PlacementMap& placement, const std::map<std::string
                              "mark a copy's table carries (table_facts, format contract §7r)");
     }
   }
+  // A name the adapter gave no answer for reaches no table.
+  const TableFacts none{};
+  const auto facts_of = [&](const Named& named) -> const TableFacts* {
+    const auto engine_facts = facts.find(named.engine);
+    if (engine_facts == facts.end()) return nullptr;
+    const auto found = engine_facts->second.find(named.table);
+    return found == engine_facts->second.end() ? &none : &found->second;
+  };
   std::map<std::string, std::vector<const Named*>> reach;
   for (const Named& named : ordered) {
-    const auto engine_facts = facts.find(named.engine);
-    if (engine_facts == facts.end()) continue;
-    const auto found = engine_facts->second.find(named.table);
-    if (found == engine_facts->second.end()) continue;
-    const TableFacts& fact = found->second;
+    // Before prepare_schema creates the copies, a copy's name may reach a table of a later schema of
+    // the search path, where the copy is not created: its own check, and this one after the last
+    // statement, read the copy where it is.
+    if (named.copy && !copies_present) continue;
+    const TableFacts* answer = facts_of(named);
+    if (answer == nullptr) continue;
+    const TableFacts& fact = *answer;
     if (named.copy) {
       if (!fact.keys.empty() && !owned_copy_marker(project_id, named.group, named.table, fact.mark)) {
         throw MigrationRefused(copy_refusal(named.table, fact.mark));
@@ -72,24 +82,21 @@ void check_table_marks(const PlacementMap& placement, const std::map<std::string
     for (const std::string& key : keys) reach[key].push_back(&named);
   }
   for (const Named& named : ordered) {
-    const auto engine_facts = facts.find(named.engine);
-    if (engine_facts == facts.end()) continue;
-    const auto found = engine_facts->second.find(named.table);
-    if (found == engine_facts->second.end()) continue;
-    std::vector<std::string> keys = found->second.keys;
+    if (named.copy && !copies_present) continue;
+    const TableFacts* answer = facts_of(named);
+    if (answer == nullptr) continue;
+    std::vector<std::string> keys = answer->keys;
     std::sort(keys.begin(), keys.end());
     for (const std::string& key : keys) {
       for (const Named* other : reach[key]) {
-        const bool same = other->group == named.group &&
-                          other->materialization == named.materialization &&
-                          other->table == named.table;
-        if (!same) {
+        if (other != &named) {
           const std::string whose = named.copy ? "copy's" : "source's";
           const std::string alone = named.copy ? "that copy" : "its group";
           throw MigrationRefused("the " + whose + " table " + python_repr(named.table) + " of " +
-                                 named.group + " is also " + other->group + "'s table " +
-                                 python_repr(other->table) + " for " + other->entity + " in " +
-                                 other->engine + ": a " + whose + " table holds " + alone +
+                                 named.group + " for " + named.entity + " is also " +
+                                 other->group + "'s table " + python_repr(other->table) + " for " +
+                                 other->entity + " in " + other->engine + ": a " + whose +
+                                 " table holds one entity of " + alone +
                                  " alone, and two names of the map reach this one");
         }
       }

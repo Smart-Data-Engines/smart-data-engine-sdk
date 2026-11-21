@@ -273,8 +273,11 @@ std::map<std::string, TableFacts> PostgresEngine::table_facts(
   for (const std::string& table : tables) found.try_emplace(table);
   if (found.empty()) return found;
   try {
+    // A server is its system identifier and the start of its postmaster: servers cloned from one
+    // data directory share the identifier, and their OIDs come from one counter.
     const Result server = cx().execute(
-        "SELECT c.system_identifier::text, d.oid::text FROM pg_control_system() c "
+        "SELECT c.system_identifier::text || '@' || to_char(pg_postmaster_start_time() AT TIME "
+        "ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US'), d.oid::text FROM pg_control_system() c "
         "CROSS JOIN pg_database d WHERE d.datname = current_database()");
     // Every name in one statement, each as the session's statements resolve it: the search path.
     std::string values;

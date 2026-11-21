@@ -36,10 +36,10 @@ def check_table_marks(
 
     For the groups with a write generation: each copy's table carries this copy's mark, each
     source's table carries no copy's mark, and no copy's or source's table is reached by another
-    name of the map. One ``table_facts`` a binding. ``copies_present`` is false before
-    ``prepare_schema`` creates the copies: a copy's table that is not there yet is not refused
-    then. A copy on an engine whose adapter cannot read marks is refused; a source there is taken,
-    as sources are.
+    name of the map - another group's, or another entity's of its own. One ``table_facts`` a
+    binding; a name the adapter gives no answer for reaches no table. ``copies_present`` is false
+    before ``prepare_schema`` creates the copies: the copies are read after it instead. A copy on an
+    engine whose adapter cannot read marks is refused; a source there is taken, as sources are.
     Groups in name order, materialisations in document order, entities in name order; the marks
     before the names.
     """
@@ -75,10 +75,13 @@ def check_table_marks(
     ]
     reach: dict[tuple[str, ...], list[tuple[str, _Named]]] = {}
     for engine, entry in ordered:
-        if engine not in facts:
-            continue
         group, _material, _entity, table, copy = entry
-        keys, mark = facts[engine][table]
+        if engine not in facts or (copy and not copies_present):
+            # Before prepare_schema creates the copies, a copy's name may reach a table of a later
+            # schema of the search path, where the copy is not created: its own check, and this
+            # one after the last statement, read the copy where it is.
+            continue
+        keys, mark = facts[engine].get(table, (frozenset(), None))
         if copy:
             if keys and not owned_copy_marker(project_id, group, table, mark):
                 raise MigrationRefused(copy_refusal(table, mark))
@@ -92,15 +95,16 @@ def check_table_marks(
         for key in sorted(keys):
             reach.setdefault(key, []).append((engine, entry))
     for engine, entry in ordered:
-        group, materialisation, _entity, table, copy = entry
-        if engine not in facts:
+        group, _materialisation, entity, table, copy = entry
+        if engine not in facts or (copy and not copies_present):
             continue
-        for key in sorted(facts[engine][table][0]):
+        for key in sorted(facts[engine].get(table, (frozenset(), None))[0]):
             for other_engine, other in reach.get(key, ()):
-                if (other[0], other[1], other[3]) != (group, materialisation, table):
+                if other != entry:
                     whose, alone = ("copy's", "that copy") if copy else ("source's", "its group")
                     raise MigrationRefused(
-                        f"the {whose} table {table!r} of {group} is also {other[0]}'s table "
-                        f"{other[3]!r} for {other[2]} in {other_engine}: a {whose} table holds "
-                        f"{alone} alone, and two names of the map reach this one"
+                        f"the {whose} table {table!r} of {group} for {entity} is also "
+                        f"{other[0]}'s table {other[3]!r} for {other[2]} in {other_engine}: a "
+                        f"{whose} table holds one entity of {alone} alone, and two names of the "
+                        f"map reach this one"
                     )

@@ -178,24 +178,26 @@ def refuse_another_name(
             )
 
 
-def refuse_shared_source(reach: Reach, group: str, material: str, table: str) -> None:
+def refuse_shared_source(
+    reach: Reach, group: str, material: str, entity: str, table: str
+) -> None:
     """Refuse a source's table that another name of the map reaches (format contract §7r).
 
     An erasure deletes from a source's table: one group's source named as another group's table -
-    two engine names bound to one database - would have it delete the other group's rows. A table
-    that is not there reaches nothing.
+    two engine names bound to one database - or as another entity's of its own group would have it
+    delete the other's rows. A table that is not there reaches nothing.
     """
-    this = (group, material, table)
+    this = (group, material, entity, table)
     for key in sorted(reach):
         names = reach[key]
-        if all((name, other, named) != this for name, other, _, named, _ in names):
+        if all((name, other, ent, named) != this for name, other, ent, named, _ in names):
             continue
-        for name, other, entity, named, engine in names:
-            if (name, other, named) != this:
+        for name, other, ent, named, engine in names:
+            if (name, other, ent, named) != this:
                 raise MigrationRefused(
-                    f"the source's table {table!r} of {group} is also {name}'s table {named!r} "
-                    f"for {entity} in {engine}: a source's table holds its group alone, and two "
-                    f"names of the map reach this one"
+                    f"the source's table {table!r} of {group} for {entity} is also {name}'s "
+                    f"table {named!r} for {ent} in {engine}: a source's table holds one entity "
+                    f"of its group alone, and two names of the map reach this one"
                 )
 
 
@@ -317,7 +319,7 @@ class LocalCutover:
         beside no staging, cutover or index build; ``stop_after`` bounds a run to that many
         chunks an entity.
         """
-        from .migration import backfill
+        from .migration import backfill_view
 
         self._owner()
         with self.store.lock():
@@ -356,7 +358,7 @@ class LocalCutover:
                             self._copy_owned(current, material.id, group, table, state, reach)
             context = InspectionContext(self.model, current, self.engines, self.project_id)
             return [
-                backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
+                backfill_view(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
                 for group in groups
             ]
 
@@ -488,7 +490,9 @@ class LocalCutover:
                         table = material.layout.tables[request.entity]
                         self._copy_owned(erased, material.id, name, table, state, reach)
                 source = spot.source
-                refuse_shared_source(reach, name, source.id, source.layout.tables[request.entity])
+                refuse_shared_source(
+                    reach, name, source.id, request.entity, source.layout.tables[request.entity]
+                )
             plan = plan_erasure(self, request)
             if not execute:
                 return plan

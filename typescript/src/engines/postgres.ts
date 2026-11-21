@@ -499,8 +499,11 @@ export class PostgresEngine {
       for (const name of names) found[name] = { keys: [], mark: null }
       if (names.length === 0) return found
       const quoted = new Map(names.map((name) => [QUOTE['postgres']!(name), name]))
+      // A server is its system identifier and the start of its postmaster: servers cloned from one
+      // data directory share the identifier, and their OIDs come from one counter.
       const server = (await this.run(
-        'SELECT c.system_identifier::text AS server, d.oid::text AS database FROM pg_control_system() c ' +
+        "SELECT c.system_identifier::text || '@' || to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC', " +
+          "'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS server, d.oid::text AS database FROM pg_control_system() c " +
           'CROSS JOIN pg_database d WHERE d.datname = current_database()',
       )).rows[0] as { server: string; database: string }
       const result = await this.run(

@@ -31,8 +31,9 @@ type Named = { group: string; materialization: string; entity: string; table: st
  * Refuse a map whose tables are not what it calls them (format contract §7r), as the reference
  * does: for the groups with a write generation, each copy's table carries this copy's mark, each
  * source's table carries no copy's mark, and no copy's or source's table is reached by another name
- * of the map.
- * `copiesPresent` is false before `prepareSchema` creates the copies.
+ * of the map - another group's, or another entity's of its own. A name the adapter gives no answer
+ * for reaches no table. `copiesPresent` is false before `prepareSchema` creates the copies: the
+ * copies are read after it instead.
  */
 export async function checkTableMarks(
   placement: PlacementMap,
@@ -69,9 +70,18 @@ export async function checkTableMarks(
       )
     }
   }
+  // A name the adapter gave no answer for reaches no table.
+  const factsOf = (engine: string, table: string): TableFacts | undefined => {
+    const answers = facts.get(engine)
+    return answers === undefined ? undefined : (answers[table] ?? { keys: [], mark: null })
+  }
   const reach = new Map<string, { engine: string; named: Named }[]>()
   for (const { engine, named } of ordered) {
-    const found = facts.get(engine)?.[named.table]
+    // Before prepareSchema creates the copies, a copy's name may reach a table of a later schema of
+    // the search path, where the copy is not created: its own check, and this one after the last
+    // statement, read the copy where it is.
+    if (named.copy && !copiesPresent) continue
+    const found = factsOf(engine, named.table)
     if (found === undefined) continue
     if (named.copy) {
       if (found.keys.length > 0 && !ownedCopyMarker(projectId, named.group, named.table, found.mark)) {
@@ -89,18 +99,17 @@ export async function checkTableMarks(
     for (const key of [...found.keys].sort(compareCodePoints)) reach.set(key, [...(reach.get(key) ?? []), { engine, named }])
   }
   for (const { engine, named } of ordered) {
-    const found = facts.get(engine)?.[named.table]
+    if (named.copy && !copiesPresent) continue
+    const found = factsOf(engine, named.table)
     if (found === undefined) continue
     for (const key of [...found.keys].sort(compareCodePoints)) {
       for (const other of reach.get(key) ?? []) {
-        const same = other.named.group === named.group && other.named.materialization === named.materialization &&
-          other.named.table === named.table
-        if (!same) {
+        if (other.named !== named) {
           const [whose, alone] = named.copy ? ["copy's", 'that copy'] : ["source's", 'its group']
           throw new MigrationRefused(
-            `the ${whose} table '${named.table}' of ${named.group} is also ${other.named.group}'s table ` +
-              `'${other.named.table}' for ${other.named.entity} in ${other.engine}: a ${whose} table holds ` +
-              `${alone} alone, and two names of the map reach this one`,
+            `the ${whose} table '${named.table}' of ${named.group} for ${named.entity} is also ` +
+              `${other.named.group}'s table '${other.named.table}' for ${other.named.entity} in ${other.engine}: a ` +
+              `${whose} table holds one entity of ${alone} alone, and two names of the map reach this one`,
           )
         }
       }

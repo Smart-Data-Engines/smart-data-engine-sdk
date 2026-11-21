@@ -224,7 +224,8 @@ def test_an_erasure_refuses_a_source_another_name_reaches(
         request = ErasureRequest.build(model, "Event", [{"id": 1}])
         before = copy_rows(roles, target)
         monkeypatch.setattr(local_cutover, "map_reach", shared)
-        with pytest.raises(MigrationRefused, match="a source's table holds its group alone"):
+        refused = "a source's table holds one entity of its group alone"
+        with pytest.raises(MigrationRefused, match=refused):
             executor.erase(request, execute=True)
         assert copy_rows(roles, target) == before
         assert executor.store.read()["execution"] is None
