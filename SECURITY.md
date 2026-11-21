@@ -10,8 +10,35 @@ trust that a mailbox is being read. If you would rather use email,
 
 Either way, please do not open a public issue for a vulnerability.
 
-We will acknowledge within three working days and tell you what we intend to do and when. If we
-disagree that something is a vulnerability we will say so and explain, rather than going quiet.
+## What happens after you report
+
+| Step | Target |
+|---|---|
+| Acknowledgement | 3 working days |
+| Assessment: validity, severity (CVSS v3.1 base score), affected versions, plan | 10 working days after the acknowledgement |
+| Fixed release, critical (9.0-10.0) | 14 days after we confirm it |
+| Fixed release, high (7.0-8.9) | 30 days |
+| Fixed release, medium (4.0-6.9) | 90 days |
+| Fixed release, low | the next regular release |
+
+If we are going to miss a target, you hear that from us before it passes, with the reason and a new
+date. If we disagree that something is a vulnerability we will say so and explain, rather than
+going quiet.
+
+## Disclosure
+
+We publish a GitHub Security Advisory when the fixed release is on the registry, with a CVE where
+one applies, and credit you unless you would rather we did not. Please keep the details private
+until then, or for 90 days from your report, whichever comes first; if a fix is close, we may ask
+you for more time. Subscribers of the control plane are told by e-mail no later than the advisory.
+
+## Research in good faith
+
+If you follow this policy, we will not take legal action against you for your research. Test
+against your own installation of the libraries and the operator, and the hosted panel only with
+your own account; do not access data beyond what shows the problem; do not degrade our services
+(no load or denial-of-service testing of smartdataengines.com, the panel or our hosts); no social
+engineering. There is no bug bounty.
 
 ## What is in scope
 
@@ -38,9 +65,9 @@ their databases, so the interesting questions are about what it does with what i
 
 ## Supported versions
 
-Security fixes go into the latest release of each library and into `main`. A fix ships as a patch
-release of the affected library, and it is announced as a GitHub Security Advisory once that release
-is on the registry, with a CVE where one applies.
+Security fixes go into the latest minor release of each library and into `main`, and into the
+previous minor release for 6 months after its successor is released. A fix ships as a patch release
+of the affected library.
 
 ## What is deliberately not a vulnerability
 
