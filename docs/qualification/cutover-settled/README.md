@@ -209,6 +209,29 @@ So it is not added now. By what the pause measurably spends, the next steps are,
    side's rows by key, ClickHouse's under `FINAL`. Both walks read the rows that carry G on both
    sides; reading the two side by side in key order, as a cutover without a settle reads its two
    sides, would look up only the keys one side lacks.
+
+   *Measured after this record*, with the two sides read side by side (on 20 November 2026, the
+   same laptop and engines, two million rows, `settled-written`; `main` at `b562e49` and the change
+   at `95f81fc`, run by run in turn, two rounds of each; a desktop indexer kept one of the four
+   hardware threads busy throughout, the same for both - [`side-by-side/`](side-by-side/)):
+
+   | move | written since the settle | pause before, s | pause after, s | repair before, s | repair after, s |
+   |---|---|---|---|---|---|
+   | PostgreSQL → ClickHouse | 2 000 | 3.70-5.07 | 2.93-3.00 | 0.54-0.69 | 0.52-0.54 |
+   | PostgreSQL → ClickHouse | 100 000 | 10.30-11.10 | 6.09-6.15 | 7.89-8.34 | 3.32-3.65 |
+   | ClickHouse → PostgreSQL | 2 000 | 1.27-1.79 | 1.23-1.64 | 0.39-0.40 | 0.30-0.46 |
+   | ClickHouse → PostgreSQL | 100 000 | 8.54-9.36 | 5.00-8.15 | 7.20-7.62 | 3.17-6.48 |
+
+   The statements say why. With 100 000 rows since, the lookups by key fell from 220 statements to
+   40 in ClickHouse and from 100 to 10 in PostgreSQL from PostgreSQL into ClickHouse, and from 200
+   to 20 and from 110 to 20 the other way; the pages read in key order, 100 on each side, are the
+   same ([`side-by-side/base-statements-since50.json`](side-by-side/base-statements-since50.json),
+   [`side-by-side/branch-statements-since50.json`](side-by-side/branch-statements-since50.json)).
+   What is still looked up is the tenth of the rows the copy lacked, which the repair then writes.
+   With 2 000 rows since there are 2 pages a side and little to gain. One run of the change from
+   ClickHouse with 100 000 rows since spent 6.48 s in the repair where its other run spent 3.17 s
+   and the probe of its statements 4.39 s; nothing in what it sent differs, so it is reported as it
+   came rather than averaged away.
 3. The index above: 0.15 to 0.94 s of PostgreSQL's reads at two million rows.
 
 ## A PostgreSQL barrier waits for an autovacuum

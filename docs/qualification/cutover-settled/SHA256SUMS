@@ -12,4 +12,14 @@ afd0476bb58bdfcc1560342eb535d7bdccf93d31b361d708150e971b2cac6b0d  ./final/statem
 acfa9c2725f938db6a7ece4f65f5e4af6f9c9b7f2c7c1940647c32b5df16dfb9  ./final/statements-2m.log
 d0dc2e6d5d188f6f28efb366b0d64a10aec50ffe69fc65e20df7aa5d18037b36  ./measure_settled.py
 b095d97b7acd576725e172ab5627394953158ba107548ec7953a2987ea5ce335  ./probe_pause_statements.py
+f89ac23924b0dc20037f01eb8d70f8699780d2abe913f1aa1b845103aef15088  ./side-by-side/base-since1-r1.json
+c0d6f46f80645e3e672bdd1ff5ca6f2fe44e35c65b1b3e8e31d64d89cbd70b64  ./side-by-side/base-since1-r2.json
+415442fe1c4d588174988dbda9da57bff6e75e03b1dfaf678ca08ae9c5113f2c  ./side-by-side/base-since50-r1.json
+58aa12388965ebf774305eb513a13a4d163de9ef8e05d611dc3c535d89466a6a  ./side-by-side/base-since50-r2.json
+fb2f9f749bd3d9385d31978f10047d197d806eecc1e4d84d9bbca3fb223e6137  ./side-by-side/base-statements-since50.json
+3a9d8da668b32ad60448c4a0e076b6df57a28ae4c17af9f60d6771aced7f6fe5  ./side-by-side/branch-since1-r1.json
+2e6337ecab2573ddef848a366b253b7782c33aae9d903dcc0f46519e5f2d8fdc  ./side-by-side/branch-since1-r2.json
+0aec56877a5bffbec9320d9e43f616d85507c2e197bbc63721d9504d2b3243cf  ./side-by-side/branch-since50-r1.json
+885e2c4abec1bc734c8bffdb7aaf588a5848e3ea3d7387fee0ffee0c75cb35b3  ./side-by-side/branch-since50-r2.json
+2079d0990a84ab3e6493ff9af6d73a6ab30bb2ae29b9a1c1a9f34035923d6c96  ./side-by-side/branch-statements-since50.json
 f042ee9fe2ed6e161eca1ce50fb0a4868de768c9a9b365aeaf1fb33252aadd81  ./summarise.py
