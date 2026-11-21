@@ -27,6 +27,15 @@ both sides, as before; where the pause repaired rows it now also counts the copy
 before the repair, which the second pass did not see again (ten rows the copy held otherwise, in
 pages of five: 4 pages where it was 2).
 
+**Changed: the security policy has targets, a disclosure rule and a support window**
+([`SECURITY.md`](SECURITY.md)). After the acknowledgement within three working days: an assessment
+within ten, and a fixed release within 14, 30 or 90 days of confirming a critical, high or medium
+vulnerability (CVSS v3.1), a low one in the next regular release; an advisory when the fix is on
+the registry, with credit, and a statement on research in good faith. The previous minor release
+of each library gets security fixes for 6 months after its successor. And where an erasure's
+receipt stays: with you, never deleted by the operator and never taken by the control plane
+([erasure](docs/erasure.md#keeping-the-receipt)).
+
 **Fixed: a copy's table is one the library created and marked, and the operator writes to no
 other** (all three libraries' `prepare_schema`, and the operator;
 [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
