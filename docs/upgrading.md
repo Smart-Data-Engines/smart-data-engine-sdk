@@ -257,9 +257,22 @@ when it opens.
 
 A map you write by hand, of contract 4 or later, may not name a copy's table for anything else too
 - another group's source or copy, or another entity of the copy: `load_map` refuses it.
-Nor may two groups' sources be one table, by one name or by two engine names bound to one
-database: a session and `prepare_schema` refuse a source's table another name of the map reaches,
-and so does the operator's erasure.
+Nor may two groups' sources be one table, or one table hold two entities of a group's source, by
+one name or by two engine names bound to one database: a session and `prepare_schema` refuse a
+source's table another name of the map reaches, and so does the operator's erasure. A source on an
+engine whose adapter does not say what its names reach is not held to this.
+
+`sde.backfill` (Python) takes a session only: a call with an `InspectionContext` or another view of
+a map is refused, since only a session read the marks of the map's tables when it opened. Open a
+session on the map and pass it.
+
+Upgrade the operator (`sde-operator`, Python) before, or with, the application's library. A copy
+marked by this release's `prepare_schema` and then made the source by an earlier operator's
+cutover keeps the copy's mark, and a session of this release refuses that source.
+
+C++: a session keeps its own copies of the model and the map it opened on. A map loaded into the
+same variable afterwards does not reach it - open a new session for a new map, as before; the
+model and the map need not outlive the session any more.
 
 Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
 no other* and *Fixed: a session reads the marks of its map's tables when it opens*.

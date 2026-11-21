@@ -2576,7 +2576,8 @@ keeps each staging it completed, also checks that the stage was for G.
   binding, the table every name of the map reaches through the binding of its engine, and refuses
   a copy that another name reaches: two engine names bound to one database, or an Elasticsearch
   alias, name one table twice where `load_map` sees two. An erasure, which deletes from sources
-  too, refuses a source's table another name reaches the same way, before anything is deleted.
+  too, refuses a source's table another name reaches - another group's, or another entity's of its
+  own group - the same way, before anything is deleted.
 - A copy provisioned before this section existed carries no mark and is refused; it is made
   again. A mark is never written on an existing table: it would say the library created what a map
   merely named, and the name is the one thing in a map a library cannot check.
@@ -2584,25 +2585,38 @@ keeps each staging it completed, also checks that the stage was for G.
   or copy - is refused when it loads (§7, `errors/151`). The mark cannot refuse it: the table is
   this project's, and one of the two namings is its own.
 - **A session reads the marks of its map's tables when it opens.** A session of a map with write
-  generations - and its `ensure_schema` - reads every table of the map through the binding of its
-  engine, one look-up a binding (`table_facts`: each name's table as the session's statements reach
-  it, by identity, and the mark it carries), and refuses before it writes, with `MigrationRefused`:
-  a copy's table without its own mark (`is not one this library created for it`); a source's table
-  with a copy's mark (`carries a copy's mark`: a copy becomes the source only through a cutover,
-  which writes a source's mark in its place); and a copy's or a source's table another name of the
-  map reaches (`two names of the map reach this one`: two groups' sources of one table would take
-  both groups' rows, and an erasure of one group's subject would delete the other's). Groups in name
-  order, materialisations in document order, entities in name order; the marks before the names.
-  `prepare_schema` refuses the same, before its first statement for the tables already there and
-  after its last for the tables it created. `sde.backfill` writes through a session, so only to
-  copies its session read. A copy on an engine whose adapter cannot read marks is refused; a source
-  there is taken, as sources are.
-- What is not closed yet. A staging's mark carries no group, so a session and `prepare_schema` take
-  any staging's mark of this project on a table of a staged copy's name, where the operator checks
-  the stage's group in its own records; a staging's mark with its group is the next step of this
-  section. A source no other name of the map reaches, without a copy's mark, is taken as the map
-  names it - a table of the client's from before SDE is one - so a map naming as a group's source
-  a table the client keeps for something else, of the group's shape, reaches it.
+  generations - and its `ensure_schema` - reads every table of its groups with a write generation
+  through the binding of its engine (`table_facts`: each name's table as the session's statements
+  reach it, by identity, and the mark it carries; one look-up of the catalogue a binding in
+  PostgreSQL and ClickHouse, two requests a name in Elasticsearch; a name the adapter gives no
+  answer for reaches no table), and refuses before it writes, with `MigrationRefused`: a copy's
+  table without its own mark (`is not one this library created for it`); a source's table with a
+  copy's mark, `sde.copy1` (`carries a copy's mark`: a copy becomes the source only through a
+  cutover, which writes a source's mark in its place); and a copy's or a source's table another
+  name of the map reaches - another group's, or another entity's of its own group (`two names of
+  the map reach this one`: two groups' sources of one table would take both groups' rows, and an
+  erasure of one subject would delete the other's). Groups in name order, materialisations in
+  document order, entities in name order; the marks before the names. `prepare_schema` refuses the
+  same: before its first statement for the sources already there, and after its last for every
+  table, the copies where it created them - before it, a copy's name may reach a table of a later
+  schema of the search path, where the copy is not created. `sde.backfill` writes through a session
+  only, so only to copies its session read; another view of a map is refused. A copy on an engine
+  whose adapter cannot read marks is refused; a source there is taken, as sources are, and is not
+  held to the rule of names. A PostgreSQL table's identity is the server's system identifier, the
+  start of its postmaster, the database and the table: two servers cloned from one data directory
+  share the identifier and hand out object ids from one counter.
+- What is not closed yet:
+  - A staging's mark carries no group, so a session and `prepare_schema` take any staging's mark of
+    this project on a table of a staged copy's name, where the operator checks the stage's group in
+    its own records. And a source's table with a staging's mark, `sde.stage1`, is taken: a cutover
+    of an operator before this section left that mark on the staged copy it promoted, and a session
+    cannot tell that source from a staged copy a forged map names as one. A staging's mark with its
+    group, refused on a source, with the operator writing a source's mark where its records show the
+    promotion, is the next step of this section.
+  - A source's mark of another group is taken: a group renamed in the model keeps its source.
+  - A source no other name of the map reaches, without a copy's mark, is taken as the map names it -
+    a table of the client's from before SDE is one - so a map naming as a group's source a table the
+    client keeps for something else, of the group's shape, reaches it.
 - A map below contract 4 carries no project and no write generation, so neither a fence nor a mark
   applies to it, and the libraries take it as they always did - also where a project is configured,
   since the verification protocol (§7b) is pinned on such maps. A forged map of an older contract

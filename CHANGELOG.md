@@ -15,17 +15,22 @@ and `sde.backfill` through it - did not, so a forged map could still direct the 
 to a table of the project of a copy's shape: a marked copy a previous map named as another group's
 source, or a copy that a second engine name bound to the same database reaches as another group's
 table, which `prepare_schema` marked and took both ways. A session of a map with write generations
-now reads every table of its map through its bindings when it opens, one look-up a binding, and
-refuses before it writes a copy's table without its own mark, a source's table with a copy's mark,
-and a copy's or a source's table another name of the map reaches; `prepare_schema` refuses the
-same, before its first statement and after its last. Two groups' sources reaching one table - by
-two engine names, or by one name the loader has no rule against for sources - would have taken
-both groups' rows, and the operator's erasure, which deletes from sources too, now refuses that
-source as well before anything is deleted. Found by the second independent review of copy
-ownership.
+now reads the tables of its groups with a write generation through its bindings when it opens, and
+refuses before it writes a copy's table without its own mark, a source's table with a copy's mark
+(`sde.copy1`), and a copy's or a source's table another name of the map reaches - another
+group's, or another entity's of its own group; `prepare_schema` refuses the same, before its first
+statement for the sources and after its last for every table. Two groups' sources reaching one
+table, or two entities of a group named for one table, would have mixed their rows, and the
+operator's erasure, which deletes from sources too, now refuses such a source before anything is
+deleted. Found by the second independent review of copy ownership; a third review of this change
+found the rule of entities, the cloned PostgreSQL servers and the two items below.
 **Breaking** for a copy made before copies were marked, which a session now refuses too (make it
-again before the application's library is upgraded), and for an adapter of your own holding a copy,
-which says what each name reaches ([upgrading](docs/upgrading.md)).
+again before the application's library is upgraded), for an adapter of your own holding a copy,
+which says what each name reaches, and for a call of `sde.backfill` with anything but a session -
+an `InspectionContext` reads no mark and is refused ([upgrading](docs/upgrading.md)). In C++ a
+session now keeps its own copies of the model and the map: it held references, so a map loaded into
+the same variable later took over an open session without any of its checks, and left the reads it
+had prepared pointing into freed memory.
 
 **Fixed: a copy's table is one the library created and marked, and the operator writes to no
 other** (all three libraries' `prepare_schema`, and the operator;
