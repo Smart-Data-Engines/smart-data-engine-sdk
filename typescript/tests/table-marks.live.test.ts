@@ -4,9 +4,9 @@
  *
  * Two independent reviews of copy ownership wrote over another group's rows through a session that
  * read no mark. A session of a map with write generations now refuses, before it writes: a copy's
- * table without its own mark, a source's table with a copy's mark, and a copy's table that another
- * name of the map reaches. `prepareSchema` refuses the same. The control: a map provisioned as
- * `prepareSchema` provisions it opens.
+ * table without its own mark, a source's table with a copy's mark, and a copy's or a source's table
+ * that another name of the map reaches. `prepareSchema` refuses the same. The control: a map
+ * provisioned as `prepareSchema` provisions it opens.
  */
 import { describe, expect, it } from 'vitest'
 import { buildModel, entity, loadMap, prepareSchema, Session, T } from '../src/index.js'
@@ -97,6 +97,22 @@ describe.skipIf(!LIVE)("a session reads the marks of its map's tables", () => {
       const placement = map(built, dialect, { Account: [['a', 'acct'], [['b', 'shared']]], Event: [['a', 'shared'], null] })
       await expect(prepareSchema(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(/carries a copy's mark/)
       await expect(Session.open(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(/carries a copy's mark/)
+    })
+  })
+
+  it.each([
+    ['postgres', 'b'], ['clickhouse', 'b'], ['postgres', 'a'], ['clickhouse', 'a'],
+  ] as const)("two groups' sources reaching one table are refused (%s, Event's on %s)", async (dialect, other) => {
+    // A session would write both groups' rows into the table, and an erasure of one group's
+    // subject would delete the other's: refused after prepareSchema's last statement, and before a
+    // session's first write.
+    await engineFixture(dialect, async (engine) => {
+      const built = model()
+      const engines = { a: engine, b: engine }
+      const placement = map(built, dialect, { Account: [['a', 'shared'], null], Event: [[other, 'shared'], null] })
+      const refused = /a source's table holds its group alone, and two names of the map reach this one/
+      await expect(prepareSchema(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(refused)
+      await expect(Session.open(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(refused)
     })
   })
 

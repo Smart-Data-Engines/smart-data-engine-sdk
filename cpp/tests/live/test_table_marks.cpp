@@ -3,9 +3,9 @@
 ///
 /// Two independent reviews of copy ownership wrote over another group's rows through a session that
 /// read no mark. A session of a map with write generations now refuses, before it writes: a copy's
-/// table without its own mark, a source's table with a copy's mark, and a copy's table that another
-/// name of the map reaches. `prepare_schema` refuses the same. The control: a map provisioned as
-/// `prepare_schema` provisions it opens.
+/// table without its own mark, a source's table with a copy's mark, and a copy's or a source's
+/// table that another name of the map reaches. `prepare_schema` refuses the same. The control: a
+/// map provisioned as `prepare_schema` provisions it opens.
 
 #include <functional>
 #include <map>
@@ -179,6 +179,29 @@ TEST_P(TableMarks, ACopyAnotherEngineNameReachesIsRefused) {
   EXPECT_NE(refusal_of([&] { const sde::Session session(model, map, engines, with_project()); })
                 .find("two names of the map reach this one"),
             std::string::npos);
+}
+
+TEST_P(TableMarks, TwoGroupsSourcesReachingOneTableAreRefused) {
+  // A session would write both groups' rows into the table, and an erasure of one group's subject
+  // would delete the other's: refused after prepare_schema's last statement, and before a session's
+  // first write - by two engine names bound to one database, and by one name.
+  const std::unique_ptr<Side> side = side_of(GetParam());
+  SDE_REQUIRE_SIDE(side, GetParam());
+  const sde::Model model = two_groups();
+  const std::map<std::string, sde::Engine*> engines{{"a", &side->engine()}, {"b", &side->engine()}};
+  const std::string refused =
+      "a source's table holds its group alone, and two names of the map reach this one";
+  for (const std::string other : {"b", "a"}) {
+    const sde::PlacementMap map =
+        place(model, *side, {{"Account", {{"a", "shared"}, {}}}, {"Event", {{other, "shared"}, {}}}});
+    EXPECT_NE(refusal_of([&] { sde::prepare_schema(model, map, engines, kProject); }).find(refused),
+              std::string::npos)
+        << other;
+    EXPECT_NE(refusal_of([&] { const sde::Session session(model, map, engines, with_project()); })
+                  .find(refused),
+              std::string::npos)
+        << other;
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, TableMarks, ::testing::Values("postgres", "clickhouse"),

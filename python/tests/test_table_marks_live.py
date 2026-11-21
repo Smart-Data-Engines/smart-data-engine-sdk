@@ -4,9 +4,10 @@ The two independent reviews of copy ownership (20 November 2026) wrote over anot
 through a session that read no mark: a marked copy one map named as a group's source, and two
 engine names bound to one database, where `prepare_schema` marked a copy the same map took as
 another group's source. A session of a map with write generations now refuses, before it writes:
-a copy's table without its own mark, a source's table with a copy's mark, and a copy's table that
-another name of the map reaches. `prepare_schema` refuses the same, before its first statement and
-after its last. The control: a map provisioned as `prepare_schema` provisions it opens.
+a copy's table without its own mark, a source's table with a copy's mark, and a copy's or a
+source's table that another name of the map reaches. `prepare_schema` refuses the same, before its
+first statement and after its last. The control: a map provisioned as `prepare_schema` provisions
+it opens.
 """
 
 from __future__ import annotations
