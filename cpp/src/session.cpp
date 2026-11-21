@@ -100,17 +100,17 @@ std::string operation_target(std::string_view entity, TargetOf&& target_of) {
 
 }  // namespace
 
-Session::Session(const Model& model, const PlacementMap& placement,
+Session::Session(const Model& model_given, const PlacementMap& placement_given,
                  std::map<std::string, Engine*> engines, SessionOptions options)
-    : model_(model),
-      placement_(placement),
+    : model_(model_given),
+      placement_(placement_given),
       engines_(std::move(engines)),
       recorder_(options.recorder),
       names_(options.names),
       project_id_(std::move(options.project_id)),
       log_(std::move(options.log)),
       hook_(std::move(options.hook)),
-      groups_(model.groups()) {
+      groups_(model_.groups()) {
   detail::check_project_id(project_id_);
   if (names_ != nullptr) {
     for (const auto& [original, hashed] : names_->entities) application_names_.emplace(hashed, original);
@@ -127,10 +127,10 @@ Session::Session(const Model& model, const PlacementMap& placement,
         for (const auto& [original_relation, hashed_relation] : relations->second) {
           const std::string& source = names_->entity(entity);
           const auto relation = std::find_if(
-              model.relations().begin(), model.relations().end(), [&](const Relation& r) {
+              model_.relations().begin(), model_.relations().end(), [&](const Relation& r) {
                 return r.from == source && r.name == hashed_relation;
               });
-          const Entity& target = model.entity(relation->to);
+          const Entity& target = model_.entity(relation->to);
           const auto& target_fields = names_->fields.at(original_entities.at(target.name));
           for (const auto& [original_key, hashed_key] : target_fields) {
             if (std::find(target.key.begin(), target.key.end(), hashed_key) != target.key.end()) {
@@ -146,15 +146,15 @@ Session::Session(const Model& model, const PlacementMap& placement,
     for (const auto& [original, unused] : names_->entities) declared_.push_back(original);
   }
 
-  for (const OperationShape& shape : model.shapes()) {
+  for (const OperationShape& shape : model_.shapes()) {
     shapes_[{shape.entity, shape.kind, shape.fields}] = &shape;
   }
   // What a row of each entity must and may carry, once per session. The write-generation column is
   // left to `stamp_values`, which refuses it with its own reason: it is reserved, not undeclared.
   for (const Group& group : groups_) {
-    const auto columns = group_columns(model, group);
+    const auto columns = group_columns(model_, group);
     for (const std::string& member : group.members) {
-      const Entity& spec = model.entity(member);
+      const Entity& spec = model_.entity(member);
       Admission admission;
       for (const auto& [name, unused] : columns.at(member)) admission.declared.insert(name);
       // `columns` is a map, so the checks are in code point order, the order a refusal names.
@@ -164,7 +164,7 @@ Session::Session(const Model& model, const PlacementMap& placement,
           admission.temporal.emplace_back(name, kind);
         }
       }
-      if (placement.contract() >= 4) admission.declared.insert(std::string(EPOCH_COLUMN));
+      if (placement_.contract() >= 4) admission.declared.insert(std::string(EPOCH_COLUMN));
       for (const Field& field : spec.fields) {
         const bool keyed = std::find(spec.key.begin(), spec.key.end(), field.name) != spec.key.end();
         if (!field.nullable || keyed) admission.required.push_back(field.name);
@@ -175,7 +175,7 @@ Session::Session(const Model& model, const PlacementMap& placement,
   }
 
   std::set<std::string> missing;
-  for (const auto& [name, spot] : placement.groups()) {
+  for (const auto& [name, spot] : placement_.groups()) {
     for (const Materialization* material : spot.all()) {
       if (engines_.count(material->engine) == 0) missing.insert(material->engine);
     }
@@ -190,9 +190,9 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // A temporal column keeps its field's zone (format contract 7a): groups in name order,
   // materialisations in document order. Here, as the fan-out rule below, because only an engine says
   // which dialect's spelling a layout is written in.
-  for (const auto& [name, spot] : placement.groups()) {  // a std::map: groups in name order
+  for (const auto& [name, spot] : placement_.groups()) {  // a std::map: groups in name order
     for (const Materialization* material : spot.all()) {
-      if (auto refusal = zone_refusal(model, name, material->id, material->layout,
+      if (auto refusal = zone_refusal(model_, name, material->id, material->layout,
                                       engines_.at(material->engine)->dialect())) {
         throw MapError(*refusal);
       }
@@ -205,7 +205,7 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // of a point read (measured). An entity whose read cannot be decided here has none, and the
   // general path decides it - and refuses it - as before.
   if (names_ == nullptr) {
-    for (const Entity& entity : model.entities()) {
+    for (const Entity& entity : model_.entities()) {
       PointRead read{entity.key, nullptr, {}, {}, {}};
       std::sort(read.key.begin(), read.key.end());
       const auto found = shapes_.find({entity.name, "point_read", read.key});
@@ -221,7 +221,7 @@ Session::Session(const Model& model, const PlacementMap& placement,
         const auto place = [&](bool source) {
           // Named, as in `target`: GCC cannot tell that `resolve` returns into the map.
           const RouteContext context{false, source};
-          const Materialization& at = resolve(placement, *read.shape, context);
+          const Materialization& at = resolve(placement_, *read.shape, context);
           return PointRead::Place{engines_.at(at.engine), &at,
                                   &at.layout.table_for(entity.name)};
         };
@@ -238,9 +238,9 @@ Session::Session(const Model& model, const PlacementMap& placement,
   // rather than found by `verify` after one. Here rather than in the map loader, because a map names
   // engines and carries no dialect: this is the first door holding the adapters.
   for (const Group& group : groups_) {
-    const auto spot = placement.groups().find(group.name);
-    if (spot == placement.groups().end() || spot->second.also_write.empty()) continue;
-    const auto columns = group_columns(model, group);
+    const auto spot = placement_.groups().find(group.name);
+    if (spot == placement_.groups().end() || spot->second.also_write.empty()) continue;
+    const auto columns = group_columns(model_, group);
     const std::string_view source_dialect = engines_.at(spot->second.source.engine)->dialect();
     for (const Materialization* copy : spot->second.also_write_targets()) {
       for (const auto& [entity, neutral] : columns) {
@@ -256,14 +256,14 @@ Session::Session(const Model& model, const PlacementMap& placement,
 
   // On the path every start takes - a rolled-back map file is read at process start - and costing
   // nothing for an unsigned map.
-  physical_ = detail::validate_generations(model, placement, engines_, project_id_);
+  physical_ = detail::validate_generations(model_, placement_, engines_, project_id_);
   // What the fan-out writes to: a copy's table carries its own mark, a source's no copy's, and no
   // two names of the map reach one table (format contract section 7r).
-  if (placement.contract() >= GENERATIONS_SINCE && project_id_) {
-    detail::check_table_marks(placement, engines_, *project_id_);
+  if (placement_.contract() >= GENERATIONS_SINCE && project_id_) {
+    detail::check_table_marks(placement_, engines_, *project_id_);
   }
   report_physical();
-  forward_only_ = enforce_forward_only(placement, engines_, log_);
+  forward_only_ = enforce_forward_only(placement_, engines_, log_);
 }
 
 Session::~Session() = default;
