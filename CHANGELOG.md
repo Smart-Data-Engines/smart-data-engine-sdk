@@ -17,8 +17,12 @@ source, or a copy that a second engine name bound to the same database reaches a
 table, which `prepare_schema` marked and took both ways. A session of a map with write generations
 now reads every table of its map through its bindings when it opens, one look-up a binding, and
 refuses before it writes a copy's table without its own mark, a source's table with a copy's mark,
-and a copy's table another name of the map reaches; `prepare_schema` refuses the same, before its
-first statement and after its last. Found by the second independent review of copy ownership.
+and a copy's or a source's table another name of the map reaches; `prepare_schema` refuses the
+same, before its first statement and after its last. Two groups' sources reaching one table - by
+two engine names, or by one name the loader has no rule against for sources - would have taken
+both groups' rows, and the operator's erasure, which deletes from sources too, now refuses that
+source as well before anything is deleted. Found by the second independent review of copy
+ownership.
 **Breaking** for a copy made before copies were marked, which a session now refuses too (make it
 again before the application's library is upgraded), and for an adapter of your own holding a copy,
 which says what each name reaches ([upgrading](docs/upgrading.md)).

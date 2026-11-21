@@ -257,6 +257,9 @@ when it opens.
 
 A map you write by hand, of contract 4 or later, may not name a copy's table for anything else too
 - another group's source or copy, or another entity of the copy: `load_map` refuses it.
+Nor may two groups' sources be one table, by one name or by two engine names bound to one
+database: a session and `prepare_schema` refuse a source's table another name of the map reaches,
+and so does the operator's erasure.
 
 Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
 no other* and *Fixed: a session reads the marks of its map's tables when it opens*.
