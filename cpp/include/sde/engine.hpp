@@ -153,7 +153,7 @@ struct TableFacts {
 
 /// What each name of a map reaches, one look-up of the catalogue for all of them: what a session
 /// and `prepare_schema` read to refuse a copy's table without its own mark, a source's table with a
-/// copy's mark, and a copy's table another name of the map reaches.
+/// copy's mark, and a copy's or a source's table another name of the map reaches.
 class ReadsTableFacts {
  public:
   virtual ~ReadsTableFacts() = default;

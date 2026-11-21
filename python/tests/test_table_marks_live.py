@@ -168,3 +168,25 @@ def test_a_copy_another_engine_name_reaches_is_refused(dialect: str) -> None:
             sde.prepare_schema(model, placement, engines, project_id=PROJECT)
         with pytest.raises(MigrationRefused, match="two names of the map reach this one"):
             sde.Session(model, placement, engines, project_id=PROJECT)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+@pytest.mark.parametrize("names", ["two engine names", "one engine name"])
+def test_two_groups_sources_reaching_one_table_are_refused(dialect: str, names: str) -> None:
+    """Account's and Event's sources are one table: a session would write both groups' rows into
+    it, and an erasure of one group's subject would delete the other's rows. ``load_map`` cannot
+    tell two engine names bound to one database apart, and names no rule for two sources of one
+    name; `prepare_schema` creates the table once for both and refuses after its last statement,
+    a session before its first write."""
+    with two_groups(dialect) as (model, operator):
+        engines = {"a": operator, "b": operator}
+        other = "b" if names == "two engine names" else "a"
+        placement = _map(
+            model, dialect,
+            {"Account": (("a", "shared"), None), "Event": ((other, "shared"), None)},
+        )
+        refused = "a source's table holds its group alone, and two names of the map reach this one"
+        with pytest.raises(MigrationRefused, match=refused):
+            sde.prepare_schema(model, placement, engines, project_id=PROJECT)
+        with pytest.raises(MigrationRefused, match=refused):
+            sde.Session(model, placement, engines, project_id=PROJECT)

@@ -6,8 +6,8 @@
  * forged map could still direct those writes to a table of the project of the copy's shape. A
  * session of a map with write generations now reads, when it opens, every table of the map through
  * its binding, once a binding: a copy's table carries its own mark, a source's carries no copy's,
- * and no two names of the map reach one table. `prepareSchema` reads the same before its first
- * statement and after its last. The reference is Python's `sde.table_marks`.
+ * and no two names of the map reach one table, a copy's or a source's. `prepareSchema` reads the
+ * same before its first statement and after its last. The reference is Python's `sde.table_marks`.
  */
 import { compareCodePoints } from './canonical.js'
 import { MigrationRefused } from './errors.js'
@@ -30,7 +30,8 @@ type Named = { group: string; materialization: string; entity: string; table: st
 /**
  * Refuse a map whose tables are not what it calls them (format contract §7r), as the reference
  * does: for the groups with a write generation, each copy's table carries this copy's mark, each
- * source's table carries no copy's mark, and no copy's table is reached by another name of the map.
+ * source's table carries no copy's mark, and no copy's or source's table is reached by another name
+ * of the map.
  * `copiesPresent` is false before `prepareSchema` creates the copies.
  */
 export async function checkTableMarks(
@@ -88,7 +89,6 @@ export async function checkTableMarks(
     for (const key of [...found.keys].sort(compareCodePoints)) reach.set(key, [...(reach.get(key) ?? []), { engine, named }])
   }
   for (const { engine, named } of ordered) {
-    if (!named.copy) continue
     const found = facts.get(engine)?.[named.table]
     if (found === undefined) continue
     for (const key of [...found.keys].sort(compareCodePoints)) {
@@ -96,10 +96,11 @@ export async function checkTableMarks(
         const same = other.named.group === named.group && other.named.materialization === named.materialization &&
           other.named.table === named.table
         if (!same) {
+          const [whose, alone] = named.copy ? ["copy's", 'that copy'] : ["source's", 'its group']
           throw new MigrationRefused(
-            `the copy's table '${named.table}' of ${named.group} is also ${other.named.group}'s table ` +
-              `'${other.named.table}' for ${other.named.entity} in ${other.engine}: a copy's table holds that ` +
-              'copy alone, and two names of the map reach this one',
+            `the ${whose} table '${named.table}' of ${named.group} is also ${other.named.group}'s table ` +
+              `'${other.named.table}' for ${other.named.entity} in ${other.engine}: a ${whose} table holds ` +
+              `${alone} alone, and two names of the map reach this one`,
           )
         }
       }

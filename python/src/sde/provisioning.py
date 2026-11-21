@@ -64,8 +64,9 @@ def prepare_schema(
                             f"mark the tables it creates for a copy (format contract §7r); a "
                             f"copy's table that is not marked is not one the operator writes to"
                         )
-        # The tables already there: a source carries no copy's mark, and no copy is reached by
-        # another name of the map (§7r). The copies this call creates are read again after it.
+        # The tables already there: a source carries no copy's mark, and no copy or source is
+        # reached by another name of the map (§7r). The copies this call creates are read again
+        # after it.
         assert local_project is not None
         check_table_marks(placement, engines, local_project, copies_present=False)
     for group in colocation_groups(model):

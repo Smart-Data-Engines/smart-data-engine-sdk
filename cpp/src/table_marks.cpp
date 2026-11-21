@@ -72,7 +72,6 @@ void check_table_marks(const PlacementMap& placement, const std::map<std::string
     for (const std::string& key : keys) reach[key].push_back(&named);
   }
   for (const Named& named : ordered) {
-    if (!named.copy) continue;
     const auto engine_facts = facts.find(named.engine);
     if (engine_facts == facts.end()) continue;
     const auto found = engine_facts->second.find(named.table);
@@ -85,11 +84,13 @@ void check_table_marks(const PlacementMap& placement, const std::map<std::string
                           other->materialization == named.materialization &&
                           other->table == named.table;
         if (!same) {
-          throw MigrationRefused("the copy's table " + python_repr(named.table) + " of " +
+          const std::string whose = named.copy ? "copy's" : "source's";
+          const std::string alone = named.copy ? "that copy" : "its group";
+          throw MigrationRefused("the " + whose + " table " + python_repr(named.table) + " of " +
                                  named.group + " is also " + other->group + "'s table " +
                                  python_repr(other->table) + " for " + other->entity + " in " +
-                                 other->engine + ": a copy's table holds that copy alone, and two "
-                                 "names of the map reach this one");
+                                 other->engine + ": a " + whose + " table holds " + alone +
+                                 " alone, and two names of the map reach this one");
         }
       }
     }

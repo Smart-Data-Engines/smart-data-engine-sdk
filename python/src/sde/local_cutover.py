@@ -178,6 +178,27 @@ def refuse_another_name(
             )
 
 
+def refuse_shared_source(reach: Reach, group: str, material: str, table: str) -> None:
+    """Refuse a source's table that another name of the map reaches (format contract §7r).
+
+    An erasure deletes from a source's table: one group's source named as another group's table -
+    two engine names bound to one database - would have it delete the other group's rows. A table
+    that is not there reaches nothing.
+    """
+    this = (group, material, table)
+    for key in sorted(reach):
+        names = reach[key]
+        if all((name, other, named) != this for name, other, _, named, _ in names):
+            continue
+        for name, other, entity, named, engine in names:
+            if (name, other, named) != this:
+                raise MigrationRefused(
+                    f"the source's table {table!r} of {group} is also {name}'s table {named!r} "
+                    f"for {entity} in {engine}: a source's table holds its group alone, and two "
+                    f"names of the map reach this one"
+                )
+
+
 class LocalCutover:
     """One local POSIX project directory and dedicated operator/runtime-probe connections.
 
@@ -455,7 +476,8 @@ class LocalCutover:
                     "it before an erasure"
                 )
             # Rows go from every copy of the entity first: each copy's table is one this project
-            # created and marked for its group (§7r), checked before anything is read or deleted.
+            # created and marked for its group (§7r), and each source's table no other name of
+            # the map reaches, checked before anything is read or deleted.
             erased = self.active_map()
             reach = map_reach(erased, self.native)
             for name, spot in sorted(erased.groups.items()):
@@ -465,6 +487,8 @@ class LocalCutover:
                     if material.engine in self.native:
                         table = material.layout.tables[request.entity]
                         self._copy_owned(erased, material.id, name, table, state, reach)
+                source = spot.source
+                refuse_shared_source(reach, name, source.id, source.layout.tables[request.entity])
             plan = plan_erasure(self, request)
             if not execute:
                 return plan
