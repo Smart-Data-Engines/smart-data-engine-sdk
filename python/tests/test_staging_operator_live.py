@@ -922,3 +922,55 @@ def test_a_newer_map_that_overtakes_a_staging_is_named_with_both_versions(
                 reasons.append(str(error))
                 error = error.__cause__
             assert expected in reasons
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
+    source: str, tmp_path: Path
+) -> None:
+    """A cutover before the source's mark existed left the staged copy it made the source with the
+    staging's mark, which a session of this release refuses. ``mark_sources`` writes the source's
+    mark where this project's records show the stage was completed for the group; the control is a
+    staging's mark of a stage the records do not show, left as it is."""
+    from sde.errors import MigrationRefused
+    from sde.ownership import source_marker, stage_marker
+
+    with initial(source, tmp_path) as (
+        operator, stage, _old, roles, model, public, signed, _, _, target,
+    ):
+        assert operator.stage(stage).as_record()["outcome"] == "prepared"
+        assert operator.execute(cutover(stage, signed, model, public)).as_record()["outcome"] == (
+            "success"
+        )
+        promoted = stage.prepared.groups["Event"].derived[0].layout.tables["Event"]
+        native = roles[target].operator
+
+        def put(mark: str) -> None:
+            if target == "postgres":
+                native._cx.execute(f"COMMENT ON TABLE \"{promoted}\" IS '{mark}'")
+                native._cx.commit()
+            else:
+                native._cx.command(f"ALTER TABLE `{promoted}` MODIFY COMMENT '{mark}'")
+
+        def comment() -> Any:
+            if target == "postgres":
+                return native._cx.execute(
+                    "SELECT obj_description(to_regclass(%s), 'pg_class')", [f'"{promoted}"']
+                ).fetchone()[0]
+            return native._cx.query(
+                "SELECT comment FROM system.tables WHERE database = currentDatabase() "
+                "AND name = {name:String}", parameters={"name": promoted}
+            ).result_rows[0][0]
+
+        runtime = {name: role.runtime for name, role in roles.items()}
+        put(stage_marker(PROJECT, "f" * 32, promoted))
+        assert operator.mark_sources() == []
+        with pytest.raises(MigrationRefused, match="carries a staging's mark"):
+            sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        put(stage_marker(PROJECT, stage.stage_id, promoted))
+        assert operator.mark_sources() == [
+            {"group": "Event", "entity": "Event", "engine": target, "table": promoted}
+        ]
+        assert comment() == source_marker(PROJECT, "Event", promoted)
+        sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
+        assert operator.mark_sources() == []

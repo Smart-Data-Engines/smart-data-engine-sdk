@@ -244,7 +244,7 @@ def test_a_staged_copy_is_created_with_its_whole_design(roles: Roles) -> None:
     creator = NativeStaging(NativeOperator(roles.operator, [roles.runtime]))
     creator.preflight(layout, keys)
     creator.create_table(
-        entity="Reading", layout=layout, keys=keys, marker=creation_marker(PROJECT, stage, table)
+        entity="Reading", layout=layout, keys=keys, marker=creation_marker(PROJECT, stage, "Reading", table)
     )
     creator.create_indexes(layout)
     assert roles.operator.validate_schema(layout, keys=keys) == ()

@@ -368,3 +368,66 @@ def test_a_copy_its_adapter_gives_no_answer_for_is_not_there() -> None:
 
     with pytest.raises(MigrationRefused, match="is not there"):
         check_table_marks(placement, {"e": Silent()}, PROJECT)
+
+
+STAGE = "a" * 32
+STAGED = f"sde_m_{STAGE}_000001"
+
+
+def _mark(operator: Any, dialect: str, table: str, mark: str) -> None:
+    if dialect == "postgres":
+        operator._cx.execute(f"COMMENT ON TABLE \"{table}\" IS '{mark}'")
+    else:
+        operator._cx.command(f"ALTER TABLE `{table}` MODIFY COMMENT '{mark}'")
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+def test_a_staging_s_mark_holds_its_group(dialect: str) -> None:
+    """The first review's D1: a staging's mark of an earlier release named no group, so one
+    group's staged copy was taken as another group's copy. The mark a staging writes now names
+    the group: a staged copy of Account named as Event's copy is refused, Event's own taken."""
+    from sde.ownership import stage2_marker
+
+    with two_groups(dialect) as (model, operator):
+        engines = {"e": operator}
+        placement = _map(
+            model, dialect,
+            {"Account": (("e", "acct"), None), "Event": (("e", "ev"), ("e", STAGED))},
+        )
+        sde.prepare_schema(model, placement, engines, project_id=PROJECT)
+        _mark(operator, dialect, STAGED, stage2_marker(PROJECT, STAGE, "Account", STAGED))
+        with pytest.raises(MigrationRefused, match="is not one this library created for it"):
+            sde.Session(model, placement, engines, project_id=PROJECT)
+        _mark(operator, dialect, STAGED, stage2_marker(PROJECT, STAGE, "Event", STAGED))
+        sde.Session(model, placement, engines, project_id=PROJECT)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "clickhouse"])
+@pytest.mark.parametrize("release", ["stage1", "stage2"])
+def test_a_source_s_table_with_a_staging_s_mark_is_refused(dialect: str, release: str) -> None:
+    """The third review's F1: a map naming a staged copy as a source - another group's, or its own
+    group's without a cutover - is refused before a write, whatever release staged it."""
+    from sde.ownership import stage2_marker, stage_marker
+
+    with two_groups(dialect) as (model, operator):
+        engines = {"e": operator}
+        first = _map(
+            model, dialect,
+            {"Account": (("e", "acct"), None), "Event": (("e", "ev"), ("e", STAGED))},
+        )
+        sde.prepare_schema(model, first, engines, project_id=PROJECT)
+        mark = (
+            stage_marker(PROJECT, STAGE, STAGED)
+            if release == "stage1"
+            else stage2_marker(PROJECT, STAGE, "Event", STAGED)
+        )
+        _mark(operator, dialect, STAGED, mark)
+        promoted = _map(
+            model, dialect,
+            {"Account": (("e", "acct"), None), "Event": (("e", STAGED), None)},
+            version=2,
+        )
+        with pytest.raises(MigrationRefused, match="carries a staging's mark"):
+            sde.Session(model, promoted, engines, project_id=PROJECT)
+        with pytest.raises(MigrationRefused, match="carries a staging's mark"):
+            sde.prepare_schema(model, promoted, engines, project_id=PROJECT)
