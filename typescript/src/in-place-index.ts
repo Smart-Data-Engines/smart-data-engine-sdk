@@ -62,8 +62,8 @@ function signature(document: Record<string, unknown>): void {
   if (!equal(names, ['alg', 'value']) && !equal(names, ['alg', 'key_id', 'value'])) {
     throw new MigrationRefused('index build signatures have missing or unknown fields')
   }
-  const malformed = 'index build signatures must use ed25519 and canonical base64'
-  if (value['alg'] !== 'ed25519' || typeof value['value'] !== 'string') throw new MigrationRefused(malformed)
+  const malformed = 'index build signatures must use ed25519 or es256 and canonical base64'
+  if ((value['alg'] !== 'ed25519' && value['alg'] !== 'es256') || typeof value['value'] !== 'string') throw new MigrationRefused(malformed)
   const decoded = Buffer.from(value['value'], 'base64')
   if (decoded.length !== 64 || decoded.toString('base64') !== value['value']) throw new MigrationRefused(malformed)
   if ('key_id' in value && typeof value['key_id'] !== 'string') {

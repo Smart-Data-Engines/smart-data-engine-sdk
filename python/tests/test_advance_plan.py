@@ -216,7 +216,7 @@ def test_integral_json_numbers_preserve_packet_identity() -> None:
         ),
         (
             lambda raw: {**raw, "signature": {**raw["signature"], "alg": "rsa"}},
-            "advance signatures must use ed25519 and canonical base64",
+            "advance signatures must use ed25519 or es256 and canonical base64",
         ),
         (
             lambda raw: {**raw, "signature": {**raw["signature"], "key_id": 5}},

@@ -42,12 +42,12 @@ function signature(document: Record<string, unknown>): void {
   if (!equal(names, ['alg', 'value']) && !equal(names, ['alg', 'key_id', 'value'])) {
     throw new MigrationRefused('advance signatures have missing or unknown fields')
   }
-  if (value['alg'] !== 'ed25519' || typeof value['value'] !== 'string') {
-    throw new MigrationRefused('advance signatures must use ed25519 and canonical base64')
+  if ((value['alg'] !== 'ed25519' && value['alg'] !== 'es256') || typeof value['value'] !== 'string') {
+    throw new MigrationRefused('advance signatures must use ed25519 or es256 and canonical base64')
   }
   const decoded = Buffer.from(value['value'], 'base64')
   if (decoded.length !== 64 || decoded.toString('base64') !== value['value']) {
-    throw new MigrationRefused('advance signatures must use ed25519 and canonical base64')
+    throw new MigrationRefused('advance signatures must use ed25519 or es256 and canonical base64')
   }
   if ('key_id' in value && typeof value['key_id'] !== 'string') {
     throw new MigrationRefused('advance signature key_id must be a string')

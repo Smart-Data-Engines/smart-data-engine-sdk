@@ -153,7 +153,7 @@ it.each([
   ['a group that is a number', (raw: Packet): unknown => ({ ...raw, group: 5 }), 'advance group must be a nonempty string'],
   ['a signature that is text', (raw: Packet): unknown => ({ ...raw, signature: 'x' }), 'advance signature must be an object'],
   ['a signature without a value', (raw: Packet): unknown => ({ ...raw, signature: { alg: 'ed25519' } }), 'advance signatures have missing or unknown fields'],
-  ['another algorithm', (raw: Packet): unknown => ({ ...raw, signature: { ...raw['signature'], alg: 'rsa' } }), 'advance signatures must use ed25519 and canonical base64'],
+  ['another algorithm', (raw: Packet): unknown => ({ ...raw, signature: { ...raw['signature'], alg: 'rsa' } }), 'advance signatures must use ed25519 or es256 and canonical base64'],
   ['a key id that is a number', (raw: Packet): unknown => ({ ...raw, signature: { ...raw['signature'], key_id: 5 } }), 'advance signature key_id must be a string'],
   ['no pause budget', (raw: Packet): unknown => { const { pause_budget_ms: _gone, ...rest } = raw; return rest }, 'advance authorization has missing or unknown fields'],
 ])('refuses %s as an advance, before any key is tried', (_name, change, words) => {
