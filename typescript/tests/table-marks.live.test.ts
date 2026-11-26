@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildModel, entity, loadMap, prepareSchema, Session, T } from '../src/index.js'
 import { checkTableMarks } from '../src/table-marks.js'
+import { stage2Marker, stageMarker } from '../src/ownership.js'
 import { fixture as engineFixture, type Database, type Dialect } from './_generation-engines.js'
 
 const LIVE = process.env['SDE_POSTGRES_DSN'] !== undefined && process.env['SDE_CLICKHOUSE_DSN'] !== undefined
@@ -54,6 +55,15 @@ async function unmark(engine: Database, table: string): Promise<void> {
   const raw = engine as unknown as { run?: (s: string) => Promise<unknown>; command?: (s: string) => Promise<void> }
   if (engine.dialect === 'postgres') await raw.run!(`COMMENT ON TABLE "${table}" IS NULL`)
   else await raw.command!(`ALTER TABLE \`${table}\` MODIFY COMMENT ''`)
+}
+
+const STAGE = 'a'.repeat(32)
+const STAGED = `sde_m_${STAGE}_000001`
+
+async function mark(engine: Database, table: string, value: string): Promise<void> {
+  const raw = engine as unknown as { run?: (s: string) => Promise<unknown>; command?: (s: string) => Promise<void> }
+  if (engine.dialect === 'postgres') await raw.run!(`COMMENT ON TABLE "${table}" IS '${value}'`)
+  else await raw.command!(`ALTER TABLE \`${table}\` MODIFY COMMENT '${value}'`)
 }
 
 async function definition(engine: Database, table: string): Promise<unknown> {
@@ -189,6 +199,36 @@ describe.skipIf(!LIVE)("a session reads the marks of its map's tables", () => {
       const refused = /a source's table holds one entity of its group alone/
       await expect(prepareSchema(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(refused)
       await expect(Session.open(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(refused)
+    })
+  })
+
+  it.each(['postgres', 'clickhouse'] as const)("a staging's mark holds its group (%s)", async (dialect) => {
+    // The first review's D1: a staged copy of Account named as Event's copy is refused, Event's own taken.
+    await engineFixture(dialect, async (engine) => {
+      const built = model()
+      const engines = { e: engine }
+      const placement = map(built, dialect, { Account: [['e', 'acct'], null], Event: [['e', 'ev'], [['e', STAGED]]] })
+      await prepareSchema(built, placement, engines, { projectId: PROJECT })
+      await mark(engine, STAGED, stage2Marker(PROJECT, STAGE, 'Account', STAGED))
+      await expect(Session.open(built, placement, engines, { projectId: PROJECT })).rejects.toThrow(/is not one this library created for it/)
+      await mark(engine, STAGED, stage2Marker(PROJECT, STAGE, 'Event', STAGED))
+      await Session.open(built, placement, engines, { projectId: PROJECT })
+    })
+  })
+
+  it.each([
+    ['postgres', 'stage1'], ['clickhouse', 'stage1'], ['postgres', 'stage2'], ['clickhouse', 'stage2'],
+  ] as const)("a source's table with a staging's mark is refused (%s, %s)", async (dialect, release) => {
+    // The third review's F1: a map naming a staged copy as a source is refused before a write.
+    await engineFixture(dialect, async (engine) => {
+      const built = model()
+      const engines = { e: engine }
+      const first = map(built, dialect, { Account: [['e', 'acct'], null], Event: [['e', 'ev'], [['e', STAGED]]] })
+      await prepareSchema(built, first, engines, { projectId: PROJECT })
+      await mark(engine, STAGED, release === 'stage1' ? stageMarker(PROJECT, STAGE, STAGED) : stage2Marker(PROJECT, STAGE, 'Event', STAGED))
+      const promoted = map(built, dialect, { Account: [['e', 'acct'], null], Event: [['e', STAGED], null] }, 2)
+      await expect(Session.open(built, promoted, engines, { projectId: PROJECT })).rejects.toThrow(/carries a staging's mark/)
+      await expect(prepareSchema(built, promoted, engines, { projectId: PROJECT })).rejects.toThrow(/carries a staging's mark/)
     })
   })
 })

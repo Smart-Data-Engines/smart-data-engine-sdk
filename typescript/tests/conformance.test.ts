@@ -2,6 +2,7 @@ import { loadStagingPlan } from '../src/staging.js'
 import { loadAdvancePlan } from '../src/advance.js'
 import { indexBuildName, loadIndexPlan } from '../src/in-place-index.js'
 import { MigrationRefused as StagingRefused } from '../src/errors.js'
+import { copyMarks as isCopyMark, ownedCopyMarker } from '../src/ownership.js'
 import { loadCutoverPlan } from '../src/cutover.js'
 import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
 import { bindGenerationMetadata, copyMarks } from './_generation.js'
@@ -359,6 +360,21 @@ interface SignatureExpectation {
   readonly error?: string
   readonly match?: string
 }
+
+describe('marks', () => {
+  // Where each mark is taken (§7r): as this group's copy, and on a source.
+  for (const name of cases('marks')) {
+    it(name, () => {
+      const items = readJson<{ project_id: string; group: string; table: string; mark: string | null; copy: boolean; source: boolean; why: string }[]>(
+        join(VECTORS, 'marks', name, 'cases.json'),
+      )
+      for (const item of items) {
+        expect(ownedCopyMarker(item.project_id, item.group, item.table, item.mark), item.why).toBe(item.copy)
+        expect(!isCopyMark(item.mark), item.why).toBe(item.source)
+      }
+    })
+  }
+})
 
 describe('signature vectors', () => {
   for (const name of cases('signature')) {

@@ -781,3 +781,13 @@ byte order mark that leads a secret, which some UTF-8 decoders drop by default. 
 timeouts your number parser would read, from `inf` to an underscore or a digit beyond ASCII: test
 the digits with your own pattern before any parser sees them. A refusal names the part that is
 wrong and never contains the secret; each case that has one says so.
+
+**17. Copy and source marks (Tier 2). Vectors: `marks/`.**
+
+Two functions of a mark, so no engine: whether the mark read on a table makes it the copy of a group
+in a project, and whether a table carrying it may be a source (§7r). Compute the marks from their
+forms yourself and compare strings exactly. Four cases carry most of the risk. A copy's mark of
+another group, project or table name is no copy of this one. A staging's mark names its group
+(`stage2`), and an earlier release's (`stage1`) does not, so it is taken only on a table named after
+its stage. A source's mark is never a copy's, though another group's is taken on a source, because
+a group can be renamed. And no copy's or staging's mark is taken on a source, whatever its group.

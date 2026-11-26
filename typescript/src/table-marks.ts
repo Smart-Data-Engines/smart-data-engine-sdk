@@ -11,7 +11,7 @@
  */
 import { compareCodePoints } from './canonical.js'
 import { MigrationRefused } from './errors.js'
-import { COPY_MARKER, copyRefusal, ownedCopyMarker, sourceRefusal } from './ownership.js'
+import { copyMarks, copyRefusal, ownedCopyMarker, sourceRefusal } from './ownership.js'
 import type { PlacementMap } from './placement.js'
 
 /** A name's table as a connection reaches it: its identities (JSON tuples) and its mark. */
@@ -93,8 +93,8 @@ export async function checkTableMarks(
             '(prepareSchema) before a session writes to it',
         )
       }
-    } else if (found.mark !== null && COPY_MARKER.test(found.mark)) {
-      throw new MigrationRefused(sourceRefusal(named.table, named.group))
+    } else if (copyMarks(found.mark)) {
+      throw new MigrationRefused(sourceRefusal(named.table, named.group, found.mark))
     }
     for (const key of [...found.keys].sort(compareCodePoints)) reach.set(key, [...(reach.get(key) ?? []), { engine, named }])
   }

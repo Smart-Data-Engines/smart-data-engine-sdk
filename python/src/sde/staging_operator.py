@@ -103,7 +103,7 @@ def _snapshot(operator: LocalCutover, plan: StagingPlan, state: dict[str, Any]) 
                 "entity": entity,
                 "engine": target.engine,
                 "table": table,
-                "marker": creation_marker(operator.project_id, plan.stage_id, table),
+                "marker": creation_marker(operator.project_id, plan.stage_id, plan.group, table),
                 "identity": None,
             }
             for entity, table in sorted(target.layout.tables.items())

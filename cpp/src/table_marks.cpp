@@ -1,7 +1,6 @@
 #include "table_marks_internal.hpp"
 
 #include <algorithm>
-#include <regex>
 #include <utility>
 #include <vector>
 
@@ -23,7 +22,6 @@ struct Named {
 void check_table_marks(const PlacementMap& placement, const std::map<std::string, Engine*>& engines,
                        const std::string& project_id, bool copies_present) {
   if (placement.contract() < GENERATIONS_SINCE) return;
-  static const std::regex copy_mark(R"(sde\.copy1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16})");
   std::vector<Named> ordered;
   std::map<std::string, std::vector<std::string>> by_engine;
   std::map<std::string, bool> engine_has_copy;
@@ -74,8 +72,8 @@ void check_table_marks(const PlacementMap& placement, const std::map<std::string
                                named.group + " is not there: provision the map (prepare_schema) "
                                "before a session writes to it");
       }
-    } else if (fact.mark && std::regex_match(*fact.mark, copy_mark)) {
-      throw MigrationRefused(source_refusal(named.table, named.group));
+    } else if (copy_marks(fact.mark)) {
+      throw MigrationRefused(source_refusal(named.table, named.group, fact.mark));
     }
     std::vector<std::string> keys = fact.keys;
     std::sort(keys.begin(), keys.end());

@@ -16,10 +16,14 @@ them **refuses your own code's writes until you remove it**. This page lists bot
 | `sde_backfill_state` | an engine a backfill wrote to | the library | rows copied per entity | none |
 | `__sde_fence_drains` | ClickHouse | the local operator | the identity of each table a drain detached | none |
 | field `__sde_tokens` | every Elasticsearch index with a text field | the library, at each write | the field's search tokens, computed by the library | none: a document written without it is accepted |
+| a mark: the table's comment, or `_meta.sde.copy`, `stage` or `source` of an index | a copy's table `prepare_schema` or a staging created, and a source a cutover made of one | the library, the local operator | which project and group the table was created for ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)) | none |
 
 Nothing on this list holds a row of yours. Elasticsearch removes a mapped field only by a reindex, so
 `__sde_write_epoch` and `__sde_tokens` stay in an index's mapping after you leave; the mapping is
-`dynamic: strict`, as the library created it, and it is yours to change.
+`dynamic: strict`, as the library created it, and it is yours to change. Departure leaves the marks
+too: a mark changes no write, and it is how a library that is installed again tells a table it
+created from one it did not. A comment is yours to remove (`COMMENT ON TABLE … IS NULL`, `ALTER
+TABLE … MODIFY COMMENT ''`), and so is `_meta` of an index, by a mapping update.
 
 A table **outside the map in force** can also carry this project's fence: the source a completed move
 retired, or the copy an abandoned one left. Those hold rows. Departure lists them and never releases
@@ -94,7 +98,8 @@ and changes the engines only, so the language your application was written in do
 engine it writes the way your code would: on the raw connection, without the generation. The write
 is refused under the fence; that refusal is the control. The test then runs the listed text on the
 same raw connection and requires the write to be accepted and every row kept. After the cleanup it
-reads the engine's catalogue independently and requires nothing of ours to be left. It also holds
+reads the engine's catalogue independently and requires nothing of ours that acts on a write to be
+left. It also holds
 the refusals: a held table, a table detached by an interrupted ClickHouse drain, a listing the
 engines no longer match, and tables outside the map or of another project, which stay closed with
 their rows. `python/tests/test_operator_depart_live.py` runs the command itself.
