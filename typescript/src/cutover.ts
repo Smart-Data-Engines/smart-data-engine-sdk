@@ -39,23 +39,32 @@ function positive(value: unknown, name: string): number {
 function equal(left: unknown, right: unknown): boolean {
   return canonicalBytes(left).equals(canonicalBytes(right))
 }
-function signature(document: Record<string, unknown>): void {
-  const value = record(document['signature'], 'signature')
+/**
+ * A packet envelope's signature block, as the loader of every packet reads it - cutover, staging,
+ * index build, advance - with `subject` naming the packet in each refusal. One function, as in the
+ * reference, so that the algorithms a packet may be signed with are one rule.
+ */
+export function packetSignature(document: Record<string, unknown>, subject: string): void {
+  const raw = document['signature']
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new MigrationRefused(`${subject} signature must be an object`)
+  }
+  const value = raw as Record<string, unknown>
   const names = Object.keys(value).sort(compareCodePoints)
   if (!equal(names, ['alg', 'value']) && !equal(names, ['alg', 'key_id', 'value'])) {
-    throw new MigrationRefused('cutover signatures have missing or unknown fields')
+    throw new MigrationRefused(`${subject} signatures have missing or unknown fields`)
   }
+  const malformed = `${subject} signatures must use ed25519 or es256 and canonical base64`
   if ((value['alg'] !== 'ed25519' && value['alg'] !== 'es256') || typeof value['value'] !== 'string') {
-    throw new MigrationRefused('cutover signatures must use ed25519 or es256 and canonical base64')
+    throw new MigrationRefused(malformed)
   }
   const decoded = Buffer.from(value['value'], 'base64')
-  if (decoded.length !== 64 || decoded.toString('base64') !== value['value']) {
-    throw new MigrationRefused('cutover signatures must use ed25519 or es256 and canonical base64')
-  }
+  if (decoded.length !== 64 || decoded.toString('base64') !== value['value']) throw new MigrationRefused(malformed)
   if ('key_id' in value && typeof value['key_id'] !== 'string') {
-    throw new MigrationRefused('cutover signature key_id must be a string')
+    throw new MigrationRefused(`${subject} signature key_id must be a string`)
   }
 }
+const signature = (document: Record<string, unknown>): void => packetSignature(document, 'cutover')
 function except(value: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([name]) => !keys.includes(name)))
 }

@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto'
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError, MigrationRefused } from './errors.js'
+import { packetSignature } from './cutover.js'
 import { checkMapProject, GENERATIONS_SINCE, MAX_EPOCH } from './generation.js'
 import { colocationGroups } from './groups.js'
 import { groupColumns } from './layout.js'
@@ -39,23 +40,7 @@ function hex(value: unknown, width: number, name: string): string {
 function equal(left: unknown, right: unknown): boolean {
   return canonicalBytes(left).equals(canonicalBytes(right))
 }
-function signature(document: Record<string, unknown>): void {
-  const value = record(document['signature'], 'signature')
-  const names = Object.keys(value).sort(compareCodePoints)
-  if (!equal(names, ['alg', 'value']) && !equal(names, ['alg', 'key_id', 'value'])) {
-    throw new MigrationRefused('staging signatures have missing or unknown fields')
-  }
-  if ((value['alg'] !== 'ed25519' && value['alg'] !== 'es256') || typeof value['value'] !== 'string') {
-    throw new MigrationRefused('staging signatures must use ed25519 or es256 and canonical base64')
-  }
-  const decoded = Buffer.from(value['value'], 'base64')
-  if (decoded.length !== 64 || decoded.toString('base64') !== value['value']) {
-    throw new MigrationRefused('staging signatures must use ed25519 or es256 and canonical base64')
-  }
-  if ('key_id' in value && typeof value['key_id'] !== 'string') {
-    throw new MigrationRefused('staging signature key_id must be a string')
-  }
-}
+const signature = (document: Record<string, unknown>): void => packetSignature(document, 'staging')
 function except(value: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([name]) => !keys.includes(name)))
 }

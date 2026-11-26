@@ -29,13 +29,24 @@ function fixture() {
   return { raw, model, options, plan: loadAdvancePlan(raw, options) }
 }
 
+// The order of P-256: an ES256 signature's s is given in the lower half of it.
+const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+
 /** Signs as the control plane signs: over the canonical bytes without the block. */
-function signer() {
-  const pair = generateKeyPairSync('ed25519')
-  const publicKey = { k: pair.publicKey.export({ format: 'der', type: 'spki' }).subarray(-32) }
+function signer(alg: 'ed25519' | 'es256' = 'ed25519') {
+  const pair = alg === 'ed25519' ? generateKeyPairSync('ed25519') : generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const der = pair.publicKey.export({ format: 'der', type: 'spki' })
+  const publicKey = { k: der.subarray(alg === 'ed25519' ? -32 : -65) }
+  function value(bytes: Uint8Array): Buffer {
+    if (alg === 'ed25519') return sign(null, bytes, pair.privateKey)
+    const p1363 = sign('sha256', bytes, { key: pair.privateKey, dsaEncoding: 'ieee-p1363' })
+    const s = BigInt(`0x${p1363.subarray(32).toString('hex')}`)
+    const low = s > P256_N / 2n ? P256_N - s : s
+    return Buffer.concat([p1363.subarray(0, 32), Buffer.from(low.toString(16).padStart(64, '0'), 'hex')])
+  }
   function signed(document: Packet): void {
     delete document['signature']
-    document['signature'] = { alg: 'ed25519', key_id: 'k', value: sign(null, canonicalBytes(document), pair.privateKey).toString('base64') }
+    document['signature'] = { alg, key_id: 'k', value: value(canonicalBytes(document)).toString('base64') }
   }
   /** The packet with both of its maps and its envelope signed again. */
   function resigned(input: Packet): Packet {
@@ -62,6 +73,16 @@ function refusalOf(change: (packet: Packet) => void): string {
 function inBothMaps(change: (map: Packet) => void): (packet: Packet) => void {
   return packet => { for (const name of ['before', 'after']) change(packet[name]) }
 }
+
+it('loads the packet and its maps signed with ES256', () => {
+  // A control plane whose key has no Ed25519 - a hardware module's - signs the envelope and both
+  // maps with ES256, and the packet loads as it does signed with Ed25519.
+  const { raw, model, plan } = fixture(), key = signer('es256')
+  const again = loadAdvancePlan(key.resigned(raw), { model, projectId: PROJECT, publicKey: key.publicKey })
+  expect(again.verifiedWith).toBe('k')
+  expect([again.group, again.sourceEpoch, again.nextEpoch]).toEqual([plan.group, 1, 2])
+  expect(again.before.fingerprint).toBe(plan.before.fingerprint)
+})
 
 it('loads the packet signed again: the premise of every refusal below', () => {
   const { raw, model, plan } = fixture(), key = signer()

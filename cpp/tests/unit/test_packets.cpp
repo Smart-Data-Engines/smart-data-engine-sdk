@@ -505,6 +505,19 @@ TEST_F(AdvancePacket, LoadsWhatTheControlPlaneSigned) {
   EXPECT_EQ(plan.after_payload(), sde::canonical_bytes(at(plan.as_record(), {"after"})));
 }
 
+TEST_F(AdvancePacket, LoadsWhatAControlPlaneSignedWithES256) {
+  // A control plane whose key has no Ed25519 - a hardware module's - signs the envelope and both
+  // maps with ES256, and the packet loads as it does signed with Ed25519.
+  const Signer p256{"", true};
+  const sde::AdvancePlan plan = sde::load_advance_plan(
+      p256.resigned(base.packet, {"before", "after"}), base.model, std::string(kProject),
+      p256.keys());
+  EXPECT_EQ(plan.verified_with(), "k");
+  EXPECT_EQ(plan.group(), "Event");
+  EXPECT_EQ(plan.next_epoch(), 2);
+  EXPECT_EQ(plan.before().fingerprint(), load(resigned(base.packet)).before().fingerprint());
+}
+
 TEST_F(AdvancePacket, ItsFingerprintCoversItsMapsAsTheyWereSigned) {
   // The vector's packet under the vector's key and the same packet signed again here: the maps'
   // fingerprints leave their signatures out, and the packet's holds the maps whole.
