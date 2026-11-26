@@ -2,9 +2,10 @@ import { loadStagingPlan } from '../src/staging.js'
 import { loadAdvancePlan } from '../src/advance.js'
 import { indexBuildName, loadIndexPlan } from '../src/in-place-index.js'
 import { MigrationRefused as StagingRefused } from '../src/errors.js'
+import { copyMarks as isCopyMark, ownedCopyMarker } from '../src/ownership.js'
 import { loadCutoverPlan } from '../src/cutover.js'
 import { InspectionContext, verifyFrozen, frozenVerifyRecord } from '../src/index.js'
-import { bindGenerationMetadata } from './_generation.js'
+import { bindGenerationMetadata, copyMarks } from './_generation.js'
 import { WriteFence as NativeWriteFence, type ColumnState, type FenceState } from '../src/write-fence.js'
 import { MemoryFences } from './_write-fence.js'
 import { VerificationRequest } from '../src/verification.js'
@@ -359,6 +360,21 @@ interface SignatureExpectation {
   readonly error?: string
   readonly match?: string
 }
+
+describe('marks', () => {
+  // Where each mark is taken (§7r): as this group's copy, and on a source.
+  for (const name of cases('marks')) {
+    it(name, () => {
+      const items = readJson<{ project_id: string; group: string; table: string; mark: string | null; copy: boolean; source: boolean; why: string }[]>(
+        join(VECTORS, 'marks', name, 'cases.json'),
+      )
+      for (const item of items) {
+        expect(ownedCopyMarker(item.project_id, item.group, item.table, item.mark), item.why).toBe(item.copy)
+        expect(!isCopyMark(item.mark), item.why).toBe(item.source)
+      }
+    })
+  }
+})
 
 describe('signature vectors', () => {
   for (const name of cases('signature')) {
@@ -1294,7 +1310,7 @@ async function driveGenerationVector(directory: string, model: LogicalModel, map
   const want = readJson<{ project_id?: string; error?: string; match?: string; actions: Action[]; tables: unknown;
     engine_generations: Record<string, Record<string, {project_id: string; epoch: number}>>;
   }>(join(directory, 'generation.json'))
-  bindGenerationMetadata(engines, want.engine_generations)
+  bindGenerationMetadata(engines, want.engine_generations, false, copyMarks(map))
   const open = () => Session.open(model, map, engines, want.project_id === undefined ? {} : {projectId: want.project_id})
   if (want.error !== undefined) await refusesAsync(open, want.error, want.match as string)
   else {
@@ -1330,7 +1346,7 @@ async function driveFrozenVector(directory: string, model: LogicalModel, map: Pl
     epochs: Record<string, number>; at: string; retry?: boolean; report?: unknown; error?: string; match?: string;
     engine_generations: Record<string, Record<string, {project_id: string; epoch: number}>>;
   }>(join(directory, 'frozen.json'))
-  bindGenerationMetadata(engines, want.engine_generations, true)
+  bindGenerationMetadata(engines, want.engine_generations, true, copyMarks(map))
   const context = new InspectionContext(model, map, engines, {projectId: want.project_id})
   const request = VerificationRequest.fromRecord(want.request)
   const invoke = () => verifyFrozen(context, want.group, { request, holdId: want.hold_id,

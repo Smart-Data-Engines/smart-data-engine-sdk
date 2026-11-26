@@ -13,6 +13,7 @@ from .model import LogicalModel
 from .ownership import MarksCopies
 from .physical import refuse_findings
 from .placement import PlacementMap
+from .table_marks import check_table_marks
 from .watermark import WatermarkStore
 
 if TYPE_CHECKING:
@@ -63,6 +64,11 @@ def prepare_schema(
                             f"mark the tables it creates for a copy (format contract §7r); a "
                             f"copy's table that is not marked is not one the operator writes to"
                         )
+        # The tables already there: a source carries no copy's mark, and no copy or source is
+        # reached by another name of the map (§7r). The copies this call creates are read again
+        # after it.
+        assert local_project is not None
+        check_table_marks(placement, engines, local_project, copies_present=False)
     for group in colocation_groups(model):
         spot = placement.placement_of(group.name)
         keys = {name: model.entity(name).key for name in group.members}
@@ -85,6 +91,9 @@ def prepare_schema(
                     cast(Fencable, engine).write_fence(table, project_id=local_project).prepare(
                         spot.write_epoch
                     )
+    if placement.contract >= 4:
+        assert local_project is not None
+        check_table_marks(placement, engines, local_project)
     if placement.signed:
         # Prepare storage only. Recording this map here would activate a future watermark before
         # the native generations are ready for runtime and could lock out the current map.

@@ -38,6 +38,24 @@ std::string stage_marker(std::string_view project, std::string_view stage_id,
          digest(table, 16);
 }
 
+std::string stage2_marker(std::string_view project, std::string_view stage_id,
+                          std::string_view group, std::string_view table) {
+  return "sde.stage2." + std::string(project) + "." + std::string(stage_id) + "." +
+         digest(group, 16) + "." + digest(table, 16);
+}
+
+bool staging_mark(const std::optional<std::string>& mark) {
+  static const std::regex stage1(R"(sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16})");
+  static const std::regex stage2(
+      R"(sde\.stage2\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16})");
+  return mark && (std::regex_match(*mark, stage1) || std::regex_match(*mark, stage2));
+}
+
+bool copy_marks(const std::optional<std::string>& mark) {
+  static const std::regex copy1(R"(sde\.copy1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16})");
+  return staging_mark(mark) || (mark && std::regex_match(*mark, copy1));
+}
+
 bool owned_copy_marker(std::string_view project, std::string_view group, std::string_view table,
                        const std::optional<std::string>& found) {
   if (!found || found->empty()) return false;
@@ -45,7 +63,8 @@ bool owned_copy_marker(std::string_view project, std::string_view group, std::st
   static const std::regex staged("sde_m_([0-9a-f]{32})_[0-9]{6}");
   std::match_results<std::string_view::const_iterator> match;
   if (!std::regex_match(table.begin(), table.end(), match, staged)) return false;
-  return *found == stage_marker(project, match[1].str(), table);
+  return *found == stage2_marker(project, match[1].str(), group, table) ||
+         *found == stage_marker(project, match[1].str(), table);
 }
 
 std::string copy_refusal(std::string_view table, const std::optional<std::string>& found) {
@@ -64,6 +83,21 @@ std::string copy_refusal(std::string_view table, const std::optional<std::string
          "(docs/upgrading.md); a table of yours is given another name in the map.";
 }
 
+std::string source_refusal(std::string_view table, std::string_view group,
+                           const std::optional<std::string>& mark) {
+  if (staging_mark(mark)) {
+    return "the source's table " + python_repr(table) + " of " + std::string(group) +
+           " carries a staging's mark: a staged copy becomes the source only through a cutover, "
+           "which writes a source's mark in place of the staging's, so this is a copy a map names "
+           "as a source (format contract §7r). A staged copy an earlier operator's cutover promoted "
+           "gets the source's mark from the operator of this release (docs/upgrading.md)";
+  }
+  return "the source's table " + python_repr(table) + " of " + std::string(group) +
+         " carries a copy's mark: a copy becomes the source only through a cutover, which writes a "
+         "source's mark in place of the copy's, so this is a copy a map names as a source (format "
+         "contract §7r)";
+}
+
 }  // namespace sde::detail
 
 namespace sde {
@@ -77,6 +111,8 @@ bool owned_copy_marker(std::string_view project_id, std::string_view group, std:
                        const std::optional<std::string>& found) {
   return detail::owned_copy_marker(project_id, group, table, found);
 }
+
+bool copy_marks(const std::optional<std::string>& found) { return detail::copy_marks(found); }
 
 std::string copy_refusal(std::string_view table, const std::optional<std::string>& found) {
   return detail::copy_refusal(table, found);

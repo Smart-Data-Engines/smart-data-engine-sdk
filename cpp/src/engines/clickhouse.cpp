@@ -23,6 +23,7 @@
 #include "sde/physical.hpp"
 #include "sde/placement.hpp"
 #include "sde/query.hpp"
+#include "sde/json.hpp"
 #include "sde/schema.hpp"
 #include "storage_internal.hpp"
 
@@ -289,6 +290,7 @@ Capabilities ClickHouseEngine::capabilities() noexcept {
   offered.fences = this;
   offered.schema = this;
   offered.copies = this;
+  offered.facts = this;
   offered.storage = this;
   offered.temporal = this;
   return offered;
@@ -329,6 +331,41 @@ std::vector<PhysicalFinding> ClickHouseEngine::ensure_schema(const PhysicalLayou
     verify_schema(layout);
     return physical_findings(layout, keys);
   });
+}
+
+std::map<std::string, TableFacts> ClickHouseEngine::table_facts(
+    const std::vector<std::string>& tables) {
+  const Use use(*this);
+  std::map<std::string, TableFacts> found;
+  for (const std::string& table : tables) found.try_emplace(table);
+  if (found.empty()) return found;
+  const std::vector<std::vector<Value>> database =
+      answer("SELECT toString(serverUUID()), toString(uuid), name FROM system.databases "
+             "WHERE name = currentDatabase()")
+          .rows;
+  if (database.empty()) throw EngineError("ClickHouse returned no current database");
+  std::string names;
+  for (const auto& [table, unused] : found) names += (names.empty() ? "" : ", ") + literal(Value(table));
+  const std::vector<std::vector<Value>> rows =
+      answer("SELECT name, toString(uuid), comment FROM system.tables WHERE database = "
+             "currentDatabase() AND has([" + names + "], name)")
+          .rows;
+  for (const std::vector<Value>& row : rows) {
+    const std::string& name = text_at(row, 0);
+    const std::string& uuid = text_at(row, 1);
+    // A database that is not Atomic gives every table the nil uuid: there the name is it.
+    const std::string object =
+        uuid != "00000000-0000-0000-0000-000000000000" ? uuid : text_at(database.front(), 2) + "." + name;
+    Json key = Json::array();
+    key.as_array().emplace_back("clickhouse");
+    key.as_array().emplace_back(text_at(database.front(), 0));
+    key.as_array().emplace_back(text_at(database.front(), 1));
+    key.as_array().emplace_back(object);
+    TableFacts& fact = found[name];
+    fact.keys = {dump_json(key)};
+    if (!text_at(row, 2).empty()) fact.mark = text_at(row, 2);
+  }
+  return found;
 }
 
 std::vector<PhysicalFinding> ClickHouseEngine::ensure_copy(const PhysicalLayout& layout,

@@ -26,7 +26,7 @@ const std::map<std::string, int>& tier_of_family() {
       {"canonical", 0}, {"model", 0},     {"routing", 0},   {"errors", 0},
       {"signature", 0}, {"hashing", 0},   {"telemetry", 1}, {"schema", 2},
       {"migration", 2}, {"query", 2},     {"books", 2},     {"search", 2},
-      {"documents", 2}, {"dsn", 2}};
+      {"documents", 2}, {"dsn", 2},     {"marks", 2}};
   return tiers;
 }
 
@@ -49,7 +49,7 @@ const std::set<std::string>& run_here() {
   static const std::set<std::string> families = [] {
     std::set<std::string> out = {"canonical", "model",     "routing", "errors",    "signature",
                                  "hashing",   "telemetry", "schema",  "query",     "migration",
-                                 "books"};
+                                 "books",     "marks"};
     // Built with the orderbook adapter, whose DSN the family reads (tests/CMakeLists.txt).
 #ifdef SDE_CONFORMANCE_DSN
     out.insert("dsn");

@@ -1590,7 +1590,9 @@ adapters:
    **in name order** and their fields **in name order** (`MapError`);
 3. the fan-out precision rule: groups **in name order**, within a group the `also_write` copies in
    document order, within a copy the entities **in name order** (`MigrationRefused`);
-4. the forward-only check (§7, *Forward only*).
+4. the forward-only check (§7, *Forward only*), after, from contract 4, the write generations
+   (§7d) and the marks of the map's tables (§7r): groups in name order, materialisations in
+   document order, entities in name order, the marks before the names (`MigrationRefused`).
 
 Two of those three orderings are not new rules and are written down here only so nobody has to
 re-derive them: groups are already sorted by name by §5, and a group's members with them, so the
@@ -1841,7 +1843,7 @@ separately from the tier, for the same reason "supported" has to mean one thing:
 
 ## 10. Running the vectors
 
-There are fourteen kinds:
+There are fifteen kinds:
 
 | Kind | What it pins |
 |---|---|
@@ -1859,6 +1861,7 @@ There are fourteen kinds:
 | `search/` | the tokens of a text, and whether a row matches a query in its chosen fields - or the refusal of a query with no token |
 | `documents/` | a row as an Elasticsearch document - its `_id` and `_source` - or the refusal of a value the index would not keep exactly |
 | `dsn/` | an orderbook DSN, and what it says - host, port, credentials, TLS and timeout - or its refusal, which never contains the secret |
+| `marks/` | a mark read on a table, and whether it makes the table a group's copy in a project, and whether a table carrying it may be a source |
 
 This table said "five" and listed five for as long as there were nine, with the other four argued
 in the prose below it. Nothing counted them, which is the failure mode of a number about our own
@@ -2272,10 +2275,13 @@ name: the canonical JSON (§1) of `{"index": name, "mappings": m}`, where `m` is
   `"meta": {"sde_type": neutral}` where the column type has one; and, when the entity has a
   `keyword` column, `"__sde_tokens": {"properties": {column: {"type": "keyword"}}}` for each.
 
-`_meta.sde` may carry one key more, `stage`: the creation marker of the staging that created the
-index, `sde.stage1.<project id>.<stage id>.<16 hex digits>`, written in the request that creates it.
-A reader accepts exactly that key in exactly that form beside the rendered mapping, and anything
-else under `_meta.sde` is a mapping this library would not create.
+`_meta.sde` may carry one key more, the index's mark (§7r): `stage`, the creation marker of the
+staging that created the index, `sde.stage2.<project id>.<stage id>.<16 hex digits>.<16 hex
+digits>` - or, from a staging of an earlier release, `sde.stage1.<project id>.<stage id>.<16 hex
+digits>` - written in the request that creates it; `copy`, the mark of a copy `prepare_schema`
+created; or `source`, the mark a cutover writes in place of either. A reader accepts one of those
+keys in its form beside the rendered mapping, and anything else under `_meta.sde` is a mapping this
+library would not create.
 
 A key column of a float type is refused - an `_id` needs exact bytes - as are a column whose name is
 empty, contains a dot or starts with `__sde_`, and a column type outside the table above. Creating
@@ -2551,8 +2557,10 @@ each digest is of the name's UTF-8 bytes, in lowercase hexadecimal. Where it is 
 | ClickHouse | the table's comment | `CREATE TABLE … COMMENT '<mark>'` |
 | Elasticsearch | `mappings._meta.sde.copy` | in the `PUT /<index>` that creates the index |
 
-A staging (§7h) marks the copy it creates `sde.stage1.<project_id>.<stage_id>.<sha256(table)[:16]>`
-and names it `sde_m_<stage_id>_<NNNNNN>`; that mark makes the table a copy too.
+A staging (§7h) marks the copy it creates
+`sde.stage2.<project_id>.<stage_id>.<sha256(group)[:16]>.<sha256(table)[:16]>` and names it
+`sde_m_<stage_id>_<NNNNNN>`; that mark makes the table a copy too. A staging of an earlier release
+wrote `sde.stage1.<project_id>.<stage_id>.<sha256(table)[:16]>`, without the group.
 
 **After a cutover.** A copy's mark says the library created the table as a copy, and left on a
 table a cutover made the source it would go on saying so: a later map could name that table, which
@@ -2570,8 +2578,10 @@ was. A table that carries a source's mark is never taken for a copy. A library r
 Elasticsearch index's mapping accepts `_meta.sde.source` of that form beside the entity and the key.
 
 **Whose it is.** A table is a copy of group G in project P when its mark is the `copy1` mark of P, G
-and its name, or the `stage1` mark of P, the stage in its name, and its name. The operator, which
-keeps each staging it completed, also checks that the stage was for G.
+and its name; the `stage2` mark of P, the stage in its name, G and its name; or the `stage1` mark of
+P, the stage in its name, and its name, which names no group. The operator, which keeps each staging
+it completed, also checks that the stage was for G. A copy's or a staging's mark - `copy1`,
+`stage1` or `stage2`, of any project and group - is never taken on a source.
 
 **What each side does.**
 
@@ -2583,33 +2593,69 @@ keeps each staging it completed, also checks that the stage was for G.
   erasure write to it, and refuses the same way. It also looks up, once a command and once a
   binding, the table every name of the map reaches through the binding of its engine, and refuses
   a copy that another name reaches: two engine names bound to one database, or an Elasticsearch
-  alias, name one table twice where `load_map` sees two.
+  alias, name one table twice where `load_map` sees two. An erasure, which deletes from sources
+  too, refuses a source's table another name reaches - another group's, or another entity's of its
+  own group - the same way, before anything is deleted.
 - A copy provisioned before this section existed carries no mark and is refused; it is made
   again. A mark is never written on an existing table: it would say the library created what a map
   merely named, and the name is the one thing in a map a library cannot check.
 - From contract 4 a map that names a copy's table for anything else too - another group's source
   or copy - is refused when it loads (§7, `errors/151`). The mark cannot refuse it: the table is
   this project's, and one of the two namings is its own.
-- The application's session does not read the marks when it opens, and `sde.backfill`, which
-  runs on a session, does not read them either. A session writes to the copies of a map whose
-  tables carry this project's write generation (§7d), so a forged map can still direct its writes
-  to a table of this project of the same shape: another group's staged copy, a table an earlier map
-  placed, a copy this map names as another group's source through a second engine name bound to
-  the same database (`prepare_schema` marks it, and only the operator looks the names up), or a
-  copy one map named as a group's source and the next names as a copy again. And a copy a map
-  makes the source without a cutover - a newer map published with the copy as the source, which
-  no release of the control plane writes - keeps its copy's mark. `prepare_schema` takes a
-  staging's mark without the stage's group, which only the operator keeps. The next steps of this
-  section: a session, `sde.backfill` and `prepare_schema` read the marks - a copy's own on each
-  copy, none of a copy or a staging on a source - and look every name up through the bindings, and
-  a staging's mark carries its group.
+- **A session reads the marks of its map's tables when it opens.** A session of a map with write
+  generations - and its `ensure_schema` - reads every table of its groups with a write generation
+  through the binding of its engine (`table_facts`: each name's table as the session's statements
+  reach it, by identity, and the mark it carries; one look-up of the catalogue a binding in
+  PostgreSQL and ClickHouse, two requests a name in Elasticsearch; a name the adapter gives no
+  answer for reaches no table), and refuses before it writes, with `MigrationRefused`: a copy's
+  table without its own mark (`is not one this library created for it`); a source's table with a
+  copy's mark (`carries a copy's mark`) or a staging's (`carries a staging's mark`): a copy becomes
+  the source only through a cutover, which writes a source's mark in its place; and a copy's or a
+  source's table another
+  name of the map reaches - another group's, or another entity's of its own group (`two names of
+  the map reach this one`: two groups' sources of one table would take both groups' rows, and an
+  erasure of one subject would delete the other's). Groups in name order, materialisations in
+  document order, entities in name order; the marks before the names. `prepare_schema` refuses the
+  same: before its first statement for the sources already there, and after its last for every
+  table, the copies where it created them - before it, a copy's name may reach a table of a later
+  schema of the search path, where the copy is not created. `sde.backfill` writes through a session
+  only, so only to copies its session read; another view of a map is refused. A copy on an engine
+  whose adapter cannot read marks is refused; a source there is taken, as sources are, and is not
+  held to the rule of names. A PostgreSQL table's identity is the server's system identifier, the
+  start of its postmaster, the database and the table: two servers cloned from one data directory
+  share the identifier and hand out object ids from one counter.
+- **A source an earlier cutover left with a staging's mark.** A cutover of an operator before this
+  section left the staging's mark (`stage1`) on the staged copy it made the source, and a session
+  refuses that source: it cannot tell it from a staged copy a forged map names as one. The
+  operator's `mark-sources` writes the source's mark on each source of the map in force that
+  carries a `stage1` mark exactly as the stage in it writes it, where the project's records hold
+  that stage completed for the group the map gives the table to and a cutover of that group
+  completed with success. It reads the table's identity again before it writes - and leaves a
+  table in a ClickHouse database that is not Atomic, which has none to read - and asks nothing else
+  of the table that a cutover asks: a mark moves no row and no authority. Every other source of a
+  group with a write generation that carries a copy's or a staging's mark is left as it is and
+  named, with the reason, as is each binding of those groups the operator is not bound to; the
+  command exits 1 while one is.
+- What is not closed yet:
+  - A `stage1` mark names no group, so a session and `prepare_schema` take it on a table of a staged
+    copy's name for any group, where the operator checks the stage's group in its own records. A
+    staging of this release writes `stage2`.
+  - A source's mark of another group is taken: a group renamed in the model keeps its source.
+  - A source no other name of the map reaches, without a copy's or a staging's mark, is taken as
+    the map names it - a table of the client's from before SDE is one - so a map naming as a group's
+    source a table the client keeps for something else, of the group's shape, reaches it.
+  - A mark says who created a table to a reader who trusts the engine's own rights over it. In
+    PostgreSQL a comment needs the table's owner, and in ClickHouse the right to alter it; in
+    Elasticsearch a key that may write documents to an index may also update its mapping, `_meta`
+    included, so there the application's own key can write any mark.
 - A map below contract 4 carries no project and no write generation, so neither a fence nor a mark
   applies to it, and the libraries take it as they always did - also where a project is configured,
   since the verification protocol (§7b) is pinned on such maps. A forged map of an older contract
   therefore reaches tables the mark would have refused, through a session's fan-out and
   `sde.backfill`; the operator takes no map below contract 4. Refusing an older contract where a
-  project is configured, with §7b's vectors on contract 4, is the third step.
+  project is configured, with §7b's vectors on contract 4, is a further step.
 
 Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
 marks - the mark included, so its computation is held with them - and a case of the schema family
-carries the project and group of the copy in `copy`.
+carries the project and group of the copy in `copy`. `marks/001` pins where each mark is taken: as a
+group's copy in a project, and on a source.

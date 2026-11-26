@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..errors import MigrationRefused
-from ..ownership import STAGE_MARKER, copy_refusal, owned_copy_marker
+from ..ownership import STAGE2_MARKER, STAGE_MARKER, copy_refusal, owned_copy_marker
 from ._operator import TableIdentity
 from ._staging import native_staging
 
@@ -31,7 +31,7 @@ def copy_owned(
     if found is None or not owned_copy_marker(project_id, group, table, mark):
         raise MigrationRefused(copy_refusal(table, mark))
     assert mark is not None
-    if STAGE_MARKER.fullmatch(mark):
+    if STAGE_MARKER.fullmatch(mark) or STAGE2_MARKER.fullmatch(mark):
         receipt = (stages.get(mark.split(".")[3]) or {}).get("receipt") or {}
         if receipt.get("outcome") != "prepared" or receipt.get("group") != group:
             raise MigrationRefused(

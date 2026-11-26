@@ -632,11 +632,34 @@ def backfill(
     ``stop_after`` bounds the work to that many chunks per entity, for an operator who wants to copy
     for a while and stop, and for a test that needs to interrupt at a known point. ``None`` runs
     each entity to the end of its table.
+
+    It writes through an application's session (`sde.Session`), whose opening read the marks of
+    the map's tables (format contract §7r), and refuses any other view of a map - an
+    ``InspectionContext`` reads no mark. The operator backfills through its own checks.
     """
+    from .session import Session
+
+    if not isinstance(session, Session):
+        raise MigrationRefused(
+            f"sde.backfill writes through a session, which reads the marks of its map's tables "
+            f"when it opens (format contract §7r); a {type(session).__name__} reads none"
+        )
+    return backfill_view(session, group, chunk_rows=chunk_rows, stop_after=stop_after)
+
+
+def backfill_view(
+    view: MigrationView,
+    group: str,
+    *,
+    chunk_rows: int = CHUNK_ROWS,
+    stop_after: int | None = None,
+) -> BackfillProgress:
+    """``backfill`` through any view of a map: for the operator, which checks each copy's mark
+    and every name of the map before it calls this (format contract §7r)."""
     if chunk_rows < 1:
         raise MigrationRefused(f"a chunk of {chunk_rows} rows is not a chunk")
     progress: list[EntityProgress] = []
-    for copy in _plan(session, group):
+    for copy in _plan(view, group):
         progress.append(
             _backfill_one(copy, group=group, chunk_rows=chunk_rows, stop_after=stop_after)
         )

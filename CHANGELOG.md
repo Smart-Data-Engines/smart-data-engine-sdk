@@ -22,6 +22,52 @@ before; an earlier release refuses a map signed with ES256 by its algorithm, so 
 move to ES256 only once every library that reads them understands it. The Weather starter takes a
 P-256 key in its bootstrap as well.
 
+**Fixed: a staging's mark names its group, and no copy's or staging's mark is taken on a
+source** (all three libraries, and the operator;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). A
+staging marked the copy it created with its project, stage and table name, but no group, so a
+session and `prepare_schema` took one group's staged copy as another group's copy. And a session
+took a source's table that carried a staging's mark, so a forged map could name a staged copy as a
+source - another group's, or its own group's without the cutover - and the application's writes
+went into it. Both were found by independent reviews of copy ownership. A staging now writes
+`sde.stage2.<project>.<stage>.<sha256(group)[:16]>.<sha256(table)[:16]>`, taken only as that
+group's copy; a session and `prepare_schema` refuse a source's table with a copy's or a staging's
+mark (`carries a staging's mark`). A copy an earlier staging marked `sde.stage1` is still taken as a
+copy. An Elasticsearch index carries one mark at most, a string: two under `_meta.sde`, which no
+library writes, were read in an order that differed between Python and TypeScript, and are now
+refused by name. New vectors `marks/001`. **Breaking** for a source an earlier operator's cutover
+made from a staged copy: it carries the staging's mark, and a session of this release refuses it
+until `sde-operator mark-sources` writes the source's mark in its place. It does so where the
+project's records show the stage completed for the group the map in force gives the table to and a
+cutover of that group completed with success, whatever the table carries since - a trigger, a
+dependent view, a pipeline - and names every source it leaves with a copy's or a staging's mark,
+with the reason, and every binding it is not bound to, exiting 1 while there is one
+([upgrading](docs/upgrading.md)).
+
+**Fixed: a session reads the marks of its map's tables when it opens** (all three libraries;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). The
+operator read a copy's mark before it wrote to a copy, and the application's session - its fan-out,
+and `sde.backfill` through it - did not, so a forged map could still direct the application's writes
+to a table of the project of a copy's shape: a marked copy a previous map named as another group's
+source, or a copy that a second engine name bound to the same database reaches as another group's
+table, which `prepare_schema` marked and took both ways. A session of a map with write generations
+now reads the tables of its groups with a write generation through its bindings when it opens, and
+refuses before it writes a copy's table without its own mark, a source's table with a copy's mark
+(`sde.copy1`), and a copy's or a source's table another name of the map reaches - another
+group's, or another entity's of its own group; `prepare_schema` refuses the same, before its first
+statement for the sources and after its last for every table. Two groups' sources reaching one
+table, or two entities of a group named for one table, would have mixed their rows, and the
+operator's erasure, which deletes from sources too, now refuses such a source before anything is
+deleted. Found by the second independent review of copy ownership; a third review of this change
+found the rule of entities, the cloned PostgreSQL servers and the two items below.
+**Breaking** for a copy made before copies were marked, which a session now refuses too (make it
+again before the application's library is upgraded), for an adapter of your own holding a copy,
+which says what each name reaches, and for a call of `sde.backfill` with anything but a session -
+an `InspectionContext` reads no mark and is refused ([upgrading](docs/upgrading.md)). In C++ a
+session now keeps its own copies of the model and the map: it held references, so a map loaded into
+the same variable later took over an open session without any of its checks, and left the reads it
+had prepared pointing into freed memory.
+
 **Changed: the pause of a cutover after a settle reads both sides' rows since the advance beside
 each other** (Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause),
 record [`docs/qualification/cutover-settled/`](docs/qualification/cutover-settled/README.md)). It

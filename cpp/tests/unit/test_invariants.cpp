@@ -220,6 +220,36 @@ sde::PlacementMap unsigned_map(const sde::Model& model) {
                        options);
 }
 
+sde::PlacementMap map_on(const sde::Model& model, const std::string& table) {
+  sde::LoadOptions options;
+  options.model = &model;
+  return sde::load_map(R"({"contract": 3, "model_version": ")" + model.version() +
+                           R"(", "map_version": 1, "groups": {"User": {"source": {"id": "User@e",
+      "engine": "e", "layout": {"tables": {"User": ")" + table + R"("}}}}}})",
+                       options);
+}
+
+TEST(Invariants, ASessionKeepsTheModelAndTheMapItOpenedOn) {
+  // A map loaded into the same variable after the session opened reaches none of its writes: only a
+  // new session's checks admit a map. The session holds copies, so the reads it prepared when it
+  // opened point into its own map rather than into a variable assigned over since.
+  const sde::Model model = users();
+  sde::testing::MemoryEngineOptions engine_options;
+  engine_options.dialect = "postgres";
+  engine_options.name = "e";
+  sde::testing::MemoryEngine engine(engine_options);
+  sde::PlacementMap map = map_on(model, "users_first");
+  sde::Session session(model, map, {{"e", &engine}});
+  session.ensure_schema();
+  map = map_on(model, "users_later");
+  session.save("User", {{"id", sde::Uuid(ID)}, {"email", std::string("a")},
+                        {"name", std::string("b")}, {"age", std::int64_t{1}}});
+  EXPECT_EQ(engine.tables.count("users_later"), 0U);
+  ASSERT_EQ(engine.tables.count("users_first"), 1U);
+  EXPECT_EQ(engine.tables.at("users_first").size(), 1U);
+  EXPECT_TRUE(session.get("User", {{"id", sde::Uuid(ID)}}).has_value());
+}
+
 TEST(Invariants, NoValueReachesALogEventATelemetryWindowOrARefusal) {
   const sde::Model model = users();
   const sde::PlacementMap map = unsigned_map(model);

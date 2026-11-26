@@ -27,6 +27,7 @@ import { canonicalString, compareCodePoints } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError, MigrationRefused } from '../errors.js'
 import { COPY_MARKER, copyRefusal, ownedCopyMarker, SOURCE_MARKER } from '../ownership.js'
+import type { TableFacts } from '../table-marks.js'
 import { loopback } from './_transport.js'
 import type { PhysicalLayout } from '../placement.js'
 import { keyColumns, sameWidth } from '../migration.js'
@@ -71,8 +72,8 @@ export const BACKFILL_MAPPING = {
   properties: { entity: { type: 'keyword' }, materialization: { type: 'keyword' }, rows_copied: { type: 'long' } },
 } as const
 
-/** What a staging writes on the index it creates: its project, its stage and the index's name. */
-const CREATION_MARKER = /^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
+/** What a staging writes on the index it creates (`stage2`, with its group), or wrote before (`stage1`). */
+const CREATION_MARKER = /^sde\.stage2\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}$|^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
 /** A shard that fails or times out fails the search, rather than leaving its rows out. */
 const PARTIAL_REFUSED = '?allow_partial_search_results=false'
 
@@ -84,6 +85,27 @@ export interface ElasticsearchConnection {
   readonly caCert: string | null
   readonly connectTimeoutMs: number
   readonly sendReceiveTimeoutMs: number
+}
+
+/** The keys of an index's `_meta.sde` that carry its mark (format contract §7m, §7r). */
+const MARK_KEYS = ['copy', 'stage', 'source'] as const
+
+/**
+ * The mark under an index's `_meta.sde`, or `null` when it carries none. A library writes one of
+ * {@link MARK_KEYS}, a string, and a cutover replaces the copy's or the staging's with the source's.
+ * Two of them, or one that is not a string, are refused rather than read in some order: which one a
+ * reader took first would decide whether the index is a copy.
+ */
+export function indexMark(index: string, sde: Readonly<Record<string, unknown>>): string | null {
+  const present = MARK_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(sde, key))
+  const first = present[0]
+  if (present.length > 1 || (first !== undefined && typeof sde[first] !== 'string')) {
+    throw new MigrationRefused(
+      `index ${index} carries ${present.join(' and ')} under _meta.sde, and an index carries ` +
+        'one mark at most, a string (format contract §7r)',
+    )
+  }
+  return first === undefined ? null : (sde[first] as string)
 }
 
 function refuse(reason: string): never {
@@ -451,6 +473,37 @@ export class ElasticsearchEngine {
   }
 
   /**
+   * Each name's indexes as this connection reaches them, by uuid, and the mark of an index the name
+   * is (format contract §7r). An alias reaches the indexes behind it, and is no index of its own, so
+   * it carries no mark. A name that reaches nothing has no keys and no mark.
+   */
+  async tableFacts(tables: readonly string[]): Promise<Record<string, TableFacts>> {
+    return this.usage.operation(async () => {
+      const found: Record<string, TableFacts> = {}
+      for (const name of [...new Set(tables)].sort()) {
+        const [status, body] = await this.request('GET', this.path(name, '_settings'))
+        if (status === 404) {
+          found[name] = { keys: [], mark: null }
+          continue
+        }
+        if (status !== 200 || typeof body !== 'object' || body === null) {
+          throw new EngineError(`the settings of ${name} could not be read: ${errorOf(status, body)}`)
+        }
+        const keys: string[] = []
+        for (const index of Object.values(body as Record<string, { settings?: { index?: { uuid?: unknown } } }>)) {
+          const uuid = index?.settings?.index?.uuid
+          if (typeof uuid !== 'string') throw new EngineError(`the settings of ${name} carry no index identity`)
+          keys.push(JSON.stringify(['elasticsearch', uuid]))
+        }
+        const indexes = Object.keys(body)
+        const one = indexes.length === 1 && indexes[0] === name
+        found[name] = { keys: keys.sort(), mark: one ? ((await this.mark(name)) ?? null) : null }
+      }
+      return found
+    })
+  }
+
+  /**
    * The copy's or the staging's mark an index carries: a string, `null` when it has none, and
    * `undefined` when there is no index. An alias answers under its index's name and is refused.
    */
@@ -462,9 +515,7 @@ export class ElasticsearchEngine {
       throw new EngineError(`the mapping of ${index} could not be read as one index's: ${errorOf(status, body)}`)
     }
     const mappings = (body as Record<string, { mappings?: { _meta?: { sde?: Record<string, unknown> } } }>)[index]?.mappings
-    const sde = mappings?._meta?.sde ?? {}
-    const mark = sde['copy'] ?? sde['stage'] ?? sde['source']
-    return typeof mark === 'string' ? mark : null
+    return indexMark(index, mappings?._meta?.sde ?? {})
   }
 
   /** Check the existing indexes without creating anything. */
@@ -539,6 +590,12 @@ export class ElasticsearchEngine {
     }
     const entity = meta?.entity
     if (typeof entity !== 'string' || entity === '') throw new EngineError(`index ${name} names no entity in _meta.sde`)
+    // An index carries one mark at most: a copy's, a staging's or a source's (§7r); the form of the
+    // one it carries is checked below.
+    const marks = MARK_KEYS.filter((key) => meta !== undefined && Object.prototype.hasOwnProperty.call(meta, key))
+    if (marks.length > 1) {
+      throw new EngineError(`index ${name} carries ${marks.join(' and ')} under _meta.sde, and an index carries one mark at most`)
+    }
     // A staging's index says which staging created it, in the request that created it - as a SQL
     // staging comments its table in the transaction that creates it. Its form is fixed.
     const stage = meta?.stage

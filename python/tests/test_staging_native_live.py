@@ -37,7 +37,7 @@ def setup(roles: Any, *, indexes: bool = False) -> tuple[NativeStaging, sde.Phys
         else (),
     )
     creator = NativeStaging(NativeOperator(roles.operator, [roles.runtime]))
-    return creator, layout, creation_marker(PROJECT, STAGE, table)
+    return creator, layout, creation_marker(PROJECT, STAGE, "Event", table)
 
 
 def test_owned_creation_repeats_with_the_same_native_identity(roles: Any) -> None:
@@ -71,7 +71,7 @@ def test_a_foreign_table_is_not_adopted_or_marked(roles: Any) -> None:
 def test_a_different_stage_marker_does_not_authorize_recovery(roles: Any) -> None:
     creator, layout, marker = setup(roles)
     creator.create_table(entity="Event", layout=layout, keys={"Event": ["id"]}, marker=marker)
-    other = creation_marker(PROJECT, "6" * 32, layout.tables["Event"])
+    other = creation_marker(PROJECT, "6" * 32, "Event", layout.tables["Event"])
     with pytest.raises(sde.MigrationRefused, match="creation marker"):
         creator.create_table(entity="Event", layout=layout, keys={"Event": ["id"]}, marker=other)
 
