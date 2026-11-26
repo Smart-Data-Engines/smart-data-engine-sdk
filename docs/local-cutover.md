@@ -166,8 +166,16 @@ connections must resolve the same schema/search path. Engine binding names must 
 cover every engine the application's signed sessions use for watermark protection.
 
 Before enrollment, provision the signed before-map with `sde.prepare_schema` using operator
-connections, including an otherwise unused supplied engine's bookkeeping. Set up the restricted
-runtime grants described in [runtime roles](runtime-roles.md). Enrollment only records the exact
+connections, including an otherwise unused supplied engine's bookkeeping. It creates the copy's
+tables with their mark (format contract §7r) and refuses a table of a copy's name that does not
+carry it: a map naming a copy like a table you already have does not make that table the copy. The
+operator reads the mark again before every command that writes to the copy, and refuses a copy that
+another name of the map reaches - two engine bindings to one database, or an Elasticsearch alias -
+so bind each engine name of the map to the database it names. A cutover that makes the copy the
+source writes a source's mark in place of the copy's, so no later map takes that table for a copy
+again. A copy provisioned before copies were marked is made again ([upgrading](upgrading.md)); a
+copy's mark is never written on a table after the fact.
+Set up the restricted runtime grants described in [runtime roles](runtime-roles.md). Enrollment only records the exact
 signed map; it does not provision databases or grant runtime access. It takes one input snapshot
 and applies the map contract's integral-JSON normalization before both verification and publication,
 so caller changes after verification cannot replace the document being persisted.
@@ -383,12 +391,22 @@ force, and the rows a settle compares are the rows below the one in force when i
 the map the packet starts from - the same fingerprint, so no advance, index build or other map
 came between - at the packet's generation, and over the tables the cutover has just qualified, by
 their identities. Its repair, under the same barriers as before, is then:
-1. the source's rows that carry G against the copy's, by key: a row the copy lacks or holds
-   otherwise is written under the cutover's generation, E+1 here as above, and read back;
-2. the copy's rows that carry G against the source's, by key: one that differs is written over
-   with the source's, and a key the source lacks ends in the whole refill, as above. A copy row
-   can carry G where the source's does not: a settle wrote it, or a backfill after the advance;
+1. the rows that carry G on both sides, read beside each other in key order, each side by pages of
+   its own: a source row is compared with the copy's row of its key where the copy's pages show it
+   beside the source's page, and is looked up by its key where they do not. A row the copy lacks
+   or holds otherwise is written under the cutover's generation, E+1 here as above, and read back;
+2. a copy row that carries G and that no source row beside it asked for, against the source's by
+   key, a page of them at a time: one that differs is written over with the source's, and a key
+   the source lacks ends in the whole refill, as above. A copy row can carry G where the source's
+   does not - a settle wrote it, or a backfill after the advance - and a row can come to this step
+   because the two engines order the key otherwise, a UUID on ClickHouse;
 3. under the final barriers, as before: the copy's rows that carry E+1, and both counts.
+
+Where both sides hold the same rows that carry G and both engines order the key as the library
+does, steps 1 and 2 look up no row by its key: they read each side's rows that carry G once. Any
+other row is looked up, never left out: a source row the copy lacks (a fan-out that did not arrive),
+a copy row a settle or a backfill wrote under G, and a row the two engines order otherwise; a row
+written is read back by its key.
 
 The record of the completed cutover's repair says `"mode": "since"`. The record of the settle is
 removed when the cutover ends, either way: the map it was made under is not in force any more.

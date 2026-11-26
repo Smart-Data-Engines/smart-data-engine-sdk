@@ -8,6 +8,100 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Changed: the pause of a cutover after a settle reads both sides' rows since the advance beside
+each other** (Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause),
+record [`docs/qualification/cutover-settled/`](docs/qualification/cutover-settled/README.md)). It
+compared each row written since the generation advance by looking it up by its key on the other side
+- the source's rows in the copy, then the copy's in the source - a statement for every thousand
+rows, each of which ClickHouse answers with `FINAL` over the keys. It now reads the rows that carry
+the generation on both sides, each side by pages in its own key order, and compares them side by
+side: a row is looked up by its key only where the other side did not show it, which is a row the
+copy lacks, one a settle wrote under the generation, a key the source lacks, or one the two engines
+order otherwise (a UUID on ClickHouse). Where both sides hold the same rows under the generation and
+both orders agree, the pause looks up no row at all. Measured with two million rows and 100 000
+written since the settle: the pause from PostgreSQL into ClickHouse took 6.1 to 6.2 s where it took
+10.3 to 11.1 s, the other way 5.0 to 8.1 s where it took 8.5 to 9.4 s
+([record](docs/qualification/cutover-settled/README.md)). What the pause guarantees, its record and
+its refusals are the same. A verification's `chunks_compared` counts the pages the pause read on
+both sides, as before; where the pause repaired rows it now also counts the copy's pages it read
+before the repair, which the second pass did not see again (ten rows the copy held otherwise, in
+pages of five: 4 pages where it was 2).
+
+**Changed: the security policy has targets, a disclosure rule and a support window**
+([`SECURITY.md`](SECURITY.md)). After the acknowledgement within three working days: an assessment
+within ten, and a fixed release within 14, 30 or 90 days of confirming a critical, high or medium
+vulnerability (CVSS v3.1), a low one in the next regular release; an advisory when the fix is on
+the registry, with credit, and a statement on research in good faith. The previous minor release
+of each library gets security fixes for 6 months after its successor. And where an erasure's
+receipt stays: with you, never deleted by the operator and never taken by the control plane
+([erasure](docs/erasure.md#keeping-the-receipt)).
+
+**Fixed: a copy's table is one the library created and marked, and the operator writes to no
+other** (all three libraries' `prepare_schema`, and the operator;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)).
+`prepare_schema` created a copy's tables with `CREATE TABLE IF NOT EXISTS`, so a map naming a copy
+like a table you already had, of the same shape - another group's, or one outside SDE - made that
+table the copy, and the operator then wrote over its rows (`backfill`, `settle`), emptied and
+refilled it (a cutover's refill) and deleted rows from it (`erase`). Now `prepare_schema` creates a
+copy's table with its mark - `sde.copy1.<project>.<group>.<table>`, as a comment in PostgreSQL and
+ClickHouse and in the index mapping's `_meta` in Elasticsearch, in the statement that creates it -
+and refuses a table of the copy's name without it before anything is written to it. Every operator
+path that writes to a copy reads the mark first, accepting a staging's on the copy that staging
+created for the same group, and refuses a copy that another name of the map reaches through its
+bindings: two engine names bound to one database, or an alias. A cutover that makes a copy the
+source writes a source's mark in place of the copy's, so no later map takes that table, which now
+holds your application's rows, for a copy again. A source is taken as before: it is often your own
+table from before SDE. From contract 4, a map naming a copy's table for anything else
+too - another group's source or copy - is refused when it loads (`errors/151`), since the mark
+cannot tell two namings of one project apart. What is not closed yet, and §7r says so: the
+application's session and `sde.backfill` do not read the marks or look names up through the
+bindings, and `prepare_schema` does not look them up either; `prepare_schema` takes a staging's mark
+without the stage's group; and a map below contract 4 is taken without fences or marks, as before,
+also where a project is configured. Found by an independent review of `sde-operator`, and
+the fix reviewed again. **Breaking** for a copy provisioned before this release: it has no mark, and
+is made again ([upgrading](docs/upgrading.md)); for an adapter of your own that holds such a copy,
+which implements `ensure_copy`; and for a map written by hand that names a copy's table twice.
+
+**Fixed: a map cannot put a statement of its own choosing into a client's engine** (all three
+libraries; [format contract §7a](docs/format-contract.md#what-a-layout-may-name-and-spell)).
+Two parts of a map reach statements in ways quoting did not cover. A physical name - a table, a
+column, an index - holding `%`, `{` or `}`: the Python ClickHouse driver formats the whole text of a
+statement that has parameters with `%`, so a table called `payment%(k0_0).0s` became `payment` in a
+deletion by key; `{name:Type}` is a ClickHouse server-side parameter; and an Elasticsearch path is
+percent-decoded, so an index called `%5fall` addressed `_all`. A map naming one is now refused when
+it loads, and so is a model whose entity, field or relation name holds one, since those become table
+and column names. And a column type, which the renderer writes as the layout spells it: a layout naming
+`uuid, "x" int); DROP TABLE "victim"; --` rendered that statement whole, and PostgreSQL runs several
+statements in one simple query. A type is now read first by one grammar - words of two vocabularies,
+digits, spaces, zones in single quotes, parentheses four deep and commas inside them - and anything
+else is refused before a statement is rendered. Every PostgreSQL and ClickHouse type the libraries
+derive, and every one in the conformance vectors, is within it. The shared vectors `errors/144` to `150` and `schema/021` to
+`023` hold the rules. Found by an independent review of the libraries as a compromised control plane
+would use them: a signed map carries the control plane's word, and what it says is checked here
+before it reaches your engine. **Breaking** for a model or a hand-written map with such a name, and
+for a hand-written map with such a type.
+
+**Fixed: `sde.explain()` on PostgreSQL plans one statement and runs none of it** (Python;
+[`engine-statements.md`](docs/engine-statements.md#postgresql)). The query to plan comes from the
+control plane, and it went to PostgreSQL by the simple query protocol - psycopg's choice for a
+statement without parameters - where every statement of the string runs. A query of
+`SELECT 1; COMMIT; DELETE FROM payment; DROP TABLE audit_log; SELECT 1` ended the read-only
+transaction, and the rest ran in a new, read-write one: measured on PostgreSQL, the table was emptied
+and the other dropped while `explain` returned an ordinary plan and reported that writing was
+prevented. The query now goes as one statement by the extended protocol, which refuses a string of
+several before any of them runs, and the refusal says so. ClickHouse was not affected: each statement
+there carries `readonly=1`, and its HTTP interface takes one statement. The TypeScript and C++
+libraries have no `explain`. Found by an independent review of the libraries as a compromised control
+plane would use them.
+
+**Changed: Python's canonical encoder writes a string with nothing to escape without walking it**
+(`sde.canonical`). A string with no control character, quote or backslash - most names,
+identifiers and instants - is its own characters between quotes, and the character loop that
+decides that is now skipped for it: 2.0 against 0.5 µs for an eight-letter name, 13.6 against 0.9 µs
+for 64 letters. The bytes are the same; the canonical vectors and a test of every code point to
+U+2FFF against the loop hold them. Found where the control plane spends its time: re-encoding
+journal entries when it validates its state.
+
 **Fixed: TypeScript waits for a ClickHouse answer that is slow to begin, as documented, on Node 19
 and later** ([`docs/engine-connections.md`](docs/engine-connections.md#clickhouse-the-same-connection-intent-in-python-typescript-and-c)).
 Reading past the handshake is unbounded unless the DSN sets `send_receive_timeout`, and a request
@@ -16,6 +110,21 @@ answer that took longer than that to begin - a server that stalled, or an aggreg
 rows are a long way off - failed with `no answer within undefined ms`. Each request now says
 unbounded itself. Found by the soak of the three libraries under injected faults, which saw the
 TypeScript process alone fail 5 seconds into a frozen ClickHouse.
+
+**Added: a session's operation hook, in all three libraries** ([`docs/observability.md`](docs/observability.md#the-operation-hook)).
+A session given a hook calls it once for every operation it completes - the method, the entity and
+group in your own names, the shape, the engine, the materialization that served it, how long it
+took, how many rows it moved and how it ended - and with nothing the operation carried: no key, no
+row, no filter, no statement and no error message. A whole transaction is a record of its own. A
+hook that raises changes nothing about the operation. The library depends on no tracing package;
+the page shows an OpenTelemetry bridge of a few lines in each language, which each library's tests
+run. [`docs/alerts.md`](docs/alerts.md) says which events and which numbers deserve an alert.
+
+**Added: TypeScript says its events, through a sink you pass** ([`docs/observability.md`](docs/observability.md#the-event-vocabulary)).
+The C++ library's vocabulary but `sde.schema.text_collation`: maps loaded and refused, the rollback
+check, the schema applied and differing from its design, extra columns, failed writes, a copy's
+divergence, backfill progress, orderbook flushes and storage sizes that could not be read. Without
+a sink it says nothing, as before.
 
 **Changed: a generation change, and a barrier's release, are one change of each table** (all three
 libraries; [`docs/write-fences.md`](docs/write-fences.md#stored-protocol), record

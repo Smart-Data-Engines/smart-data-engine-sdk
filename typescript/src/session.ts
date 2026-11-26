@@ -34,6 +34,11 @@ import { type Check, checkFor, Misfit } from './admission.js'
 import type { Group } from './groups.js'
 import { colocationGroups, groupOf } from './groups.js'
 import type { NameMap } from './hashing.js'
+import { emit } from './events.js'
+import type { EventSink } from './events.js'
+import { outcomeOf } from './hook.js'
+import type { Operation, OperationHook, OperationRecord } from './hook.js'
+import { guard } from './internal.js'
 import { groupColumns, zoneRefusal } from './layout.js'
 import { precisionRefusal } from './migration.js'
 import type { LogicalModel } from './model.js'
@@ -121,6 +126,13 @@ export interface SessionOptions {
   readonly recorder?: Recorder
   /** The name map from {@link hashIdentifiers}, when the client hashes their identifiers. */
   readonly names?: NameMap
+  /**
+   * Called once per completed operation with what it was and how it ended, never with what it
+   * carried (`hook.ts`). Off by default, as telemetry is.
+   */
+  readonly hook?: OperationHook
+  /** Where this session's events go (`events.ts`); without it, it says nothing. */
+  readonly events?: EventSink
 }
 
 export interface ManagedEngine extends Engine {
@@ -204,6 +216,8 @@ export class Session {
     private readonly engines: Readonly<Record<string, Engine>>,
     private readonly recorder: Recorder | undefined,
     private readonly names: NameMap | undefined,
+    private readonly hook: OperationHook | undefined,
+    private readonly events: EventSink | undefined,
     /**
      * Whether an older map could be loaded over this one, and why.
      *
@@ -347,17 +361,20 @@ export class Session {
       // unsigned map - which is checked inside rather than here, because gathering the watermarks
       // first and then noticing the map was unsigned is the right answer with the promise broken.
       const physical = await validateGenerations(model, placement, engines, options.projectId)
-      const protection = await enforceForwardOnly(placement, engines)
+      const protection = await enforceForwardOnly(placement, engines, options.events)
       const session = new Session(
         model,
         placement,
         engines,
         options.recorder,
         options.names,
+        options.hook,
+        options.events,
         protection,
         options.projectId,
       )
       session.physicalFindings = Object.freeze([...physical])
+      session.reportPhysical()
       return session
 
     })
@@ -611,6 +628,8 @@ export class Session {
       if (this.placement.contract >= 4) {
         const physical = await validateGenerations(this.model, this.placement, this.engines, this.projectId)
         this.physicalFindings = Object.freeze([...physical])
+        this.reportPhysical()
+        emit(this.events, 'sde.schema.applied', { groups: this.groups.length })
         return
       }
       const findings: PhysicalFinding[] = []
@@ -627,7 +646,17 @@ export class Session {
         }
       }
       this.physicalFindings = Object.freeze(findings)
+      this.reportPhysical()
+      emit(this.events, 'sde.schema.applied', { groups: this.groups.length })
+    })
+  }
 
+  /** `sde.schema.physical_mismatch`, when existing tables differ from the declared design. */
+  private reportPhysical(): void {
+    if (this.physicalFindings.length === 0) return
+    emit(this.events, 'sde.schema.physical_mismatch', {
+      findings: this.physicalFindings.length,
+      tables: [...new Set(this.physicalFindings.map((finding) => finding.table))].sort(compareCodePoints),
     })
   }
 
@@ -652,14 +681,16 @@ export class Session {
       const body = snapshotOne(admitted)
       await this.held(entity, target, shape.group, materialization.engine, [body], false)
       const table = tableFor(materialization.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false
+      let caught: unknown
       try {
         await engine.insert(table, stampValues(this.placement, shape.group, body))
         this.usage.check()
         await this.fanOut(target, shape.group, body)
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
         // Recorded on both paths on purpose: a failed write is exactly the operation whose latency
@@ -667,7 +698,8 @@ export class Session {
         // would silently omit. The fan-out is inside the timed region, which is a decision - it makes
         // the client's write slower and the telemetry has to say so, or a placement would be scored
         // against a latency the application is not experiencing.
-        this.observe(shape, started, 1, failed)
+        this.observe(shape, started, 1, failed, undefined, undefined, undefined,
+          { operation: 'save', served: materialization, error: caught })
       }
 
     })
@@ -733,6 +765,11 @@ export class Session {
       }
       sizes.sort((a, b) => compareCodePoints(a.group, b.group))
       const ordered = Object.keys(unavailable).sort(compareCodePoints)
+      for (const name of ordered) {
+        emit(this.events, 'sde.telemetry.storage_unavailable', {
+          engine: placementOf(this.placement, name).source.engine, reason: unavailable[name],
+        })
+      }
       return { sizes, unavailable: Object.fromEntries(ordered.map((name) => [name, unavailable[name]!])) }
     })
   }
@@ -781,17 +818,20 @@ export class Session {
       await this.held(entity, target, shape.group, materialization.engine, snapshot, true)
       const stamped = snapshot.map((row) => stampValues(this.placement, shape.group, row))
       const table = tableFor(materialization.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false
+      let caught: unknown
       try {
         await writer.insertMany(table, stamped)
         this.usage.check()
         await this.fanOut(target, shape.group, snapshot)
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, snapshot.length, failed)
+        this.observe(shape, started, snapshot.length, failed, undefined, undefined, undefined,
+          { operation: 'save_many', served: materialization, error: caught })
       }
     })
   }
@@ -852,16 +892,19 @@ export class Session {
       const write = whole ? books.replaceLevels : books.applyLevels
       if (typeof write !== 'function') throw new EngineError(`${target} is placed on an engine that does not take a book by price`)
       const table = tableFor(materialization.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false
+      let caught: unknown
       try {
         await write.call(engine, table, update)
         this.usage.check()
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, update.levels.length, failed)
+        this.observe(shape, started, update.levels.length, failed, undefined, undefined, undefined,
+          { operation: 'book_stream', served: materialization, error: caught })
       }
     })
   }
@@ -895,8 +938,9 @@ export class Session {
         throw new QueryRefused(`${entity} is placed on an engine that does not compose a book: the orderbook engine does`)
       }
       const table = tableFor(material.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false, returned = 0
+      let caught: unknown
       try {
         const book = await books.bookAt.call(engine, table, {
           symbol: options.symbol, exchange: options.exchange, atNs: options.atNs,
@@ -907,9 +951,11 @@ export class Session {
         return { bid: [...book.bid], ask: [...book.ask] }
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, returned, failed, undefined, { equal, ranged: moment })
+        this.observe(shape, started, returned, failed, undefined, { equal, ranged: moment }, undefined,
+          { operation: 'book_at', served: material, error: caught })
       }
     })
   }
@@ -936,17 +982,20 @@ export class Session {
       const shape = this.shapeFor(target, 'point_read', expected)
       const [engine, materialization] = this.target(shape, options.fresh === true)
       const table = tableFor(materialization.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false
+      let caught: unknown
       let row: Row | null = null
       try {
         row = await engine.get(table, checked)
         return this.fieldsOut(entity, logicalRow(this.placement, row))
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, row === null ? 0 : 1, failed)
+        this.observe(shape, started, row === null ? 0 : 1, failed, undefined, undefined, undefined,
+          { operation: 'get', served: materialization, error: caught })
       }
 
     })
@@ -1043,12 +1092,14 @@ export class Session {
       } else {
         await engine.insert(entry.table, stampValues(this.placement, entry.group, entry.values as Row))
       }
-    } catch {
-      // Deliberately swallowed, and the only place in this library that swallows a write failure.
-      // There is no logging channel here to record it in, which the reference has - so the
-      // divergence reaches the caller only as a fan-out failure count, and `verify` is the gate
-      // that acts on it.
+    } catch (error) {
+      // Deliberately swallowed, and the only place in this library that swallows a write failure:
+      // the row is in the source, which is the copy that counts, and `verify` is the gate that
+      // acts on it. Said as `sde.migration.divergence`, and counted as a fan-out failure.
       failed = true
+      emit(this.events, 'sde.migration.divergence', {
+        engine: entry.engine, table: entry.table, error: error instanceof Error ? error.name : 'Exception',
+      })
     }
     this.recorder?.recordFanOut({
       group: entry.group,
@@ -1101,8 +1152,9 @@ export class Session {
       const [engine, material] = this.target(shape, options.fresh === true)
       this.readProjection(material, target, plan, false)
       const reader = queryEngine(engine), table = tableFor(material.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false, returned = 0
+      let caught: unknown
       try {
         const rows = await reader.selectRows(table, plan)
         this.usage.check()
@@ -1118,9 +1170,11 @@ export class Session {
         return { rows: result, nextAfter }
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, returned, failed, plan)
+        this.observe(shape, started, returned, failed, plan, undefined, undefined,
+          { operation: 'scan', served: material, error: caught })
       }
     })
   }
@@ -1160,8 +1214,9 @@ export class Session {
       searchEngine(engine)
       const indexed = textIndex(engine)
       const reader = indexed === null ? queryEngine(engine) : null
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false, examined = 0
+      let caught: unknown
       const found: Row[] = []
       try {
         let plan = first
@@ -1203,11 +1258,12 @@ export class Session {
         return { rows: found.map(row => this.fieldsOut(entity, row)!), nextAfter, examined }
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
         this.observe(shape, started, failed ? 0 : found.length, failed, undefined, undefined, {
           examined, searched: chosen,
-        })
+        }, { operation: 'search', served: material, error: caught })
       }
     })
   }
@@ -1247,17 +1303,20 @@ export class Session {
       const [engine, material] = this.target(shape, options.fresh === true)
       this.readProjection(material, target, plan, true)
       const reader = countEngine(engine), table = tableFor(material.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false
+      let caught: unknown
       try {
         const result = await reader.countRows(table, plan)
         this.usage.check()
         return result
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, failed ? 0 : 1, failed, plan)
+        this.observe(shape, started, failed ? 0 : 1, failed, plan, undefined, undefined,
+          { operation: 'count', served: material, error: caught })
       }
     })
   }
@@ -1277,17 +1336,20 @@ export class Session {
       this.readProjection(material, target, plan, true)
       if (!Object.hasOwn(material.layout.columns[target] ?? {}, name)) throw new QueryRefused('the routed materialization does not contain the summary field')
       const reader = summaryEngine(engine), table = tableFor(material.layout, target)
-      const started = this.recorder === undefined ? 0 : now()
+      const started = this.recorder === undefined && this.hook === undefined ? 0 : now()
       let failed = false
+      let caught: unknown
       try {
         const raw = await reader.summarizeRows(table, plan, column)
         this.usage.check()
         return numericSummary(raw, column, meanScale)
       } catch (error) {
         failed = true
+        caught = error
         throw error
       } finally {
-        this.observe(shape, started, failed ? 0 : 1, failed, plan)
+        this.observe(shape, started, failed ? 0 : 1, failed, plan, undefined, undefined,
+          { operation: 'summarize', served: material, error: caught })
       }
     })
   }
@@ -1296,21 +1358,58 @@ export class Session {
     shape: OperationShape, started: number, rows: number, failed: boolean, plan?: ReadPlan,
     predicates?: { equal: string[]; ranged: string | null },
     search?: { examined: number; searched: readonly string[] },
+    hooked?: { operation: Operation; served: Materialization; error: unknown },
   ): void {
-    const recorder = this.recorder
-    if (recorder === undefined) return
-    recorder.record({
-      shapeId: shapeId(shape),
-      group: shape.group,
-      entity: shape.entity,
-      kind: shape.kind,
-      nanoseconds: now() - started,
-      rows,
-      failed,
-      ...(plan === undefined ? (predicates ?? {}) : readPredicates(plan)),
-      ...(search ?? {}),
-    })
+    const recorder = this.recorder, hook = this.hook
+    if (recorder === undefined && hook === undefined) return
+    const nanoseconds = now() - started
+    if (recorder !== undefined) {
+      recorder.record({
+        shapeId: shapeId(shape),
+        group: shape.group,
+        entity: shape.entity,
+        kind: shape.kind,
+        nanoseconds,
+        rows,
+        failed,
+        ...(plan === undefined ? (predicates ?? {}) : readPredicates(plan)),
+        ...(search ?? {}),
+      })
+    }
+    if (hook !== undefined && hooked !== undefined) {
+      this.callHook(hook, hooked.operation, shape.entity, shape.group, shapeId(shape), hooked.served,
+        nanoseconds, rows, hooked.error)
+    }
   }
+
+  /** Build the record and call the hook; a hook that throws is counted, never propagated. */
+  private callHook(
+    hook: OperationHook, operation: Operation, entity: string, group: string, shape: string,
+    served: Materialization, nanoseconds: number, rows: number, error: unknown,
+  ): void {
+    const record: OperationRecord = Object.freeze({
+      operation,
+      entity: this.applicationName(entity),
+      group: this.applicationName(group),
+      shape,
+      engine: served.engine,
+      dialect: (this.engines[served.engine] as Engine).dialect,
+      materialization: served.id,
+      durationNs: nanoseconds,
+      rows,
+      outcome: outcomeOf(error),
+    })
+    guard('session.hook', () => hook(record))
+  }
+
+  /** An entity's or a group's name as the application wrote it (a group is named after an entity). */
+  private applicationName(modelName: string): string {
+    if (this.names === undefined) return modelName
+    this.applicationNames ??= new Map(Object.entries(this.names.entities).map(([original, hashed]) => [hashed, original]))
+    return this.applicationNames.get(modelName) ?? modelName
+  }
+  /** The application's name of each hashed one, built at the first record rather than per record. */
+  private applicationNames: Map<string, string> | undefined
 
   // --- transactions ------------------------------------------------------------------------
 
@@ -1357,7 +1456,8 @@ export class Session {
     const first = names[0]
     if (first === undefined) throw new ModelPlanningError('a transaction needs an entity')
     const group = this.groupOf(first)
-    const engineName = placementOf(this.placement, group.name).source.engine
+    const source = placementOf(this.placement, group.name).source
+    const engineName = source.engine
     const engine = this.engines[engineName]
     if (engine === undefined) throw new EngineError(`no adapter for engine '${engineName}'`)
 
@@ -1366,6 +1466,11 @@ export class Session {
     const outer = this.deferred.length
     this.inWriteTransaction = true
     let committed = false
+    // The whole transaction is one record of the hook, beside a record of each operation in it:
+    // from opening to its end, committed or not.
+    const hook = this.hook
+    const started = hook === undefined ? 0 : now()
+    let caught: unknown
     try {
       const result = await engine.transaction(async () => {
         const value = await body(this)
@@ -1375,7 +1480,13 @@ export class Session {
       })
       committed = true
       return result
+    } catch (error) {
+      caught = error
+      throw error
     } finally {
+      if (hook !== undefined) {
+        this.callHook(hook, 'transaction', first, group.name, '', source, now() - started, 0, caught)
+      }
       this.inWriteTransaction = previous
       const pending = this.deferred.slice(outer)
       this.deferred.length = outer

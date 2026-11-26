@@ -10,6 +10,7 @@ from .errors import EngineError, MigrationRefused
 from .generation import Fencable, check_map_project, fenced_groups, refuse_a_fencing_engine
 from .groups import colocation_groups
 from .model import LogicalModel
+from .ownership import MarksCopies
 from .physical import refuse_findings
 from .placement import PlacementMap
 from .watermark import WatermarkStore
@@ -54,13 +55,30 @@ def prepare_schema(
             if spot.write_epoch is None:
                 for material in spot.all():
                     refuse_a_fencing_engine(name, material.engine, engines[material.engine])
+            else:
+                for material in spot.derived:
+                    if not callable(getattr(engines[material.engine], "ensure_copy", None)):
+                        raise MigrationRefused(
+                            f"group {name} has a copy in {material.engine}, whose adapter cannot "
+                            f"mark the tables it creates for a copy (format contract §7r); a "
+                            f"copy's table that is not marked is not one the operator writes to"
+                        )
     for group in colocation_groups(model):
         spot = placement.placement_of(group.name)
         keys = {name: model.entity(name).key for name in group.members}
         for material in spot.all():
             engine = engines[material.engine]
+            if spot.write_epoch is not None and material is not spot.source:
+                # A copy's tables are created here and marked, or found with their mark: a table of
+                # a copy's name and shape the client already has is not taken for it (§7r).
+                assert local_project is not None
+                findings = cast(MarksCopies, engine).ensure_copy(
+                    material.layout, keys=keys, project_id=local_project, group=group.name
+                )
+            else:
+                findings = engine.ensure_schema(material.layout, keys=keys)
             # Provisioning is where a person can act on a physical difference, so here it refuses.
-            refuse_findings(engine.ensure_schema(material.layout, keys=keys) or (), EngineError)
+            refuse_findings(findings or (), EngineError)
             if spot.write_epoch is not None:
                 for table in sorted(material.layout.tables.values()):
                     assert local_project is not None

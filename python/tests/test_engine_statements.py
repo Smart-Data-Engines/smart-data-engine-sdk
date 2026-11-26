@@ -276,7 +276,9 @@ def test_typescript_and_cpp_open_no_kind_of_statement_the_page_does_not_have() -
         if "application" in sender or "provisioning" in sender
         for form in forms
     }
-    openings = {" ".join(form.split()[:2]) for form in page}
+    openings = {" ".join(form.split()[:2]) for form in page} | {
+        match.group(1) for form in page if (match := OPENING.match(form))
+    }  # `COMMENT ON TABLE` opens with three words
     sources = [
         *sorted((ROOT / "typescript" / "src").rglob("*.ts")),
         *sorted((ROOT / "cpp" / "src").rglob("*.cpp")),

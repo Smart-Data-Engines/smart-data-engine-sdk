@@ -118,6 +118,8 @@ export {
 } from './migration.js'
 export type { Engine, ManagedEngine, Row, SessionOptions } from './session.js'
 export { Session, tableFor } from './session.js'
+export { FIELDS as OPERATION_FIELDS, OPERATIONS, outcomeOf } from './hook.js'
+export type { Operation, OperationHook, OperationRecord } from './hook.js'
 export type { ScanOptions, CountOptions, SummaryOptions } from './session.js'
 export { MAX_PAGE_ROWS, QueryRefused } from './query.js'
 export type { Range, ScanPage, Queryable, ReadColumn, ReadFilter, ReadPlan, NumericSummary, Summarizable } from './query.js'
@@ -130,11 +132,14 @@ export {
   watermarkRecord,
 } from './watermark.js'
 export { MIGRATABLE_MEMBERS, satisfies, WATERMARK_MEMBERS } from './capabilities.js'
+export type { MarksCopies } from './ownership.js'
+export { copyMarker, ownedCopyMarker } from './ownership.js'
 export type { ResolveOptions } from './routing.js'
 export { resolve } from './routing.js'
 export type { CompatibilityViews, Dialect, SchemaOptions, ViewOptions } from './schema.js'
 export {
   compatibilityViews,
+  copyStatements,
   DIALECTS,
   FIXED_SCHEMA,
   QUOTE,

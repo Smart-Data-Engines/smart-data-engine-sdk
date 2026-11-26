@@ -1,0 +1,76 @@
+[
+  {
+    "materialization": "Order@ch",
+    "dialect": "postgres",
+    "fixed": false,
+    "copy": {
+      "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+      "group": "Order"
+    },
+    "layout_columns": {
+      "Order": {
+        "id": "uuid",
+        "placed_at": "timestamptz",
+        "tenant": "uuid",
+        "total": "numeric(12,2)"
+      },
+      "Payment": {
+        "amount": "numeric(12,2)",
+        "id": "uuid",
+        "order_id": "uuid",
+        "order_tenant": "uuid",
+        "paid_at": "timestamp"
+      }
+    },
+    "statements": [
+      "CREATE TABLE \"order\" (\"id\" uuid, \"placed_at\" timestamptz, \"tenant\" uuid, \"total\" numeric(12,2), PRIMARY KEY (\"tenant\", \"id\"))",
+      "COMMENT ON TABLE \"order\" IS 'sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.6be090825c997103.3eeb7e96e59ce40f'",
+      "CREATE TABLE \"payment\" (\"amount\" numeric(12,2), \"id\" uuid, \"order_id\" uuid, \"order_tenant\" uuid, \"paid_at\" timestamp, PRIMARY KEY (\"id\"))",
+      "COMMENT ON TABLE \"payment\" IS 'sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.6be090825c997103.040ffd5925d40e11'"
+    ],
+    "why": "A copy's table is created without IF NOT EXISTS - a table of its name is not taken for it - and its mark is the table's comment, in the same transaction: the mark is the project, the digest of the group and the digest of the table, so a copy of another group or project, and a table nobody marked, are told apart from this one (format contract §7r)."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "clickhouse",
+    "fixed": false,
+    "copy": {
+      "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+      "group": "Order"
+    },
+    "statements": [
+      "CREATE TABLE `order` (`id` UUID, `placed_at` DateTime64(6, 'UTC'), `tenant` UUID, `total` Decimal(12, 2)) ENGINE = ReplacingMergeTree ORDER BY (`tenant`, `id`) COMMENT 'sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.6be090825c997103.3eeb7e96e59ce40f'",
+      "CREATE TABLE `payment` (`amount` Decimal(12, 2), `id` UUID, `order_id` UUID, `order_tenant` UUID, `paid_at` DateTime64(6)) ENGINE = ReplacingMergeTree ORDER BY (`id`) COMMENT 'sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.6be090825c997103.040ffd5925d40e11'"
+    ],
+    "why": "In ClickHouse the mark is the COMMENT clause of the CREATE TABLE itself, so no moment holds the table without it."
+  },
+  {
+    "materialization": "Order@ch",
+    "dialect": "elasticsearch",
+    "fixed": false,
+    "copy": {
+      "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+      "group": "Order"
+    },
+    "layout_columns": {
+      "Order": {
+        "id": "keyword/uuid",
+        "placed_at": "long/timestamptz",
+        "tenant": "keyword/uuid",
+        "total": "long/decimal(12,2)"
+      },
+      "Payment": {
+        "amount": "long/decimal(12,2)",
+        "id": "keyword/uuid",
+        "order_id": "keyword/uuid",
+        "order_tenant": "keyword/uuid",
+        "paid_at": "long/timestamp"
+      }
+    },
+    "statements": [
+      "{\"index\":\"order\",\"mappings\":{\"_meta\":{\"sde\":{\"copy\":\"sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.6be090825c997103.3eeb7e96e59ce40f\",\"entity\":\"Order\",\"key\":[\"tenant\",\"id\"]}},\"dynamic\":\"strict\",\"properties\":{\"id\":{\"meta\":{\"sde_type\":\"uuid\"},\"type\":\"keyword\"},\"placed_at\":{\"meta\":{\"sde_type\":\"timestamptz\"},\"type\":\"long\"},\"tenant\":{\"meta\":{\"sde_type\":\"uuid\"},\"type\":\"keyword\"},\"total\":{\"meta\":{\"sde_type\":\"decimal(12,2)\"},\"type\":\"long\"}}}}",
+      "{\"index\":\"payment\",\"mappings\":{\"_meta\":{\"sde\":{\"copy\":\"sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.6be090825c997103.040ffd5925d40e11\",\"entity\":\"Payment\",\"key\":[\"id\"]}},\"dynamic\":\"strict\",\"properties\":{\"amount\":{\"meta\":{\"sde_type\":\"decimal(12,2)\"},\"type\":\"long\"},\"id\":{\"meta\":{\"sde_type\":\"uuid\"},\"type\":\"keyword\"},\"order_id\":{\"meta\":{\"sde_type\":\"uuid\"},\"type\":\"keyword\"},\"order_tenant\":{\"meta\":{\"sde_type\":\"uuid\"},\"type\":\"keyword\"},\"paid_at\":{\"meta\":{\"sde_type\":\"timestamp\"},\"type\":\"long\"}}}}"
+    ],
+    "why": "In Elasticsearch the mark is _meta.sde.copy in the mapping of the request that creates the index, beside the entity and the key."
+  }
+]

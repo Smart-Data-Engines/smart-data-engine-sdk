@@ -49,6 +49,17 @@ inline constexpr std::string_view POSTGRES_TEXT_COLLATION = "COLLATE \"C\"";
     const PhysicalLayout& layout, const std::map<std::string, std::vector<std::string>>& keys,
     std::string_view dialect);
 
+/// The statements that create a copy's tables with their creator's mark (format contract section
+/// 7r), table by table in code point order of the entity: PostgreSQL `CREATE TABLE ...` - without
+/// `IF NOT EXISTS`, since a table of the name is not taken for a copy - and `COMMENT ON TABLE ...
+/// IS '<mark>'`, which the adapter runs in one transaction; ClickHouse one `CREATE TABLE ...
+/// COMMENT '<mark>'`. The mark is the project's, the group's and the table's (`sde.copy1....`).
+/// Refuses (`EngineError`) a fixed-schema or unknown dialect, and (`MigrationRefused`) a project id
+/// that is not 32 lowercase hexadecimal digits.
+[[nodiscard]] std::vector<std::string> copy_statements(
+    const PhysicalLayout& layout, const std::map<std::string, std::vector<std::string>>& keys,
+    std::string_view dialect, std::string_view project_id, std::string_view group);
+
 /// `<name> ON <table> [USING <method>] (<columns>)`, shared by every PostgreSQL index this library
 /// creates: a new table's, an in-place build's and a staged copy's. `columns` is the entity's layout
 /// columns, so a text column is indexed with the reads' collation.

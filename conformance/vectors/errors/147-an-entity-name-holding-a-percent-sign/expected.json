@@ -1,0 +1,6 @@
+{
+  "error": "DeclarationError",
+  "stage": "model",
+  "match": "cannot contain %, { or }",
+  "why": "An entity's name becomes its table's, in snake case, and a physical name cannot hold %, { or } (errors/144): the Python ClickHouse driver formats a statement with parameters through %, {name:Type} is a ClickHouse parameter and an Elasticsearch path is percent-decoded. A map derived from this model would be refused when it loaded, and a layout derived in the library would carry the name into statements, so the model is refused when it is declared."
+}

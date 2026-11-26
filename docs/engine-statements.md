@@ -45,13 +45,13 @@ Who sends it:
 | `LOCK TABLE … IN SHARE ROW EXCLUSIVE MODE` | provisioning; operator | a barrier waits for the writers in flight |
 | `GRANT SELECT, INSERT ON … TO …`, `REVOKE SELECT, INSERT ON … FROM …` | operator | a cutover pauses and restores your runtime logins, and retires a source |
 | `TRUNCATE TABLE …` | operator | a cutover empties the copy it refills, after checking its identity |
-| `CREATE TABLE …`, then `COMMENT ON TABLE … IS …` | operator | a staging creates a copy with the first statement of this table, without `IF NOT EXISTS`, and marks it its own |
+| `CREATE TABLE …`, then `COMMENT ON TABLE … IS '…'` (a staging: `COMMENT ON TABLE … IS …`, the mark a parameter) | provisioning; operator | `prepare_schema` creates a copy's table, a staging its copy, without `IF NOT EXISTS`, in one transaction with the mark that makes it the copy ([format contract §7r](format-contract.md#7r-a-copys-table-carries-its-creators-mark)); a cutover that makes the copy the source writes a source's mark on it with the comment alone |
 | `CREATE INDEX …` | operator | a staging builds its copy's indexes |
 | `DROP TABLE …` | operator | an abandoned staging drops its own marked copy |
 | `CREATE INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY …`, `DROP INDEX CONCURRENTLY IF EXISTS …` | operator | an index change in place |
 | `ALTER TABLE … DROP COLUMN IF EXISTS …`, `DROP TABLE IF EXISTS …` | departure | leaving, with `--cleanup`: the generation column and the bookkeeping tables |
 | `WITH gone AS (DELETE FROM … WHERE … RETURNING 1) SELECT count(*) FROM gone` | erasure | the rows of the keys named, in each table of the entity, copies first |
-| `SET TRANSACTION READ ONLY` | application | explaining a query's plan, in a transaction that is rolled back |
+| `SET TRANSACTION READ ONLY` | application | explaining a query's plan: the query goes as one statement, by the extended protocol, in a transaction that is read only and rolled back |
 | `SET DateStyle TO ISO` | application, C++ | on connecting, so that dates are read in one format |
 | `SET row_security = off` | operator | on connecting: a statement a row-level security policy would narrow is refused instead of answered in part |
 
@@ -70,7 +70,8 @@ Who sends it:
 | `DETACH TABLE … PERMANENTLY SYNC`, then `ATTACH TABLE …` | provisioning; operator | a barrier waits for the writers in flight, recorded first in `__sde_fence_drains` |
 | `GRANT SELECT, INSERT ON … TO …`, `REVOKE SELECT, INSERT ON … FROM …` | operator | a cutover pauses and restores your runtime logins and retires a source; a dropped copy's grants are taken back |
 | `TRUNCATE TABLE … SYNC` | operator | a cutover empties the copy it refills, after checking its identity |
-| `CREATE TABLE …`, `CREATE TABLE … COMMENT '…'` | operator | a staging creates a copy with the first statement of this table, without `IF NOT EXISTS`, marked as its own |
+| `CREATE TABLE …`, `CREATE TABLE … COMMENT '…'` | provisioning; operator | `prepare_schema` creates a copy's table, a staging its copy, with the first statement of this table, without `IF NOT EXISTS`, marked as the copy (§7r) |
+| `ALTER TABLE … MODIFY COMMENT '…'` | operator | a cutover that makes the copy the source writes a source's mark in place of the copy's (§7r) |
 | `DROP TABLE …` | operator | an abandoned staging drops its own marked copy, with `SYNC` |
 | `ALTER TABLE … ADD …`, `ALTER TABLE … MATERIALIZE INDEX …` | operator | an index change builds a data-skipping index |
 | `ALTER TABLE … DROP INDEX … SETTINGS alter_sync = 0` | operator | an index change removes one |
@@ -88,7 +89,7 @@ Requests, in console syntax:
 | `PUT /…/_doc/…?refresh=wait_for`, `POST /_bulk?refresh=wait_for` | application | `save`, `save_many`, a map version |
 | `POST /…/_doc?refresh=true` | `sde.backfill` | its progress, into `sde_backfill_state` |
 | `POST /_bulk?refresh=true` | `sde.backfill`; operator | a backfill, or a cutover refilling the copy |
-| `PUT /…/_mapping` | provisioning | fence setup: `__sde_write_epoch` |
+| `PUT /…/_mapping` | provisioning; operator | fence setup: `__sde_write_epoch`; a cutover that makes the copy the source: its `_meta`, with a source's mark in place of the copy's (§7r) |
 | `PUT /_ingest/pipeline/…` | provisioning; operator | fence setup, a barrier, a generation change: the fence pipeline `__sde_f_<index>`, conditional on its version |
 | `PUT /…/_settings` | provisioning; operator; departure | the index's final pipeline set to its fence or unset when leaving, a write block lifted |
 | `PUT /…/_block/write`, `POST /…/_refresh` | provisioning; operator | a barrier waits for the writes in flight |

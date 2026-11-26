@@ -14,7 +14,7 @@ ClickHouse, with their own constraints doing the stamping and an application wri
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -172,6 +172,123 @@ def test_the_pause_after_a_settle_reads_only_the_rows_written_since_the_advance(
     report = compare_stamped(view, "Event", epoch=M, reconciled=done, chunk_rows=2)
     assert report.matched and (report.rows_source, report.rows_target) == (6, 6)
     assert (report.chunks_compared, report.chunks_mismatched) == (4, 0)
+
+
+class OrderedOtherwise(Earlier):
+    """A copy whose engine orders the key otherwise than this process does - 3, 1, 2, 4 - as
+    ClickHouse orders a UUID otherwise than PostgreSQL and Python do."""
+
+    ORDER: dict[Any, int] = {3: 0, 1: 1, 2: 2, 4: 3}
+
+    def stamped_range(
+        self,
+        table: str,
+        order: Sequence[str],
+        *,
+        epoch: int,
+        after: Sequence[Any] | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        self.calls.append("stamped_range")
+        place = self.ORDER
+        rows = sorted(
+            (row for row in self.tables[table] if row[EPOCH_COLUMN] == epoch),
+            key=lambda row: place[row["id"]],
+        )
+        if after is not None:
+            rows = [row for row in rows if place[row["id"]] > place[after[0]]]
+        return [dict(row) for row in (rows if limit is None else rows[:limit])]
+
+
+def logged(source: Table, log: list[tuple[str, str]]) -> Callable[..., Any]:
+    """A caller's wrapper that writes down each engine call in order: which side, and what."""
+
+    def call(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        side = "source" if getattr(function, "__self__", None) is source else "copy"
+        log.append((side, getattr(function, "__name__", "")))
+        return function(*args, **kwargs)
+
+    return call
+
+
+def test_a_pause_whose_two_sides_hold_the_same_rows_since_looks_up_no_key() -> None:
+    """The application's rows since the advance are on both sides, the source's from the
+    application and the copy's from the fan-out: read beside each other, by pages of each, and
+    not one looked up by its key."""
+    since = {4: ("d", G), 5: ("e", G), 6: ("f", G), 7: ("g", G), 8: ("h", G)}
+    before = {1: ("a", OLD), 2: ("b", OLD), 3: ("c", OLD)}
+    view, source, copy = settled_fixture({**before, **since}, {**before, **since})
+    log: list[tuple[str, str]] = []
+    done = reconcile_since(view, "Event", since=G, epoch=M, chunk_rows=2, call=logged(source, log))
+    # Three pages of each side, and the one of each that answers none.
+    assert done == Reconciliation(chunks=6, rows=10, written=0, surplus=False)
+    assert source.calls == copy.calls == ["stamped_range"] * 4
+    # Every statement went through the caller's wrapper, which is where a cutover keeps its
+    # pause's budget: the copy's pages too.
+    assert len(log) == len(source.calls) + len(copy.calls)
+    report = compare_stamped(view, "Event", epoch=M, reconciled=done, chunk_rows=2)
+    assert report.matched and (report.rows_source, report.rows_target) == (8, 8)
+
+
+def test_rows_another_order_puts_beside_another_chunk_are_compared_and_written_once() -> None:
+    """The copy's engine orders the key 3, 1, 2, 4. Beside the source's chunk [1, 2] it shows
+    nothing (its first row, 3, is past the chunk), so both are looked up by key and 1 is written
+    over. Beside [3, 4] it hands out 3 and 4, and 1 and 2 as orphans: 1 as it was before it was
+    written, which is not compared again, and 2, which is."""
+    view, source, copy = settled_fixture(
+        {1: ("a", G), 2: ("b", G), 3: ("c", G), 4: ("d", G)},
+        {1: ("x", G), 2: ("b", G), 3: ("c", G), 4: ("y", G)},
+        copy_engine=OrderedOtherwise,
+    )
+    done = reconcile_since(view, "Event", since=G, epoch=M, chunk_rows=2)
+    assert done.settled and not done.surplus and done.written == 2
+    assert held(copy) == {1: ("a", M), 2: ("b", G), 3: ("c", G), 4: ("d", M)}
+    # The copy looked up by the chunk it showed nothing beside, and read back twice; the source
+    # asked for the one orphan the pass had not written.
+    assert copy.asked == [[(1,), (2,)], [(1,)], [(4,)]]
+    assert source.asked == [[(2,)]]
+    assert compare_stamped(view, "Event", epoch=M, reconciled=done, chunk_rows=2).matched
+
+
+class Unorderable(OrderedOtherwise):
+    """An engine whose key is one this process cannot order: complex numbers stand in for it.
+    The engine has an order of its own, 1j then 2j."""
+
+    ORDER: dict[Any, int] = {1j: 0, 2j: 1}
+
+
+def test_a_key_this_process_cannot_order_is_handed_out_beside_the_chunk() -> None:
+    view, _, copy = settled_fixture(
+        {1j: ("a", G), 2j: ("b", G)},  # type: ignore[dict-item]
+        {1j: ("a", G), 2j: ("x", G)},  # type: ignore[dict-item]
+        source_engine=Unorderable,
+        copy_engine=Unorderable,
+    )
+    done = reconcile_since(view, "Event", since=G, epoch=M, chunk_rows=2)
+    assert done.settled and done.written == 1
+    assert held(copy)[2j] == ("b", M)  # type: ignore[index]
+    # Both rows handed out beside their chunk: the copy is asked only to read its write back.
+    assert copy.asked == [[(2j,)]]
+
+
+def test_orphans_are_compared_a_chunk_at_a_time_while_the_source_is_walked() -> None:
+    """Seven rows a settle wrote under the map's generation, whose source rows are older, sit
+    beside the source's one row since: compared by their keys two at a time as they are handed
+    out, so the pass never holds more than a chunk of them."""
+    before = {key: (str(key), OLD) for key in range(1, 8)}
+    view, source, copy = settled_fixture(
+        {**before, 9: ("i", G)},
+        {**{key: (value, G) for key, (value, _) in before.items()}, 9: ("i", G)},
+    )
+    log: list[tuple[str, str]] = []
+    done = reconcile_since(view, "Event", since=G, epoch=M, chunk_rows=2, call=logged(source, log))
+    assert done.settled and done.written == 0 and not done.surplus
+    assert {epoch for _, epoch in held(copy).values()} == {G}
+    assert source.asked == [[(1,), (2,)], [(3,), (4,)], [(5,), (6,)], [(7,)]]
+    # Three of the four lookups come before the source's walk asks for its next page.
+    walked = [index for index, entry in enumerate(log) if entry == ("source", "stamped_range")]
+    lookups = [index for index, entry in enumerate(log) if entry == ("source", "rows_for_keys")]
+    assert len(walked) == 2 and len([at for at in lookups if at < walked[1]]) == 3
 
 
 @pytest.mark.parametrize(

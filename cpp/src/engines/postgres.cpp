@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "bulk.hpp"
+#include "ownership_internal.hpp"
 #include "engines/postgres/connection.hpp"
 #include "engines/postgres/fences.hpp"
 #include "engines/postgres/values.hpp"
@@ -215,6 +216,7 @@ Capabilities PostgresEngine::capabilities() noexcept {
   offered.migration = this;
   offered.fences = this;
   offered.schema = this;
+  offered.copies = this;
   offered.storage = this;
   return offered;
 }
@@ -261,6 +263,55 @@ std::vector<PhysicalFinding> PostgresEngine::ensure_schema(const PhysicalLayout&
   fields.set("statements", static_cast<std::int64_t>(tables.size() + indexes.size()));
   detail::emit(options_.log, "sde.schema.applied", fields);
   return physical_findings(layout, keys);
+}
+
+std::vector<PhysicalFinding> PostgresEngine::ensure_copy(const PhysicalLayout& layout,
+                                                         const Keys& keys,
+                                                         const std::string& project_id,
+                                                         const std::string& group) {
+  // The comment of each table of the copy: present and this copy's, or the table is not taken.
+  const auto mark = [&](const std::string& table) -> std::optional<std::optional<std::string>> {
+    const Use use(*this);
+    const Result result = [&] {
+      try {
+        return cx().execute(
+            "SELECT c.oid::text, obj_description(c.oid, 'pg_class') FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = current_schema() AND c.relname = $1 AND c.relkind = 'r'",
+            {table});
+      } catch (const ServerError& error) {
+        throw EngineError("reading a copy's mark failed: " + explain(error.what()));
+      }
+    }();
+    if (result.rows() == 0) return std::nullopt;
+    if (result.is_null(0, 1)) return std::optional<std::string>{};
+    return std::optional<std::string>{std::string(result.text(0, 1))};
+  };
+  for (const auto& [entity, table] : layout.tables) {
+    std::optional<std::optional<std::string>> found = mark(table);
+    if (!found) {
+      PhysicalLayout one = layout;
+      one.tables = {{entity, table}};
+      const std::vector<std::string> statements =
+          copy_statements(one, keys, "postgres", project_id, group);
+      try {
+        transaction([&] {
+          for (const std::string& statement : statements) (void)cx().execute(statement);
+        });
+      } catch (const ServerError& error) {
+        if (error.sqlstate() != "42P07") {  // duplicate_table: created meanwhile
+          throw EngineError("creating the copy's table " + python_repr(table) +
+                            " failed: " + explain(error.what()));
+        }
+      }
+      found = mark(table);
+    }
+    const std::optional<std::string> comment = found ? *found : std::nullopt;
+    if (!found || !detail::owned_copy_marker(project_id, group, table, comment)) {
+      throw MigrationRefused(detail::copy_refusal(table, comment));
+    }
+  }
+  return ensure_schema(layout, keys);
 }
 
 void PostgresEngine::execute_schema(const std::vector<std::string>& statements) {

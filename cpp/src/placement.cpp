@@ -250,6 +250,9 @@ detail::Tables read_tables(const Json& tables, const std::string& where) {
       throw MapError(where + ": tables[" + python_repr(entity) + "] must be a table name, not " +
                      python_repr(*table));
     }
+    if (auto refusal = detail::physical_name_refusal(table->as_string())) {
+      throw MapError(where + ": tables[" + python_repr(entity) + "]: " + *refusal);
+    }
     out.emplace(entity, table->as_string());
   }
   return out;
@@ -269,6 +272,9 @@ detail::Columns read_columns(const Json* columns, const std::string& where) {
     }
     auto& entity_columns = out[entity];
     for (const auto& [column, type] : by_name(*types)) {
+      if (auto refusal = detail::physical_name_refusal(column)) {
+        throw MapError(where + ": columns[" + python_repr(entity) + "]: " + *refusal);
+      }
       if (!type->is_string() || type->as_string().empty()) {
         throw MapError(where + ": columns[" + python_repr(entity) + "][" + python_repr(column) +
                        "] must be a type name, not " + python_repr(*type));
@@ -542,6 +548,42 @@ void refuse_shadowing(const GroupPlacement& placement) {
                      ". That is not a copy of the group, it is the original with a second name in "
                      "the map, so its lag would always read as zero and a read routed to it would "
                      "silently be a read of the source.");
+    }
+  }
+}
+
+/// From contract 4, a copy's table holds that copy alone: one the map names for anything else too -
+/// one group's copy named like another group's source or copy - takes the writes, a backfill, a
+/// refill and an erasure meant for the other, and the copy's mark cannot tell them apart (format
+/// contract section 7r). Two sources naming one table are left as they were. Groups in name order,
+/// materialisations in document order, entities in name order; the second naming is refused.
+void refuse_a_table_named_twice(const std::map<std::string, ReadGroup>& read, int contract) {
+  if (contract < GENERATIONS_SINCE) return;
+  struct Naming {
+    std::string group, id, entity;
+    bool copy = false;
+  };
+  std::map<std::pair<std::string, std::string>, Naming> seen;
+  for (const auto& [name, group] : read) {
+    const GroupPlacement& placement = group.placement;
+    for (const Materialization* material : placement.all()) {
+      const bool copy = material != &placement.source;
+      for (const auto& [entity, table] : material->layout.tables) {
+        Naming here{name, material->id, entity, copy};
+        const auto [found, inserted] = seen.emplace(std::make_pair(material->engine, table), here);
+        if (inserted) continue;
+        const Naming& first = found->second;
+        if (!first.copy && !copy) continue;
+        throw MapError("table " + python_repr(table) + " of engine " +
+                       python_repr(material->engine) + " is named twice in the map: by group " +
+                       python_repr(first.group) + ", materialisation " + python_repr(first.id) +
+                       " (entity " + python_repr(first.entity) + "), and by group " +
+                       python_repr(name) + ", materialisation " + python_repr(material->id) +
+                       " (entity " + python_repr(entity) +
+                       "). A copy's table holds that copy alone: named for something else too, "
+                       "the writes, a backfill, a refill and an erasure meant for the one land in "
+                       "the other, and the copy's mark cannot tell them apart.");
+      }
     }
   }
 }
@@ -854,6 +896,7 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
         }
       }
       for (const auto& [name, group] : read) refuse_shadowing(group.placement);
+      refuse_a_table_named_twice(read, contract);
       // 5. The physical design rules that need the model.
       for (const auto& [name, group] : read) check_physical(group.placement, model);
     } else {
@@ -871,6 +914,7 @@ PlacementMap load_map(const Json& document, const LoadOptions& options) {
       // Explicit layouts have their tables without a model, so a copy that is the source under
       // another name is as visible here (one reference checked it only with a model).
       for (const auto& [name, group] : read) refuse_shadowing(group.placement);
+      refuse_a_table_named_twice(read, contract);
     }
     for (auto& [name, group] : read) map.groups_.emplace(name, std::move(group.placement));
 

@@ -4,6 +4,7 @@ import { EngineError, MigrationRefused } from './errors.js'
 import { checkMapProject, fencedGroups, refuseAFencingEngine, type Fencable } from './generation.js'
 import { colocationGroups } from './groups.js'
 import type { LogicalModel } from './model.js'
+import type { MarksCopies } from './ownership.js'
 import { refuseFindings } from './physical.js'
 import type { PlacementMap } from './placement.js'
 import type { Engine } from './session.js'
@@ -31,7 +32,19 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
     // Before any statement, like the check above: a map that cannot work creates nothing.
     for (const name of Object.keys(placement.groups).sort()) {
       const spot = placement.groups[name]!
-      if (spot.writeEpoch !== undefined) continue
+      if (spot.writeEpoch !== undefined) {
+        for (const material of spot.derived) {
+          const engine = engines[material.engine] as Engine & Partial<MarksCopies>
+          if (typeof engine.ensureCopy !== 'function') {
+            throw new MigrationRefused(
+              `group ${name} has a copy in ${material.engine}, whose adapter cannot mark the tables ` +
+                "it creates for a copy (format contract §7r); a copy's table that is not marked is " +
+                'not one the operator writes to',
+            )
+          }
+        }
+        continue
+      }
       for (const material of [spot.source, ...spot.derived]) {
         refuseAFencingEngine(name, material.engine, engines[material.engine])
       }
@@ -42,9 +55,15 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
     const keys: Record<string, readonly string[]> = {}
     for (const name of group.members) keys[name] = model.entities.find((entity) => entity.name === name)!.key
     for (const material of [spot.source, ...spot.derived]) {
-      const engine = engines[material.engine] as Engine & Fencable
+      const engine = engines[material.engine] as Engine & Fencable & Partial<MarksCopies>
+      // A copy's tables are created here and marked, or found with their mark: a table of a copy's
+      // name and shape the client already has is not taken for it (§7r).
+      const findings =
+        spot.writeEpoch !== undefined && material !== spot.source
+          ? await engine.ensureCopy!(material.layout, { keys, projectId: project as string, group: group.name })
+          : await engine.ensureSchema(material.layout, { keys })
       // Provisioning is where a person can act on a physical difference, so here it refuses.
-      refuseFindings((await engine.ensureSchema(material.layout, { keys })) ?? [], EngineError)
+      refuseFindings(findings ?? [], EngineError)
       if (spot.writeEpoch !== undefined) {
         for (const table of Object.values(material.layout.tables).sort()) {
           await engine.writeFence(table, { projectId: project as string }).prepare(spot.writeEpoch)

@@ -1,0 +1,6 @@
+{
+  "error": "MapError",
+  "match": "a physical name cannot contain %, { or }",
+  "stage": "map",
+  "why": "An index's columns are physical names too. They were checked against the layout's columns, and an entity whose layout gives none had its index columns unchecked - the renderer refused such a layout later, but the rule is the map's, at load, whatever else the layout leaves out. Found by the independent review of this rule on 20 November 2026."
+}

@@ -43,6 +43,7 @@ from .physical import (
     parse_indexes,
     parse_key_order,
     parse_partition_by,
+    physical_name_refusal,
 )
 
 __all__ = [
@@ -317,6 +318,9 @@ def _layout(raw: Mapping[str, Any], where: str, *, contract: int) -> PhysicalLay
         table = tables[entity]
         if not isinstance(table, str) or not table:
             raise MapError(f"{where}: tables[{entity!r}] must be a table name, not {table!r}")
+        refusal = physical_name_refusal(table)
+        if refusal:
+            raise MapError(f"{where}: tables[{entity!r}]: {refusal}")
     for name, holds in RESERVED_TABLES.items():
         reserved = sorted(entity for entity, table in tables.items() if str(table) == name)
         if reserved:
@@ -384,6 +388,9 @@ def _columns(raw: Any, where: str) -> dict[str, dict[str, str]]:
             )
         for column in sorted(types):
             kind = types[column]
+            refusal = physical_name_refusal(column)
+            if refusal:
+                raise MapError(f"{where}: columns[{entity!r}]: {refusal}")
             if not isinstance(kind, str) or not kind:
                 raise MapError(
                     f"{where}: columns[{entity!r}][{column!r}] must be a type name, not {kind!r}"
@@ -896,6 +903,7 @@ def _parse_map(
         }
         for name in sorted(groups):
             _refuse_shadowing(groups[name])
+        _refuse_a_table_named_twice(groups, contract=contract)
         for name in sorted(groups):
             _check_physical(groups[name], model)
         _check_routing_targets(routing, groups, model)
@@ -910,6 +918,7 @@ def _parse_map(
         # did not; both refuse it now, after coverage and in name order (format contract §8a).
         for name in sorted(groups):
             _refuse_shadowing(groups[name])
+        _refuse_a_table_named_twice(groups, contract=contract)
         _check_routing_targets(routing, groups, None)
 
     if contract >= 4:
@@ -999,6 +1008,41 @@ def _refuse_shadowing(placement: GroupPlacement) -> None:
                 "it is the original with a second name in the map, so its lag would always read as "
                 "zero and a read routed to it would silently be a read of the source."
             )
+
+
+def _refuse_a_table_named_twice(groups: Mapping[str, GroupPlacement], *, contract: int) -> None:
+    """From contract 4, refuse a copy's table that the map names for anything else too.
+
+    A copy's table holds that copy alone. Named by another materialisation as well - one group's
+    copy named like another group's source or copy - the application's writes, a backfill, a
+    cutover's refill and an erasure meant for the one land in the other, and the copy's mark (format
+    contract §7r) cannot tell them apart, since both are this project's. Found by an independent
+    review: a forged map named one group's source as another group's copy, and that group's
+    backfill and erasure rewrote and deleted the first group's rows. Two sources naming one table
+    are left as they were: a source is taken as the map names it, and the maps of contracts 1 and
+    2 list every entity's table in every group. Groups in name order, within a group the
+    materialisations in document order, within one the entities in name order; the second naming
+    is the one refused (§8a).
+    """
+    if contract < 4:
+        return
+    seen: dict[tuple[str, str], tuple[str, str, str, bool]] = {}
+    for name in sorted(groups):
+        placement = groups[name]
+        for material in placement.all():
+            copy = material is not placement.source
+            for entity, table in sorted(material.layout.tables.items()):
+                here = (name, material.id, entity, copy)
+                first = seen.setdefault((material.engine, table), here)
+                if first != here and (first[3] or copy):
+                    raise MapError(
+                        f"table {table!r} of engine {material.engine!r} is named twice in the "
+                        f"map: by group {first[0]!r}, materialisation {first[1]!r} (entity "
+                        f"{first[2]!r}), and by group {name!r}, materialisation {material.id!r} "
+                        f"(entity {entity!r}). A copy's table holds that copy alone: named for "
+                        "something else too, the writes, a backfill, a refill and an erasure meant "
+                        "for the one land in the other, and the copy's mark cannot tell them apart."
+                    )
 
 
 def _resolve_auto(placement: GroupPlacement, model: LogicalModel, group: Any) -> GroupPlacement:

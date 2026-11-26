@@ -10,6 +10,8 @@
  * come from us, when there is no key to check the claim against.
  */
 
+import { emit, truncated } from './events.js'
+import type { EventSink } from './events.js'
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto'
 
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
@@ -25,6 +27,7 @@ import {
   parseIndexes,
   parseKeyOrder,
   parsePartitionBy,
+  physicalNameRefusal,
 } from './physical.js'
 import { enumerateShapes, shapeId, SOURCE_ONLY_KINDS, WRITE_KINDS } from './shapes.js'
 
@@ -104,6 +107,8 @@ export interface LoadOptions {
    */
   readonly publicKey?: Uint8Array | Readonly<Record<string, Uint8Array>>
   readonly requireSignature?: boolean
+  /** Where `sde.map.loaded` and `sde.map.rejected` go; without it this says nothing (`events.ts`). */
+  readonly events?: EventSink
 }
 
 export const MAP_CONTRACT = 6
@@ -258,6 +263,8 @@ function readColumns(raw: unknown, where: string): Record<string, Record<string,
     }
     for (const column of Object.keys(types).sort(compareCodePoints)) {
       const kind = types[column]
+      const refusal = physicalNameRefusal(column)
+      if (refusal !== null) throw new MapError(`${where}: columns['${entity}']: ${refusal}`)
       if (typeof kind !== 'string' || kind.length === 0) {
         throw new MapError(
           `${where}: columns['${entity}']['${column}'] must be a type name, not ${describe(kind)}`,
@@ -295,6 +302,8 @@ function readLayout(raw: unknown, where: string, contract: number): MaybeLayout 
     if (typeof table !== 'string' || table.length === 0) {
       throw new MapError(`${where}: tables['${entity}'] must be a table name, not ${describe(table)}`)
     }
+    const refusal = physicalNameRefusal(table)
+    if (refusal !== null) throw new MapError(`${where}: tables['${entity}']: ${refusal}`)
   }
   for (const [name, holds] of RESERVED_TABLES) {
     const reserved = Object.entries(tables as Record<string, string>)
@@ -747,6 +756,42 @@ function checkRoutingTargets(
 }
 
 /**
+ * From contract 4, a copy's table holds that copy alone. One the map names for anything else too -
+ * one group's copy named like another group's source or copy - takes the writes, a backfill, a
+ * refill and an erasure meant for the other, and the copy's mark cannot tell them apart (format
+ * contract §7r). Two sources naming one table are left as they were. Groups in name order,
+ * materialisations in document order, entities in name order; the second naming is refused.
+ */
+function refuseATableNamedTwice(groups: Record<string, GroupPlacement>, contract: number): void {
+  if (contract < 4) return
+  const seen = new Map<string, { group: string; id: string; entity: string; copy: boolean }>()
+  for (const name of Object.keys(groups).sort(compareCodePoints)) {
+    const placement = groups[name]!
+    for (const material of [placement.source, ...placement.derived]) {
+      const copy = material !== placement.source
+      for (const entity of Object.keys(material.layout.tables).sort(compareCodePoints)) {
+        const table = material.layout.tables[entity]!
+        const key = JSON.stringify([material.engine, table])
+        const first = seen.get(key)
+        if (first === undefined) {
+          seen.set(key, { group: name, id: material.id, entity, copy })
+          continue
+        }
+        if (!first.copy && !copy) continue
+        throw new MapError(
+          `table '${table}' of engine '${material.engine}' is named twice in the map: by group ` +
+            `'${first.group}', materialisation '${first.id}' (entity '${first.entity}'), and by ` +
+            `group '${name}', materialisation '${material.id}' (entity '${entity}'). A copy's ` +
+            'table holds that copy alone: named for something else too, the writes, a backfill, ' +
+            "a refill and an erasure meant for the one land in the other, and the copy's mark " +
+            'cannot tell them apart.',
+        )
+      }
+    }
+  }
+}
+
+/**
  * The physical design rules that need the model: key permutations and partitions on the key.
  *
  * Materialisations in document order within the group, entities in name order within a layout -
@@ -798,7 +843,32 @@ function requireCanonicalText(value: unknown): void {
   }
 }
 
+/**
+ * Read a placement map, or refuse it - and say which to the event sink, when there is one. A refusal
+ * reaches the application as a `MapError` and the operator as `sde.map.rejected`, and those are
+ * different people at four in the morning. Its reason is about structure, never a value.
+ */
 export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
+  let placement: PlacementMap
+  try {
+    placement = parseMap(raw, options)
+  } catch (error) {
+    if (error instanceof MapError) {
+      emit(options.events, 'sde.map.rejected', { error: error.name, reason: truncated(error.message) })
+    }
+    throw error
+  }
+  emit(options.events, 'sde.map.loaded', {
+    model_version: placement.modelVersion,
+    map_version: placement.mapVersion,
+    signed: placement.signed,
+    forward_only: placement.signed,
+    key: placement.verifiedWith,
+  })
+  return placement
+}
+
+function parseMap(raw: unknown, options: LoadOptions): PlacementMap {
   const body = asRecord(structuredClone(raw), 'a placement map')
 
   const contract = body['contract']
@@ -1032,6 +1102,8 @@ export function loadMap(raw: unknown, options: LoadOptions = {}): PlacementMap {
       }
     }
   }
+
+  refuseATableNamedTwice(groups, contract)
 
   if (model) {
     for (const name of Object.keys(groups).sort(compareCodePoints)) {

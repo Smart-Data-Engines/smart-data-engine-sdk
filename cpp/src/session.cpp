@@ -108,8 +108,12 @@ Session::Session(const Model& model, const PlacementMap& placement,
       names_(options.names),
       project_id_(std::move(options.project_id)),
       log_(std::move(options.log)),
+      hook_(std::move(options.hook)),
       groups_(model.groups()) {
   detail::check_project_id(project_id_);
+  if (names_ != nullptr) {
+    for (const auto& [original, hashed] : names_->entities) application_names_.emplace(hashed, original);
+  }
 
   // The one place the client's names and the hashed ones meet: everything downstream speaks
   // digests, and the application keeps saying its own names.
@@ -217,7 +221,8 @@ Session::Session(const Model& model, const PlacementMap& placement,
           // Named, as in `target`: GCC cannot tell that `resolve` returns into the map.
           const RouteContext context{false, source};
           const Materialization& at = resolve(placement, *read.shape, context);
-          return PointRead::Place{engines_.at(at.engine), &at.layout.table_for(entity.name)};
+          return PointRead::Place{engines_.at(at.engine), &at,
+                                  &at.layout.table_for(entity.name)};
         };
         read.routed = place(false);
         read.source = place(true);
@@ -507,18 +512,16 @@ void Session::save(std::string_view entity, const Row& given) {
   held(entity, target_entity, write.group, materialization->engine, {values}, false);
   const std::string& table = materialization->layout.table_for(target_entity);
   const std::int64_t started = now();
-  bool failed = false;
   try {
     engine->insert(table, detail::stamp_values(placement_, write.group, values));
     fan_out(target_entity, write.group, {values}, false);
   } catch (...) {
     // A failed write is the operation whose latency and errors matter most to a placement.
-    failed = true;
-    observe(write, started, 1, failed);
+    observe(write, started, 1, "save", *materialization, std::current_exception());
     throw;
   }
   // The fan-out is inside the timed region, deliberately: it is what the client pays.
-  observe(write, started, 1, failed);
+  observe(write, started, 1, "save", *materialization, nullptr);
 }
 
 void Session::save_many(std::string_view entity, const std::vector<Row>& given) {
@@ -587,10 +590,10 @@ void Session::save_many(std::string_view entity, const std::vector<Row>& given) 
     writer->insert_many(table, stamped);
     fan_out(target_entity, write.group, rows, true);
   } catch (...) {
-    observe(write, started, rows.size(), true);
+    observe(write, started, rows.size(), "save_many", *materialization, std::current_exception());
     throw;
   }
-  observe(write, started, rows.size(), false);
+  observe(write, started, rows.size(), "save_many", *materialization, nullptr);
 }
 
 // Format contract section 8b. ClickHouse 24.8 holds a date and a timestamp from 1900-01-01 to
@@ -689,8 +692,8 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
         fresh || in_write_transaction_ ? known->second.source : known->second.routed;
     // Names nothing translates, so the entity is its own target and the key is the model's.
     std::optional<Row> changed;
-    return read_one(*known->second.shape, entity, *place.engine, *place.table,
-                    checked_point_key(entity, known->second, key, changed));
+    return read_one(*known->second.shape, entity, *place.engine, *place.materialization,
+                    *place.table, checked_point_key(entity, known->second, key, changed));
   }
   const std::string target_entity =
       operation_target(entity, [this](std::string_view name) { return target_of(name); });
@@ -715,20 +718,22 @@ std::optional<Row> Session::get(std::string_view entity, const Row& key, bool fr
   const Row checked = checked_key(entity, target_entity, given, expected);
   const OperationShape& read = shape(target_entity, "point_read", expected);
   const auto [engine, materialization] = target(read, fresh);
-  return read_one(read, entity, *engine, materialization->layout.table_for(target_entity), checked);
+  return read_one(read, entity, *engine, *materialization,
+                  materialization->layout.table_for(target_entity), checked);
 }
 
 std::optional<Row> Session::read_one(const OperationShape& read, std::string_view entity,
-                                     Engine& engine, const std::string& table, const Row& given) {
+                                     Engine& engine, const Materialization& served,
+                                     const std::string& table, const Row& given) {
   const std::int64_t started = now();
   std::optional<Row> row;
   try {
     row = engine.get(table, given);
   } catch (...) {
-    observe(read, started, 0, true);
+    observe(read, started, 0, "get", served, std::current_exception());
     throw;
   }
-  observe(read, started, row ? 1 : 0, false);
+  observe(read, started, row ? 1 : 0, "get", served, nullptr);
   if (!row) return std::nullopt;
   return fields_out(entity, detail::logical_row(placement_, std::move(*row)));
 }
@@ -827,10 +832,10 @@ ScanPage Session::scan(std::string_view entity, const ScanOptions& options) {
     }
     for (Row& row : rows) page.rows.push_back(fields_out(entity, std::move(row)));
   } catch (...) {
-    observe(*read, started, 0, true, &plan);
+    observe(*read, started, 0, "scan", *material, std::current_exception(), &plan);
     throw;
   }
-  observe(*read, started, page.rows.size(), false, &plan);
+  observe(*read, started, page.rows.size(), "scan", *material, nullptr, &plan);
   return page;
 }
 
@@ -854,10 +859,10 @@ std::uint64_t Session::count(std::string_view entity, const CountOptions& option
   try {
     result = offered.count->count_rows(table, plan);
   } catch (...) {
-    observe(aggregate, started, 0, true, &plan);
+    observe(aggregate, started, 0, "count", *material, std::current_exception(), &plan);
     throw;
   }
-  observe(aggregate, started, 1, false, &plan);
+  observe(aggregate, started, 1, "count", *material, nullptr, &plan);
   return result;
 }
 
@@ -899,10 +904,10 @@ NumericSummary Session::summarize(std::string_view entity, std::string_view fiel
     summary = numeric_summary(offered.summary->summarize_rows(table, plan, *column), *column,
                               options.mean_scale);
   } catch (...) {
-    observe(aggregate, started, 0, true, &plan);
+    observe(aggregate, started, 0, "summarize", *material, std::current_exception(), &plan);
     throw;
   }
-  observe(aggregate, started, 1, false, &plan);
+  observe(aggregate, started, 1, "summarize", *material, nullptr, &plan);
   return summary;
 }
 
@@ -1050,10 +1055,11 @@ void Session::book_write(const std::string& target_entity, const OperationShape&
       books->apply_levels(table, symbol, exchange, side, timestamp_ns, levels);
     }
   } catch (...) {
-    observe(write, started, levels.size(), true);
+    observe(write, started, levels.size(), "book_stream", *materialization,
+            std::current_exception());
     throw;
   }
-  observe(write, started, levels.size(), false);
+  observe(write, started, levels.size(), "book_stream", *materialization, nullptr);
 }
 
 Book Session::book_at(std::string_view entity, const std::string& symbol,
@@ -1098,15 +1104,46 @@ Book Session::book_at(std::string_view entity, const std::string& symbol,
 }
 
 void Session::observe(const OperationShape& shape, std::int64_t started, std::uint64_t rows,
-                      bool failed, const ReadPlan* plan) {
-  if (recorder_ == nullptr) return;
+                      std::string_view operation, const Materialization& served,
+                      const std::exception_ptr& error, const ReadPlan* plan) {
+  if (recorder_ == nullptr && !hook_) return;
   const std::int64_t elapsed = steady_ns() - started;
-  if (plan == nullptr) {
-    recorder_->record(shape, elapsed, rows, failed);
-    return;
+  const bool failed = static_cast<bool>(error);
+  if (recorder_ != nullptr) {
+    if (plan == nullptr) {
+      recorder_->record(shape, elapsed, rows, failed);
+    } else {
+      const Filter filter = predicates(*plan);
+      recorder_->record(shape, elapsed, rows, failed, &filter);
+    }
   }
-  const Filter filter = predicates(*plan);
-  recorder_->record(shape, elapsed, rows, failed, &filter);
+  if (hook_) call_hook(operation, shape.entity, shape.group, shape.id, served, elapsed, rows, error);
+}
+
+void Session::call_hook(std::string_view operation, const std::string& entity,
+                        const std::string& group, const std::string& shape,
+                        const Materialization& served, std::int64_t elapsed, std::uint64_t rows,
+                        const std::exception_ptr& error) {
+  try {
+    OperationRecord record;
+    record.operation = std::string(operation);
+    record.entity = application_name(entity);
+    record.group = application_name(group);
+    record.shape = shape;
+    record.engine = served.engine;
+    record.dialect = std::string(engines_.at(served.engine)->dialect());
+    record.materialization = served.id;
+    record.duration_ns = elapsed;
+    record.rows = rows;
+    record.outcome = outcome_of(error);
+    hook_(record);
+  } catch (...) {  // NOLINT(bugprone-empty-catch): the application's hook never fails its operation
+  }
+}
+
+std::string Session::application_name(const std::string& model_name) const {
+  const auto found = application_names_.find(model_name);
+  return found == application_names_.end() ? model_name : found->second;
 }
 
 // --- transactions -------------------------------------------------------------------------------
@@ -1148,7 +1185,8 @@ void Session::transaction(const std::vector<std::string>& entities,
         "commit.");
   }
   const Group& group = group_of(names.front());
-  Engine& engine = *engines_.at(placement_.placement_of(group.name).source.engine);
+  const Materialization& source = placement_.placement_of(group.name).source;
+  Engine& engine = *engines_.at(source.engine);
   const bool previous = in_write_transaction_;
   const std::size_t outer = deferred_.size();
   in_write_transaction_ = true;
@@ -1167,12 +1205,23 @@ void Session::transaction(const std::vector<std::string>& entities,
     }
     // Rolled back: the rows never existed in the source, so they must never exist in the copy.
   };
+  // The whole transaction is one record of the hook, beside a record of each operation in it:
+  // from opening to its end, committed or not.
+  const std::int64_t started = hook_ ? steady_ns() : 0;
   try {
     engine.transaction(body);
     committed = true;
   } catch (...) {
+    if (hook_) {
+      call_hook("transaction", names.front(), group.name, "", source, steady_ns() - started, 0,
+                std::current_exception());
+    }
     settle();
     throw;
+  }
+  if (hook_) {
+    call_hook("transaction", names.front(), group.name, "", source, steady_ns() - started, 0,
+              nullptr);
   }
   settle();
 }

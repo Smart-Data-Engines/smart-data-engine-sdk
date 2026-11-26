@@ -50,6 +50,8 @@ add_executable(sde_unit_tests
   unit/test_overhead.cpp
   unit/test_invariants.cpp
   unit/test_books.cpp
+  unit/test_operation_hook.cpp
+  unit/test_otel_bridge.cpp
 )
 target_link_libraries(sde_unit_tests PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # The vocabulary test reads the library's sources and the reference's, as they are in the tree.

@@ -28,6 +28,7 @@ where it does, the caller records an explicit index in each element rather than 
 from __future__ import annotations
 
 import hashlib
+import re
 import unicodedata
 from typing import Final
 
@@ -54,8 +55,18 @@ class CanonicalError(ValueError):
     """
 
 
+# What makes a string need more than its own characters between quotes: a control character, a
+# quote or a backslash. Most strings a model or a journal holds - names, identifiers, instants -
+# have none, and for them the loop below is a slow way to add two quotes: 2.0 against 0.5 µs for
+# `operator`, 13.6 against 0.9 µs for 64 letters (laptop, Python 3.14). The loop stays the
+# definition; this only recognises when it would change nothing.
+_NEEDS_ESCAPE: Final = re.compile(r'[\x00-\x1f"\\]')
+
+
 def _escape(text: str) -> str:
     normalised = unicodedata.normalize("NFC", text)
+    if _NEEDS_ESCAPE.search(normalised) is None:
+        return '"' + normalised + '"'
     out: list[str] = ['"']
     for char in normalised:
         code = ord(char)

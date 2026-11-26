@@ -28,6 +28,7 @@ from test_staging_operator_live import cutover
 import sde
 from sde.engines._write_fences import fence_pipeline
 from sde.engines.elasticsearch import ElasticsearchEngine
+from sde.ownership import source_marker
 
 PROJECT = "1" * 32
 DSN = os.environ.get("SDE_ELASTICSEARCH_DSN")
@@ -291,6 +292,13 @@ def test_a_group_moves_onto_elasticsearch_and_the_copy_is_repaired_from_the_froz
             cutover(move.stage, move.signed, move.model, move.public)).as_record()
         assert (final["outcome"], final["reason"]) == ("success", "matched")
         assert final["verification"]["matched"] is True
+        # The staging's mark gives way to a source's (format contract §7r); the rest of the
+        # index's own _meta.sde - its entity and key, which a session reads - stays.
+        status, body = move.es.operator._request("GET", f"/{move.copy}/_mapping")
+        sde_meta = body[move.copy]["mappings"]["_meta"]["sde"]
+        assert sde_meta["source"] == source_marker(PROJECT, "Event", move.copy)
+        assert "stage" not in sde_meta and "copy" not in sde_meta
+        assert {"entity", "key"} <= set(sde_meta)
         moved = move.session()
         for key, row in ROWS.items():
             assert moved.get("Event", {"id": key}) == row
@@ -739,3 +747,24 @@ def test_a_newer_map_on_an_elasticsearch_cluster_is_named_as_the_cluster_s(tmp_p
             f"{move.stage.current.map_version}. An Elasticsearch cluster keeps one stream of maps, "
             f"whatever project wrote them (format contract 7m)."
         )
+
+
+def test_a_name_reaches_the_index_under_it_and_an_alias_the_index_behind_it(
+    tmp_path: Path,
+) -> None:
+    """How the operator tells two names of a map apart (§7r): by the index each reaches."""
+    with moving("elasticsearch", tmp_path) as move:
+        native = move.operator.native["elasticsearch"]
+        index = move.source_table
+        key = native.identity(index).physical_key
+        assert native.object_keys(index) == {key}
+        assert native.object_keys(index + "_none") == frozenset()
+        alias = index + "_alias"
+        es = move.es.operator
+        actions = {"actions": [{"add": {"index": index, "alias": alias}}]}
+        assert es._request("POST", "/_aliases", actions)[0] == 200
+        try:
+            assert native.object_keys(alias) == {key}
+        finally:
+            es._request("POST", "/_aliases",
+                        {"actions": [{"remove": {"index": index, "alias": alias}}]})

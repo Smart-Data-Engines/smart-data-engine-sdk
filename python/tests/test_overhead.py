@@ -245,3 +245,42 @@ def test_end_to_end_comparison_is_reported_but_not_asserted(
         "the median. That is not measurement noise - a median moves only if every call pays - so "
         "look for a second round trip or a connection being opened per operation."
     )
+
+
+def test_the_operation_hook_adds_under_one_percent(
+    model: sde.LogicalModel, placement: sde.PlacementMap, engine: PostgresEngine
+) -> None:
+    """What a hook costs an operation: the two clock reads, the record, the guard and the call.
+
+    Measured as the gate above measures routing - the mechanism alone, against a round trip
+    measured apart - with a hook that does nothing, which is the library's share; an exporter's
+    share is the exporter's.
+    """
+    table = placement.placement_of("Reading").source.layout.table_for("Reading")
+    key = uuid.uuid4()
+    engine.insert(table, {"id": key, "sensor": "s", "value": 1.0})
+    round_trips = _time(lambda: engine.get(table, {"id": key}), ROUND_TRIPS)
+
+    session = sde.Session(model, placement, {"pg": engine}, hook=lambda record: None)
+    shape = next(s for s in sde.enumerate_shapes(model) if s.kind == "point_read")
+    served = placement.placement_of("Reading").source
+
+    def added_work() -> None:
+        started = time.perf_counter_ns()
+        session._observe(
+            shape, started, rows=1, failed=False, operation="get", served=served, error=None
+        )
+
+    added = _time(added_work, LIBRARY_CALLS)
+    ratio = statistics.median(added) / statistics.median(round_trips)
+    print(
+        f"\n  round trip p50      {statistics.median(round_trips) / 1000:9.1f} µs"
+        f"\n  hook added p50      {statistics.median(added) / 1000:9.3f} µs  (n={LIBRARY_CALLS})"
+        f"\n  hook added p99      {_percentile(added, 0.99) / 1000:9.3f} µs"
+        f"\n  ratio p50/p50       {ratio * 100:9.3f} %  budget {BUDGET * 100:.0f} %"
+    )
+    assert ratio < BUDGET, (
+        f"an empty hook adds {ratio * 100:.2f}% of a round trip, over the {BUDGET * 100:.0f}% "
+        "budget: building one record and calling a function should not cost that."
+    )
+    assert statistics.median(round_trips) > 10_000, "the round trip is not a PostgreSQL one"

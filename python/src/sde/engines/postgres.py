@@ -25,7 +25,7 @@ from typing import Any
 
 from .._usage import UsageGate, guarded
 from ..bulk import batch_columns
-from ..errors import EngineError
+from ..errors import EngineError, MigrationRefused
 from ..explain import (
     Cost,
     QueryPlan,
@@ -36,10 +36,11 @@ from ..generation import EPOCH_COLUMN
 from ..layout import POSTGRES_TYPES
 from ..logging import log
 from ..migration import key_columns, same_width
+from ..ownership import copy_refusal, owned_copy_marker
 from ..physical import DeclaredTable, PhysicalFinding, declared_tables
 from ..placement import BACKFILL_TABLE, WATERMARK_TABLE, PhysicalLayout
 from ..query import ReadColumn, ReadPlan, read_row, read_sql, summary_sql
-from ..schema import QUOTE, schema_statements
+from ..schema import QUOTE, copy_statements, schema_statements
 from ..write_fence import WriteFence
 from ._transport import loopback
 from ._write_fences import PostgresFences
@@ -304,6 +305,67 @@ class PostgresEngine:
         self._execute(indexes)
         log("sde.schema.applied", engine=self.dialect, statements=len(tables) + len(indexes))
         return self._physical_findings(layout, keys)
+
+    @guarded
+    def ensure_copy(
+        self,
+        layout: PhysicalLayout,
+        *,
+        keys: Mapping[str, Sequence[str]],
+        project_id: str,
+        group: str,
+    ) -> tuple[PhysicalFinding, ...]:
+        """A copy's tables: created here and marked, or found with the mark they were made with.
+
+        Each table's mark is :func:`sde.ownership.copy_marker` of the project, the group and the
+        table; a staging's mark on the copy it named is the copy's too. A table that is not
+        there is created - ``CREATE TABLE`` without ``IF NOT EXISTS`` - and marked with ``COMMENT
+        ON TABLE`` in the same transaction. A table that is there is this copy's only if it carries
+        its mark; one without it is refused before anything is written to it. ``CREATE TABLE IF
+        NOT EXISTS`` took any table of the name and shape as the copy, and every path that writes to
+        a copy - a backfill, a repair, an emptying refill, an erasure - then wrote to a table the
+        client had for something else (format contract §7r). Then what :meth:`ensure_schema` does.
+        """
+        from psycopg import errors as pg_errors
+
+        for entity, table in sorted(layout.tables.items()):
+            found = self._mark(table)
+            if found is None:
+                one = replace(layout, tables={entity: table})
+                create, comment = copy_statements(
+                    one, keys=keys, dialect=self.dialect, project_id=project_id, group=group
+                )
+                try:
+                    with self._cx.transaction():
+                        self._cx.execute(create)
+                        self._cx.execute(comment)
+                except pg_errors.DuplicateTable:
+                    pass  # created meanwhile; the mark below says whose it is
+                found = self._mark(table)
+            if found is None or not owned_copy_marker(project_id, group, table, found[1]):
+                raise MigrationRefused(copy_refusal(table, None if found is None else found[1]))
+        return self.ensure_schema(layout, keys=keys)
+
+    def _mark(self, table: str) -> tuple[str, str | None] | None:
+        """A table's object id and its comment, or ``None`` when no table has the name.
+
+        Looked for where ``CREATE TABLE`` puts it, in ``current_schema()``, by its name, as
+        TypeScript and C++ do. Resolved through the search path instead, the mark of a copy in a
+        later schema was taken for one ``ensure_schema`` then made unmarked in the first. A name
+        longer than 63 bytes is compared as PostgreSQL truncates it, so the table is found; the
+        check of its columns, which reads it by the whole name, then refuses it in all three.
+        """
+        with self._cx.cursor() as cur:
+            cur.execute(
+                "SELECT c.oid::text, obj_description(c.oid, 'pg_class') FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND c.relname = %s AND c.relkind = 'r'",
+                [table],
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return None
+        return str(rows[0][0]), None if rows[0][1] is None else str(rows[0][1])
 
     def _execute(self, statements: Sequence[str]) -> None:
         with self._cx.cursor() as cur:
@@ -636,9 +698,16 @@ class PostgresEngine:
                     f"refused in a read-only one."
                 )
             try:
-                cursor.execute(f"EXPLAIN (FORMAT JSON) {sql}")
+                # One statement, by the extended protocol. Without parameters psycopg sends a
+                # statement by the simple protocol, where PostgreSQL runs every statement of the
+                # string: a query of `SELECT 1; COMMIT; DELETE ...` ended the read-only transaction
+                # and deleted in a new, read-write one, and the plan came back as if nothing had
+                # happened (SDE-97, measured). The extended protocol takes one statement and
+                # refuses a string of several before any of them runs; `binary=True` is what
+                # makes psycopg use it for a statement without parameters.
+                cursor.execute(f"EXPLAIN (FORMAT JSON) {sql}", binary=True)
                 raw = cursor.fetchone()
-                cursor.execute(f"EXPLAIN {sql}")
+                cursor.execute(f"EXPLAIN {sql}", binary=True)
                 text = tuple(str(row[0]) for row in cursor.fetchall())
             except Exception as exc:
                 # The refusal *is* the validation. Re-raised with the engine's own wording,
@@ -680,10 +749,11 @@ class PostgresEngine:
             ),
             findings=postgres_findings(node),
             read_only_enforced=(
-                "SET TRANSACTION READ ONLY, and the transaction is rolled back. PostgreSQL "
-                "refuses a write in such a transaction whatever the statement looks like - "
-                "measured: a data-modifying CTE fails with 'cannot execute SELECT in a read-only "
-                "transaction'."
+                "SET TRANSACTION READ ONLY, one statement sent by the extended protocol - a query "
+                "of several is refused before any of them runs - and the transaction is rolled "
+                "back. PostgreSQL refuses a write in such a transaction whatever the statement "
+                "looks like - measured: a data-modifying CTE fails with 'cannot execute SELECT in "
+                "a read-only transaction'."
             ),
         )
 

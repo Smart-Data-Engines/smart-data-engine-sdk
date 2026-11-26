@@ -42,7 +42,25 @@ __all__ = [
     "TEMPORAL_TYPES",
     "capabilities",
     "index_method",
+    "physical_name_refusal",
 ]
+
+UNSAFE_IN_NAMES: Final = frozenset("%{}")
+"""What no physical name - a table, a column, an index - may hold (format contract §7a).
+
+Quoting makes such a name safe for the server, not for what reads the statement before it: the
+Python ClickHouse driver formats the whole text of a statement that has parameters with ``%``, so
+a table called ``payment%(k0_0).0s`` became ``payment`` in a deletion by key; ``{name:Type}`` is a
+ClickHouse server-side parameter; and an Elasticsearch path is percent-decoded, so an index called
+``%5fall`` addressed ``_all``. Found by an independent review on 20 November 2026.
+"""
+
+
+def physical_name_refusal(name: str) -> str | None:
+    """Why ``name`` cannot be a physical name, or ``None`` when it can."""
+    if UNSAFE_IN_NAMES.isdisjoint(name):
+        return None
+    return f"a physical name cannot contain %, {{ or }}, and {name!r} does"
 
 PHYSICAL_DESIGN_SINCE: Final = 5
 """The placement map contract that introduced ``key_order``, ``partition_by`` and index methods."""
@@ -225,6 +243,9 @@ def parse_indexes(
             )
         if not isinstance(name, str) or not name:
             raise MapError(f"{at} needs a non-empty name")
+        refusal = physical_name_refusal(name)
+        if refusal:
+            raise MapError(f"{at}: {refusal}")
         if name in names:
             raise MapError(f"{at} reuses the index name {name!r}")
         names.add(name)
@@ -235,6 +256,11 @@ def parse_indexes(
             or len(set(cols)) != len(cols)
         ):
             raise MapError(f"{at} needs a non-empty list of distinct column names")
+        for column in cols:
+            # Checked here as well as with the layout's columns, which an entity may not have.
+            refusal = physical_name_refusal(column)
+            if refusal:
+                raise MapError(f"{at}: {refusal}")
         declared = columns.get(entity)
         if declared:
             missing = [column for column in cols if column not in declared]

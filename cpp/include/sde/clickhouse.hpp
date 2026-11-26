@@ -59,6 +59,7 @@ class ClickHouseEngine final : public Engine,
                                public Migratable,
                                public Fencable,
                                public SchemaValidator,
+                               public MarksCopies,
                                public StorageMeasurable,
                                public TemporalBounded {
  public:
@@ -86,6 +87,10 @@ class ClickHouseEngine final : public Engine,
   /// as another type.
   std::vector<PhysicalFinding> ensure_schema(const PhysicalLayout& layout,
                                              const Keys& keys) override;
+  /// A copy's tables, created marked or found with their mark (format contract section 7r).
+  std::vector<PhysicalFinding> ensure_copy(const PhysicalLayout& layout, const Keys& keys,
+                                           const std::string& project_id,
+                                           const std::string& group) override;
   void insert(const std::string& table, const Row& values) override;
   std::optional<Row> get(const std::string& table, const Row& key) override;
   /// Refuses (`EngineError`) before `body` runs: ClickHouse has no multi-statement transactions.
