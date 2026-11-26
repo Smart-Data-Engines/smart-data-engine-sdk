@@ -9,7 +9,7 @@ agree. What does is the conformance suite and
 ## Unreleased
 
 **Added: maps and signed packets may be signed with ES256** (all three libraries;
-[format contract](docs/format-contract.md) §7, *Signing*; vectors `signature/016` to `025`). Beside
+[format contract](docs/format-contract.md) §7, *Signing*; vectors `signature/016` to `029`). Beside
 Ed25519, a map or packet may carry `"alg": "es256"`: ECDSA over P-256 with SHA-256, the signature r
 and s of 32 bytes each (IEEE P1363, as JWS and a cloud KMS give it) with s in the lower half of the
 order, so that a map has one signature as it has in Ed25519. A trusted key is 32 bytes of Ed25519 or

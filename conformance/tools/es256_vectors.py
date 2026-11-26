@@ -51,6 +51,10 @@ CASES = (
     "023-a-p256-key-off-the-curve-is-refused",
     "024-a-compressed-p256-key-is-refused",
     "025-an-unknown-algorithm-is-refused",
+    "026-a-hybrid-p256-key-is-refused",
+    "027-an-es256-signature-with-r-zero-is-refused",
+    "028-an-es256-signature-with-r-at-the-order-is-refused",
+    "029-an-es256-signature-with-s-zero-is-refused",
 )
 
 
@@ -243,6 +247,25 @@ def main() -> int:
                         "match": "only ed25519 and es256 signatures are understood",
                         "why": "an algorithm a library does not implement is refused by name, never "
                         "verified as another"})
+        # SEC1's hybrid form carries both coordinates, as the uncompressed one does, under a first
+        # byte of 0x06 or 0x07; openssl parses it as the same point.
+        hybrid = bytes([6 + (y & 1)]) + p1.public[1:]
+        write(CASES[10], model=model, document=by_p1, keys={"": b64(hybrid)},
+              expected={"error": "MapError",
+                        "match": "a P-256 key is an uncompressed point, whose first byte is 0x04",
+                        "why": "SEC1's hybrid form, 65 bytes beginning 0x06 or 0x07, which openssl "
+                        "reads as the same point: refused by its first byte, so that every library "
+                        "takes one form and none takes it through its cryptography library"})
+        form = "with both above zero and below the order of P-256"
+        for case, value, what in (
+            (CASES[11], p1363(0, s), "r of zero"),
+            (CASES[12], p1363(N, s), "r equal to the order of the curve"),
+            (CASES[13], p1363(r, 0), "s of zero"),
+        ):
+            write(case, model=model, document=signed(value), keys={"": b64(p1.public)},
+                  expected={"error": "MapError", "match": form,
+                            "why": f"{what} is no ECDSA signature: refused by its form, before "
+                            "verification is attempted, as one outside the range of r and s is"})
     print("done; the private keys were in a temporary directory and are gone")
     return 0
 
