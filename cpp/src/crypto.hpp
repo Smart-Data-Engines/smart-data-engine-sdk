@@ -23,6 +23,15 @@ using Digest = std::array<std::uint8_t, 32>;
 [[nodiscard]] bool ed25519_verify(std::string_view public_key, std::string_view message,
                                   std::string_view signature);
 
+/// Whether `point` - 65 bytes, an uncompressed SEC1 point - is a point on P-256.
+[[nodiscard]] bool p256_point(std::string_view point);
+
+/// Whether `signature` - r and s, 32 bytes each (IEEE P1363) - is a valid ECDSA P-256 SHA-256
+/// signature of `message` under the uncompressed point `public_key`. False for anything that is
+/// not; never throws for a malformed key or signature.
+[[nodiscard]] bool es256_verify(std::string_view public_key, std::string_view message,
+                                std::string_view signature);
+
 [[nodiscard]] std::string to_hex(std::span<const std::uint8_t> bytes);
 
 }  // namespace sde::detail

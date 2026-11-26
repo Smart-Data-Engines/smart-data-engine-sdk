@@ -29,10 +29,11 @@ The JSON object contains exactly these fields:
 | `verification` | The protocol-1 request for the exact signed before-map, model, group and copies. |
 | `query_impact_digest` | 64-digit lowercase SHA-256 identifier of the controller's approved query-impact record. |
 | `pause_budget_ms` | Positive safe integer budget for the executor; validation does not enforce elapsed time. |
-| `signature` | Ed25519 over canonical bytes excluding this entire block. |
+| `signature` | Ed25519 or ES256 over canonical bytes excluding this entire block. |
 
-Every signature in a packet uses canonical base64 of exactly 64 bytes. Signature blocks contain
-`alg`, `value`, and optionally a string `key_id`. Integral JSON numbers are normalized consistently
+Every signature in a packet uses canonical base64 of exactly 64 bytes: Ed25519, or r and s of
+ES256 as the format contract's *Signing* section fixes them. Signature blocks contain `alg`
+(`ed25519` or `es256`), `value`, and optionally a string `key_id`. Integral JSON numbers are normalized consistently
 before signature verification. Canonical map identifiers follow §7f of the format contract.
 
 The controller must pass the saved-query-impact gate before signing this authorization. The SDK

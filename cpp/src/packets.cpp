@@ -119,10 +119,14 @@ void signature_block(const Json& document, std::string_view subject) {
   if (!exactly(signature, {"alg", "value"}) && !exactly(signature, {"alg", "value", "key_id"})) {
     refuse(cat({subject, " signatures have missing or unknown fields"}));
   }
-  const std::string malformed = cat({subject, " signatures must use ed25519 and canonical base64"});
+  const std::string malformed =
+      cat({subject, " signatures must use ed25519 or es256 and canonical base64"});
   const Json& alg = *signature.find("alg");
   const Json& value = *signature.find("value");
-  if (!alg.is_string() || alg.as_string() != "ed25519" || !value.is_string()) refuse(malformed);
+  if (!alg.is_string() || (alg.as_string() != "ed25519" && alg.as_string() != "es256") ||
+      !value.is_string()) {
+    refuse(malformed);
+  }
   const std::optional<std::string> decoded = detail::base64_decode_as_python(value.as_string());
   if (!decoded || decoded->size() != 64 || detail::base64_encode(*decoded) != value.as_string()) {
     refuse(malformed);

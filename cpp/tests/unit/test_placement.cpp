@@ -273,9 +273,9 @@ TEST(LoadMap, SignatureValuesAreDecodedAsTheReferenceDecodesThem) {
   // Excess padding after a whole quantum decodes, as in Python 3.12; the bytes then do not verify.
   EXPECT_REFUSED(with_value(R"("AAAA==")"), options, "does not verify against any of the 1 key");
   EXPECT_REFUSED(map_with(model, kSource, R"(, "signature": "abc")"), options,
-                 "only ed25519 signatures are understood");
+                 "only ed25519 and es256 signatures are understood");
   EXPECT_REFUSED(map_with(model, kSource, R"(, "signature": {"alg": "rsa", "value": "AAAA"})"),
-                 options, "only ed25519 signatures are understood");
+                 options, "only ed25519 and es256 signatures are understood");
   // A null signature is no signature.
   EXPECT_FALSE(sde::load_map(std::string_view(map_with(model, kSource, R"(, "signature": null)")),
                              options)

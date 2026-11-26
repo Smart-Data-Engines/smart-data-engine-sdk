@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "is signed with es256 and none of the 1 key(s) supplied is an ES256 (P-256) key",
+  "why": "a key of one algorithm never verifies the other's signature, and a signature with no key of its algorithm is an unverifiable claim"
+}

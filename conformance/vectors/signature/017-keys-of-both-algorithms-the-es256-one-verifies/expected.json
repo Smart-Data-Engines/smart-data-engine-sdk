@@ -1,0 +1,4 @@
+{
+  "verified_with": "ec",
+  "why": "a set may hold keys of both algorithms, as a rotation from one to the other does; the map's alg says which of them are tried, and the one that verified is reported"
+}

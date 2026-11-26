@@ -42,7 +42,8 @@ Give [the Weather declaration](../examples/weather/model.json) to the controller
 return a `bootstrap.json` with exactly these fields:
 
 - `kind: "sde-weather-bootstrap"` and `protocol: 1`;
-- `project_id`, the neutral `model`, and `public_keys` mapping key IDs to raw Ed25519 bytes in base64;
+- `project_id`, the neutral `model`, and `public_keys` mapping key IDs to raw public keys in base64: 32 bytes of Ed25519, or 65 of an
+  uncompressed P-256 point for maps signed with ES256;
 - `engines`, mapping your binding names to `postgres` or `clickhouse` (one of each at most);
 - `current_map`, the signed contract-4 initial map, version 1, with source materializations only.
 
