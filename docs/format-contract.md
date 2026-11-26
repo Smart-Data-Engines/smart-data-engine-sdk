@@ -648,7 +648,7 @@ handed; the message is. `telemetry/006`.
     }
   },
   "routing": {"<shape id>": "<materialisation id>"},
-  "signature": {"alg": "ed25519", "key_id": "k1", "value": "<base64>"}
+  "signature": {"alg": "ed25519", "key_id": "k1", "value": "<base64>"}   // or "alg": "es256"
 }
 ```
 
@@ -778,7 +778,16 @@ where data is written:
 
 ### Signing
 
-The signature is Ed25519 over `canonical_bytes(map without the "signature" key)`.
+The signature is Ed25519 (`"alg": "ed25519"`) or ECDSA over P-256 with SHA-256 (`"alg": "es256"`)
+over `canonical_bytes(map without the "signature" key)`. Its value is 64 bytes in both, base64: an
+Ed25519 signature, or r and s of 32 bytes each, big-endian (IEEE P1363, as JWS and a KMS give it),
+with both in [1, n) and s in the lower half of the order, s ≤ n/2, so that a map has one signature
+as it has in Ed25519. A public key is 32 bytes of Ed25519 or a P-256 point uncompressed (SEC1, 65
+bytes, `04 ‖ X ‖ Y`); the algorithm of a key is its form. A map's `alg` decides which of the keys
+supplied are tried, and nothing else: a key of one algorithm never verifies a signature of the
+other, and a map signed with an algorithm none of the keys supplied has is refused, as a signature
+with no key to check it is. Any other `alg` is refused by name (`only ed25519 and es256 signatures
+are understood`). The same holds for the signature of a packet's envelope (§7b onward).
 
 Three cases, and the middle one is the one to get right:
 
@@ -824,7 +833,8 @@ verification is attempted:
 
 | Configuration | Result |
 |---|---|
-| a public key that is not 32 bytes | **refused**, naming the key and its length |
+| a public key that is neither 32 bytes nor 65 | **refused**, naming the key and its length |
+| 65 bytes that are not an uncompressed point on P-256 | **refused**, naming the key |
 | an empty set of keys | **refused**: this is not the no-account mode, it is a configuration that can verify nothing |
 
 Both exist because of what the alternative looks like. A key pasted a byte short would otherwise

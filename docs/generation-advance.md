@@ -46,8 +46,8 @@ it to verify and no outcome to choose: the packet has one next map, not a `succe
 }
 ```
 
-The signature is Ed25519 over the canonical envelope without its top-level signature, with the
-encoding and trusted-key selection of [cutover packets](cutover-packets.md); each nested map carries
+The signature is Ed25519 or ES256 (format contract §7, *Signing*) over the canonical envelope
+without its top-level signature, with the encoding and trusted-key selection of [cutover packets](cutover-packets.md); each nested map carries
 its own valid signature. The packet fingerprint is SHA-256 of that canonical unsigned envelope, so
 it covers both maps as they were signed. Integral JSON numbers normalize by the existing map rules
 before validation.

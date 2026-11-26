@@ -23,9 +23,9 @@ engine that reuses a source table, so a relayout copy cannot be the source under
 
 The exact envelope fields are `kind: "sde-stage"`, `protocol` (1 or 2), `stage_id`, `project_id`, `group`,
 `current`, `prepared`, and `signature`. The ids are 32 lowercase hexadecimal digits. The signature
-is Ed25519 over the canonical envelope without its top-level signature; its encoding and trusted
-key selection follow [cutover packets](cutover-packets.md). Each nested map also has its own valid
-signature. The packet fingerprint is SHA-256 of that canonical unsigned envelope. Integral JSON
+is Ed25519 or ES256 (format contract §7, *Signing*) over the canonical envelope without its
+top-level signature; its encoding and trusted key selection follow
+[cutover packets](cutover-packets.md). Each nested map also has its own valid signature. The packet fingerprint is SHA-256 of that canonical unsigned envelope. Integral JSON
 numbers normalize by the existing map rules before validation and canonical encoding.
 
 Both maps must use contract 4, match the locally enrolled project and model, and contain explicit

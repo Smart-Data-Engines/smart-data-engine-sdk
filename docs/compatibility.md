@@ -100,11 +100,11 @@ repository reads are constants in its source, and the table on
 
 By release, for the two libraries on a registry:
 
-| Release | Placement map | Cutover, staging and index build packets | Generation advance packet |
-|---|---|---|---|
-| 0.1.0, 0.1.1 | 1 to 5 | 1 and 2 | not read |
-| 0.2.0 | 1 to 6 | 1 and 2 | not read |
-| `main` | 1 to 6 | 1 and 2 | 1 |
+| Release | Placement map | Cutover, staging and index build packets | Generation advance packet | Signatures |
+|---|---|---|---|---|
+| 0.1.0, 0.1.1 | 1 to 5 | 1 and 2 | not read | Ed25519 |
+| 0.2.0 | 1 to 6 | 1 and 2 | not read | Ed25519 |
+| `main` | 1 to 6 | 1 and 2 | 1 | Ed25519 and ES256 |
 
 **Backwards compatible, forwards strict.** A library reads every earlier map contract with its
 meaning unchanged, and refuses a later one by its number: what came after it cannot be known, so it
@@ -113,6 +113,9 @@ is not guessed. Two things follow.
   library that reads 1 to 5 refuses a contract-6 map whole when it loads it.
 - **Upgrade the operator before a packet of a newer protocol reaches it.** `sde-operator` refuses a
   packet whose protocol it does not know when it loads it, before it changes anything.
+- **Upgrade the libraries before a map signed with ES256 reaches them.** A signature's algorithm is
+  read the same way: a library that knows only Ed25519 refuses a map or a packet signed with ES256
+  by its algorithm ([format contract](format-contract.md) §7, *Signing*).
 
 The Python and TypeScript libraries of one client need not move together. What makes two of them
 agree is not a version number: it is the conformance suite, which holds every library to the same
