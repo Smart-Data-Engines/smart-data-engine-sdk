@@ -51,8 +51,10 @@ def source1(project: str, group: str, table: str) -> str:
     return f"sde.source1.{project}.{_d16(group)}.{_d16(table)}"
 
 
-def case(table: str, mark: str | None, copy: bool, source: bool, why: str) -> dict[str, Any]:
-    return {"project_id": PROJECT, "group": "Event", "table": table, "mark": mark,
+def case(
+    table: str, mark: str | None, copy: bool, source: bool, why: str, group: str = "Event"
+) -> dict[str, Any]:
+    return {"project_id": PROJECT, "group": group, "table": table, "mark": mark,
             "copy": copy, "source": source, "why": why}
 
 
@@ -69,14 +71,22 @@ CASES: list[dict[str, Any]] = [
     case(STAGED, stage2(PROJECT, STAGE, "Event", STAGED), True, False,
          "a staging's mark for this group, on the copy it named after its stage"),
     case(STAGED, stage2(PROJECT, STAGE, "Account", STAGED), False, False,
-         "another group's staged copy (the first review's D1): its mark names its group"),
+         "another group's staged copy: its mark names its group"),
     case(STAGED, stage2(PROJECT, OTHER_STAGE, "Event", STAGED), False, False,
          "a staging's mark of another stage than the one the table is named after"),
     case(STAGED, stage1(PROJECT, STAGE, STAGED), True, False,
          "an earlier release's staging mark names no group: taken on a staged copy's table, where "
-         "the operator checks the stage's group in its records; never on a source (the third "
-         "review's F1), which the operator gives a source's mark where its records show the "
-         "cutover"),
+         "the operator checks the stage's group in its records; never on a source, to which "
+         "sde-operator mark-sources gives a source's mark where its records show the stage "
+         "completed for the group and a cutover of the group completed"),
+    case(STAGED, stage1(PROJECT, STAGE, STAGED), True, False,
+         "the same mark for another group is taken too: it names no group, so only the operator's "
+         "records of the stage can tell, and a library takes it as any group's staged copy",
+         group="Account"),
+    case(STAGED, stage1(OTHER_PROJECT, STAGE, STAGED), False, False,
+         "an earlier release's staging mark of another project"),
+    case(STAGED, stage2(OTHER_PROJECT, STAGE, "Event", STAGED), False, False,
+         "a staging's mark of another project"),
     case("event_copy", stage1(PROJECT, STAGE, "event_copy"), False, False,
          "a staging's mark on a table not named after its stage"),
     case("event", source1(PROJECT, "Event", "event"), False, True,
@@ -91,6 +101,10 @@ CASES: list[dict[str, Any]] = [
     case("event_copy", copy1(PROJECT, "Event", "event_copy")[:-1], False, True,
          "a copy's mark one digit short is no mark of a library's, and a table carrying it is not "
          "a copy"),
+    case("event_copy", copy1(PROJECT, "Event", "event_copy") + "\n", False, True,
+         "a mark is the whole comment: one with a line break after it is no mark"),
+    case(STAGED, stage2(PROJECT, STAGE, "Event", STAGED).upper().replace("SDE.STAGE2", "sde.stage2"),
+         False, True, "a mark's digits are lowercase hexadecimal: one in capitals is no mark"),
 ]
 
 
