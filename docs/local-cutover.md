@@ -259,18 +259,35 @@ Do not drop retired tables or remove the state on the basis of a missing respons
 A cutover writes a source's mark on the copy it makes the source (format contract §7r). An operator
 before that mark existed left the staging's mark on the staged copy it promoted, and a session of
 this release refuses such a source (`carries a staging's mark`): a staged copy a forged map names as
-a source carries the same mark. Run, once, before the application's library is upgraded:
+a source carries the same mark. With this release's operator, before the application's library is
+upgraded, run once:
 
 ```bash
-sde-operator mark-sources
+sde-operator --project-dir <project directory> --config <operator configuration> mark-sources
 ```
 
-It reads the mark of each source of the map in force and, where the mark is a staging's of a stage
-the project's records hold completed for the group the map gives the table to, writes the source's
-mark in its place, after reading the table's identity again. It prints `{"marked": [...]}` - group,
-entity, engine and table of each - and leaves every other table as it is; run again, it marks
-nothing. Like every operator command it takes the project's lock and refuses beside an unfinished
-operation.
+It reads the mark of each source of the map in force. Where the mark is a staging's of a stage the
+project's records hold completed for the group the map gives the table to, and a cutover of that
+group completed with success, it writes the source's mark in its place, after reading the table's
+identity again. Nothing else a cutover asks of a table is asked here: a trigger, a dependent view,
+a row policy or an ingest pipeline the application has added since stays as it is, since a mark
+moves no row and no authority. It prints
+
+```json
+{"marked": [...], "left": [...], "unexamined": [...]}
+```
+
+- `marked`: group, entity, engine and table of each source it marked;
+- `left`: each source of the map in force that still carries a copy's or a staging's mark - which a
+  session of this release refuses - with the reason it was left: another project's or another
+  table's mark, a stage or a cutover the project's records do not hold, or an engine that did not
+  take the mark;
+- `unexamined`: the bindings of the map this operator is not bound to, whose sources it could not
+  read.
+
+A table it cannot mark does not stop it, and it exits 1 while `left` is not empty. Run again, it
+marks nothing. Like every operator command it takes the project's lock and refuses beside an
+unfinished operation.
 
 ## Pause budget and receipt
 
@@ -296,7 +313,8 @@ customer's operator, not a new signature authorizing placement. The controller m
 acceptance to its reserved packet through the authenticated operator handoff.
 
 CLI exit codes: 0 is a result, 2 a refused/invalid input, and 3 an operation or storage failure
-requiring inspection. A successful abort returns 0 with `outcome: "abort"`; consumers must read the
+requiring inspection; `mark-sources` exits 1 while it leaves a source with a copy's or a staging's
+mark. A successful abort returns 0 with `outcome: "abort"`; consumers must read the
 outcome. Driver error details are omitted from the JSON output to avoid including local credentials.
 
 ## Filling the copy before the pause

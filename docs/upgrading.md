@@ -266,17 +266,24 @@ engine whose adapter does not say what its names reach is not held to this.
 a map is refused, since only a session read the marks of the map's tables when it opened. Open a
 session on the map and pass it.
 
-A source an earlier operator's cutover made from a staged copy carries the staging's mark
-(`sde.stage1`), and a session of this release refuses it (`carries a staging's mark`): it cannot be
-told from a staged copy a forged map names as a source. Before the application's library is
-upgraded, run `sde-operator mark-sources` (this release's operator, on the project's directory): it
+Upgrade the operator (`sde-operator`, Python) first, before the application's library. A source an
+earlier operator's cutover made from a staged copy carries the staging's mark (`sde.stage1`), and a
+session of this release refuses it (`carries a staging's mark`): it cannot be told from a staged copy
+a forged map names as a source. With the upgraded operator, before the library is upgraded, run
+`sde-operator --project-dir <dir> --config <file> mark-sources`
+([local cutover](local-cutover.md#a-source-an-earlier-cutover-left-with-the-stagings-mark)). It
 writes the source's mark on each such source the project's records show was promoted - a stage
-completed for the group the map in force gives the table to - and prints what it marked; a table
-without such a record is left as it is. A copy an earlier staging marked is still taken as a copy.
+completed for the group the map in force gives the table to, and a cutover of that group completed
+with success - whatever the application has added to the table since, a trigger or a dependent view
+included. It names every source of the map it leaves with a copy's or a staging's mark, with the
+reason, and exits 1 while there is one: a session of this release would refuse each, so find where
+each came from before the library is upgraded. A copy an earlier staging marked is still taken as a
+copy.
 
-Upgrade the operator (`sde-operator`, Python) before, or with, the application's library. A copy
-marked by this release's `prepare_schema` and then made the source by an earlier operator's
-cutover keeps the copy's mark, and a session of this release refuses that source.
+A copy marked by this release's `prepare_schema` and then made the source by an earlier operator's
+cutover keeps the copy's mark, and a session of this release refuses that source; `mark-sources`
+leaves it, since no record of the project shows which cutover promoted it. That is why the operator
+goes first.
 
 C++: a session keeps its own copies of the model and the map it opened on. A map loaded into the
 same variable afterwards does not reach it - open a new session for a new map, as before; the

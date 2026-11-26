@@ -2265,12 +2265,13 @@ name: the canonical JSON (§1) of `{"index": name, "mappings": m}`, where `m` is
   `"meta": {"sde_type": neutral}` where the column type has one; and, when the entity has a
   `keyword` column, `"__sde_tokens": {"properties": {column: {"type": "keyword"}}}` for each.
 
-`_meta.sde` may carry one key more, `stage`: the creation marker of the staging that created the
-index, `sde.stage2.<project id>.<stage id>.<16 hex digits>.<16 hex digits>` (§7r) - or, from a
-staging of an earlier release, `sde.stage1.<project id>.<stage id>.<16 hex digits>` - written in
-the request that creates it.
-A reader accepts exactly that key in exactly that form beside the rendered mapping, and anything
-else under `_meta.sde` is a mapping this library would not create.
+`_meta.sde` may carry one key more, the index's mark (§7r): `stage`, the creation marker of the
+staging that created the index, `sde.stage2.<project id>.<stage id>.<16 hex digits>.<16 hex
+digits>` - or, from a staging of an earlier release, `sde.stage1.<project id>.<stage id>.<16 hex
+digits>` - written in the request that creates it; `copy`, the mark of a copy `prepare_schema`
+created; or `source`, the mark a cutover writes in place of either. A reader accepts one of those
+keys in its form beside the rendered mapping, and anything else under `_meta.sde` is a mapping this
+library would not create.
 
 A key column of a float type is refused - an `_id` needs exact bytes - as are a column whose name is
 empty, contains a dot or starts with `__sde_`, and a column type outside the table above. Creating
@@ -2618,16 +2619,23 @@ it completed, also checks that the stage was for G. A copy's or a staging's mark
   refuses that source: it cannot tell it from a staged copy a forged map names as one. The
   operator's `mark-sources` writes the source's mark on each source of the map in force that
   carries a `stage1` mark exactly as the stage in it writes it, where the project's records hold
-  that stage completed for the group the map gives the table to; it reads the table's identity
-  again before it writes, and leaves every other table as it is.
+  that stage completed for the group the map gives the table to and a cutover of that group
+  completed with success. It reads the table's identity again before it writes, and asks nothing
+  else of the table that a cutover asks - a mark moves no row and no authority. Every other source
+  of the map in force that carries a copy's or a staging's mark is left as it is and named, with
+  the reason; the command exits 1 while one is.
 - What is not closed yet:
   - A `stage1` mark names no group, so a session and `prepare_schema` take it on a table of a staged
     copy's name for any group, where the operator checks the stage's group in its own records. A
     staging of this release writes `stage2`.
   - A source's mark of another group is taken: a group renamed in the model keeps its source.
-  - A source no other name of the map reaches, without a copy's mark, is taken as the map names it -
-    a table of the client's from before SDE is one - so a map naming as a group's source a table the
-    client keeps for something else, of the group's shape, reaches it.
+  - A source no other name of the map reaches, without a copy's or a staging's mark, is taken as
+    the map names it - a table of the client's from before SDE is one - so a map naming as a group's
+    source a table the client keeps for something else, of the group's shape, reaches it.
+  - A mark says who created a table to a reader who trusts the engine's own rights over it. In
+    PostgreSQL a comment needs the table's owner, and in ClickHouse the right to alter it; in
+    Elasticsearch a key that may write documents to an index may also update its mapping, `_meta`
+    included, so there the application's own key can write any mark.
 - A map below contract 4 carries no project and no write generation, so neither a fence nor a mark
   applies to it, and the libraries take it as they always did - also where a project is configured,
   since the verification protocol (§7b) is pinned on such maps. A forged map of an older contract
