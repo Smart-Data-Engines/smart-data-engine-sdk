@@ -72,8 +72,8 @@ export const BACKFILL_MAPPING = {
   properties: { entity: { type: 'keyword' }, materialization: { type: 'keyword' }, rows_copied: { type: 'long' } },
 } as const
 
-/** What a staging writes on the index it creates: its project, its stage and the index's name. */
-const CREATION_MARKER = /^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
+/** What a staging writes on the index it creates (`stage2`, with its group), or wrote before (`stage1`). */
+const CREATION_MARKER = /^sde\.stage2\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}$|^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
 /** A shard that fails or times out fails the search, rather than leaving its rows out. */
 const PARTIAL_REFUSED = '?allow_partial_search_results=false'
 

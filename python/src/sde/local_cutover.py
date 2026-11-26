@@ -506,6 +506,64 @@ class LocalCutover:
             write_receipt(self.store.root, receipt)
             return receipt
 
+    def mark_sources(self) -> list[dict[str, Any]]:
+        """A source's mark on each source of the map in force still carrying a staging's mark.
+
+        A cutover before the source's mark existed left a staged copy it made the source with the
+        staging's mark (``sde.stage1``), and a session of this release refuses a source that carries
+        one (format contract §7r): it cannot tell that source from a staged copy a forged map names
+        as one. This project's records can: the mark names the stage, and the stage's receipt says
+        it was completed for the group the map in force gives the table to. Only then is the
+        source's mark written, after the table's identity is read again; a source without such a
+        record is left as it is. Idempotent; under the project lock, beside no unfinished
+        operation.
+        """
+        from .engines._staging import native_staging
+        from .ownership import STAGE_MARKER, source_marker, stage_marker
+
+        self._owner()
+        with self.store.lock():
+            state = self.store.read()
+            if state["execution"] is not None:
+                raise MigrationRefused(
+                    "an unfinished operation of this project holds its tables; resume or abandon "
+                    "it before marking sources"
+                )
+            current = self.active_map()
+            stages = state.get("stages", {})
+            marked: list[dict[str, Any]] = []
+            for group, spot in sorted(current.groups.items()):
+                source = spot.source
+                if spot.write_epoch is None or source.engine not in self.native:
+                    continue
+                native = self.native[source.engine]
+                for entity, table in sorted(source.layout.tables.items()):
+                    found = native_staging(native).marker(table)
+                    mark = None if found is None else found[1]
+                    if mark is None or STAGE_MARKER.fullmatch(mark) is None:
+                        continue
+                    stage = mark.split(".")[3]
+                    receipt = (stages.get(stage) or {}).get("receipt") or {}
+                    if (
+                        mark != stage_marker(self.project_id, stage, table)
+                        or receipt.get("outcome") != "prepared"
+                        or receipt.get("group") != group
+                    ):
+                        continue
+                    assert found is not None
+                    identity = native.identity(table)
+                    if identity.object != found[0]:
+                        raise MigrationRefused(
+                            f"the source's table {table!r} changed while its mark was read"
+                        )
+                    native.mark_source(
+                        [identity], {table: source_marker(self.project_id, group, table)}
+                    )
+                    marked.append(
+                        {"group": group, "entity": entity, "engine": source.engine, "table": table}
+                    )
+            return marked
+
     def status(self) -> dict[str, Any]:
         return _local_status(
             self.store.root, model=self.model, project_id=self.project_id, public_key=self.keys

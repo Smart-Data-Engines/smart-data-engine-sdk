@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -13,13 +12,19 @@ from ..placement import PhysicalLayout
 from ..schema import postgres_index_target, schema_statements
 from ._operator import NativeOperator, TableIdentity
 
-CREATION_MARKER = re.compile(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}")
-"""What a staging writes on the table it creates: its project, its stage and the table's name."""
+CREATION_MARKER = re.compile(
+    r"sde\.stage2\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}"
+    r"|sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}"
+)
+"""What a staging writes on the table it creates: its project, its stage, its group and the
+table's name (``stage2``); a staging of an earlier release, recorded with its mark, wrote
+``stage1``, without the group, and is resumed or abandoned with the mark it recorded."""
 
 
-def creation_marker(project_id: str, stage_id: str, table: str) -> str:
-    suffix = hashlib.sha256(table.encode("utf-8")).hexdigest()[:16]
-    return f"sde.stage1.{project_id}.{stage_id}.{suffix}"
+def creation_marker(project_id: str, stage_id: str, group: str, table: str) -> str:
+    from ..ownership import stage2_marker
+
+    return stage2_marker(project_id, stage_id, group, table)
 
 
 def native_staging(native: Any) -> Any:

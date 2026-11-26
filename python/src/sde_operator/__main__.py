@@ -113,6 +113,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="with --execute, also drop the generation column and the bookkeeping tables",
     )
     commands.add_parser(
+        "mark-sources",
+        help="write a source's mark on each source an earlier cutover promoted from a staging, "
+        "as this project's records show; before the application's library is upgraded",
+    )
+    commands.add_parser(
         "backfill",
         help="fill the copy a staging created, before its cutover, while writes continue",
     )
@@ -271,6 +276,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(executor.advance(raised).as_record()))
         elif args.command == "abandon":
             print(json.dumps(executor.abandon().as_record()))
+        elif args.command == "mark-sources":
+            print(json.dumps({"marked": executor.mark_sources()}))
         elif args.command == "backfill":
             print(json.dumps([progress.as_record() for progress in executor.backfill()]))
         elif args.command == "settle":
