@@ -19,10 +19,12 @@
 #include "sde/errors.hpp"
 #include "sde/migration.hpp"
 #include "sde/model.hpp"
+#include "sde/ownership.hpp"
 #include "sde/placement.hpp"
 #include "sde/session.hpp"
 #include "sde/testing/memory.hpp"
 #include "sde/verification.hpp"
+#include "sde/write_fence.hpp"
 
 namespace {
 
@@ -814,8 +816,11 @@ struct Bound {
       : model(sde::load_neutral_model(R"({"entities": [{"name": "Event", "fields": [
           {"name": "id", "type": "int32"}, {"name": "value", "type": "string"}],
           "key": ["id"]}]})")),
-        document(sde::parse_json(R"({"contract": 3, "model_version": ")" + model.version() +
-                                 R"(", "map_version": 1, "groups": {"Event": {
+        // Contract 4: the request binds a locally configured project, and a map below contract 4
+        // is refused where one is configured (format contract section 7r).
+        document(sde::parse_json(R"({"contract": 4, "project_id": ")" + std::string(kProject) +
+                                 R"(", "model_version": ")" + model.version() +
+                                 R"(", "map_version": 1, "groups": {"Event": {"write_epoch": 1,
           "source": {"id": "source", "engine": "source", "layout": {"tables": {"Event": "events"},
                      "columns": {"Event": {"id": "integer", "value": "text"}}}},
           "derived": [{"id": "copy", "engine": "copy", "lag_budget_ms": 1000,
@@ -825,7 +830,25 @@ struct Bound {
         map(load(document)),
         source(holding("source", "events", "private-row-value")),
         target(holding("copy", "events_copy", "different-private-value")),
-        request(sde::verification_request(map, "Event", kProject, kRequest, kAt)) {}
+        request(sde::verification_request(map, "Event", kProject, kRequest, kAt)) {
+    // The write fences and the copy's mark of a provisioned deployment, as the shared vectors
+    // bind them.
+    fence(source, "events");
+    fence(target, "events_copy");
+    target.bind_marks({{"events_copy", sde::copy_marker(kProject, "Event", "events_copy")}});
+  }
+
+  static void fence(sde::testing::MemoryEngine& engine, const std::string& table) {
+    auto backend = std::make_shared<sde::testing::MemoryFences>();
+    backend->identity = table;
+    backend->column = sde::ColumnState::valid;
+    const std::string prefix(sde::FENCE_PREFIX);
+    const std::string column(sde::EPOCH_COLUMN);
+    backend->constraints[prefix + "owner_" + kProject] = "1";
+    backend->constraints[prefix + "min_1"] = column + " >= 1";
+    backend->constraints[prefix + "max_1"] = column + " <= 1";
+    engine.bind_fences({{table, backend}});
+  }
 
   /// An engine on the shared journal, holding one row of the table.
   sde::testing::MemoryEngineOptions holding(std::string name, const std::string& table,
@@ -919,12 +942,11 @@ TEST(VerificationRequest, AWrongBindingIsRefusedBeforeTheFirstEngineCall) {
 }
 
 TEST(VerificationRequest, AProjectIsNeverLearnedFromTheRequest) {
+  // Without a locally configured project no session opens on the map, so nothing verifies: the
+  // project the request names is never taken for the local one.
   Bound bound;
-  sde::Session unconfigured = bound.session(std::nullopt);
-  sde::VerifyOptions options;
-  options.request = bound.request;
-  EXPECT_TRUE(contains(refusal([&] { (void)sde::verify(unconfigured, "Event", options); }),
-                       "no project_id"));
+  EXPECT_TRUE(contains(refusal([&] { (void)bound.session(std::nullopt); }),
+                       "needs its locally configured project_id"));
   EXPECT_TRUE(bound.journal->calls().empty());
 }
 
@@ -1003,7 +1025,12 @@ TEST(VerificationRequest, TheSameNumberWithAnotherLayoutIsAnotherMap) {
 
 TEST(VerificationRequest, AMapWithNoCanonicalFormCannotBeBound) {
   Bound bound;
+  // A map of an earlier contract, without the project and the generation contract 4 added: one of
+  // contract 4 with no canonical form is refused when it loads.
   sde::Json annotated = bound.document;
+  annotated.set("contract", 3);
+  (void)annotated.erase("project_id");
+  (void)annotated.find("groups")->find("Event")->erase("write_epoch");
   annotated.set("annotation", sde::Json::from_lexeme("1.25"));
   const sde::PlacementMap legacy = bound.load(annotated);
   EXPECT_FALSE(legacy.fingerprint().has_value());
