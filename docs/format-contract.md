@@ -2620,10 +2620,12 @@ it completed, also checks that the stage was for G. A copy's or a staging's mark
   operator's `mark-sources` writes the source's mark on each source of the map in force that
   carries a `stage1` mark exactly as the stage in it writes it, where the project's records hold
   that stage completed for the group the map gives the table to and a cutover of that group
-  completed with success. It reads the table's identity again before it writes, and asks nothing
-  else of the table that a cutover asks - a mark moves no row and no authority. Every other source
-  of the map in force that carries a copy's or a staging's mark is left as it is and named, with
-  the reason; the command exits 1 while one is.
+  completed with success. It reads the table's identity again before it writes - and leaves a
+  table in a ClickHouse database that is not Atomic, which has none to read - and asks nothing else
+  of the table that a cutover asks: a mark moves no row and no authority. Every other source of a
+  group with a write generation that carries a copy's or a staging's mark is left as it is and
+  named, with the reason, as is each binding of those groups the operator is not bound to; the
+  command exits 1 while one is.
 - What is not closed yet:
   - A `stage1` mark names no group, so a session and `prepare_schema` take it on a table of a staged
     copy's name for any group, where the operator checks the stage's group in its own records. A

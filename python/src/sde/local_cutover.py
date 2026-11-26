@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from time import monotonic_ns
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from .advance import AdvancePlan, AdvanceReceipt
 from .canonical import canonical_bytes
@@ -200,6 +200,26 @@ def refuse_shared_source(
                     f"of its group alone, and two names of the map reach this one"
                 )
 
+
+
+_NOT_WRITTEN: Final[dict[str | None, str]] = {
+    "privilege": (
+        "the operator's login may not write the table's mark: in PostgreSQL it must own the "
+        "table, in ClickHouse hold ALTER on it, in Elasticsearch update the index's mapping"
+    ),
+    "kind": "the name is not an ordinary table, and a mark is written on a table alone",
+    "block": (
+        "a block on the index refuses the update of its mapping: lift it, and run the command again"
+    ),
+    # The driver's text can carry what a connection is, and is left out as the CLI leaves it out of
+    # every result.
+    None: (
+        "the engine did not answer or did not take the mark (its error is left out): run the "
+        "command again"
+    ),
+}
+"""Why ``mark-sources`` left a source whose mark the engine did not take, by
+:attr:`~sde.engines._operator.MarkNotWritten.cause`."""
 
 class LocalCutover:
     """One local POSIX project directory and dedicated operator/runtime-probe connections.
@@ -519,12 +539,14 @@ class LocalCutover:
         identity is read again. Nothing a cutover requires of a table is asked of it here - no
         trigger, no dependent view, no pipeline - since a mark moves no row and no authority.
 
-        Returns ``marked``, what it marked; ``left``, each source of the map in force that still
-        carries a copy's or a staging's mark, which a session of this release refuses, with the
-        reason it was left; and ``unexamined``, the bindings of the map this operator is not bound
-        to, whose sources it could not read. A table it cannot mark does not stop it: the next one
-        is read. Idempotent; under the project lock, beside no unfinished operation.
+        Only groups with a write generation are read: a session reads the marks of those alone.
+        Returns ``marked``, what it marked; ``left``, each of their sources that still carries a
+        copy's or a staging's mark, which a session of this release refuses, with the reason it
+        was left; and ``unexamined``, the bindings of those groups this operator is not bound to,
+        whose sources it could not read. A table it cannot mark does not stop it: the next one is
+        read. Idempotent; under the project lock, beside no unfinished operation.
         """
+        from .engines._operator import MarkNotWritten
         from .engines._staging import native_staging
         from .ownership import copy_marks, source_marker
 
@@ -548,6 +570,10 @@ class LocalCutover:
             unexamined: set[str] = set()
             for group, spot in sorted(current.groups.items()):
                 source = spot.source
+                if spot.write_epoch is None:
+                    # A session reads the marks of a group's tables only where its writes carry a
+                    # generation (format contract §7r), and nothing marked a group without one.
+                    continue
                 native = self.native.get(source.engine)
                 if native is None:
                     unexamined.add(source.engine)
@@ -566,15 +592,12 @@ class LocalCutover:
                             native.write_source_mark(
                                 table, found[0], source_marker(self.project_id, group, table)
                             )
+                    except MarkNotWritten as exc:
+                        reason = _NOT_WRITTEN.get(exc.cause, _NOT_WRITTEN[None])
                     except MigrationRefused as exc:
                         reason = str(exc)
                     except EngineError:
-                        # Its text can carry what the driver says, connection details included,
-                        # and is left out as the CLI leaves it out of every result.
-                        reason = (
-                            "the engine did not answer or did not take the mark (its error is "
-                            "left out): run the command again"
-                        )
+                        reason = _NOT_WRITTEN[None]
                     if reason is None:
                         marked.append(where)
                     else:

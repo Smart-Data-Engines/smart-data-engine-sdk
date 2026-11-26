@@ -275,15 +275,16 @@ a forged map names as a source. With the upgraded operator, before the library i
 writes the source's mark on each such source the project's records show was promoted - a stage
 completed for the group the map in force gives the table to, and a cutover of that group completed
 with success - whatever the application has added to the table since, a trigger or a dependent view
-included. It names every source of the map it leaves with a copy's or a staging's mark, with the
-reason, and exits 1 while there is one: a session of this release would refuse each, so find where
-each came from before the library is upgraded. A copy an earlier staging marked is still taken as a
-copy.
+included. It names every source it leaves with a copy's or a staging's mark, with the reason, and
+every binding it is not bound to, and exits 1 while there is one: a session of this release would
+refuse each source left, so find where each came from before the library is upgraded, and bind the
+operator to every engine of the map. A copy an earlier staging marked is still taken as a copy.
 
 A copy marked by this release's `prepare_schema` and then made the source by an earlier operator's
 cutover keeps the copy's mark, and a session of this release refuses that source; `mark-sources`
-leaves it, since no record of the project shows which cutover promoted it. That is why the operator
-goes first.
+leaves it. Only a staging's mark names a stage, whose receipt in the project's records says which
+group it was prepared for; a copy's mark names no record the operator could check. That is why the
+operator goes first.
 
 C++: a session keeps its own copies of the model and the map it opened on. A map loaded into the
 same variable afterwards does not reach it - open a new session for a new map, as before; the

@@ -1095,3 +1095,18 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
         assert comment() == source_marker(PROJECT, "Event", promoted)
         sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
         assert operator.mark_sources() == {"marked": [], "left": [], "unexamined": []}
+
+        # Bound to the other engine alone, the operator cannot read this source: it says so and
+        # exits 1, since a session on the map reads what the operator did not.
+        other = next(name for name in roles if name != target)
+        alone = tmp_path / "alone"
+        alone.mkdir()
+        lone, lone_environment = _operator_cli(
+            alone, operator, {other: roles[other]}, model, public
+        )
+        run = subprocess.run(
+            [*lone, "mark-sources"], env=lone_environment, capture_output=True, text=True,
+            timeout=45,
+        )
+        assert run.returncode == 1, run.stderr
+        assert json.loads(run.stdout) == {"marked": [], "left": [], "unexamined": [target]}

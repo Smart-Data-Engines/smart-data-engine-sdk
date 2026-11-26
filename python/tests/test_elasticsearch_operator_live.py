@@ -387,7 +387,9 @@ def test_mark_sources_marks_an_index_an_earlier_cutover_left_with_the_staging_s_
             assert outcome["marked"] == [] and [
                 {key: value for key, value in entry.items() if key != "reason"}
                 for entry in outcome["left"]] == [where]
-            assert "did not take the mark" in outcome["left"][0]["reason"]
+            assert "a block on the index refuses the update of its mapping" in (
+                outcome["left"][0]["reason"]
+            )
             assert meta()["sde"]["stage"] == stage_marker(PROJECT, move.stage.stage_id, move.copy)
             assert move.operator.mark_sources()["marked"] == [where]
             move.session()
@@ -595,6 +597,14 @@ def test_an_unfinished_staging_onto_elasticsearch_is_abandoned_with_its_index(
         with pytest.raises(Crash):
             move.operator.stage(move.stage)
         move.operator._after_step = lambda _step: None
+        # A key the application's own key wrote beside the staging's mark, which no library
+        # writes: the index is still this staging's, by its mark and its uuid, and is removed.
+        status, body = move.es.operator._request("GET", f"/{move.copy}/_mapping")
+        if status == 200:
+            meta = dict(body[move.copy]["mappings"]["_meta"])
+            meta["sde"] = {**meta["sde"], "copy": "not a mark of a library's"}
+            assert move.es.runtime._request(
+                "PUT", f"/{move.copy}/_mapping", {"_meta": meta})[0] == 200
         receipt = move.operator.abandon().as_record()
         assert receipt["outcome"] == "abandoned"
         (row,) = receipt["tables"]

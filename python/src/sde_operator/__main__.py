@@ -279,8 +279,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "mark-sources":
             outcome = executor.mark_sources()
             print(json.dumps(outcome))
-            if outcome["left"]:
-                # A source left with a copy's or a staging's mark is one a session refuses.
+            if outcome["left"] or outcome["unexamined"]:
+                # A source left with a copy's or a staging's mark is one a session refuses, and one
+                # on an engine this operator is not bound to may be.
                 return 1
         elif args.command == "backfill":
             print(json.dumps([progress.as_record() for progress in executor.backfill()]))

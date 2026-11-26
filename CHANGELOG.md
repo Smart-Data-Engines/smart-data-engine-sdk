@@ -27,7 +27,8 @@ until `sde-operator mark-sources` writes the source's mark in its place. It does
 project's records show the stage completed for the group the map in force gives the table to and a
 cutover of that group completed with success, whatever the table carries since - a trigger, a
 dependent view, a pipeline - and names every source it leaves with a copy's or a staging's mark,
-with the reason, exiting 1 while there is one ([upgrading](docs/upgrading.md)).
+with the reason, and every binding it is not bound to, exiting 1 while there is one
+([upgrading](docs/upgrading.md)).
 
 **Fixed: a session reads the marks of its map's tables when it opens** (all three libraries;
 [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). The

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -11,6 +12,28 @@ from ..schema import QUOTE
 from ._storage import STORAGE_COLUMNS
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+class MarkNotWritten(EngineError):
+    """A source's mark the engine did not take, with what kept it from it, in one word or
+    ``None``: ``privilege``, ``kind`` (not a table) or ``block``. ``sde-operator mark-sources``
+    names the cause by it, without the driver's text, which can carry what a connection is."""
+
+    def __init__(self, message: str, cause: str | None) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+
+def mark_cause(error: BaseException | None) -> str | None:
+    """What kept an engine from taking a mark, read off the driver's error: PostgreSQL's SQLSTATE
+    (42501, 42809), ClickHouse's error code (497)."""
+    sqlstate = getattr(error, "sqlstate", None)
+    if sqlstate == "42501":
+        return "privilege"
+    if sqlstate == "42809":
+        return "kind"
+    code = re.search(r"\bCode: (\d+)\b", str(error or ""))
+    return "privilege" if code is not None and code.group(1) == "497" else None
 
 
 @dataclass(frozen=True)
@@ -300,6 +323,14 @@ class NativeOperator:
             raise MigrationRefused(
                 f"the table {table!r} changed while its mark was read: run the command again"
             )
+        if self.dialect == "clickhouse" and object_id == NIL_UUID:
+            # Only an Atomic database gives its tables a uuid: in another, a name is all there is
+            # to read again, and a table renamed into it between the two reads would be marked.
+            raise MigrationRefused(
+                f"the table {table!r} is in a ClickHouse database that is not Atomic, where a "
+                f"table has no identity to read again before its mark is written; its source's "
+                f"mark is {mark}, for an administrator to write"
+            )
         self._write_source_mark(str(rows[0][1]), table, mark)
 
     def _write_source_mark(self, namespace: str, table: str, mark: str) -> None:
@@ -308,10 +339,13 @@ class NativeOperator:
         if SOURCE_MARKER.fullmatch(mark) is None:
             raise MigrationRefused(f"{mark!r} is not a source's mark")
         name = self.quote(namespace) + "." + self.quote(table)
-        if self.dialect == "postgres":
-            self.command(f"COMMENT ON TABLE {name} IS '{mark}'")
-        else:
-            self.command(f"ALTER TABLE {name} MODIFY COMMENT '{mark}'")
+        try:
+            if self.dialect == "postgres":
+                self.command(f"COMMENT ON TABLE {name} IS '{mark}'")
+            else:
+                self.command(f"ALTER TABLE {name} MODIFY COMMENT '{mark}'")
+        except EngineError as exc:
+            raise MarkNotWritten(str(exc), mark_cause(exc.__cause__)) from exc
 
     def qualify(
         self,

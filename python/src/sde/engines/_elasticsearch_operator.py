@@ -24,7 +24,7 @@ from ..errors import EngineError, MigrationRefused
 from ..placement import PhysicalLayout
 from ..schema import schema_statements
 from ..watermark import WATERMARK_TABLE
-from ._operator import TableIdentity
+from ._operator import MarkNotWritten, TableIdentity
 from ._staging import CREATION_MARKER
 from ._write_fences import fence_pipeline
 
@@ -269,9 +269,13 @@ class ElasticsearchOperator:
         }
         sde["source"] = mark
         meta["sde"] = sde
-        status, _ = self._call(self.engine, "PUT", path, {"_meta": meta})
+        status, answer = self._call(self.engine, "PUT", path, {"_meta": meta})
         if status != 200:
-            raise EngineError(f"the source's mark on {table} was not written ({status})")
+            cause = {"cluster_block_exception": "block", "security_exception": "privilege"}
+            raise MarkNotWritten(
+                f"the source's mark on {table} was not written ({status})",
+                cause.get(_error_type(answer) or ""),
+            )
 
     def _blocked(self, table: str, kind: str) -> bool:
         blocks = self._settings(table).get("blocks")
@@ -503,9 +507,9 @@ class ElasticsearchStaging:
         self.engine = native.engine
         self.dialect = DIALECT
 
-    def marker(self, table: str) -> tuple[str, str | None] | None:
-        from .elasticsearch import index_mark
-
+    def _read(self, table: str) -> tuple[str, Mapping[str, Any] | None] | None:
+        """The index under ``table`` - its uuid and its ``_meta.sde`` - or ``None`` when there is
+        none. An alias answers under its index's name and is refused: a staging's is one index."""
         status, body = self.native._call(self.engine, "GET", self.engine._path(table, "_mapping"))
         if status == 404:
             return None
@@ -515,12 +519,34 @@ class ElasticsearchStaging:
             raise MigrationRefused("staging index name has an ambiguous native identity")
         meta = body[table].get("mappings", {}).get("_meta", {})
         sde = meta.get("sde") if isinstance(meta, Mapping) else None
-        # A staging's mark, or a copy's that prepare_schema wrote, or the source's a cutover wrote
-        # in place of either (format contract §7r): each says what the index is, none is another's,
-        # and an index carries one, as a session reads it.
-        mark = index_mark(table, sde) if isinstance(sde, Mapping) else None
         uuid = str(self.native._settings(table)["uuid"])
-        return uuid, mark
+        return uuid, sde if isinstance(sde, Mapping) else None
+
+    def marker(self, table: str) -> tuple[str, str | None] | None:
+        """The index under ``table`` and its mark: a staging's, a copy's that prepare_schema
+        wrote, or the source's a cutover wrote in place of either (format contract §7r). Each says
+        what the index is, none is another's, and an index carries one, as a session reads it."""
+        from .elasticsearch import index_mark
+
+        found = self._read(table)
+        if found is None:
+            return None
+        uuid, sde = found
+        return uuid, None if sde is None else index_mark(table, sde)
+
+    def _own(self, table: str) -> tuple[str, str | None] | None:
+        """The index under ``table`` and the staging's mark in it, ``_meta.sde.stage``, read alone.
+
+        A staging's own steps - creating its index, resuming, abandoning it - compare this with the
+        mark and the uuid they recorded: the index is this staging's whatever else its mapping has
+        come to carry, so a key another writer added beside the mark does not keep an abandoned
+        staging's index in the cluster, or the project from its next operation."""
+        found = self._read(table)
+        if found is None:
+            return None
+        uuid, sde = found
+        stage = None if sde is None else sde.get("stage")
+        return uuid, stage if isinstance(stage, str) else None
 
     def preflight(self, layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]) -> None:
         schema_statements(layout, keys=keys, dialect=DIALECT)
@@ -534,7 +560,7 @@ class ElasticsearchStaging:
         if CREATION_MARKER.fullmatch(marker) is None:
             raise MigrationRefused("staging creation marker is not valid protocol metadata")
         table = layout.tables[entity]
-        present = self.marker(table)
+        present = self._own(table)
         if present is not None:
             if present[1] != marker:
                 raise MigrationRefused("staging refuses an index without its exact creation marker")
@@ -554,7 +580,7 @@ class ElasticsearchStaging:
             raise EngineError(
                 f"staging index creation has an uncertain outcome ({status}); resume its intent"
             )
-        found = self.marker(table)
+        found = self._own(table)
         if found is None or found[1] != marker:
             raise MigrationRefused("staging creation marker was not established with the index")
         return self.native.identity(table)
@@ -563,7 +589,7 @@ class ElasticsearchStaging:
         self, table: str, marker: str, identity: TableIdentity | None
     ) -> TableIdentity | None:
         """This staging's own index under ``table``, or ``None`` when it is absent or not ours."""
-        present = self.marker(table)
+        present = self._own(table)
         if present is None or present[1] != marker:
             return None
         if identity is not None:
@@ -572,14 +598,14 @@ class ElasticsearchStaging:
 
     def drop_owned(self, table: TableIdentity, marker: str) -> None:
         """Delete this staging's own index, then its write fence's pipeline."""
-        present = self.marker(table.name)
+        present = self._own(table.name)
         if present is not None:
             if present[1] != marker or present[0] != table.object:
                 raise MigrationRefused("the index to abandon is no longer this staging's own")
             status, _ = self.native._call(self.engine, "DELETE", self.engine._path(table.name))
             if status != 200:
                 raise EngineError(f"deleting {table.name} has an uncertain outcome ({status})")
-            if self.marker(table.name) is not None:
+            if self._read(table.name) is not None:
                 raise MigrationRefused("an abandoned staging index is still in the cluster")
         # The pipeline outlives its index; it is this staging's when it names the index removed.
         path = f"/_ingest/pipeline/{fence_pipeline(table.name)}"
