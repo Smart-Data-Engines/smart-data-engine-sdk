@@ -111,3 +111,35 @@ def test_mark_sources_reads_the_groups_a_session_reads(
         groups={"Book": SimpleNamespace(write_epoch=write_epoch, source=source)}
     )
     assert executor.mark_sources() == {"marked": [], "left": [], "unexamined": unexamined}
+
+
+def test_an_engine_that_does_not_answer_leaves_the_source_and_keeps_its_text_out() -> None:
+    """The driver's text can carry what a connection is: a source the engine did not answer for is
+    left with a fixed reason, and the next table is read."""
+    import os
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from sde.local_cutover import LocalCutover
+
+    def rows(*_: Any, **__: Any) -> list[Any]:
+        raise sde.EngineError("local operator metadata query failed: host=db.internal password=x")
+
+    executor: Any = object.__new__(LocalCutover)
+    executor._pid = os.getpid()
+    executor.native = {
+        "pg": SimpleNamespace(dialect="postgres", engine=None, quote=lambda n: n, rows=rows)
+    }
+    executor.project_id = "1" * 32
+    executor.store = SimpleNamespace(
+        lock=nullcontext, read=lambda: {"execution": None, "stages": {}, "completed": {}}
+    )
+    source = SimpleNamespace(engine="pg", layout=SimpleNamespace(tables={"A": "a", "B": "b"}))
+    executor.active_map = lambda: SimpleNamespace(
+        groups={"G": SimpleNamespace(write_epoch=1, source=source)}
+    )
+    outcome = executor.mark_sources()
+    assert outcome["marked"] == [] and outcome["unexamined"] == []
+    assert [entry["table"] for entry in outcome["left"]] == ["a", "b"]
+    for entry in outcome["left"]:
+        assert "did not answer" in entry["reason"] and "password" not in entry["reason"]

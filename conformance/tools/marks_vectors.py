@@ -103,7 +103,8 @@ CASES: list[dict[str, Any]] = [
          "a copy"),
     case("event_copy", copy1(PROJECT, "Event", "event_copy") + "\n", False, True,
          "a mark is the whole comment: one with a line break after it is no mark"),
-    case(STAGED, stage2(PROJECT, STAGE, "Event", STAGED).upper().replace("SDE.STAGE2", "sde.stage2"),
+    case(STAGED,
+         stage2(PROJECT, STAGE, "Event", STAGED).upper().replace("SDE.STAGE2", "sde.stage2"),
          False, True, "a mark's digits are lowercase hexadecimal: one in capitals is no mark"),
 ]
 
