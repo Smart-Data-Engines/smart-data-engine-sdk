@@ -18,6 +18,7 @@ from sde.engines.elasticsearch import (
     WATERMARK_MAPPING,
     ElasticsearchEngine,
     document_id,
+    index_mark,
     parse_dsn,
     search_tokens,
     stored,
@@ -677,3 +678,26 @@ def test_a_refused_store_read_carries_its_status_and_an_odd_one_is_refused() -> 
             engine.storage_sizes(["note"])
     with pytest.raises(sde.EngineError, match="not an Elasticsearch index name"):
         engine.storage_sizes(["note*"])
+
+
+@pytest.mark.parametrize(
+    ("sde_meta", "mark"),
+    [
+        ({"entity": "Event", "key": ["id"]}, None),
+        ({"copy": "sde.copy1.x"}, "sde.copy1.x"),
+        ({"stage": "sde.stage2.x"}, "sde.stage2.x"),
+        ({"source": "sde.source1.x"}, "sde.source1.x"),
+        ({"copy": None, "stage": "sde.stage2.x"}, "copy and stage"),
+        ({"stage": "sde.stage1.x", "source": "sde.source1.x"}, "stage and source"),
+        ({"copy": 5}, "copy"),
+        ({"source": None}, "source"),
+    ],
+)
+def test_an_index_carries_one_mark_at_most_a_string(sde_meta: dict[str, Any], mark: str) -> None:
+    """Read in an order, ``{copy: null, stage: ...}`` was a source to one library and a staged copy
+    to the other: which key a reader took first decided whether the index was a copy."""
+    if mark is None or mark.startswith("sde."):
+        assert index_mark("event", sde_meta) == mark
+    else:
+        with pytest.raises(sde.MigrationRefused, match=f"carries {mark} under _meta.sde"):
+            index_mark("event", sde_meta)

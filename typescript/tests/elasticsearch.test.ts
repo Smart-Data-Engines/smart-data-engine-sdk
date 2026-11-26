@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 import { EngineError, MigrationRefused, searchEngine, SearchRefused } from '../src/index.js'
 import { decimalBound, stored } from '../src/elasticsearch-document.js'
-import { ElasticsearchEngine, HttpStatus, parseDsn, WATERMARK_MAPPING, whole, writeErrorOf } from '../src/engines/elasticsearch.js'
+import { ElasticsearchEngine, HttpStatus, indexMark, parseDsn, WATERMARK_MAPPING, whole, writeErrorOf } from '../src/engines/elasticsearch.js'
 import { OrderbookEngine } from '../src/engines/orderbook.js'
 import { parseExactJson, stringifyExactJson } from '../src/engines/_json.js'
 
@@ -394,5 +394,27 @@ describe('the store sizes', () => {
     await expect(answering(shards, [200, stats({})]).engine.storageSizes(['note*'])).rejects.toThrow(
       /not an Elasticsearch index name/,
     )
+  })
+})
+
+describe('the mark of an index', () => {
+  // Read in an order, {copy: null, stage: ...} was a source to one library and a staged copy to the
+  // other: which key a reader took first decided whether the index was a copy.
+  it.each([
+    [{ entity: 'Event', key: ['id'] }, null],
+    [{ copy: 'sde.copy1.x' }, 'sde.copy1.x'],
+    [{ stage: 'sde.stage2.x' }, 'sde.stage2.x'],
+    [{ source: 'sde.source1.x' }, 'sde.source1.x'],
+  ])('reads one mark, a string: %j', (sde, mark) => {
+    expect(indexMark('event', sde)).toBe(mark)
+  })
+  it.each([
+    [{ copy: null, stage: 'sde.stage2.x' }, 'copy and stage'],
+    [{ stage: 'sde.stage1.x', source: 'sde.source1.x' }, 'stage and source'],
+    [{ copy: 5 }, 'copy'],
+    [{ source: null }, 'source'],
+  ])('refuses two marks, or one that is not a string: %j', (sde, keys) => {
+    expect(() => indexMark('event', sde)).toThrow(MigrationRefused)
+    expect(() => indexMark('event', sde)).toThrow(`carries ${keys} under _meta.sde`)
   })
 })

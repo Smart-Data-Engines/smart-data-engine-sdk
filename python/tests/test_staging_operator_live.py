@@ -804,51 +804,61 @@ def test_staging_recovery_refuses_changed_native_objects_before_publication(
         assert operator.store.read()["execution"] is not None
 
 
+def _operator_cli(
+    tmp_path: Path, operator: Any, roles: Any, model: Any, public: bytes
+) -> tuple[list[str], dict[str, str]]:
+    """The ``sde-operator`` command line for ``operator``'s project and the environment it reads
+    its connections from: a configuration file naming the bindings of ``roles``."""
+    import json
+    import os
+    import sys
+
+    from psycopg.conninfo import make_conninfo
+
+    config: dict[str, Any] = {
+        "protocol": 1,
+        "project_id": PROJECT,
+        "model": sde.neutral_declaration(model),
+        "public_keys": {"primary": base64.b64encode(public).decode()},
+        "engines": {},
+    }
+    environment = dict(os.environ)
+    for name, role in roles.items():
+        op_name, run_name = "SDE_STAGE_" + name.upper(), "SDE_STAGE_APP_" + name.upper()
+        operator_dsn = role.operator._dsn
+        if name == "postgres":
+            operator_dsn = make_conninfo(operator_dsn, options="-csearch_path=" + role.namespace)
+        environment[op_name], environment[run_name] = operator_dsn, role.runtime._dsn
+        config["engines"][name] = {
+            "dialect": name,
+            "operator_dsn_env": op_name,
+            "runtime_dsn_envs": [run_name],
+        }
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config))
+    base = [
+        sys.executable,
+        "-m",
+        "sde_operator",
+        "--project-dir",
+        str(operator.store.root),
+        "--config",
+        str(config_path),
+    ]
+    return base, environment
+
+
 @pytest.mark.parametrize("source", ["postgres", "clickhouse"])
 def test_staging_cli_publishes_a_usable_map_and_repeats_the_same_receipt(
     source: str, tmp_path: Path
 ) -> None:
     import json
-    import os
     import subprocess
-    import sys
-
-    from psycopg.conninfo import make_conninfo
 
     with initial(source, tmp_path / "state") as (operator, stage, _, roles, model, public, *_):
-        config = {
-            "protocol": 1,
-            "project_id": PROJECT,
-            "model": sde.neutral_declaration(model),
-            "public_keys": {"primary": base64.b64encode(public).decode()},
-            "engines": {},
-        }
-        environment = dict(os.environ)
-        for name, role in roles.items():
-            op_name, run_name = "SDE_STAGE_" + name.upper(), "SDE_STAGE_APP_" + name.upper()
-            operator_dsn = role.operator._dsn
-            if name == "postgres":
-                operator_dsn = make_conninfo(
-                    operator_dsn, options="-csearch_path=" + role.namespace
-                )
-            environment[op_name], environment[run_name] = operator_dsn, role.runtime._dsn
-            config["engines"][name] = {
-                "dialect": name,
-                "operator_dsn_env": op_name,
-                "runtime_dsn_envs": [run_name],
-            }
-        config_path, packet_path = tmp_path / "config.json", tmp_path / "packet.json"
-        config_path.write_text(json.dumps(config))
+        base, environment = _operator_cli(tmp_path, operator, roles, model, public)
+        packet_path = tmp_path / "packet.json"
         packet_path.write_text(json.dumps(stage.as_record()))
-        base = [
-            sys.executable,
-            "-m",
-            "sde_operator",
-            "--project-dir",
-            str(operator.store.root),
-            "--config",
-            str(config_path),
-        ]
         receipts = []
         for _ in range(2):
             run = subprocess.run(
@@ -930,12 +940,16 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
 ) -> None:
     """A cutover before the source's mark existed left the staged copy it made the source with the
     staging's mark, which a session of this release refuses. ``mark_sources`` writes the source's
-    mark where this project's records show the stage was completed for the group; the control is a
-    staging's mark of a stage the records do not show, left as it is."""
-    from sde.errors import MigrationRefused
-    from sde.ownership import source_marker, stage_marker
+    mark where this project's records show the stage completed for the group and a cutover of the
+    group completed with success - with a trigger or a dependent view on the table, which a
+    cutover would refuse and a mark does not need. Every other source with a copy's or a staging's
+    mark is left as it is, with the reason, and the command exits 1 while one is."""
+    import json
+    import subprocess
 
-    with initial(source, tmp_path) as (
+    from sde.ownership import copy_marker, source_marker, stage2_marker, stage_marker
+
+    with initial(source, tmp_path / "state") as (
         operator, stage, _old, roles, model, public, signed, _, _, target,
     ):
         assert operator.stage(stage).as_record()["outcome"] == "prepared"
@@ -945,12 +959,18 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
         promoted = stage.prepared.groups["Event"].derived[0].layout.tables["Event"]
         native = roles[target].operator
 
-        def put(mark: str) -> None:
+        def sql(statement: str) -> None:
             if target == "postgres":
-                native._cx.execute(f"COMMENT ON TABLE \"{promoted}\" IS '{mark}'")
+                native._cx.execute(statement)
                 native._cx.commit()
             else:
-                native._cx.command(f"ALTER TABLE `{promoted}` MODIFY COMMENT '{mark}'")
+                native._cx.command(statement)
+
+        def put(mark: str) -> None:
+            if target == "postgres":
+                sql(f"COMMENT ON TABLE \"{promoted}\" IS '{mark}'")
+            else:
+                sql(f"ALTER TABLE `{promoted}` MODIFY COMMENT '{mark}'")
 
         def comment() -> Any:
             if target == "postgres":
@@ -963,14 +983,94 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
             ).result_rows[0][0]
 
         runtime = {name: role.runtime for name, role in roles.items()}
-        put(stage_marker(PROJECT, "f" * 32, promoted))
-        assert operator.mark_sources() == []
-        with pytest.raises(MigrationRefused, match="carries a staging's mark"):
+        where = {"group": "Event", "entity": "Event", "engine": target, "table": promoted}
+
+        def left(mark: str) -> str:
+            """The reason ``mark`` on the promoted source is left, and the mark as it was."""
+            put(mark)
+            outcome = operator.mark_sources()
+            assert (outcome["marked"], outcome["unexamined"]) == ([], [])
+            [entry] = outcome["left"]
+            assert {key: value for key, value in entry.items() if key != "reason"} == where
+            assert comment() == mark
+            return str(entry["reason"])
+
+        assert "not one this project wrote" in left(
+            stage_marker("e" * 32, stage.stage_id, promoted)
+        )
+        assert "not one this project wrote" in left(
+            stage_marker(PROJECT, stage.stage_id, promoted + "_other")
+        )
+        assert f"no staging {'f' * 32} completed" in left(stage_marker(PROJECT, "f" * 32, promoted))
+        assert "a copy's mark" in left(copy_marker(PROJECT, "Event", promoted))
+        assert "a copy's mark" in left(stage2_marker(PROJECT, stage.stage_id, "Event", promoted))
+        with pytest.raises(sde.MigrationRefused, match="carries a staging's mark"):
             sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
-        put(stage_marker(PROJECT, stage.stage_id, promoted))
-        assert operator.mark_sources() == [
-            {"group": "Event", "entity": "Event", "engine": target, "table": promoted}
-        ]
+
+        # The project's records, as another project's directory or a tampered one holds them.
+        earlier = stage_marker(PROJECT, stage.stage_id, promoted)
+        with operator.store.lock():
+            kept = operator.store.read()
+        tampered = deepcopy(kept)
+        tampered["stages"][stage.stage_id]["receipt"]["group"] = "Other"
+        with operator.store.lock():
+            operator.store.write(tampered)
+        assert "prepared 'Other'" in left(earlier)
+        tampered = deepcopy(kept)
+        for record in tampered["completed"].values():
+            record["receipt"]["outcome"] = "abort"
+        with operator.store.lock():
+            operator.store.write(tampered)
+        assert "no cutover of 'Event' completed" in left(earlier)
+        with operator.store.lock():
+            operator.store.write(kept)
+
+        # The command line says it too: while a source is left it exits 1, the result printed.
+        base, environment = _operator_cli(tmp_path, operator, roles, model, public)
+        put(copy_marker(PROJECT, "Event", promoted))
+        run = subprocess.run(
+            [*base, "mark-sources"], env=environment, capture_output=True, text=True, timeout=45
+        )
+        assert run.returncode == 1, run.stderr
+        printed = json.loads(run.stdout)
+        assert (printed["marked"], printed["unexamined"]) == ([], [])
+        assert [
+            {key: value for key, value in entry.items() if key != "reason"}
+            for entry in printed["left"]
+        ] == [where]
+
+        # A trigger (PostgreSQL) or a dependent view (ClickHouse), the application's own made
+        # since the cutover, which a cutover would refuse: the mark is written beside it.
+        put(earlier)
+        if target == "postgres":
+            sql(
+                f"CREATE FUNCTION \"{promoted}_t\"() RETURNS trigger LANGUAGE plpgsql "
+                f"AS $$ BEGIN RETURN NEW; END $$"
+            )
+            sql(
+                f"CREATE TRIGGER \"{promoted}_t\" BEFORE INSERT ON \"{promoted}\" "
+                f"FOR EACH ROW EXECUTE FUNCTION \"{promoted}_t\"()"
+            )
+        else:
+            sql(
+                f"CREATE MATERIALIZED VIEW `{promoted}_v` ENGINE = MergeTree ORDER BY id "
+                f"AS SELECT id FROM `{promoted}`"
+            )
+        try:
+            with pytest.raises(sde.MigrationRefused, match="cutover requires"):
+                operator.native[target].identity(promoted)
+            run = subprocess.run(
+                [*base, "mark-sources"], env=environment, capture_output=True, text=True,
+                timeout=45,
+            )
+            assert run.returncode == 0, run.stderr
+            assert json.loads(run.stdout) == {"marked": [where], "left": [], "unexamined": []}
+        finally:
+            if target == "postgres":
+                sql(f"DROP TRIGGER \"{promoted}_t\" ON \"{promoted}\"")
+                sql(f"DROP FUNCTION \"{promoted}_t\"()")
+            else:
+                sql(f"DROP TABLE `{promoted}_v`")
         assert comment() == source_marker(PROJECT, "Event", promoted)
         sde.Session(model, operator.active_map(), runtime, project_id=PROJECT)
-        assert operator.mark_sources() == []
+        assert operator.mark_sources() == {"marked": [], "left": [], "unexamined": []}

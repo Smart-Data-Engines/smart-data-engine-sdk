@@ -232,30 +232,46 @@ class ElasticsearchOperator:
         entity and key - is read and written back with ``source`` in place of ``copy`` and
         ``stage`` (format contract §7r). Idempotent.
         """
-        from ..ownership import SOURCE_MARKER
-
         for table in tables:
             if self.identity(table.name).physical_key != table.physical_key:
                 raise MigrationRefused("physical target identity changed before its source mark")
-            mark = marks[table.name]
-            if SOURCE_MARKER.fullmatch(mark) is None:
-                raise MigrationRefused(f"{mark!r} is not a source's mark")
-            path = self.engine._path(table.name, "_mapping")
-            status, body = self._call(self.engine, "GET", path)
-            if status != 200 or not isinstance(body, Mapping) or set(body) != {table.name}:
-                raise EngineError(f"the mapping of {table.name} could not be read ({status})")
-            mappings = body[table.name].get("mappings") or {}
-            meta = dict(mappings.get("_meta") or {})
-            sde = {
-                key: value
-                for key, value in dict(meta.get("sde") or {}).items()
-                if key not in ("copy", "stage")
-            }
-            sde["source"] = mark
-            meta["sde"] = sde
-            status, _ = self._call(self.engine, "PUT", path, {"_meta": meta})
-            if status != 200:
-                raise EngineError(f"the source's mark on {table.name} was not written ({status})")
+            self._write_source_mark(table.name, marks[table.name])
+
+    def write_source_mark(self, table: str, object_id: str, mark: str) -> None:
+        """A source's mark in ``table``, while it is still the index ``object_id``.
+
+        ``sde-operator mark-sources`` writes it in a source an earlier cutover left with the
+        staging's mark. Nothing a cutover requires of its indexes is asked here - no pipeline, no
+        lifecycle policy, no foreign block - since a mark moves no document and no authority; a
+        block that refuses the mapping's update refuses the mark, which is then left.
+        """
+        if str(self._settings(table)["uuid"]) != object_id:
+            raise MigrationRefused(
+                f"the index {table!r} changed while its mark was read: run the command again"
+            )
+        self._write_source_mark(table, mark)
+
+    def _write_source_mark(self, table: str, mark: str) -> None:
+        from ..ownership import SOURCE_MARKER
+
+        if SOURCE_MARKER.fullmatch(mark) is None:
+            raise MigrationRefused(f"{mark!r} is not a source's mark")
+        path = self.engine._path(table, "_mapping")
+        status, body = self._call(self.engine, "GET", path)
+        if status != 200 or not isinstance(body, Mapping) or set(body) != {table}:
+            raise EngineError(f"the mapping of {table} could not be read ({status})")
+        mappings = body[table].get("mappings") or {}
+        meta = dict(mappings.get("_meta") or {})
+        sde = {
+            key: value
+            for key, value in dict(meta.get("sde") or {}).items()
+            if key not in ("copy", "stage")
+        }
+        sde["source"] = mark
+        meta["sde"] = sde
+        status, _ = self._call(self.engine, "PUT", path, {"_meta": meta})
+        if status != 200:
+            raise EngineError(f"the source's mark on {table} was not written ({status})")
 
     def _blocked(self, table: str, kind: str) -> bool:
         blocks = self._settings(table).get("blocks")
@@ -488,6 +504,8 @@ class ElasticsearchStaging:
         self.dialect = DIALECT
 
     def marker(self, table: str) -> tuple[str, str | None] | None:
+        from .elasticsearch import index_mark
+
         status, body = self.native._call(self.engine, "GET", self.engine._path(table, "_mapping"))
         if status == 404:
             return None
@@ -498,13 +516,11 @@ class ElasticsearchStaging:
         meta = body[table].get("mappings", {}).get("_meta", {})
         sde = meta.get("sde") if isinstance(meta, Mapping) else None
         # A staging's mark, or a copy's that prepare_schema wrote, or the source's a cutover wrote
-        # in place of either (format contract §7r): each says what the index is, and none is
-        # another's.
-        stage = None
-        if isinstance(sde, Mapping):
-            stage = sde.get("stage", sde.get("copy", sde.get("source")))
+        # in place of either (format contract §7r): each says what the index is, none is another's,
+        # and an index carries one, as a session reads it.
+        mark = index_mark(table, sde) if isinstance(sde, Mapping) else None
         uuid = str(self.native._settings(table)["uuid"])
-        return uuid, stage if isinstance(stage, str) else None
+        return uuid, mark
 
     def preflight(self, layout: PhysicalLayout, keys: Mapping[str, Sequence[str]]) -> None:
         schema_statements(layout, keys=keys, dialect=DIALECT)

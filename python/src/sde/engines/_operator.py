@@ -58,6 +58,8 @@ class NativeOperations(Protocol):
 
     def mark_source(self, tables: Sequence[TableIdentity], marks: Mapping[str, str]) -> None: ...
 
+    def write_source_mark(self, table: str, object_id: str, mark: str) -> None: ...
+
     def qualify(
         self,
         tables: Sequence[str],
@@ -269,19 +271,47 @@ class NativeOperator:
         and the operator empty or refill it (format contract §7r). Idempotent: a resumed cutover
         writes the same mark again.
         """
-        from ..ownership import SOURCE_MARKER
-
         for table in tables:
             if self.identity(table.name).physical_key != table.physical_key:
                 raise MigrationRefused("physical target identity changed before its source mark")
-            mark = marks[table.name]
-            if SOURCE_MARKER.fullmatch(mark) is None:
-                raise MigrationRefused(f"{mark!r} is not a source's mark")
-            name = self.quote(table.namespace) + "." + self.quote(table.name)
-            if self.dialect == "postgres":
-                self.command(f"COMMENT ON TABLE {name} IS '{mark}'")
-            else:
-                self.command(f"ALTER TABLE {name} MODIFY COMMENT '{mark}'")
+            self._write_source_mark(table.namespace, table.name, marks[table.name])
+
+    def write_source_mark(self, table: str, object_id: str, mark: str) -> None:
+        """A source's mark on ``table``, while it is still the object ``object_id``.
+
+        ``sde-operator mark-sources`` writes it on a source an earlier cutover left with the
+        staging's mark. Nothing a cutover requires of its tables is asked here - no trigger, no
+        dependent view, no row policy - since a mark moves no row and no authority: a source the
+        application has given a trigger since is marked as it stands.
+        """
+        if self.dialect == "postgres":
+            rows = self.rows(
+                "SELECT c.oid::text,n.nspname FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid=to_regclass(%s)",
+                [self.quote(table)],
+            )
+        else:
+            rows = self.rows(
+                "SELECT toString(uuid),database FROM system.tables "
+                "WHERE database=currentDatabase() AND name={table:String}",
+                {"table": table},
+            )
+        if len(rows) != 1 or str(rows[0][0]) != object_id:
+            raise MigrationRefused(
+                f"the table {table!r} changed while its mark was read: run the command again"
+            )
+        self._write_source_mark(str(rows[0][1]), table, mark)
+
+    def _write_source_mark(self, namespace: str, table: str, mark: str) -> None:
+        from ..ownership import SOURCE_MARKER
+
+        if SOURCE_MARKER.fullmatch(mark) is None:
+            raise MigrationRefused(f"{mark!r} is not a source's mark")
+        name = self.quote(namespace) + "." + self.quote(table)
+        if self.dialect == "postgres":
+            self.command(f"COMMENT ON TABLE {name} IS '{mark}'")
+        else:
+            self.command(f"ALTER TABLE {name} MODIFY COMMENT '{mark}'")
 
     def qualify(
         self,

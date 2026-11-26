@@ -28,7 +28,7 @@ from test_staging_operator_live import cutover
 import sde
 from sde.engines._write_fences import fence_pipeline
 from sde.engines.elasticsearch import ElasticsearchEngine
-from sde.ownership import source_marker
+from sde.ownership import source_marker, stage2_marker, stage_marker
 
 PROJECT = "1" * 32
 DSN = os.environ.get("SDE_ELASTICSEARCH_DSN")
@@ -275,7 +275,7 @@ def test_a_group_moves_onto_elasticsearch_and_the_copy_is_repaired_from_the_froz
         status, body = move.es.operator._request("GET", f"/{move.copy}/_mapping")
         assert status == 200
         marker = body[move.copy]["mappings"]["_meta"]["sde"]["stage"]
-        assert marker.startswith(f"sde.stage1.{PROJECT}.{move.stage.stage_id}.")
+        assert marker == stage2_marker(PROJECT, move.stage.stage_id, "Event", move.copy)
         assert move.es.operator.count(move.copy) == 0
         move.old.save("Event", ROWS[2])  # the old map: PostgreSQL only, a fan-out never made
         move.session().save("Event", ROWS[3])  # the prepared map: fanned out to Elasticsearch
@@ -311,6 +311,78 @@ def test_a_group_moves_onto_elasticsearch_and_the_copy_is_repaired_from_the_froz
         assert _blocks(move.es, move.copy) == {}
         with pytest.raises(sde.EngineError):
             move.old.get("Event", {"id": 1})
+
+
+def test_mark_sources_marks_an_index_an_earlier_cutover_left_with_the_staging_s_mark(
+    tmp_path: Path,
+) -> None:
+    """A source index an earlier cutover left with the staging's mark gets the source's, with a
+    default pipeline and the flood-stage block on it, both of which a cutover refuses: a mark moves
+    no document. Behind a block that refuses the mapping's update it is left, named, and the next
+    run marks it."""
+    with moving("postgres", tmp_path) as move:
+        assert move.operator.stage(move.stage).as_record()["outcome"] == "prepared"
+        final = move.operator.execute(
+            cutover(move.stage, move.signed, move.model, move.public)).as_record()
+        assert final["outcome"] == "success"
+        es, path = move.es.operator, f"/{move.copy}/_mapping"
+
+        def meta() -> dict[str, Any]:
+            status, body = es._request("GET", path)
+            assert status == 200
+            return dict(body[move.copy]["mappings"]["_meta"])
+
+        def earlier() -> None:
+            """The index as a cutover before the source's mark left it."""
+            written = meta()
+            written["sde"] = {key: value for key, value in written["sde"].items()
+                              if key != "source"}
+            written["sde"]["stage"] = stage_marker(PROJECT, move.stage.stage_id, move.copy)
+            assert es._request("PUT", path, {"_meta": written})[0] == 200
+
+        def block(name: str, value: bool | None) -> None:
+            assert es._request("PUT", f"/{move.copy}/_settings",
+                               {f"index.blocks.{name}": value})[0] == 200
+
+        where = {"group": "Event", "entity": "Event", "engine": "elasticsearch",
+                 "table": move.copy}
+        pipeline = "sde_test_default_" + uuid4().hex[:8]
+        assert es._request("PUT", f"/_ingest/pipeline/{pipeline}",
+                           {"processors": [{"set": {"field": "note", "value": "x"}}]})[0] == 200
+        try:
+            earlier()
+            with pytest.raises(sde.MigrationRefused, match="carries a staging's mark"):
+                move.session()
+            assert es._request("PUT", f"/{move.copy}/_settings",
+                               {"index.default_pipeline": pipeline})[0] == 200
+            block("read_only_allow_delete", True)
+            try:
+                with pytest.raises(sde.MigrationRefused, match="default ingest pipeline"):
+                    move.operator.native["elasticsearch"].identity(move.copy)
+                assert move.operator.mark_sources() == {
+                    "marked": [where], "left": [], "unexamined": []}
+            finally:
+                block("read_only_allow_delete", None)
+            assert meta()["sde"]["source"] == source_marker(PROJECT, "Event", move.copy)
+            assert "stage" not in meta()["sde"] and "copy" not in meta()["sde"]
+            assert move.operator.mark_sources() == {"marked": [], "left": [], "unexamined": []}
+
+            earlier()
+            block("read_only", True)
+            try:
+                outcome = move.operator.mark_sources()
+            finally:
+                block("read_only", None)
+            assert outcome["marked"] == [] and [
+                {key: value for key, value in entry.items() if key != "reason"}
+                for entry in outcome["left"]] == [where]
+            assert "did not take the mark" in outcome["left"][0]["reason"]
+            assert meta()["sde"]["stage"] == stage_marker(PROJECT, move.stage.stage_id, move.copy)
+            assert move.operator.mark_sources()["marked"] == [where]
+            move.session()
+        finally:
+            es._request("PUT", f"/{move.copy}/_settings", {"index.default_pipeline": None})
+            es._request("DELETE", f"/_ingest/pipeline/{pipeline}")
 
 
 def test_a_group_moves_off_elasticsearch_and_the_index_it_left_is_closed_to_everyone(

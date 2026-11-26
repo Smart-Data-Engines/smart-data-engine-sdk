@@ -277,7 +277,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "abandon":
             print(json.dumps(executor.abandon().as_record()))
         elif args.command == "mark-sources":
-            print(json.dumps({"marked": executor.mark_sources()}))
+            outcome = executor.mark_sources()
+            print(json.dumps(outcome))
+            if outcome["left"]:
+                # A source left with a copy's or a staging's mark is one a session refuses.
+                return 1
         elif args.command == "backfill":
             print(json.dumps([progress.as_record() for progress in executor.backfill()]))
         elif args.command == "settle":
