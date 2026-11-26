@@ -1,7 +1,11 @@
 """Add verification-request cases without regenerating any pre-existing vector.
 
-The map fingerprint is checked against openssl over independently encoded ASCII JSON. The map,
-model and data come from the already-frozen positive verification case. Existing outputs are never
+The map fingerprint is checked against openssl over independently encoded ASCII JSON. The model
+and data come from the already-frozen positive verification case, and so does the map, raised to
+contract 4: the request binds a locally configured project, and a map below contract 4 is refused
+where a project is configured (format contract §7r), so the cases carry the project and a write
+generation, and the write fences and copy marks a provisioned deployment holds
+(`engine_generations`, bound as the generation vectors bind it). Existing outputs are never
 silently overwritten: changing them requires the same explicit contract-change flag as other tools.
 """
 
@@ -18,6 +22,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python" / "src"))
+sys.path.insert(0, str(ROOT / "python" / "tests"))
+from _generation import bind_generation_metadata, copy_marks  # noqa: E402
+
 import sde  # noqa: E402
 from sde.testing.loader import model_from_neutral  # noqa: E402
 from sde.testing.memory import engines_from  # noqa: E402
@@ -73,6 +80,29 @@ def sign(document: dict[str, Any], directory: Path) -> tuple[dict[str, Any], str
     return result, base64.b64encode(public.read_bytes()[-32:]).decode()
 
 
+def raised(document: dict[str, Any]) -> dict[str, Any]:
+    """The frozen case's map at contract 4: this project's, every group at write generation 1."""
+    out = copy.deepcopy(document)
+    out["contract"] = 4
+    out["project_id"] = PROJECT
+    for spot in out["groups"].values():
+        spot["write_epoch"] = 1
+    return out
+
+
+def generations(document: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    """Each engine's tables of a map with the write fence a provisioned deployment holds."""
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for spot in document["groups"].values():
+        for material in [spot["source"], *spot.get("derived", [])]:
+            for table in material["layout"]["tables"].values():
+                out.setdefault(material["engine"], {})[table] = {
+                    "project_id": PROJECT,
+                    "epoch": spot["write_epoch"],
+                }
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
@@ -80,7 +110,7 @@ def main() -> None:
     args = parser.parse_args()
     model_document, document, engine_document = (
         read("model.json"),
-        read("map.json"),
+        raised(read("map.json")),
         read("engines.json"),
     )
     model = model_from_neutral(model_document)
@@ -120,7 +150,11 @@ def main() -> None:
             {"targets": [{"engine": "other", "id": "Reading@pg2"}]},
             "does not match",
         ),
-        ("030-verification-needs-a-locally-configured-project", {}, "no project_id"),
+        (
+            "030-verification-needs-a-locally-configured-project",
+            {},
+            "needs its locally configured project_id",
+        ),
         ("031-verification-cannot-predate-the-request", {}, "predates"),
         ("032-verification-refuses-a-row-field", {"rows": []}, "unknown fields"),
         (
@@ -217,9 +251,13 @@ def main() -> None:
                 body["requires_signature"] = True
             loaded = sde.load_map(case_map, model=model, public_key=key)
             engines = engines_from(engine_document)
-            session = sde.Session(model, loaded, engines, project_id=want.get("project_id"))
+            want["engine_generations"] = generations(case_map)
+            bind_generation_metadata(engines, want["engine_generations"], marks=copy_marks(loaded))
             if error:
                 try:
+                    session = sde.Session(
+                        model, loaded, engines, project_id=want.get("project_id")
+                    )
                     parsed = sde.VerificationRequest.from_record(body)
                     sde.verify(session, "Reading", request=parsed, at=want["at"], chunk_rows=3)
                 except sde.MigrationRefused as caught:
@@ -228,6 +266,7 @@ def main() -> None:
                     raise AssertionError(f"{name} did not refuse")
                 want.update(error="MigrationRefused", match=error)
             else:
+                session = sde.Session(model, loaded, engines, project_id=want.get("project_id"))
                 report = sde.verify(
                     session,
                     "Reading",

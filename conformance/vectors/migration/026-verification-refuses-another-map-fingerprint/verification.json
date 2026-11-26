@@ -24,6 +24,28 @@
   "group": "Reading",
   "at": "2026-09-12T12:00:01Z",
   "chunk_rows": 3,
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      }
+    }
+  },
   "error": "MigrationRefused",
   "match": "does not match"
 }
