@@ -292,7 +292,7 @@ std::map<std::string, TableFacts> PostgresEngine::table_facts(
         "SELECT q.name, c.oid::text, obj_description(c.oid, 'pg_class') FROM (VALUES " + values +
             ") AS q(name) JOIN pg_class c ON c.oid = to_regclass(q.name)",
         quoted);
-    for (std::size_t row = 0; row < result.rows(); ++row) {
+    for (int row = 0; row < result.rows(); ++row) {
       Json key = Json::array();
       key.as_array().emplace_back("postgres");
       key.as_array().emplace_back(std::string(server.text(0, 0)));

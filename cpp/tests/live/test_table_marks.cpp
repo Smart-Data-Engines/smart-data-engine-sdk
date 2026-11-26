@@ -280,6 +280,6 @@ TEST_P(TableMarks, TwoEntitiesOfOneGroupInOneSourceTableAreRefused) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, TableMarks, ::testing::Values("postgres", "clickhouse"),
-                         [](const ::testing::TestParamInfo<std::string>& info) { return info.param; });
+                         [](const auto& param_info) { return param_info.param; });
 
 }  // namespace

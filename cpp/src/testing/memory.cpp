@@ -248,12 +248,12 @@ void MemoryEngine::bind_fences(std::map<std::string, std::shared_ptr<MemoryFence
   fences_ = std::move(backends);
 }
 
-std::map<std::string, TableFacts> MemoryEngine::table_facts(const std::vector<std::string>& tables) {
+std::map<std::string, TableFacts> MemoryEngine::table_facts(const std::vector<std::string>& names) {
   // Each table its own, and a copy's carrying its mark: a provisioned deployment (section 7r).
   std::map<std::string, TableFacts> found;
-  for (const std::string& table : tables) {
+  for (const std::string& table : names) {
     TableFacts& fact = found[table];
-    if (fences_.count(table) != 0 || this->tables.count(table) != 0) {
+    if (fences_.count(table) != 0 || tables.count(table) != 0) {
       Json key = Json::array();
       key.as_array().emplace_back("memory");
       key.as_array().emplace_back(name_);
