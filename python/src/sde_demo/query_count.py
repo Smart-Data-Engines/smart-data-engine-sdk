@@ -53,7 +53,7 @@ def _digest(value: Mapping[str, Any]) -> str:
 
 
 def _source(placement: sde.PlacementMap, project_id: str) -> sde.Materialization:
-    check_map_project(placement, project_id)
+    # The demo's own refusal first: a map below contract 4 is one the project check also refuses.
     if (
         placement.contract < GENERATIONS_SINCE
         or not placement.signed
@@ -62,6 +62,7 @@ def _source(placement: sde.PlacementMap, project_id: str) -> sde.Materialization
         or set(placement.groups) != {"WeatherReading"}
     ):
         raise DemoRefused("The count demo needs the loaded, signed Weather project map.")
+    check_map_project(placement, project_id)
     # The source is the one authoritative copy, also while a staging maintains another: the count
     # reads it and a query must name it. A query written for the copy stays refused until the
     # cutover makes the copy the source.

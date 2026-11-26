@@ -59,3 +59,12 @@ def test_without_a_project_prepare_schema_takes_the_same_map_as_before() -> None
     model, placement, engines = _case()
     sde.prepare_schema(model, placement, engines)
     assert {call["call"] for call in _calls(engines)} == {"ensure_schema"}
+
+
+def test_departure_refuses_a_map_below_contract_4_where_a_project_is_configured() -> None:
+    """The project decides which fences are this project's: with one, departure reads them by a map
+    of contract 4 or later, as a session does, and the operator's map in force is one."""
+    _, placement, _ = _case()
+    with pytest.raises(sde.MigrationRefused, match="carries no project and no write generation"):
+        sde.departure(placement, {}, project_id=PROJECT)
+    assert sde.departure(placement, {}).as_record() is not None
