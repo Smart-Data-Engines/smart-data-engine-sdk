@@ -106,6 +106,7 @@ add_executable(sde_conformance
   conformance/test_query.cpp
   conformance/test_migration.cpp
   conformance/test_books.cpp
+  conformance/test_marks.cpp
 )
 target_link_libraries(sde_conformance PRIVATE sde_test_support sde::testing GTest::gtest_main)
 # `dsn/` goes with the orderbook adapter (format contract section 9), whose DSN it reads.

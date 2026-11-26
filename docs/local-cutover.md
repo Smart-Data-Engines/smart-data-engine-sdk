@@ -254,6 +254,24 @@ Do not drop retired tables or remove the state on the basis of a missing respons
 [staging](staging.md#abandoning-a-staging-that-cannot-finish) or
 [in-place index build](in-place-index.md#abandonment) instead.
 
+### A source an earlier cutover left with the staging's mark
+
+A cutover writes a source's mark on the copy it makes the source (format contract §7r). An operator
+before that mark existed left the staging's mark on the staged copy it promoted, and a session of
+this release refuses such a source (`carries a staging's mark`): a staged copy a forged map names as
+a source carries the same mark. Run, once, before the application's library is upgraded:
+
+```bash
+sde-operator mark-sources
+```
+
+It reads the mark of each source of the map in force and, where the mark is a staging's of a stage
+the project's records hold completed for the group the map gives the table to, writes the source's
+mark in its place, after reading the table's identity again. It prints `{"marked": [...]}` - group,
+entity, engine and table of each - and leaves every other table as it is; run again, it marks
+nothing. Like every operator command it takes the project's lock and refuses beside an unfinished
+operation.
+
 ## Pause budget and receipt
 
 A process watchdog bounds native waits independently of driver exception translation. Preflight

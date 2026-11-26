@@ -266,6 +266,14 @@ engine whose adapter does not say what its names reach is not held to this.
 a map is refused, since only a session read the marks of the map's tables when it opened. Open a
 session on the map and pass it.
 
+A source an earlier operator's cutover made from a staged copy carries the staging's mark
+(`sde.stage1`), and a session of this release refuses it (`carries a staging's mark`): it cannot be
+told from a staged copy a forged map names as a source. Before the application's library is
+upgraded, run `sde-operator mark-sources` (this release's operator, on the project's directory): it
+writes the source's mark on each such source the project's records show was promoted - a stage
+completed for the group the map in force gives the table to - and prints what it marked; a table
+without such a record is left as it is. A copy an earlier staging marked is still taken as a copy.
+
 Upgrade the operator (`sde-operator`, Python) before, or with, the application's library. A copy
 marked by this release's `prepare_schema` and then made the source by an earlier operator's
 cutover keeps the copy's mark, and a session of this release refuses that source.
@@ -275,7 +283,8 @@ same variable afterwards does not reach it - open a new session for a new map, a
 model and the map need not outlive the session any more.
 
 Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
-no other* and *Fixed: a session reads the marks of its map's tables when it opens*.
+no other*, *Fixed: a session reads the marks of its map's tables when it opens* and *Fixed: a
+staging's mark names its group, and no copy's or staging's mark is taken on a source*.
 
 ### After the upgrade
 

@@ -1,0 +1,137 @@
+[
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event_copy",
+  "mark": "sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.4e1f49a9c8ae8a15.6137cc17e2928ac7",
+  "copy": true,
+  "source": false,
+  "why": "prepare_schema's mark for this project, group and table: a copy, never a source"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event_copy",
+  "mark": "sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.7e1b0d5641f2640c.6137cc17e2928ac7",
+  "copy": false,
+  "source": false,
+  "why": "another group's copy: a forged map naming it Event's copy would write Event's rows over it"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event_copy",
+  "mark": "sde.copy1.0dd50dd50dd50dd50dd50dd50dd50dd5.4e1f49a9c8ae8a15.6137cc17e2928ac7",
+  "copy": false,
+  "source": false,
+  "why": "another project's copy"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event_copy",
+  "mark": "sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.4e1f49a9c8ae8a15.9ead52edcfe8c697",
+  "copy": false,
+  "source": false,
+  "why": "the mark of another table name, as a table renamed under its mark would carry"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "sde_m_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1_000001",
+  "mark": "sde.stage2.5eed5eed5eed5eed5eed5eed5eed5eed.a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.4e1f49a9c8ae8a15.18bd8b937a230abc",
+  "copy": true,
+  "source": false,
+  "why": "a staging's mark for this group, on the copy it named after its stage"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "sde_m_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1_000001",
+  "mark": "sde.stage2.5eed5eed5eed5eed5eed5eed5eed5eed.a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.7e1b0d5641f2640c.18bd8b937a230abc",
+  "copy": false,
+  "source": false,
+  "why": "another group's staged copy (the first review's D1): its mark names its group"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "sde_m_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1_000001",
+  "mark": "sde.stage2.5eed5eed5eed5eed5eed5eed5eed5eed.b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2.4e1f49a9c8ae8a15.18bd8b937a230abc",
+  "copy": false,
+  "source": false,
+  "why": "a staging's mark of another stage than the one the table is named after"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "sde_m_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1_000001",
+  "mark": "sde.stage1.5eed5eed5eed5eed5eed5eed5eed5eed.a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.18bd8b937a230abc",
+  "copy": true,
+  "source": false,
+  "why": "an earlier release's staging mark names no group: taken on a staged copy's table, where the operator checks the stage's group in its records; never on a source (the third review's F1), which the operator gives a source's mark where its records show the cutover"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event_copy",
+  "mark": "sde.stage1.5eed5eed5eed5eed5eed5eed5eed5eed.a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.6137cc17e2928ac7",
+  "copy": false,
+  "source": false,
+  "why": "a staging's mark on a table not named after its stage"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event",
+  "mark": "sde.source1.5eed5eed5eed5eed5eed5eed5eed5eed.4e1f49a9c8ae8a15.b8e1f80bd70ae078",
+  "copy": false,
+  "source": true,
+  "why": "a cutover's mark on the copy it made the source: a table that has been a source is never a copy again"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event",
+  "mark": "sde.source1.5eed5eed5eed5eed5eed5eed5eed5eed.7e1b0d5641f2640c.b8e1f80bd70ae078",
+  "copy": false,
+  "source": true,
+  "why": "another group's source mark is taken on a source: a group renamed in the model keeps its source"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event",
+  "mark": null,
+  "copy": false,
+  "source": true,
+  "why": "no mark: a table of the client's from before SDE"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event",
+  "mark": "",
+  "copy": false,
+  "source": true,
+  "why": "an empty comment is no mark (ClickHouse's table without one)"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event",
+  "mark": "the client's own note",
+  "copy": false,
+  "source": true,
+  "why": "a comment of the client's is no mark"
+ },
+ {
+  "project_id": "5eed5eed5eed5eed5eed5eed5eed5eed",
+  "group": "Event",
+  "table": "event_copy",
+  "mark": "sde.copy1.5eed5eed5eed5eed5eed5eed5eed5eed.4e1f49a9c8ae8a15.6137cc17e2928ac",
+  "copy": false,
+  "source": true,
+  "why": "a copy's mark one digit short is no mark of a library's, and a table carrying it is not a copy"
+ }
+]
