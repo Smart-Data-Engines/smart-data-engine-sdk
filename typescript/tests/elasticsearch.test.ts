@@ -418,3 +418,20 @@ describe('the mark of an index', () => {
     expect(() => indexMark('event', sde)).toThrow(`carries ${keys} under _meta.sde`)
   })
 })
+
+describe("a session's facts of an index", () => {
+  it('refuse an index with two marks', async () => {
+    // What a session reads of an index's mark goes through the same rule as indexMark.
+    const stage = `sde.stage2.${'1'.repeat(32)}.${'2'.repeat(32)}.${'3'.repeat(16)}.${'4'.repeat(16)}`
+    const engine = new ElasticsearchEngine('elasticsearch+http://127.0.0.1:9200')
+    ;(engine as unknown as { request: unknown }).request = async (method: string, path: string): Promise<[number, unknown]> => {
+      if (method === 'GET' && path.startsWith('/event/_settings')) return [200, { event: { settings: { index: { uuid: 'u1' } } } }]
+      if (method === 'GET' && path.startsWith('/event/_mapping')) {
+        return [200, { event: { mappings: { _meta: { sde: { entity: 'Event', key: ['id'], copy: null, stage } } } } }]
+      }
+      return [404, {}]
+    }
+    await expect(engine.tableFacts(['event'])).rejects.toThrow('carries copy and stage under _meta.sde')
+    await engine.close()
+  })
+})

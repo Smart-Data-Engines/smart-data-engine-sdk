@@ -367,6 +367,17 @@ def test_mark_sources_marks_an_index_an_earlier_cutover_left_with_the_staging_s_
             assert "stage" not in meta()["sde"] and "copy" not in meta()["sde"]
             assert move.operator.mark_sources() == {"marked": [], "left": [], "unexamined": []}
 
+            # Two marks, which no library writes: the operator refuses the index by name, as a
+            # session does, and leaves it, where read in an order it would have marked it.
+            written = meta()
+            written["sde"] = {**written["sde"],
+                              "stage": stage_marker(PROJECT, move.stage.stage_id, move.copy)}
+            assert es._request("PUT", path, {"_meta": written})[0] == 200
+            outcome = move.operator.mark_sources()
+            assert outcome["marked"] == [] and "carries stage and source under _meta.sde" in (
+                outcome["left"][0]["reason"]
+            )
+
             earlier()
             block("read_only", True)
             try:

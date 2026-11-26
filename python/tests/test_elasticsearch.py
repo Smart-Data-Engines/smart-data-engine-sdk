@@ -701,3 +701,16 @@ def test_an_index_carries_one_mark_at_most_a_string(sde_meta: dict[str, Any], ma
     else:
         with pytest.raises(sde.MigrationRefused, match=f"carries {mark} under _meta.sde"):
             index_mark("event", sde_meta)
+
+
+def test_a_session_s_facts_refuse_an_index_with_two_marks() -> None:
+    """What a session reads of an index's mark goes through the same rule: two marks are refused,
+    where read in an order one of them would have decided whether the index was a copy."""
+    stage = "sde.stage2." + "1" * 32 + "." + "2" * 32 + "." + "3" * 16 + "." + "4" * 16
+    engine, _ = _bookkeeping_engine({
+        ("GET", "/event/_settings"): (200, {"event": {"settings": {"index": {"uuid": "u1"}}}}),
+        ("GET", "/event/_mapping"): (200, {"event": {"mappings": {"_meta": {"sde": {
+            "entity": "Event", "key": ["id"], "copy": None, "stage": stage}}}}}),
+    })
+    with pytest.raises(sde.MigrationRefused, match=r"carries copy and stage under _meta\.sde"):
+        engine.table_facts(["event"])

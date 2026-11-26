@@ -1025,6 +1025,24 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
         with operator.store.lock():
             operator.store.write(kept)
 
+        # The table read again before the source's mark is written: another object than the one
+        # whose mark was read is left, as a table renamed or recreated between the two would be.
+        from sde.engines import _staging
+
+        put(earlier)
+        marker = _staging.NativeStaging.marker
+        try:
+            _staging.NativeStaging.marker = lambda self, table: (  # type: ignore[method-assign]
+                ("0", earlier) if table == promoted else marker(self, table)
+            )
+            outcome = operator.mark_sources()
+        finally:
+            _staging.NativeStaging.marker = marker  # type: ignore[method-assign]
+        assert outcome["marked"] == [] and "changed while its mark was read" in (
+            outcome["left"][0]["reason"]
+        )
+        assert comment() == earlier
+
         # The command line says it too: while a source is left it exits 1, the result printed.
         base, environment = _operator_cli(tmp_path, operator, roles, model, public)
         put(copy_marker(PROJECT, "Event", promoted))
