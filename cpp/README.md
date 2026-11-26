@@ -39,7 +39,7 @@ give it, and that is the only state kept between calls.
 - A C++20 compiler: **GCC 12** or **Clang 16** at the oldest. CI builds with both floors, every
   warning an error, and runs the suite under AddressSanitizer and UndefinedBehaviorSanitizer with
   the newest Clang.
-- OpenSSL 3 (`libcrypto`): SHA-256, HMAC-SHA256 and Ed25519.
+- OpenSSL 3 (`libcrypto`): SHA-256, HMAC-SHA256, Ed25519 and ECDSA over P-256 (ES256).
 - utf8proc: NFC and case mapping.
 - libpq, for the PostgreSQL adapter only. `-DSDE_POSTGRES=OFF` builds without it, and without the
   adapter.
