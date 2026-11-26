@@ -108,9 +108,10 @@ def main() -> None:
     parser.add_argument("--i-am-changing-the-contract", action="store_true", required=True)
     parser.add_argument("--scratch", type=Path, required=True)
     args = parser.parse_args()
+    frozen = read("map.json")
     model_document, document, engine_document = (
         read("model.json"),
-        raised(read("map.json")),
+        raised(frozen),
         read("engines.json"),
     )
     model = model_from_neutral(model_document)
@@ -128,6 +129,15 @@ def main() -> None:
     assert fingerprint == placement.fingerprint
     request = sde.verification_request(
         placement, group="Reading", project_id=PROJECT, request_id="2" * 32, requested_at=AT
+    ).as_record()
+    # 030 keeps the frozen case's own map, contract 2, and a session with no project: the one way a
+    # session still opens without a project, and verification (§7b) refuses it itself.
+    legacy_request = sde.verification_request(
+        sde.load_map(frozen, model=model),
+        group="Reading",
+        project_id=PROJECT,
+        request_id="2" * 32,
+        requested_at=AT,
     ).as_record()
     cases: list[tuple[str, dict[str, Any], str | None]] = [
         ("022-verification-is-bound-to-its-request", {}, None),
@@ -150,11 +160,7 @@ def main() -> None:
             {"targets": [{"engine": "other", "id": "Reading@pg2"}]},
             "does not match",
         ),
-        (
-            "030-verification-needs-a-locally-configured-project",
-            {},
-            "needs its locally configured project_id",
-        ),
+        ("030-verification-needs-a-locally-configured-project", {}, "no project_id"),
         ("031-verification-cannot-predate-the-request", {}, "predates"),
         ("032-verification-refuses-a-row-field", {"rows": []}, "unknown fields"),
         (
@@ -217,8 +223,9 @@ def main() -> None:
         else:
             signed, public = sign(document, Path(raw))
         for name, changes, error in cases:
-            case_map = copy.deepcopy(document)
-            body = copy.deepcopy(request)
+            legacy = name.startswith("030")
+            case_map = copy.deepcopy(frozen if legacy else document)
+            body = copy.deepcopy(legacy_request if legacy else request)
             body.update(changes)
             want: dict[str, Any] = {
                 "project_id": PROJECT,
@@ -251,13 +258,16 @@ def main() -> None:
                 body["requires_signature"] = True
             loaded = sde.load_map(case_map, model=model, public_key=key)
             engines = engines_from(engine_document)
-            want["engine_generations"] = generations(case_map)
-            bind_generation_metadata(engines, want["engine_generations"], marks=copy_marks(loaded))
+            if not legacy:
+                want["engine_generations"] = generations(case_map)
+                bind_generation_metadata(
+                    engines, want["engine_generations"], marks=copy_marks(loaded)
+                )
+            # Opened outside the expected refusal: every case's session opens, and each is refused,
+            # where it is, by the check its name gives.
+            session = sde.Session(model, loaded, engines, project_id=want.get("project_id"))
             if error:
                 try:
-                    session = sde.Session(
-                        model, loaded, engines, project_id=want.get("project_id")
-                    )
                     parsed = sde.VerificationRequest.from_record(body)
                     sde.verify(session, "Reading", request=parsed, at=want["at"], chunk_rows=3)
                 except sde.MigrationRefused as caught:
@@ -266,7 +276,6 @@ def main() -> None:
                     raise AssertionError(f"{name} did not refuse")
                 want.update(error="MigrationRefused", match=error)
             else:
-                session = sde.Session(model, loaded, engines, project_id=want.get("project_id"))
                 report = sde.verify(
                     session,
                     "Reading",

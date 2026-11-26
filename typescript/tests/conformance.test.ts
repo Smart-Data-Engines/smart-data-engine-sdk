@@ -1073,17 +1073,18 @@ describe('migration vectors', () => {
           error?: string; match?: string; report?: unknown; matched?: boolean;
           engine_generations?: Record<string, Record<string, {project_id: string; epoch: number}>>
         }>(boundFile)
-        // The write fences and copy marks of a provisioned deployment: the request binds a project,
-        // and only a map of contract 4 or later is taken where one is configured.
+        // The write fences a provisioned deployment holds, and the copy marks its map implies (§7r):
+        // the request binds a project, and only a map of contract 4 or later is taken where one is
+        // configured.
         if (want.engine_generations !== undefined) {
           bindGenerationMetadata(engines, want.engine_generations, false, copyMarks(map))
         }
-        // The session is opened inside, so that one that refuses to open is the refusal a case expects.
-        const compare = async () => verify(
-          await Session.open(model, map, engines, want.project_id === undefined ? {} : { projectId: want.project_id }),
-          want.group,
-          { request: VerificationRequest.fromRecord(want.request), at: want.at, chunkRows: want.chunk_rows ?? 3 },
-        )
+        const boundSession = await Session.open(model, map, engines,
+          want.project_id === undefined ? {} : { projectId: want.project_id })
+        const compare = async () => verify(boundSession, want.group, {
+          request: VerificationRequest.fromRecord(want.request), at: want.at,
+          chunkRows: want.chunk_rows ?? 3,
+        })
         if (want.error !== undefined) {
           await refusesAsync(compare, want.error, want.match as string)
         } else {

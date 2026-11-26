@@ -563,14 +563,14 @@ def test_migration_vector(case: Path) -> None:
     if bound.is_file():
         want = _read_json(bound)
         if "engine_generations" in want:
-            # The write fences and copy marks of a provisioned deployment: the request binds a
-            # project, and only a map of contract 4 or later is taken where one is configured.
+            # The write fences a provisioned deployment holds, and the copy marks its map implies
+            # (§7r): the request binds a project, and only a map of contract 4 or later is taken
+            # where one is configured.
             bind_generation_metadata(
                 engines, want["engine_generations"], marks=copy_marks(placement)
             )
+        session = sde.Session(model, placement, engines, project_id=want.get("project_id"))
         def compare() -> sde.VerifyReport:
-            # Opened here, so that a session that refuses to open is the refusal a case expects.
-            session = sde.Session(model, placement, engines, project_id=want.get("project_id"))
             request = sde.VerificationRequest.from_record(want["request"])
             return sde.verify(session, want["group"], request=request,
                               at=want["at"], chunk_rows=want.get("chunk_rows", 3))
