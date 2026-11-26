@@ -191,6 +191,19 @@ of its table or column.
 
 Changelog: *Fixed: a map cannot put a statement of its own choosing into a client's engine*.
 
+**A map below contract 4 is refused where a project is configured.** Affected: a service that
+configures its project (`project_id`) and opens a session or prepares a schema on a map of contract
+1, 2 or 3 - a hand-written one, or one an earlier control plane issued before write generations.
+Such a map carries no project and no write generation, so it cannot be told from a forged map of an
+older contract, which would reach any table of its shape; the session or `prepare_schema` refuses it
+with `MigrationRefused` (`carries no project and no write generation`) before an engine is asked
+anything. Either load a map of contract 4 or later, which the control plane issues with the
+project, or leave the project out of that service's configuration: without one the map is taken as
+before. Verifying a copy against a request (format contract §7b) binds the configured project, so
+it runs on contract 4 or later.
+
+Changelog: *Fixed: a map below contract 4 is refused where a project is configured*.
+
 ### A write fence's backend of your own
 
 **A write fence's backend has one more operation.** Affected: a `FenceBackend` implemented outside

@@ -8,6 +8,20 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a map below contract 4 is refused where a project is configured** (all three libraries;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). A map
+of contract 1 to 3 carries no project and no write generation, so neither a write fence nor a
+copy's mark applies to it, and the libraries took it as before also where a project was configured:
+a forged map of an older contract directed the application's writes - a session's fan-out, and
+`sde.backfill` through it - to any table of its shape, around every check of the marks. A session,
+its `ensure_schema` and `prepare_schema` with a project configured now refuse such a map
+(`carries no project and no write generation`) before an engine is asked anything; without a
+project it is taken as before. The verification-request vectors `migration/022` to `045`, which
+bind a configured project, are on contract 4 with the write fences and copy marks of a provisioned
+deployment, and their engine calls and reports are the ones they were; new vector
+`migration/237`. **Breaking** for a service with a project configured that loads a map below
+contract 4 ([upgrading](docs/upgrading.md)).
+
 **Fixed: a session reads the marks of its map's tables when it opens** (all three libraries;
 [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). The
 operator read a copy's mark before it wrote to a copy, and the application's session - its fan-out,

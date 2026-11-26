@@ -104,8 +104,9 @@ the supplied metadata and run its steps against a recording DDL backend; compare
 and every call. These cases replace the model/map/row inputs with a metadata snapshot.
 
 Also execute each `verification.json` case as specified in [§7b](format-contract.md#7b-verification-requests-and-bound-reports):
-project identity comes from local session configuration, and the complete request is checked before
-comparison. Preserve it in the outgoing report. A stored fingerprint cannot describe a mutable
+bind its `engine_generations` as for `generation.json` and open the session inside the expected-error
+assertion; project identity comes from local session configuration, and the complete request is
+checked before comparison. Preserve it in the outgoing report. A stored fingerprint cannot describe a mutable
 parsed map; retain an immutable input snapshot and reject copied objects that have not been loaded.
 
 Dual write, the resume marker, and the forward-only check. A migration reaches a library as a map
