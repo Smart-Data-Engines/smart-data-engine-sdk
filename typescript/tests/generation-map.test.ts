@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { loadMap, MapError } from '../src/index.js'
 import { modelFromNeutral } from '../src/testing/loader.js'
 
-const CASE = resolve('../conformance/vectors/migration/022-verification-is-bound-to-its-request')
+const CASE = resolve('../conformance/vectors/migration/017-a-verify-that-matches')
 const PROJECT = '1'.repeat(32)
 function document() {
   const model = modelFromNeutral(JSON.parse(readFileSync(resolve(CASE, 'model.json'), 'utf8')))

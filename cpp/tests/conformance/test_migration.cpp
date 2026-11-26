@@ -413,10 +413,17 @@ void drive_verify(const std::filesystem::path& directory, const sde::Model& mode
 void drive_verification(const std::filesystem::path& directory, const sde::Model& model,
                         const sde::PlacementMap& map, Engines& engines) {
   const sde::Json want = read_json(directory / "verification.json");
+  // The write fences and copy marks of a provisioned deployment: the request binds a project, and
+  // only a map of contract 4 or later is taken where one is configured.
+  if (const sde::Json* generations = want.find("engine_generations")) {
+    bind_generation_metadata(engines, *generations, false);
+    bind_copy_marks(engines, map);
+  }
   sde::SessionOptions session_options;
   session_options.project_id = project_of(want);
-  sde::Session session(model, map, pointers(engines), session_options);
   const auto compare = [&] {
+    // Opened here, so that a session that refuses to open is the refusal a case expects.
+    sde::Session session(model, map, pointers(engines), session_options);
     sde::VerifyOptions options;
     options.request = sde::VerificationRequest::from_record(*want.find("request"));
     options.at = want.find("at")->as_string();
