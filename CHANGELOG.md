@@ -32,6 +32,34 @@ session now keeps its own copies of the model and the map: it held references, s
 the same variable later took over an open session without any of its checks, and left the reads it
 had prepared pointing into freed memory.
 
+**Changed: the pause of a cutover after a settle reads both sides' rows since the advance beside
+each other** (Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause),
+record [`docs/qualification/cutover-settled/`](docs/qualification/cutover-settled/README.md)). It
+compared each row written since the generation advance by looking it up by its key on the other side
+- the source's rows in the copy, then the copy's in the source - a statement for every thousand
+rows, each of which ClickHouse answers with `FINAL` over the keys. It now reads the rows that carry
+the generation on both sides, each side by pages in its own key order, and compares them side by
+side: a row is looked up by its key only where the other side did not show it, which is a row the
+copy lacks, one a settle wrote under the generation, a key the source lacks, or one the two engines
+order otherwise (a UUID on ClickHouse). Where both sides hold the same rows under the generation and
+both orders agree, the pause looks up no row at all. Measured with two million rows and 100 000
+written since the settle: the pause from PostgreSQL into ClickHouse took 6.1 to 6.2 s where it took
+10.3 to 11.1 s, the other way 5.0 to 8.1 s where it took 8.5 to 9.4 s
+([record](docs/qualification/cutover-settled/README.md)). What the pause guarantees, its record and
+its refusals are the same. A verification's `chunks_compared` counts the pages the pause read on
+both sides, as before; where the pause repaired rows it now also counts the copy's pages it read
+before the repair, which the second pass did not see again (ten rows the copy held otherwise, in
+pages of five: 4 pages where it was 2).
+
+**Changed: the security policy has targets, a disclosure rule and a support window**
+([`SECURITY.md`](SECURITY.md)). After the acknowledgement within three working days: an assessment
+within ten, and a fixed release within 14, 30 or 90 days of confirming a critical, high or medium
+vulnerability (CVSS v3.1), a low one in the next regular release; an advisory when the fix is on
+the registry, with credit, and a statement on research in good faith. The previous minor release
+of each library gets security fixes for 6 months after its successor. And where an erasure's
+receipt stays: with you, never deleted by the operator and never taken by the control plane
+([erasure](docs/erasure.md#keeping-the-receipt)).
+
 **Fixed: a copy's table is one the library created and marked, and the operator writes to no
 other** (all three libraries' `prepare_schema`, and the operator;
 [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)).

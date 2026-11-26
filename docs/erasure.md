@@ -88,6 +88,21 @@ and a receipt is meant to be handed to whoever asks for proof that the request w
 the secret, you can show later that a given key was erased, by computing its digest again; without
 it, the receipt says how many rows went from where, and nothing about whose.
 
+## Keeping the receipt
+
+The receipt is your record: it shows that a request was honoured, and you are the one who may be
+asked to show it. The operator keeps it in `erasures/<id>.json` and never deletes it; nothing in
+the library expires it. How long to keep it is your retention policy's decision. Keep
+`erasure.key` as protected as the data itself: with it, a digest can be tied back to a person, and
+without it, a receipt says how many rows went from where.
+
+We do not take erasure receipts. The control plane needs nothing from them, and with them it would
+hold the first record about the people whose data is in your engines.
+
+There is no `Session.delete`. The runtime login [`runtime-roles.md`](runtime-roles.md) describes
+has no grant to delete, and erasure is the operator's work, so a compromised application cannot
+delete rows through the login it runs with.
+
 ## In Python
 
 ```python

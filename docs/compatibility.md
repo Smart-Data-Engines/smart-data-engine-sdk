@@ -132,6 +132,7 @@ Both libraries are 0.x, where the minor number is the compatibility line: `npm i
   form and a document's identifier are held by the conformance vectors; a change to any of them is a
   new contract number, which every earlier library refuses by name rather than misreads.
 
-Security fixes go into the latest release of each library ([`SECURITY.md`](../SECURITY.md)). The C++
+Security fixes go into the latest minor release of each library, and into the previous minor
+release for 6 months after its successor is released ([`SECURITY.md`](../SECURITY.md)). The C++
 library is built from this repository and has no release yet; its compatibility line is the
 commit.
