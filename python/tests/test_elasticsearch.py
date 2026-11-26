@@ -572,6 +572,19 @@ def test_a_staging_marker_is_accepted_beside_the_mapping_and_nothing_else_is() -
                 engine.validate_schema(layout, keys={"Note": ["id"]})
 
 
+def test_an_index_that_carries_two_marks_each_in_its_form_is_refused() -> None:
+    from sde.schema import elasticsearch_mapping
+
+    layout = sde.PhysicalLayout(tables={"Note": "note"}, columns={"Note": {"id": "long"}})
+    mapping = elasticsearch_mapping(layout, "Note", {"Note": ["id"]})
+    mapping["_meta"]["sde"]["stage"] = "sde.stage1." + "1" * 32 + "." + "2" * 32 + "." + "3" * 16
+    mapping["_meta"]["sde"]["source"] = "sde.source1." + "1" * 32 + "." + "4" * 16 + "." + "5" * 16
+    engine, _ = _bookkeeping_engine({("GET", "/note/_mapping"): (200, {"note": {
+        "mappings": mapping}})})
+    with pytest.raises(sde.EngineError, match=r"carries stage and source under _meta\.sde"):
+        engine.validate_schema(layout, keys={"Note": ["id"]})
+
+
 def test_a_barrier_makes_what_it_drained_visible_before_it_returns() -> None:
     """The refresh comes after the block every shard confirmed, and a failed one is an error."""
     from sde.engines._write_fences import ElasticsearchFences

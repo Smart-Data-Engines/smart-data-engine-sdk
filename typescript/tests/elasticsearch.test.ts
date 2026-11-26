@@ -323,6 +323,18 @@ describe('the bookkeeping and the staging marker', () => {
       else await expect(check).rejects.toThrow(/staging marker/)
     }
   })
+
+  it('refuses an index that carries two marks, each in its form', async () => {
+    const { elasticsearchMapping } = await import('../src/schema.js')
+    const layout = { tables: { Note: 'note' }, columns: { Note: { id: 'long' } }, indexes: [], partitionBy: {} }
+    const mapping = elasticsearchMapping(layout, 'Note', { Note: ['id'] }) as { _meta: { sde: Record<string, unknown> } }
+    mapping._meta.sde['stage'] = `sde.stage1.${'1'.repeat(32)}.${'2'.repeat(32)}.${'3'.repeat(16)}`
+    mapping._meta.sde['source'] = `sde.source1.${'1'.repeat(32)}.${'4'.repeat(16)}.${'5'.repeat(16)}`
+    const { engine } = answering({ 'GET /note/_mapping': [[200, { note: { mappings: mapping } }]] })
+    await expect(engine.validateSchema(layout, { keys: { Note: ['id'] } })).rejects.toThrow(
+      'carries stage and source under _meta.sde, and an index carries one mark at most',
+    )
+  })
 })
 
 describe('the store sizes', () => {
