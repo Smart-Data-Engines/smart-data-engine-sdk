@@ -195,9 +195,9 @@ Changelog: *Fixed: a map cannot put a statement of its own choosing into a clien
 configures its project (`project_id`) and opens a session or prepares a schema on a map of contract
 1, 2 or 3 - a hand-written one, or one an earlier control plane issued before write generations.
 Such a map carries no project and no write generation, so it cannot be told from a forged map of an
-older contract, which would reach any table of its shape; the session or `prepare_schema` refuses it
-with `MigrationRefused` (`carries no project and no write generation`) before an engine is asked
-anything. Either load a map of contract 4 or later, which the control plane issues with the
+older contract, which would reach any table of its shape; the session, `prepare_schema` or
+`sde.departure` refuses it with `MigrationRefused` (`carries no project and no write generation`)
+before any statement of its own. Either load a map of contract 4 or later, which the control plane issues with the
 project, or leave the project out of that service's configuration: without one the map is taken as
 before. Verifying a copy against a request (format contract §7b) binds the configured project, so
 it runs on contract 4 or later.

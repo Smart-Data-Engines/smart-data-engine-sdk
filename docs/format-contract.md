@@ -1410,12 +1410,17 @@ coordination is a separate requirement before production cutover.
 
 The shared `migration/` vectors with `verification.json` exercise this protocol, on maps of
 contract 4: the request binds a locally configured project, and a map below contract 4 is refused
-where one is configured (§7r). Give the engines that file's `engine_generations` - the write fences
-and copy marks of a provisioned deployment, bound as for `generation.json` - then open a session
-with its optional `project_id` and decode its `request`, both **inside** the expected-error
-assertion, and call verification with its group, `at` and `chunk_rows`. Compare `report`, `matched`
-and the full `calls.json` sequence, or require the stated error and message. A refused binding
-performs no comparison calls; signed-session startup calls remain distinct from comparison calls.
+where one is configured (§7r). `030` alone keeps a map of contract 2 and no project, the one session
+that still opens without a project, which verification refuses itself (`no project_id`). Where the
+file has `engine_generations`, give its engines those write fences and the copy marks the map
+implies (§7r), as for `generation.json`; then open a session using that file's optional
+`project_id`, decode its `request` **inside** the expected-error assertion and call verification
+with its group, `at` and `chunk_rows`. Compare `report`, `matched` and the full `calls.json`
+sequence, or require the stated error and message. A refused binding performs no comparison calls;
+signed-session startup calls remain distinct from comparison calls. A session's model is compared
+with its map's when a session of contract 4 opens, so verification's own comparison of the
+request's model with the session's (`names another session model`) is reached by no session now;
+the rule stays, for an implementation whose session does not compare them.
 
 ## 7c. Native write-fence protocol
 
@@ -2622,12 +2627,13 @@ keeps each staging it completed, also checks that the stage was for G.
     client keeps for something else, of the group's shape, reaches it.
 - **A map below contract 4 is refused where a project is configured.** Such a map carries no
   project and no write generation, so neither a fence nor a mark applies to it: a session, its
-  `ensure_schema` and `prepare_schema` with a project configured refuse it with `MigrationRefused`
-  (`carries no project and no write generation`) before an engine is asked anything, and so does
-  `sde.backfill`, which writes through a session. Without a project such a map is taken as it
-  always was. The operator takes no map below contract 4, and the verification protocol (§7b),
-  which binds a locally configured project, runs on contract 4 or later (`migration/022` to `045`).
-  Vector: `migration/237`.
+  `ensure_schema`, `prepare_schema` and `sde.departure` with a project configured refuse it with
+  `MigrationRefused` (`carries no project and no write generation`) before any schema, fence, mark,
+  watermark or data statement - an adapter that connects when it is constructed has asked its own
+  settings by then - and so does `sde.backfill`, which writes through a session. Without a project
+  such a map is taken as it always was. The operator takes no map below contract 4, and the
+  verification protocol (§7b), which binds a locally configured project, runs on contract 4 or later
+  (`migration/022` to `045`, but `030`). Vector: `migration/237`.
 
 Vectors: `schema/024` pins, for each dialect, the statements that create a copy's tables with their
 marks - the mark included, so its computation is held with them - and a case of the schema family
