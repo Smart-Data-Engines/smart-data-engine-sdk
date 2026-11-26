@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "a P-256 key is an uncompressed point, whose first byte is 0x04",
+  "why": "SEC1's hybrid form, 65 bytes beginning 0x06 or 0x07, which openssl reads as the same point: refused by its first byte, so that every library takes one form and none takes it through its cryptography library"
+}

@@ -78,8 +78,12 @@ def public_keys(value: Any) -> dict[str, bytes]:
             decoded = base64.b64decode(encoded, validate=True)
         except binascii.Error:
             raise DemoRefused("Invalid public key configuration.") from None
-        if len(decoded) != 32:
-            raise DemoRefused("Ed25519 public keys must contain 32 bytes.")
+        # The map's loader checks the key itself (a P-256 key must be a point on the curve) and
+        # its refusal is said in full below; here only the two lengths a key can have.
+        if len(decoded) not in (32, 65):
+            raise DemoRefused(
+                "A trusted public key is 32 bytes (Ed25519) or 65 (a P-256 point, ES256)."
+            )
         result[name] = decoded
     return result
 

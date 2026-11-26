@@ -18,7 +18,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 import sde
@@ -43,17 +46,35 @@ def fixture() -> tuple[dict[str, Any], sde.LogicalModel, dict[str, bytes], sde.A
     return raw, model, keys, plan
 
 
+# The order of P-256: an ES256 signature's s is given in the lower half of it.
+P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+
 class Signer:
     """Signs as the control plane signs: over the canonical bytes without the block."""
 
-    def __init__(self) -> None:
-        self._key = Ed25519PrivateKey.generate()
-        self.keys = {"k": self._key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)}
+    def __init__(self, alg: str = "ed25519") -> None:
+        self.alg = alg
+        if alg == "ed25519":
+            self._key: Any = Ed25519PrivateKey.generate()
+            public = self._key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        else:
+            self._key = ec.generate_private_key(ec.SECP256R1())
+            public = self._key.public_key().public_bytes(
+                Encoding.X962, PublicFormat.UncompressedPoint
+            )
+        self.keys = {"k": public}
+
+    def _value(self, payload: bytes) -> bytes:
+        if self.alg == "ed25519":
+            return bytes(self._key.sign(payload))
+        r, s = decode_dss_signature(self._key.sign(payload, ec.ECDSA(hashes.SHA256())))
+        return r.to_bytes(32, "big") + min(s, P256_N - s).to_bytes(32, "big")
 
     def sign(self, document: dict[str, Any]) -> None:
         document.pop("signature", None)
-        value = base64.b64encode(self._key.sign(sde.canonical_bytes(document))).decode()
-        document["signature"] = {"alg": "ed25519", "key_id": "k", "value": value}
+        value = base64.b64encode(self._value(sde.canonical_bytes(document))).decode()
+        document["signature"] = {"alg": self.alg, "key_id": "k", "value": value}
 
     def resigned(self, packet: dict[str, Any]) -> dict[str, Any]:
         """The packet with both of its maps and its envelope signed again."""
@@ -83,6 +104,19 @@ def refusal_of(change: Callable[[dict[str, Any]], Any]) -> str:
             signer.resigned(raw), model=model, project_id=PROJECT, public_key=signer.keys
         )
     return str(raised.value)
+
+
+def test_the_packet_and_its_maps_signed_with_es256_load() -> None:
+    """A control plane whose key has no Ed25519 - a hardware module's - signs the envelope and both
+    maps with ES256, and the packet loads as it does signed with Ed25519."""
+    raw, model, _, plan = fixture()
+    signer = Signer("es256")
+    again = sde.load_advance_plan(
+        signer.resigned(raw), model=model, project_id=PROJECT, public_key=signer.keys
+    )
+    assert again.verified_with == "k"
+    assert (again.group, again.source_epoch, again.next_epoch) == (plan.group, 1, 2)
+    assert again.before.fingerprint == plan.before.fingerprint
 
 
 def test_the_packet_signed_again_loads() -> None:
@@ -216,7 +250,7 @@ def test_integral_json_numbers_preserve_packet_identity() -> None:
         ),
         (
             lambda raw: {**raw, "signature": {**raw["signature"], "alg": "rsa"}},
-            "advance signatures must use ed25519 and canonical base64",
+            "advance signatures must use ed25519 or es256 and canonical base64",
         ),
         (
             lambda raw: {**raw, "signature": {**raw["signature"], "key_id": 5}},

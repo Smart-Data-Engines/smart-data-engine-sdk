@@ -1,6 +1,7 @@
 /** Public starter regressions: no uncertain replay, exact values, owned-session cleanup. */
 import { afterEach, expect, it, vi } from 'vitest'
 import { createHash, generateKeyPairSync, sign as edSign } from 'node:crypto'
+import type { KeyObject } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,15 +17,28 @@ import { alertExpected, alertHumidity, fleetExpected, fleetRuns, requireDrivers,
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
-function fixture() {
+// The order of P-256: an ES256 signature's s is given in the lower half of it.
+const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+function es256(payload: Uint8Array, privateKey: KeyObject): Buffer {
+  const value = edSign('sha256', payload, { key: privateKey, dsaEncoding: 'ieee-p1363' })
+  const s = BigInt(`0x${value.subarray(32).toString('hex')}`)
+  const low = s > P256_N / 2n ? P256_N - s : s
+  return Buffer.concat([value.subarray(0, 32), Buffer.from(low.toString(16).padStart(64, '0'), 'hex')])
+}
+function fixture(alg: 'ed25519' | 'es256' = 'ed25519', trusted?: string) {
   const root = mkdtempSync(join(tmpdir(), 'sde-weather-unit-')); roots.push(root)
-  const key = generateKeyPairSync('ed25519'), model = weatherModel(), projectId = '1'.repeat(32)
-  const publicKey = key.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32).toString('base64')
+  const key = alg === 'ed25519' ? generateKeyPairSync('ed25519') : generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const model = weatherModel(), projectId = '1'.repeat(32)
+  // The raw key ends the SPKI encoding: 32 bytes of Ed25519, or the 65 of an uncompressed P-256 point.
+  const publicKey = trusted ?? key.publicKey.export({ type: 'spki', format: 'der' })
+    .subarray(alg === 'ed25519' ? -32 : -65).toString('base64')
   const config = { protocol: 1, project_id: projectId, model: neutralDeclaration(model), public_keys: { test: publicKey },
     engines: { db: { dialect: 'postgres', operator_dsn_env: 'UNUSED', runtime_dsn_envs: ['UNUSED_RUNTIME'] } } }
   function signed(raw: Record<string, unknown>) {
     const value = structuredClone(raw); delete value.signature
-    return { ...value, signature: { alg: 'ed25519', key_id: 'test', value: edSign(null, canonicalBytes(value), key.privateKey).toString('base64') } }
+    const bytes = canonicalBytes(value)
+    const signature = alg === 'ed25519' ? edSign(null, bytes, key.privateKey) : es256(bytes, key.privateKey)
+    return { ...value, signature: { alg, key_id: 'test', value: signature.toString('base64') } }
   }
   const current = { contract: 4, project_id: projectId, model_version: model.version, map_version: 1,
     groups: { WeatherReading: { write_epoch: 1, source: { id: 'source', engine: 'db', layout: {
@@ -111,6 +125,13 @@ it('refuses an active map below contract 4 as the starter refusal, not an incomp
   write(join(root, 'state', 'active-map.json'), signed(legacy))
   expect(() => project(root)).toThrow(DemoRefused)
   expect(() => project(root)).toThrow('generation-bearing map')
+})
+it('trusts a P-256 key for a map signed with ES256, and refuses one that is not a point', () => {
+  expect(project(fixture('es256').root).model.version).toBe(weatherModel().version)
+  const offCurve = Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 1)]).toString('base64')
+  expect(() => project(fixture('es256', offCurve).root)).toThrow('not a point on P-256')
+  expect(() => project(fixture('es256', Buffer.alloc(33, 1).toString('base64')).root))
+    .toThrow('32 bytes (Ed25519) or 65')
 })
 it('refuses missing credential hash and a reset marker', () => {
   const { root } = fixture()

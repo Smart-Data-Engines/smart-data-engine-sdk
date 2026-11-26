@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from copy import deepcopy
@@ -670,6 +671,33 @@ def test_setup_refuses_a_public_key_that_is_not_base64(tmp_path: Path) -> None:
     bundle, _ = supplied()
     bundle["public_keys"] = {name: "not base64!" for name in bundle["public_keys"]}
     with pytest.raises(project.DemoRefused, match="Invalid public key configuration"):
+        project.setup(tmp_path / "refused", bundle, {})
+    assert not (tmp_path / "refused").exists()
+
+
+def test_bootstrap_takes_a_map_signed_with_es256_and_its_p256_key() -> None:
+    """A control plane whose key has no Ed25519 (a hardware module's) signs the bootstrap's map with
+    ES256; the starter trusts the 65-byte P-256 key it is given, as the map's loader does."""
+    bundle, _ = supplied(alg="es256")
+    config, placement = project.bootstrap(bundle)
+    assert len(base64.b64decode(config["public_keys"]["demo-test"])) == 65
+    assert placement.map_version == 1
+
+
+@pytest.mark.parametrize(
+    ("key", "reason"),
+    [
+        (b"\x04" + b"\x01" * 64, "map does not load: .*not a point on P-256"),
+        (b"\x02" + b"\x01" * 64, "map does not load: .*uncompressed point"),
+        (b"\x01" * 33, "32 bytes \\(Ed25519\\) or 65"),
+    ],
+)
+def test_setup_refuses_a_key_that_is_neither_ed25519_nor_a_p256_point(
+    key: bytes, reason: str, tmp_path: Path
+) -> None:
+    bundle, _ = supplied(alg="es256")
+    bundle["public_keys"] = {"demo-test": base64.b64encode(key).decode()}
+    with pytest.raises(project.DemoRefused, match=reason):
         project.setup(tmp_path / "refused", bundle, {})
     assert not (tmp_path / "refused").exists()
 

@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto'
 import { CanonicalError, canonicalBytes, compareCodePoints } from './canonical.js'
 import { MapError, MigrationRefused } from './errors.js'
+import { packetSignature } from './cutover.js'
 import { checkMapProject, GENERATIONS_SINCE } from './generation.js'
 import type { LogicalModel } from './model.js'
 import {
@@ -56,20 +57,7 @@ function equal(left: unknown, right: unknown): boolean {
 function sortedKeys(value: Record<string, unknown>): string[] {
   return Object.keys(value).sort(compareCodePoints)
 }
-function signature(document: Record<string, unknown>): void {
-  const value = record(document['signature'], 'signature')
-  const names = sortedKeys(value)
-  if (!equal(names, ['alg', 'value']) && !equal(names, ['alg', 'key_id', 'value'])) {
-    throw new MigrationRefused('index build signatures have missing or unknown fields')
-  }
-  const malformed = 'index build signatures must use ed25519 and canonical base64'
-  if (value['alg'] !== 'ed25519' || typeof value['value'] !== 'string') throw new MigrationRefused(malformed)
-  const decoded = Buffer.from(value['value'], 'base64')
-  if (decoded.length !== 64 || decoded.toString('base64') !== value['value']) throw new MigrationRefused(malformed)
-  if ('key_id' in value && typeof value['key_id'] !== 'string') {
-    throw new MigrationRefused('index build signature key_id must be a string')
-  }
-}
+const signature = (document: Record<string, unknown>): void => packetSignature(document, 'index build')
 function except(value: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([name]) => !keys.includes(name)))
 }

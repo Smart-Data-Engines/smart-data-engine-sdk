@@ -1,0 +1,102 @@
+{
+  "atomic": [
+    [
+      "Order",
+      "Payment"
+    ]
+  ],
+  "cost_ceiling": {
+    "amount": "750.00",
+    "currency": "EUR"
+  },
+  "entities": [
+    {
+      "fields": [
+        {
+          "name": "at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "key": [
+        "id"
+      ],
+      "name": "Event"
+    },
+    {
+      "fields": [
+        {
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "name": "placed_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "tenant",
+          "type": "uuid"
+        },
+        {
+          "name": "total",
+          "type": "decimal(12,2)"
+        }
+      ],
+      "key": [
+        "tenant",
+        "id"
+      ],
+      "name": "Order",
+      "residency": "EU"
+    },
+    {
+      "fields": [
+        {
+          "name": "amount",
+          "type": "decimal(12,2)"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "id"
+      ],
+      "name": "Payment"
+    },
+    {
+      "fields": [
+        {
+          "name": "email",
+          "type": "string"
+        },
+        {
+          "name": "id",
+          "type": "uuid"
+        }
+      ],
+      "key": [
+        "id"
+      ],
+      "name": "User",
+      "pii": [
+        "email"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "from": "Order",
+      "name": "user",
+      "to": "User"
+    }
+  ]
+}

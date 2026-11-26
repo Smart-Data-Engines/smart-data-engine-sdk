@@ -297,7 +297,7 @@ TEST_F(CutoverPacket, ASignatureBlockIsExactlyItsFieldsAndItsCanonicalText) {
             sde::detail::base64_decode_as_python(signed_value));
   respelled.find("signature")->set("value", value);
   EXPECT_EQ(refusal([&] { (void)load(respelled); }),
-            "cutover signatures must use ed25519 and canonical base64");
+            "cutover signatures must use ed25519 or es256 and canonical base64");
 }
 
 /// A candidate map rewritten to contract 3: no project, no generation. It loads as a map, and a
@@ -505,6 +505,19 @@ TEST_F(AdvancePacket, LoadsWhatTheControlPlaneSigned) {
   EXPECT_EQ(plan.after_payload(), sde::canonical_bytes(at(plan.as_record(), {"after"})));
 }
 
+TEST_F(AdvancePacket, LoadsWhatAControlPlaneSignedWithES256) {
+  // A control plane whose key has no Ed25519 - a hardware module's - signs the envelope and both
+  // maps with ES256, and the packet loads as it does signed with Ed25519.
+  const Signer p256{"", true};
+  const sde::AdvancePlan plan = sde::load_advance_plan(
+      p256.resigned(base.packet, {"before", "after"}), base.model, std::string(kProject),
+      p256.keys());
+  EXPECT_EQ(plan.verified_with(), "k");
+  EXPECT_EQ(plan.group(), "Event");
+  EXPECT_EQ(plan.next_epoch(), 2);
+  EXPECT_EQ(plan.before().fingerprint(), load(resigned(base.packet)).before().fingerprint());
+}
+
 TEST_F(AdvancePacket, ItsFingerprintCoversItsMapsAsTheyWereSigned) {
   // The vector's packet under the vector's key and the same packet signed again here: the maps'
   // fingerprints leave their signatures out, and the packet's holds the maps whole.
@@ -571,7 +584,7 @@ TEST_F(AdvancePacket, ItsRefusalsNameAnAdvance) {
   packet = resigned(base.packet);
   packet.find("signature")->set("alg", "rsa");
   EXPECT_EQ(refusal([&] { (void)load(packet); }),
-            "advance signatures must use ed25519 and canonical base64");
+            "advance signatures must use ed25519 or es256 and canonical base64");
   packet = resigned(base.packet);
   packet.find("signature")->set("key_id", 5);
   EXPECT_EQ(refusal([&] { (void)load(packet); }), "advance signature key_id must be a string");

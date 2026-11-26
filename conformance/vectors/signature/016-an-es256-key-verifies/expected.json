@@ -1,0 +1,4 @@
+{
+  "verified_with": null,
+  "why": "an ES256 signature, r and s of 32 bytes each with s in the lower half, over the same canonical bytes an Ed25519 signature covers, verified by a P-256 key given as its uncompressed point"
+}

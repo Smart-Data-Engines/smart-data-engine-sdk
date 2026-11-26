@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "33 bytes and an Ed25519 public key is 32, a P-256 public key (an uncompressed SEC1 point) 65",
+  "why": "a P-256 key is given uncompressed; the compressed form is 33 bytes and is refused by its length"
+}
