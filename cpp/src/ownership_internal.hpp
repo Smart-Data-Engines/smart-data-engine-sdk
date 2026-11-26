@@ -17,17 +17,29 @@ namespace sde::detail {
 [[nodiscard]] std::string copy_marker(std::string_view project_id, std::string_view group,
                                       std::string_view table);
 
-/// `sde.stage1.<project>.<stage>.<sha256(table)[:16]>`: what a staging writes on the copy it
-/// creates, which it names `sde_m_<stage>_<NNNNNN>`.
+/// `sde.stage1.<project>.<stage>.<sha256(table)[:16]>`: what a staging of an earlier release wrote
+/// on the copy it created, which it named `sde_m_<stage>_<NNNNNN>`.
 [[nodiscard]] std::string stage_marker(std::string_view project_id, std::string_view stage_id,
                                        std::string_view table);
+
+/// `sde.stage2.<project>.<stage>.<sha256(group)[:16]>.<sha256(table)[:16]>`: what a staging writes
+/// on the copy it creates for `group`.
+[[nodiscard]] std::string stage2_marker(std::string_view project_id, std::string_view stage_id,
+                                        std::string_view group, std::string_view table);
+
+/// Whether `mark` is a staging's (`stage1` or `stage2`, of any project and group).
+[[nodiscard]] bool staging_mark(const std::optional<std::string>& mark);
+
+/// Whether `mark` makes a table a copy: a copy's or a staging's, of any group.
+[[nodiscard]] bool copy_marks(const std::optional<std::string>& mark);
 
 /// Whether `found`, the mark read on `table`, makes it a copy of `group` in this project.
 [[nodiscard]] bool owned_copy_marker(std::string_view project_id, std::string_view group,
                                      std::string_view table, const std::optional<std::string>& found);
 
-/// Why a source's table that carries a copy's mark is not taken as `group`'s source.
-[[nodiscard]] std::string source_refusal(std::string_view table, std::string_view group);
+/// Why a source's table that carries a copy's or a staging's mark is not `group`'s source.
+[[nodiscard]] std::string source_refusal(std::string_view table, std::string_view group,
+                                         const std::optional<std::string>& mark = std::nullopt);
 
 /// Why `table` is not taken as a copy's: what every library says, with what it found.
 [[nodiscard]] std::string copy_refusal(std::string_view table,

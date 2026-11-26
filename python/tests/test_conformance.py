@@ -698,6 +698,17 @@ def test_every_dialect_this_library_renders_appears_in_the_schema_vectors() -> N
     assert set(sde.DIALECTS) <= covered, f"no schema vector renders {set(sde.DIALECTS) - covered}"
 
 
+@pytest.mark.parametrize("case", _cases("marks"), ids=_ident)
+def test_marks_vector(case: Path) -> None:
+    """Where each mark is taken (§7r): as this group's copy, and on a source."""
+    from sde.ownership import copy_marks, owned_copy_marker
+
+    for item in _read_json(case / "cases.json"):
+        taken = owned_copy_marker(item["project_id"], item["group"], item["table"], item["mark"])
+        assert taken is item["copy"], item["why"]
+        assert (not copy_marks(item["mark"])) is item["source"], item["why"]
+
+
 @pytest.mark.parametrize("case", _cases("signature"), ids=_ident)
 def test_signature_vector(case: Path) -> None:
     """Accepting a **set** of public keys, which is what makes rotating our key possible.

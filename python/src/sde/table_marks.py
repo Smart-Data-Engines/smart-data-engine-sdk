@@ -6,8 +6,8 @@ a forged map could still direct those writes to a table of the project of the co
 group's staged copy, a copy a previous map named as a source, a copy another engine name of the map
 reaches. A session of a map with write generations now reads, when it opens, every table of the
 map through its binding, once a binding: a copy's table carries its own mark, a source's carries no
-copy's, and no two names of the map reach one table - a copy's or a source's. ``prepare_schema``
-reads the same before its first statement and again after its last.
+copy's or staging's, and no two names of the map reach one table - a copy's or a source's.
+``prepare_schema`` reads the same before its first statement and again after its last.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .errors import MigrationRefused
-from .ownership import COPY_MARKER, copy_refusal, owned_copy_marker, source_refusal
+from .ownership import copy_marks, copy_refusal, owned_copy_marker, source_refusal
 from .placement import PlacementMap
 
 __all__ = ["check_table_marks"]
@@ -35,11 +35,12 @@ def check_table_marks(
     """Refuse a map whose tables are not what it calls them (format contract §7r).
 
     For the groups with a write generation: each copy's table carries this copy's mark, each
-    source's table carries no copy's mark, and no copy's or source's table is reached by another
-    name of the map - another group's, or another entity's of its own. One ``table_facts`` a
-    binding; a name the adapter gives no answer for reaches no table. ``copies_present`` is false
-    before ``prepare_schema`` creates the copies: the copies are read after it instead. A copy on an
-    engine whose adapter cannot read marks is refused; a source there is taken, as sources are.
+    source's table carries no copy's or staging's mark, and no copy's or source's table is reached
+    by another name of the map - another group's, or another entity's of its own. One
+    ``table_facts`` a binding; a name the adapter gives no answer for reaches no table.
+    ``copies_present`` is false before ``prepare_schema`` creates the copies: the copies are read
+    after it instead. A copy on an engine whose adapter cannot read marks is refused; a source there
+    is taken, as sources are.
     Groups in name order, materialisations in document order, entities in name order; the marks
     before the names.
     """
@@ -90,8 +91,8 @@ def check_table_marks(
                     f"the copy's table {table!r} of {group} is not there: provision the map "
                     f"(prepare_schema) before a session writes to it"
                 )
-        elif mark is not None and COPY_MARKER.fullmatch(mark):
-            raise MigrationRefused(source_refusal(table, group))
+        elif copy_marks(mark):
+            raise MigrationRefused(source_refusal(table, group, mark))
         for key in sorted(keys):
             reach.setdefault(key, []).append((engine, entry))
     for engine, entry in ordered:

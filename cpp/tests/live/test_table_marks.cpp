@@ -18,6 +18,7 @@
 
 #include "live/live.hpp"
 #include "live/sides.hpp"
+#include "ownership_internal.hpp"
 #include "sde/errors.hpp"
 #include "sde/layout.hpp"
 #include "sde/model.hpp"
@@ -116,6 +117,17 @@ std::string definition(Side& side, const std::string& table) {
   }
   return side.scalar("SELECT create_table_query FROM system.tables WHERE database = "
                      "currentDatabase() AND name = '" + table + "'");
+}
+
+const std::string kStage(32, 'a');
+const std::string kStaged = "sde_m_" + kStage + "_000001";
+
+void mark(Side& side, const std::string& table, const std::string& value) {
+  if (side.dialect() == "postgres") {
+    side.run("COMMENT ON TABLE \"" + table + "\" IS '" + value + "'");
+  } else {
+    side.run("ALTER TABLE `" + table + "` MODIFY COMMENT '" + value + "'");
+  }
 }
 
 class TableMarks : public ::testing::TestWithParam<std::string> {};
@@ -277,6 +289,50 @@ TEST_P(TableMarks, TwoEntitiesOfOneGroupInOneSourceTableAreRefused) {
   EXPECT_NE(refusal_of([&] { const sde::Session session(model, map, engines, with_project()); })
                 .find(refused),
             std::string::npos);
+}
+
+TEST_P(TableMarks, AStagingsMarkHoldsItsGroup) {
+  // The first review's D1: a staged copy of Account named as Event's copy is refused, Event's own
+  // taken.
+  const std::unique_ptr<Side> side = side_of(GetParam());
+  SDE_REQUIRE_SIDE(side, GetParam());
+  const sde::Model model = two_groups();
+  const std::map<std::string, sde::Engine*> engines{{"e", &side->engine()}};
+  const sde::PlacementMap map = place(model, *side, {{"Account", {{"e", "acct"}, {}}},
+                                                     {"Event", {{"e", "ev"}, {{"e", kStaged}}}}});
+  sde::prepare_schema(model, map, engines, kProject);
+  mark(*side, kStaged, sde::detail::stage2_marker(kProject, kStage, "Account", kStaged));
+  EXPECT_NE(refusal_of([&] { const sde::Session session(model, map, engines, with_project()); })
+                .find("is not one this library created for it"),
+            std::string::npos);
+  mark(*side, kStaged, sde::detail::stage2_marker(kProject, kStage, "Event", kStaged));
+  const sde::Session session(model, map, engines, with_project());
+}
+
+TEST_P(TableMarks, ASourcesTableWithAStagingsMarkIsRefused) {
+  // The third review's F1: a map naming a staged copy as a source is refused before a write,
+  // whatever release staged it.
+  const std::unique_ptr<Side> side = side_of(GetParam());
+  SDE_REQUIRE_SIDE(side, GetParam());
+  const sde::Model model = two_groups();
+  const std::map<std::string, sde::Engine*> engines{{"e", &side->engine()}};
+  const sde::PlacementMap first = place(model, *side, {{"Account", {{"e", "acct"}, {}}},
+                                                       {"Event", {{"e", "ev"}, {{"e", kStaged}}}}});
+  sde::prepare_schema(model, first, engines, kProject);
+  const sde::PlacementMap promoted = place(
+      model, *side, {{"Account", {{"e", "acct"}, {}}}, {"Event", {{"e", kStaged}, {}}}}, 2);
+  for (const std::string& value : {sde::detail::stage_marker(kProject, kStage, kStaged),
+                                   sde::detail::stage2_marker(kProject, kStage, "Event", kStaged)}) {
+    mark(*side, kStaged, value);
+    EXPECT_NE(refusal_of([&] { const sde::Session session(model, promoted, engines, with_project()); })
+                  .find("carries a staging's mark"),
+              std::string::npos)
+        << value;
+    EXPECT_NE(refusal_of([&] { sde::prepare_schema(model, promoted, engines, kProject); })
+                  .find("carries a staging's mark"),
+              std::string::npos)
+        << value;
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, TableMarks, ::testing::Values("postgres", "clickhouse"),

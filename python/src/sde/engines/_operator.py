@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -11,6 +12,28 @@ from ..schema import QUOTE
 from ._storage import STORAGE_COLUMNS
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+class MarkNotWritten(EngineError):
+    """A source's mark the engine did not take, with what kept it from it, in one word or
+    ``None``: ``privilege``, ``kind`` (not a table) or ``block``. ``sde-operator mark-sources``
+    names the cause by it, without the driver's text, which can carry what a connection is."""
+
+    def __init__(self, message: str, cause: str | None) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+
+def mark_cause(error: BaseException | None) -> str | None:
+    """What kept an engine from taking a mark, read off the driver's error: PostgreSQL's SQLSTATE
+    (42501, 42809), ClickHouse's error code (497)."""
+    sqlstate = getattr(error, "sqlstate", None)
+    if sqlstate == "42501":
+        return "privilege"
+    if sqlstate == "42809":
+        return "kind"
+    code = re.search(r"\bCode: (\d+)\b", str(error or ""))
+    return "privilege" if code is not None and code.group(1) == "497" else None
 
 
 @dataclass(frozen=True)
@@ -57,6 +80,8 @@ class NativeOperations(Protocol):
     ) -> dict[str, frozenset[tuple[str, str, str, str]]]: ...
 
     def mark_source(self, tables: Sequence[TableIdentity], marks: Mapping[str, str]) -> None: ...
+
+    def write_source_mark(self, table: str, object_id: str, mark: str) -> None: ...
 
     def qualify(
         self,
@@ -269,19 +294,58 @@ class NativeOperator:
         and the operator empty or refill it (format contract §7r). Idempotent: a resumed cutover
         writes the same mark again.
         """
-        from ..ownership import SOURCE_MARKER
-
         for table in tables:
             if self.identity(table.name).physical_key != table.physical_key:
                 raise MigrationRefused("physical target identity changed before its source mark")
-            mark = marks[table.name]
-            if SOURCE_MARKER.fullmatch(mark) is None:
-                raise MigrationRefused(f"{mark!r} is not a source's mark")
-            name = self.quote(table.namespace) + "." + self.quote(table.name)
+            self._write_source_mark(table.namespace, table.name, marks[table.name])
+
+    def write_source_mark(self, table: str, object_id: str, mark: str) -> None:
+        """A source's mark on ``table``, while it is still the object ``object_id``.
+
+        ``sde-operator mark-sources`` writes it on a source an earlier cutover left with the
+        staging's mark. Nothing a cutover requires of its tables is asked here - no trigger, no
+        dependent view, no row policy - since a mark moves no row and no authority: a source the
+        application has given a trigger since is marked as it stands.
+        """
+        if self.dialect == "postgres":
+            rows = self.rows(
+                "SELECT c.oid::text,n.nspname FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid=to_regclass(%s)",
+                [self.quote(table)],
+            )
+        else:
+            rows = self.rows(
+                "SELECT toString(uuid),database FROM system.tables "
+                "WHERE database=currentDatabase() AND name={table:String}",
+                {"table": table},
+            )
+        if len(rows) != 1 or str(rows[0][0]) != object_id:
+            raise MigrationRefused(
+                f"the table {table!r} changed while its mark was read: run the command again"
+            )
+        if self.dialect == "clickhouse" and object_id == NIL_UUID:
+            # Only an Atomic database gives its tables a uuid: in another, a name is all there is
+            # to read again, and a table renamed into it between the two reads would be marked.
+            raise MigrationRefused(
+                f"the table {table!r} is in a ClickHouse database that is not Atomic, where a "
+                f"table has no identity to read again before its mark is written; its source's "
+                f"mark is {mark}, for an administrator to write"
+            )
+        self._write_source_mark(str(rows[0][1]), table, mark)
+
+    def _write_source_mark(self, namespace: str, table: str, mark: str) -> None:
+        from ..ownership import SOURCE_MARKER
+
+        if SOURCE_MARKER.fullmatch(mark) is None:
+            raise MigrationRefused(f"{mark!r} is not a source's mark")
+        name = self.quote(namespace) + "." + self.quote(table)
+        try:
             if self.dialect == "postgres":
                 self.command(f"COMMENT ON TABLE {name} IS '{mark}'")
             else:
                 self.command(f"ALTER TABLE {name} MODIFY COMMENT '{mark}'")
+        except EngineError as exc:
+            raise MarkNotWritten(str(exc), mark_cause(exc.__cause__)) from exc
 
     def qualify(
         self,

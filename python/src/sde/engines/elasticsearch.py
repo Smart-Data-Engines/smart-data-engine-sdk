@@ -551,6 +551,26 @@ def _layout_type(name: str, field: Mapping[str, Any]) -> str:
 # --- the adapter -----------------------------------------------------------------------------
 
 
+MARK_KEYS: Final = ("copy", "stage", "source")
+"""The keys of an index's ``_meta.sde`` that carry its mark (format contract §7m, §7r)."""
+
+
+def index_mark(index: str, sde: Mapping[str, Any]) -> str | None:
+    """The mark under an index's ``_meta.sde``, or ``None`` when it carries none.
+
+    A library writes one of :data:`MARK_KEYS`, a string, and a cutover replaces the copy's or the
+    staging's with the source's. Two of them, or one that is not a string, are refused rather than
+    read in some order: which one a reader took first would decide whether the index is a copy.
+    """
+    present = [key for key in MARK_KEYS if key in sde]
+    if len(present) > 1 or (present and not isinstance(sde[present[0]], str)):
+        raise MigrationRefused(
+            f"index {index} carries {' and '.join(present)} under _meta.sde, and an index carries "
+            f"one mark at most, a string (format contract §7r)"
+        )
+    return str(sde[present[0]]) if present else None
+
+
 class ElasticsearchEngine:
     """A thin adapter over Elasticsearch's REST API. Executes decisions, makes none."""
 
@@ -869,9 +889,7 @@ class ElasticsearchEngine:
                 f"{self._error(status, body)}"
             )
         mappings = body[index].get("mappings") or {}
-        meta = (mappings.get("_meta") or {}).get("sde") or {}
-        mark = meta.get("copy", meta.get("stage", meta.get("source")))
-        return mark if isinstance(mark, str) else None
+        return index_mark(index, (mappings.get("_meta") or {}).get("sde") or {})
 
     def _index(self, name: str) -> _Index:
         """The index as its own mapping describes it, read once per connection."""
@@ -909,6 +927,14 @@ class ElasticsearchEngine:
         entity = meta.get("entity")
         if not isinstance(entity, str) or not entity:
             raise EngineError(f"index {name} names no entity in _meta.sde")
+        # An index carries one mark at most: a copy's, a staging's or a source's (§7r); the form
+        # of the one it carries is checked below.
+        marks = [key for key in MARK_KEYS if key in meta]
+        if len(marks) > 1:
+            raise EngineError(
+                f"index {name} carries {' and '.join(marks)} under _meta.sde, and an index carries "
+                f"one mark at most"
+            )
         # A staging's index says which staging created it, in the request that created it - as a
         # SQL staging comments its table in the transaction that creates it. Its form is fixed.
         stage = meta.get("stage")

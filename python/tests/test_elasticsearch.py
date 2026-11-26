@@ -18,6 +18,7 @@ from sde.engines.elasticsearch import (
     WATERMARK_MAPPING,
     ElasticsearchEngine,
     document_id,
+    index_mark,
     parse_dsn,
     search_tokens,
     stored,
@@ -571,6 +572,19 @@ def test_a_staging_marker_is_accepted_beside_the_mapping_and_nothing_else_is() -
                 engine.validate_schema(layout, keys={"Note": ["id"]})
 
 
+def test_an_index_that_carries_two_marks_each_in_its_form_is_refused() -> None:
+    from sde.schema import elasticsearch_mapping
+
+    layout = sde.PhysicalLayout(tables={"Note": "note"}, columns={"Note": {"id": "long"}})
+    mapping = elasticsearch_mapping(layout, "Note", {"Note": ["id"]})
+    mapping["_meta"]["sde"]["stage"] = "sde.stage1." + "1" * 32 + "." + "2" * 32 + "." + "3" * 16
+    mapping["_meta"]["sde"]["source"] = "sde.source1." + "1" * 32 + "." + "4" * 16 + "." + "5" * 16
+    engine, _ = _bookkeeping_engine({("GET", "/note/_mapping"): (200, {"note": {
+        "mappings": mapping}})})
+    with pytest.raises(sde.EngineError, match=r"carries stage and source under _meta\.sde"):
+        engine.validate_schema(layout, keys={"Note": ["id"]})
+
+
 def test_a_barrier_makes_what_it_drained_visible_before_it_returns() -> None:
     """The refresh comes after the block every shard confirmed, and a failed one is an error."""
     from sde.engines._write_fences import ElasticsearchFences
@@ -677,3 +691,39 @@ def test_a_refused_store_read_carries_its_status_and_an_odd_one_is_refused() -> 
             engine.storage_sizes(["note"])
     with pytest.raises(sde.EngineError, match="not an Elasticsearch index name"):
         engine.storage_sizes(["note*"])
+
+
+@pytest.mark.parametrize(
+    ("sde_meta", "mark"),
+    [
+        ({"entity": "Event", "key": ["id"]}, None),
+        ({"copy": "sde.copy1.x"}, "sde.copy1.x"),
+        ({"stage": "sde.stage2.x"}, "sde.stage2.x"),
+        ({"source": "sde.source1.x"}, "sde.source1.x"),
+        ({"copy": None, "stage": "sde.stage2.x"}, "copy and stage"),
+        ({"stage": "sde.stage1.x", "source": "sde.source1.x"}, "stage and source"),
+        ({"copy": 5}, "copy"),
+        ({"source": None}, "source"),
+    ],
+)
+def test_an_index_carries_one_mark_at_most_a_string(sde_meta: dict[str, Any], mark: str) -> None:
+    """Read in an order, ``{copy: null, stage: ...}`` was a source to one library and a staged copy
+    to the other: which key a reader took first decided whether the index was a copy."""
+    if mark is None or mark.startswith("sde."):
+        assert index_mark("event", sde_meta) == mark
+    else:
+        with pytest.raises(sde.MigrationRefused, match=f"carries {mark} under _meta.sde"):
+            index_mark("event", sde_meta)
+
+
+def test_a_session_s_facts_refuse_an_index_with_two_marks() -> None:
+    """What a session reads of an index's mark goes through the same rule: two marks are refused,
+    where read in an order one of them would have decided whether the index was a copy."""
+    stage = "sde.stage2." + "1" * 32 + "." + "2" * 32 + "." + "3" * 16 + "." + "4" * 16
+    engine, _ = _bookkeeping_engine({
+        ("GET", "/event/_settings"): (200, {"event": {"settings": {"index": {"uuid": "u1"}}}}),
+        ("GET", "/event/_mapping"): (200, {"event": {"mappings": {"_meta": {"sde": {
+            "entity": "Event", "key": ["id"], "copy": None, "stage": stage}}}}}),
+    })
+    with pytest.raises(sde.MigrationRefused, match=r"carries copy and stage under _meta\.sde"):
+        engine.table_facts(["event"])

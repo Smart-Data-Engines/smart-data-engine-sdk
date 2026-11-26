@@ -53,7 +53,6 @@ FindingKind = Literal[
 ]
 
 _OWNER = FENCE_PREFIX + "owner_"
-_STAGE_MARKER = re.compile(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}")
 
 
 @dataclass(frozen=True)

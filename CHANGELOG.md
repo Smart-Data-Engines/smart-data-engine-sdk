@@ -8,6 +8,28 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a staging's mark names its group, and no copy's or staging's mark is taken on a
+source** (all three libraries, and the operator;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). A
+staging marked the copy it created with its project, stage and table name, but no group, so a
+session and `prepare_schema` took one group's staged copy as another group's copy. And a session
+took a source's table that carried a staging's mark, so a forged map could name a staged copy as a
+source - another group's, or its own group's without the cutover - and the application's writes
+went into it. Both were found by independent reviews of copy ownership. A staging now writes
+`sde.stage2.<project>.<stage>.<sha256(group)[:16]>.<sha256(table)[:16]>`, taken only as that
+group's copy; a session and `prepare_schema` refuse a source's table with a copy's or a staging's
+mark (`carries a staging's mark`). A copy an earlier staging marked `sde.stage1` is still taken as a
+copy. An Elasticsearch index carries one mark at most, a string: two under `_meta.sde`, which no
+library writes, were read in an order that differed between Python and TypeScript, and are now
+refused by name. New vectors `marks/001`. **Breaking** for a source an earlier operator's cutover
+made from a staged copy: it carries the staging's mark, and a session of this release refuses it
+until `sde-operator mark-sources` writes the source's mark in its place. It does so where the
+project's records show the stage completed for the group the map in force gives the table to and a
+cutover of that group completed with success, whatever the table carries since - a trigger, a
+dependent view, a pipeline - and names every source it leaves with a copy's or a staging's mark,
+with the reason, and every binding it is not bound to, exiting 1 while there is one
+([upgrading](docs/upgrading.md)).
+
 **Fixed: a session reads the marks of its map's tables when it opens** (all three libraries;
 [format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). The
 operator read a copy's mark before it wrote to a copy, and the application's session - its fan-out,
