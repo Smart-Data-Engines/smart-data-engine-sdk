@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "r and s, 32 bytes each",
+  "why": "the value is 64 bytes, r then s; a byte short is not a signature"
+}

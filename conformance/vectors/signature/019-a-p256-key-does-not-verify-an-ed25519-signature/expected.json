@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "is signed with ed25519 and none of the 1 key(s) supplied is an Ed25519 key",
+  "why": "the same rule the other way round"
+}

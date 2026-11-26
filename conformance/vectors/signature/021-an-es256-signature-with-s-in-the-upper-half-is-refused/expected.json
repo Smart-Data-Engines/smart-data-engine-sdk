@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "s in its lower half",
+  "why": "ECDSA verifies (r, s) and (r, n - s) alike - openssl verified this one - so a map would have two signatures; only the lower half is taken, as Ed25519 takes one"
+}

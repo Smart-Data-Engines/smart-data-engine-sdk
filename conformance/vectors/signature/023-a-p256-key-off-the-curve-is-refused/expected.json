@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "65 bytes that are not a point on P-256",
+  "why": "the configuration, not the map: a point off the curve is no key, and it is refused before verification is attempted"
+}

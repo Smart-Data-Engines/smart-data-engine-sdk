@@ -30,7 +30,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, NoReturn, TypeVar
+from typing import Any, Final, NoReturn, TypeVar
 
 from .canonical import CanonicalError, canonical_bytes
 from .errors import MapError
@@ -509,6 +509,38 @@ def _materialization(
     )
 
 
+# P-256 (secp256r1), for telling a point on the curve from 65 bytes that are not one without
+# needing the 'signed' extra: y^2 = x^3 - 3x + b over the field of P256_P (SEC 2, section 2.4.2).
+P256_P: Final = 2**256 - 2**224 + 2**192 + 2**96 - 1
+P256_B: Final = 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+P256_N: Final = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+
+def _key_problem(value: bytes) -> str | None:
+    """Why ``value`` is not a public key a map is verified with, or ``None`` when it is one: 32
+    bytes of Ed25519, or 65 bytes of an uncompressed SEC1 point on P-256 (ES256)."""
+    if len(value) == 32:
+        return None
+    if len(value) != 65:
+        return (
+            f"{len(value)} bytes and an Ed25519 public key is 32, a P-256 public key (an "
+            f"uncompressed SEC1 point) 65"
+        )
+    if value[0] != 4:
+        return (
+            f"65 bytes whose first is 0x{value[0]:02x}: a P-256 key is an uncompressed point, "
+            f"whose first byte is 0x04"
+        )
+    x, y = int.from_bytes(value[1:33], "big"), int.from_bytes(value[33:], "big")
+    if x >= P256_P or y >= P256_P or (y * y - (x * x * x - 3 * x + P256_B)) % P256_P != 0:
+        return "65 bytes that are not a point on P-256"
+    return None
+
+
+def _key_alg(value: bytes) -> str:
+    return "ed25519" if len(value) == 32 else "es256"
+
+
 def _key_set(public_key: bytes | Mapping[str, bytes]) -> tuple[tuple[str, bytes], ...]:
     """Normalise what the caller supplied into named keys, refusing what cannot be a key.
 
@@ -534,14 +566,35 @@ def _key_set(public_key: bytes | Mapping[str, bytes]) -> tuple[tuple[str, bytes]
             )
         pairs = tuple(sorted((str(k), bytes(v)) for k, v in public_key.items()))
     for name, value in pairs:
-        if len(value) != 32:
+        problem = _key_problem(value)
+        if problem is not None:
             raise MapError(
-                f"the public key {name or '(unnamed)'!r} is {len(value)} bytes and an Ed25519 "
-                f"public key is 32. Refused here rather than at verification: a key pasted a byte "
-                f"short would look like a map that does not verify, and the two have completely "
-                f"different fixes."
+                f"the public key {name or '(unnamed)'!r} is {problem}. Refused here rather than at "
+                f"verification: a key pasted a byte short would look like a map that does not "
+                f"verify, and the two have completely different fixes."
             )
     return pairs
+
+
+def _p1363_low_s(value: bytes) -> bool:
+    """Whether ``value`` is an ES256 signature in the one form a map's takes: r and s, 32 bytes
+    each, both in [1, n), and s at most n/2 - so that a document has one signature, as in
+    Ed25519."""
+    if len(value) != 64:
+        return False
+    r, s = int.from_bytes(value[:32], "big"), int.from_bytes(value[32:], "big")
+    return 0 < r < P256_N and 0 < s <= P256_N // 2
+
+
+def _verify_es256(key: bytes, value: bytes, payload: bytes) -> None:
+    """Raise ``InvalidSignature`` unless ``value`` is ``key``'s ECDSA P-256 SHA-256 signature."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+    public = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), key)
+    der = encode_dss_signature(int.from_bytes(value[:32], "big"), int.from_bytes(value[32:], "big"))
+    public.verify(der, payload, ec.ECDSA(hashes.SHA256()))
 
 
 def _verify_signature(
@@ -585,16 +638,30 @@ def _verify_signature(
         ) from exc
 
     signature = raw["signature"]
-    if not isinstance(signature, dict) or signature.get("alg") != "ed25519":
-        raise MapError("only ed25519 signatures are understood")
+    alg = signature.get("alg") if isinstance(signature, dict) else None
+    if alg not in ("ed25519", "es256"):
+        raise MapError("only ed25519 and es256 signatures are understood")
     try:
         value = base64.b64decode(signature["value"], validate=True)
     except Exception as exc:
         raise MapError("the signature is not valid base64") from exc
+    if alg == "es256" and not _p1363_low_s(value):
+        raise MapError(
+            "an es256 signature is r and s, 32 bytes each (IEEE P1363), with both above zero and "
+            "below the order of P-256 and s in its lower half: one map, one signature"
+        )
 
     claimed = signature.get("key_id")
     claimed = str(claimed) if isinstance(claimed, str) else None
-    keys = _key_set(public_key)
+    supplied = _key_set(public_key)
+    # A key of one algorithm never verifies a signature of the other: try the map's alone.
+    keys = tuple(pair for pair in supplied if _key_alg(pair[1]) == alg)
+    if not keys:
+        raise MapError(
+            f"the map is signed with {alg} and none of the {len(supplied)} key(s) supplied is an "
+            f"{'Ed25519' if alg == 'ed25519' else 'ES256 (P-256)'} key: a signature with no key to "
+            f"check it is refused, as an unverifiable claim"
+        )
     if claimed is None:
         ordered = list(keys)
     else:
@@ -610,7 +677,10 @@ def _verify_signature(
     )
     for name, key in ordered:
         try:
-            Ed25519PublicKey.from_public_bytes(key).verify(value, payload)
+            if alg == "ed25519":
+                Ed25519PublicKey.from_public_bytes(key).verify(value, payload)
+            else:
+                _verify_es256(key, value, payload)
         except InvalidSignature:
             continue
         return name or None

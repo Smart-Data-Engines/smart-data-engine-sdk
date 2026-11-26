@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "does not verify against any of the 1 key",
+  "why": "a signature over the map before one number changed: the canonical bytes differ, and so does what the signature covers"
+}
