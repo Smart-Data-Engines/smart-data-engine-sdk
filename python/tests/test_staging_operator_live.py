@@ -953,9 +953,6 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
         operator, stage, _old, roles, model, public, signed, _, _, target,
     ):
         assert operator.stage(stage).as_record()["outcome"] == "prepared"
-        assert operator.execute(cutover(stage, signed, model, public)).as_record()["outcome"] == (
-            "success"
-        )
         promoted = stage.prepared.groups["Event"].derived[0].layout.tables["Event"]
         native = roles[target].operator
 
@@ -982,6 +979,12 @@ def test_mark_sources_writes_the_source_s_mark_an_earlier_cutover_left_out(
                 "AND name = {name:String}", parameters={"name": promoted}
             ).result_rows[0][0]
 
+        # The staging marked its copy with its group, and the cutover gives it the source's mark.
+        assert comment() == stage2_marker(PROJECT, stage.stage_id, "Event", promoted)
+        assert operator.execute(cutover(stage, signed, model, public)).as_record()["outcome"] == (
+            "success"
+        )
+        assert comment() == source_marker(PROJECT, "Event", promoted)
         runtime = {name: role.runtime for name, role in roles.items()}
         where = {"group": "Event", "entity": "Event", "engine": target, "table": promoted}
 
