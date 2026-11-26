@@ -8,6 +8,30 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a session reads the marks of its map's tables when it opens** (all three libraries;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). The
+operator read a copy's mark before it wrote to a copy, and the application's session - its fan-out,
+and `sde.backfill` through it - did not, so a forged map could still direct the application's writes
+to a table of the project of a copy's shape: a marked copy a previous map named as another group's
+source, or a copy that a second engine name bound to the same database reaches as another group's
+table, which `prepare_schema` marked and took both ways. A session of a map with write generations
+now reads the tables of its groups with a write generation through its bindings when it opens, and
+refuses before it writes a copy's table without its own mark, a source's table with a copy's mark
+(`sde.copy1`), and a copy's or a source's table another name of the map reaches - another
+group's, or another entity's of its own group; `prepare_schema` refuses the same, before its first
+statement for the sources and after its last for every table. Two groups' sources reaching one
+table, or two entities of a group named for one table, would have mixed their rows, and the
+operator's erasure, which deletes from sources too, now refuses such a source before anything is
+deleted. Found by the second independent review of copy ownership; a third review of this change
+found the rule of entities, the cloned PostgreSQL servers and the two items below.
+**Breaking** for a copy made before copies were marked, which a session now refuses too (make it
+again before the application's library is upgraded), for an adapter of your own holding a copy,
+which says what each name reaches, and for a call of `sde.backfill` with anything but a session -
+an `InspectionContext` reads no mark and is refused ([upgrading](docs/upgrading.md)). In C++ a
+session now keeps its own copies of the model and the map: it held references, so a map loaded into
+the same variable later took over an open session without any of its checks, and left the reads it
+had prepared pointing into freed memory.
+
 **Changed: the pause of a cutover after a settle reads both sides' rows since the advance beside
 each other** (Python; [`docs/local-cutover.md`](docs/local-cutover.md#settling-before-the-pause),
 record [`docs/qualification/cutover-settled/`](docs/qualification/cutover-settled/README.md)). It

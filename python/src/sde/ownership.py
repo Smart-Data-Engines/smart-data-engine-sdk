@@ -39,6 +39,7 @@ __all__ = [
     "copy_refusal",
     "owned_copy_marker",
     "source_marker",
+    "source_refusal",
     "stage_marker",
 ]
 
@@ -92,6 +93,15 @@ def copy_refusal(table: str, found: str | None) -> str:
         f"carries {what}. A copy is written over, emptied and refilled, so a table of its name and "
         f"shape is not taken for it. A copy provisioned before copies were marked is made again "
         f"(docs/upgrading.md); a table of yours is given another name in the map."
+    )
+
+
+def source_refusal(table: str, group: str) -> str:
+    """Why a source's table that carries a copy's mark is not taken as ``group``'s source."""
+    return (
+        f"the source's table {table!r} of {group} carries a copy's mark: a copy becomes the source "
+        f"only through a cutover, which writes a source's mark in place of the copy's, so this is "
+        f"a copy a map names as a source (format contract §7r)"
     )
 
 

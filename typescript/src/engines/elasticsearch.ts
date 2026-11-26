@@ -27,6 +27,7 @@ import { canonicalString, compareCodePoints } from '../canonical.js'
 import { decimalBound, document, documentId, stored, type StoredValue } from '../elasticsearch-document.js'
 import { EngineError, MigrationRefused } from '../errors.js'
 import { COPY_MARKER, copyRefusal, ownedCopyMarker, SOURCE_MARKER } from '../ownership.js'
+import type { TableFacts } from '../table-marks.js'
 import { loopback } from './_transport.js'
 import type { PhysicalLayout } from '../placement.js'
 import { keyColumns, sameWidth } from '../migration.js'
@@ -448,6 +449,37 @@ export class ElasticsearchEngine {
       }
     }
     return this.ensureSchema(layout, { keys: options.keys })
+  }
+
+  /**
+   * Each name's indexes as this connection reaches them, by uuid, and the mark of an index the name
+   * is (format contract §7r). An alias reaches the indexes behind it, and is no index of its own, so
+   * it carries no mark. A name that reaches nothing has no keys and no mark.
+   */
+  async tableFacts(tables: readonly string[]): Promise<Record<string, TableFacts>> {
+    return this.usage.operation(async () => {
+      const found: Record<string, TableFacts> = {}
+      for (const name of [...new Set(tables)].sort()) {
+        const [status, body] = await this.request('GET', this.path(name, '_settings'))
+        if (status === 404) {
+          found[name] = { keys: [], mark: null }
+          continue
+        }
+        if (status !== 200 || typeof body !== 'object' || body === null) {
+          throw new EngineError(`the settings of ${name} could not be read: ${errorOf(status, body)}`)
+        }
+        const keys: string[] = []
+        for (const index of Object.values(body as Record<string, { settings?: { index?: { uuid?: unknown } } }>)) {
+          const uuid = index?.settings?.index?.uuid
+          if (typeof uuid !== 'string') throw new EngineError(`the settings of ${name} carry no index identity`)
+          keys.push(JSON.stringify(['elasticsearch', uuid]))
+        }
+        const indexes = Object.keys(body)
+        const one = indexes.length === 1 && indexes[0] === name
+        found[name] = { keys: keys.sort(), mark: one ? ((await this.mark(name)) ?? null) : null }
+      }
+      return found
+    })
   }
 
   /**

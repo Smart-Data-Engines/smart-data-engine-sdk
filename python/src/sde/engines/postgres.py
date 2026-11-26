@@ -346,6 +346,47 @@ class PostgresEngine:
                 raise MigrationRefused(copy_refusal(table, None if found is None else found[1]))
         return self.ensure_schema(layout, keys=keys)
 
+    @guarded
+    def table_facts(
+        self, tables: Sequence[str]
+    ) -> dict[str, tuple[frozenset[tuple[str, ...]], str | None]]:
+        """Each name's table as this connection's statements reach it: its identity and its mark.
+
+        For the check of a map's tables (format contract §7r): a copy's table carries its own
+        mark, a source carries no copy's, and no two names of the map reach one table - two engine
+        names bound to one database included, which only the identities can tell. One look-up of
+        the catalogue for all the names; a name that reaches no table has no keys and no mark.
+        """
+        names = sorted(set(tables))
+        found: dict[str, tuple[frozenset[tuple[str, ...]], str | None]] = {
+            name: (frozenset(), None) for name in names
+        }
+        if not names:
+            return found
+        quoted = {_quote(name): name for name in names}
+        with self._cx.cursor() as cur:
+            # A server is its system identifier and the start of its postmaster: servers cloned
+            # from one data directory share the identifier, and their OIDs come from one counter.
+            cur.execute(
+                "SELECT c.system_identifier::text || '@' || to_char(pg_postmaster_start_time() "
+                "AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US'), d.oid::text "
+                "FROM pg_control_system() c CROSS JOIN pg_database d "
+                "WHERE d.datname = current_database()"
+            )
+            server, database = (str(value) for value in cur.fetchall()[0])
+            cur.execute(
+                "SELECT q.name, c.oid::text, obj_description(c.oid, 'pg_class') "
+                "FROM unnest(%s::text[]) AS q(name) JOIN pg_class c ON c.oid = to_regclass(q.name)",
+                [sorted(quoted)],
+            )
+            rows = cur.fetchall()
+        for name, oid, comment in rows:
+            found[quoted[str(name)]] = (
+                frozenset({("postgres", server, database, str(oid))}),
+                None if comment is None else str(comment),
+            )
+        return found
+
     def _mark(self, table: str) -> tuple[str, str | None] | None:
         """A table's object id and its comment, or ``None`` when no table has the name.
 

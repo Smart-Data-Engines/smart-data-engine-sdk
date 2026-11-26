@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _generation import bind_generation_metadata
+from _generation import bind_generation_metadata, copy_marks
 from _write_fence import MemoryFences
 
 import sde
@@ -1031,7 +1031,7 @@ def _drive_generation_vector(
     case: Path, model: sde.LogicalModel, placement: sde.PlacementMap, engines: Any
 ) -> None:
     want = _read_json(case / "generation.json")
-    bind_generation_metadata(engines, want["engine_generations"])
+    bind_generation_metadata(engines, want["engine_generations"], marks=copy_marks(placement))
     if "error" in want:
         with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
             sde.Session(model, placement, engines, project_id=want.get("project_id"))
@@ -1068,7 +1068,9 @@ def _drive_frozen_vector(
     case: Path, model: sde.LogicalModel, placement: sde.PlacementMap, engines: Any
 ) -> None:
     want = _read_json(case / "frozen.json")
-    bind_generation_metadata(engines, want["engine_generations"], record_fences=True)
+    bind_generation_metadata(
+        engines, want["engine_generations"], record_fences=True, marks=copy_marks(placement)
+    )
     context = sde.InspectionContext(model, placement, engines, want["project_id"])
     request = sde.VerificationRequest.from_record(want["request"])
     def invoke() -> sde.FrozenVerifyReport:

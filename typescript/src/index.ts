@@ -133,6 +133,7 @@ export {
 } from './watermark.js'
 export { MIGRATABLE_MEMBERS, satisfies, WATERMARK_MEMBERS } from './capabilities.js'
 export type { MarksCopies } from './ownership.js'
+export type { ReadsTableFacts, TableFacts } from './table-marks.js'
 export { copyMarker, ownedCopyMarker } from './ownership.js'
 export type { ResolveOptions } from './routing.js'
 export { resolve } from './routing.js'

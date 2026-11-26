@@ -178,6 +178,29 @@ def refuse_another_name(
             )
 
 
+def refuse_shared_source(
+    reach: Reach, group: str, material: str, entity: str, table: str
+) -> None:
+    """Refuse a source's table that another name of the map reaches (format contract §7r).
+
+    An erasure deletes from a source's table: one group's source named as another group's table -
+    two engine names bound to one database - or as another entity's of its own group would have it
+    delete the other's rows. A table that is not there reaches nothing.
+    """
+    this = (group, material, entity, table)
+    for key in sorted(reach):
+        names = reach[key]
+        if all((name, other, ent, named) != this for name, other, ent, named, _ in names):
+            continue
+        for name, other, ent, named, engine in names:
+            if (name, other, ent, named) != this:
+                raise MigrationRefused(
+                    f"the source's table {table!r} of {group} for {entity} is also {name}'s "
+                    f"table {named!r} for {ent} in {engine}: a source's table holds one entity "
+                    f"of its group alone, and two names of the map reach this one"
+                )
+
+
 class LocalCutover:
     """One local POSIX project directory and dedicated operator/runtime-probe connections.
 
@@ -296,7 +319,7 @@ class LocalCutover:
         beside no staging, cutover or index build; ``stop_after`` bounds a run to that many
         chunks an entity.
         """
-        from .migration import backfill
+        from .migration import backfill_view
 
         self._owner()
         with self.store.lock():
@@ -335,7 +358,7 @@ class LocalCutover:
                             self._copy_owned(current, material.id, group, table, state, reach)
             context = InspectionContext(self.model, current, self.engines, self.project_id)
             return [
-                backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
+                backfill_view(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
                 for group in groups
             ]
 
@@ -455,7 +478,8 @@ class LocalCutover:
                     "it before an erasure"
                 )
             # Rows go from every copy of the entity first: each copy's table is one this project
-            # created and marked for its group (§7r), checked before anything is read or deleted.
+            # created and marked for its group (§7r), and each source's table no other name of
+            # the map reaches, checked before anything is read or deleted.
             erased = self.active_map()
             reach = map_reach(erased, self.native)
             for name, spot in sorted(erased.groups.items()):
@@ -465,6 +489,10 @@ class LocalCutover:
                     if material.engine in self.native:
                         table = material.layout.tables[request.entity]
                         self._copy_owned(erased, material.id, name, table, state, reach)
+                source = spot.source
+                refuse_shared_source(
+                    reach, name, source.id, request.entity, source.layout.tables[request.entity]
+                )
             plan = plan_erasure(self, request)
             if not execute:
                 return plan

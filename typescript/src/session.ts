@@ -59,6 +59,7 @@ import { EPOCH_COLUMN, GENERATIONS_SINCE, logicalRow, stampValues, validateGener
 import type { PhysicalFinding } from './physical.js'
 import { enforceForwardOnly } from './watermark.js'
 import { kindNoun, TEMPORAL_KINDS, type TemporalRange } from './temporal-range.js'
+import { checkTableMarks } from './table-marks.js'
 
 export type Row = Record<string, unknown>
 
@@ -361,6 +362,9 @@ export class Session {
       // unsigned map - which is checked inside rather than here, because gathering the watermarks
       // first and then noticing the map was unsigned is the right answer with the promise broken.
       const physical = await validateGenerations(model, placement, engines, options.projectId)
+      // What the fan-out writes to: a copy's table carries its own mark, a source's no copy's, and no
+      // two names of the map reach one table (§7r).
+      if (placement.contract >= 4) await checkTableMarks(placement, engines, options.projectId as string)
       const protection = await enforceForwardOnly(placement, engines, options.events)
       const session = new Session(
         model,
@@ -627,6 +631,7 @@ export class Session {
     return this.usage.operation(async () => {
       if (this.placement.contract >= 4) {
         const physical = await validateGenerations(this.model, this.placement, this.engines, this.projectId)
+        await checkTableMarks(this.placement, this.engines, this.projectId as string)
         this.physicalFindings = Object.freeze([...physical])
         this.reportPhysical()
         emit(this.events, 'sde.schema.applied', { groups: this.groups.length })

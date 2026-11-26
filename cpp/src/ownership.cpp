@@ -64,6 +64,13 @@ std::string copy_refusal(std::string_view table, const std::optional<std::string
          "(docs/upgrading.md); a table of yours is given another name in the map.";
 }
 
+std::string source_refusal(std::string_view table, std::string_view group) {
+  return "the source's table " + python_repr(table) + " of " + std::string(group) +
+         " carries a copy's mark: a copy becomes the source only through a cutover, which writes a "
+         "source's mark in place of the copy's, so this is a copy a map names as a source (format "
+         "contract §7r)";
+}
+
 }  // namespace sde::detail
 
 namespace sde {

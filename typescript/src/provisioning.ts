@@ -9,6 +9,7 @@ import { refuseFindings } from './physical.js'
 import type { PlacementMap } from './placement.js'
 import type { Engine } from './session.js'
 import type { WatermarkStore } from './watermark.js'
+import { checkTableMarks } from './table-marks.js'
 
 export async function prepareSchema(model: LogicalModel, placement: PlacementMap,
   engines: Readonly<Record<string, Engine>>, options: { projectId?: string } = {}): Promise<void> {
@@ -50,6 +51,9 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
       }
     }
   }
+  // The tables already there: a source carries no copy's mark, and no copy is reached by another
+  // name of the map (§7r). The copies this call creates are read again after it.
+  if (placement.contract >= 4) await checkTableMarks(placement, engines, project as string, { copiesPresent: false })
   for (const group of colocationGroups(model)) {
     const spot = placement.groups[group.name]!
     const keys: Record<string, readonly string[]> = {}
@@ -71,6 +75,7 @@ export async function prepareSchema(model: LogicalModel, placement: PlacementMap
       }
     }
   }
+  if (placement.contract >= 4) await checkTableMarks(placement, engines, project as string)
   if (placement.signed) {
     // Prepare storage without adopting this map's version before runtime activation.
     for (const name of Object.keys(engines).sort(compareCodePoints)) {
