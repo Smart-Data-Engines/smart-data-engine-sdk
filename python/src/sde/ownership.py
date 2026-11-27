@@ -9,9 +9,12 @@ path that writes to a copy reads the mark first (format contract §7r).
 
 Two marks make a copy's table ours. ``prepare_schema`` writes
 ``sde.copy1.<project>.<sha256(group)[:16]>.<sha256(table)[:16]>`` on the copies of the map it
-provisions; a staging writes ``sde.stage1.<project>.<stage>.<sha256(table)[:16]>`` on the copy it
-creates, which it names ``sde_m_<stage>_<NNNNNN>``. Both are computed from the project, the map and
-the table name alone, so any path can check them without local state.
+provisions; a staging writes
+``sde.stage2.<project>.<stage>.<sha256(group)[:16]>.<sha256(table)[:16]>`` on the copy it creates,
+which it names ``sde_m_<stage>_<NNNNNN>``. Both are computed from the project, the map and the table
+name alone, so any path can check them without local state. A staging of an earlier release wrote
+``sde.stage1.<project>.<stage>.<sha256(table)[:16]>``, without the group: it is still taken on a
+staged copy's table, where the operator checks the stage's group in its own records.
 
 A cutover that makes a copy the source writes, in place of the copy's mark,
 ``sde.source1.<project>.<sha256(group)[:16]>.<sha256(table)[:16]>``: a copy's mark says the library
@@ -33,12 +36,16 @@ if TYPE_CHECKING:
 __all__ = [
     "COPY_MARKER",
     "SOURCE_MARKER",
+    "STAGE2_MARKER",
     "STAGE_MARKER",
     "MarksCopies",
     "copy_marker",
+    "copy_marks",
     "copy_refusal",
     "owned_copy_marker",
     "source_marker",
+    "source_refusal",
+    "stage2_marker",
     "stage_marker",
 ]
 
@@ -46,7 +53,12 @@ COPY_MARKER: Final = re.compile(r"sde\.copy1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-
 """What ``prepare_schema`` writes on a copy's table it creates: its project, group and name."""
 
 STAGE_MARKER: Final = re.compile(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}")
-"""What a staging writes on the table it creates: its project, its stage and the table's name."""
+"""What a staging of an earlier release wrote on the table it created: project, stage, name."""
+
+STAGE2_MARKER: Final = re.compile(
+    r"sde\.stage2\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}"
+)
+"""What a staging writes on the table it creates: its project, its stage, its group and name."""
 
 SOURCE_MARKER: Final = re.compile(r"sde\.source1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}")
 """What a cutover writes on the copy it makes the source, in place of the copy's mark."""
@@ -74,8 +86,20 @@ def source_marker(project_id: str, group: str, table: str) -> str:
 
 
 def stage_marker(project_id: str, stage_id: str, table: str) -> str:
-    """The mark a staging writes on ``table``, the copy it creates for stage ``stage_id``."""
+    """The mark a staging of an earlier release wrote on ``table``, its copy for ``stage_id``."""
     return f"sde.stage1.{project_id}.{stage_id}.{_digest(table, 16)}"
+
+
+def stage2_marker(project_id: str, stage_id: str, group: str, table: str) -> str:
+    """The mark a staging writes on ``table``, the copy it creates for ``group`` in ``stage_id``."""
+    return f"sde.stage2.{project_id}.{stage_id}.{_digest(group, 16)}.{_digest(table, 16)}"
+
+
+def copy_marks(mark: str | None) -> bool:
+    """Whether ``mark`` is one that makes a table a copy: a copy's or a staging's (any group)."""
+    return mark is not None and any(
+        pattern.fullmatch(mark) for pattern in (COPY_MARKER, STAGE_MARKER, STAGE2_MARKER)
+    )
 
 
 def copy_refusal(table: str, found: str | None) -> str:
@@ -95,21 +119,45 @@ def copy_refusal(table: str, found: str | None) -> str:
     )
 
 
+def source_refusal(table: str, group: str, mark: str | None = None) -> str:
+    """Why a source's table that carries a copy's or a staging's mark is not ``group``'s source."""
+    if mark is not None and (STAGE_MARKER.fullmatch(mark) or STAGE2_MARKER.fullmatch(mark)):
+        return (
+            f"the source's table {table!r} of {group} carries a staging's mark: a staged copy "
+            f"becomes the source only through a cutover, which writes a source's mark in place of "
+            f"the staging's, so this is a copy a map names as a source (format contract §7r). A "
+            f"staged copy an earlier operator's cutover promoted gets the source's mark from the "
+            f"operator of this release (docs/upgrading.md)"
+        )
+    return (
+        f"the source's table {table!r} of {group} carries a copy's mark: a copy becomes the source "
+        f"only through a cutover, which writes a source's mark in place of the copy's, so this is "
+        f"a copy a map names as a source (format contract §7r)"
+    )
+
+
 def owned_copy_marker(
     project_id: str, group: str, table: str, found: str | None
 ) -> bool:
     """Whether ``found``, the mark read on ``table``, makes it a copy of ``group`` in this project.
 
     The mark ``prepare_schema`` writes for exactly this group and table, or the one a staging of
-    this project writes on the copy it names after its stage. A staging's mark does not name the
-    group: the operator, which knows which group each stage was for, checks that beside this.
+    this project writes for this group on the copy it names after its stage. A staging's mark of an
+    earlier release does not name the group: the operator, which knows which group each stage was
+    for, checks that beside this.
     """
     if found is None:
         return False
     if found == copy_marker(project_id, group, table):
         return True
     staged = _STAGED_NAME.fullmatch(table)
-    return staged is not None and found == stage_marker(project_id, staged.group(1), table)
+    if staged is None:
+        return False
+    stage = staged.group(1)
+    return found in (
+        stage2_marker(project_id, stage, group, table),
+        stage_marker(project_id, stage, table),
+    )
 
 
 class MarksCopies(Protocol):

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { canonicalBytes, digest16 } from '../canonical.js'
-import { checkMapProject } from '../generation.js'
+import { checkMapProject, GENERATIONS_SINCE } from '../generation.js'
 import { loadMap } from '../placement.js'
 import { neutralDeclaration } from '../model.js'
 import { weatherModel } from './model.js'
@@ -65,7 +65,10 @@ export function project(root: string) {
   for (const [name, value] of Object.entries(object(config.public_keys))) {
     if (typeof value !== 'string' || !name) throw new DemoRefused('Invalid trusted public key.')
     const decoded = Buffer.from(value, 'base64')
-    if (decoded.length !== 32 || decoded.toString('base64') !== value) throw new DemoRefused('Invalid Ed25519 key encoding.')
+    // loadMap checks the key itself (a P-256 key must be a point on the curve); here only its two lengths.
+    if ((decoded.length !== 32 && decoded.length !== 65) || decoded.toString('base64') !== value) {
+      throw new DemoRefused('A trusted public key is 32 bytes (Ed25519) or 65 (a P-256 point, ES256), in canonical base64.')
+    }
     publicKey[name] = decoded
   }
   if (!Object.keys(publicKey).length || typeof config.project_id !== 'string') throw new DemoRefused('Missing project or trusted keys.')
@@ -91,6 +94,11 @@ export function project(root: string) {
     if (existsSync(join(root, 'reset-request.json'))) throw new DemoRefused('Reset was requested; the workload has stopped.')
     const placement = loadMap(read(join(root, 'state', 'active-map.json')).value,
       { model, publicKey, requireSignature: true })
+    // The starter's own refusal first, said as a refusal: a map below contract 4 is one the project
+    // check also refuses, and would otherwise end the run as an incomplete operation.
+    if (placement.contract < GENERATIONS_SINCE) {
+      throw new DemoRefused('The starter needs a signed generation-bearing map; restore the enrolled one.')
+    }
     checkMapProject(placement, projectId)
     return placement
   }

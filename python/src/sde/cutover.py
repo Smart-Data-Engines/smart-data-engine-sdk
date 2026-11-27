@@ -65,8 +65,8 @@ def _signature(record: dict[str, Any], subject: str = "cutover") -> None:
     if set(signature) not in ({"alg", "value"}, {"alg", "value", "key_id"}):
         raise MigrationRefused(f"{subject} signatures have missing or unknown fields")
     value = signature.get("value")
-    malformed = f"{subject} signatures must use ed25519 and canonical base64"
-    if signature.get("alg") != "ed25519" or not isinstance(value, str):
+    malformed = f"{subject} signatures must use ed25519 or es256 and canonical base64"
+    if signature.get("alg") not in ("ed25519", "es256") or not isinstance(value, str):
         raise MigrationRefused(malformed)
     try:
         decoded = base64.b64decode(value, validate=True)

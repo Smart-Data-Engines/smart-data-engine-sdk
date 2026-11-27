@@ -197,6 +197,24 @@ TEST(PrepareSchema, AGenerationBearingMapNeedsTheLocallyConfiguredProject) {
   }
 }
 
+TEST(PrepareSchema, AMapBelowContract4IsRefusedWhereAProjectIsConfigured) {
+  // A map of contract 3 carries no project and no write generation, so neither a fence nor a mark
+  // applies to it (format contract section 7r): with a project configured it is refused before an
+  // engine is asked anything, and without one it is prepared as before.
+  const sde::Model model = unfenced_model();
+  const sde::PlacementMap map = loaded(model, plain_document(model));
+  const auto journal = std::make_shared<Recorded>();
+  MemoryEngine db{named("postgres", "db", journal)};
+  const std::string refused = refusal<sde::MigrationRefused>(
+      [&] { sde::prepare_schema(model, map, {{"db", &db}}, kProject); });
+  EXPECT_NE(refused.find("carries no project and no write generation"), std::string::npos)
+      << refused;
+  EXPECT_TRUE(journal->calls().empty());
+  EXPECT_TRUE(db.tables.empty());
+  sde::prepare_schema(model, map, {{"db", &db}});
+  EXPECT_EQ(calls(*journal), (std::vector<std::string>{"db.ensure_schema", "db.ensure_schema"}));
+}
+
 TEST(PrepareSchema, AGroupCarryingAGenerationNeedsAnEngineThatFences) {
   const sde::Model model = unfenced_model();
   const sde::PlacementMap map = loaded(model, unfenced_document(model));

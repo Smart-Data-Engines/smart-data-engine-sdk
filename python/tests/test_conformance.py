@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _generation import bind_generation_metadata
+from _generation import bind_generation_metadata, copy_marks
 from _write_fence import MemoryFences
 
 import sde
@@ -562,6 +562,13 @@ def test_migration_vector(case: Path) -> None:
     bound = case / "verification.json"
     if bound.is_file():
         want = _read_json(bound)
+        if "engine_generations" in want:
+            # The write fences a provisioned deployment holds, and the copy marks its map implies
+            # (§7r): the request binds a project, and only a map of contract 4 or later is taken
+            # where one is configured.
+            bind_generation_metadata(
+                engines, want["engine_generations"], marks=copy_marks(placement)
+            )
         session = sde.Session(model, placement, engines, project_id=want.get("project_id"))
         def compare() -> sde.VerifyReport:
             request = sde.VerificationRequest.from_record(want["request"])
@@ -696,6 +703,17 @@ def test_every_dialect_this_library_renders_appears_in_the_schema_vectors() -> N
         for expectation in _read_json(case / "cases.json")
     }
     assert set(sde.DIALECTS) <= covered, f"no schema vector renders {set(sde.DIALECTS) - covered}"
+
+
+@pytest.mark.parametrize("case", _cases("marks"), ids=_ident)
+def test_marks_vector(case: Path) -> None:
+    """Where each mark is taken (§7r): as this group's copy, and on a source."""
+    from sde.ownership import copy_marks, owned_copy_marker
+
+    for item in _read_json(case / "cases.json"):
+        taken = owned_copy_marker(item["project_id"], item["group"], item["table"], item["mark"])
+        assert taken is item["copy"], item["why"]
+        assert (not copy_marks(item["mark"])) is item["source"], item["why"]
 
 
 @pytest.mark.parametrize("case", _cases("signature"), ids=_ident)
@@ -1031,7 +1049,7 @@ def _drive_generation_vector(
     case: Path, model: sde.LogicalModel, placement: sde.PlacementMap, engines: Any
 ) -> None:
     want = _read_json(case / "generation.json")
-    bind_generation_metadata(engines, want["engine_generations"])
+    bind_generation_metadata(engines, want["engine_generations"], marks=copy_marks(placement))
     if "error" in want:
         with pytest.raises(_ERRORS[want["error"]], match=re.escape(want["match"])):
             sde.Session(model, placement, engines, project_id=want.get("project_id"))
@@ -1068,7 +1086,9 @@ def _drive_frozen_vector(
     case: Path, model: sde.LogicalModel, placement: sde.PlacementMap, engines: Any
 ) -> None:
     want = _read_json(case / "frozen.json")
-    bind_generation_metadata(engines, want["engine_generations"], record_fences=True)
+    bind_generation_metadata(
+        engines, want["engine_generations"], record_fences=True, marks=copy_marks(placement)
+    )
     context = sde.InspectionContext(model, placement, engines, want["project_id"])
     request = sde.VerificationRequest.from_record(want["request"])
     def invoke() -> sde.FrozenVerifyReport:

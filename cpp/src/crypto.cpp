@@ -2,8 +2,12 @@
 
 #include <memory>
 
+#include <openssl/bn.h>
+#include <openssl/crypto.h>
+#include <openssl/ecdsa.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/x509.h>
 
 #include "sde/errors.hpp"
 
@@ -53,6 +57,57 @@ bool ed25519_verify(std::string_view public_key, std::string_view message,
   if (!context) throw SdeError("OpenSSL could not allocate a verification context");
   if (EVP_DigestVerifyInit(context.get(), nullptr, nullptr, nullptr, key.get()) != 1) return false;
   return EVP_DigestVerify(context.get(), bytes_of(signature), signature.size(), bytes_of(message),
+                          message.size()) == 1;
+}
+
+namespace {
+
+/// The SubjectPublicKeyInfo of an uncompressed P-256 point, the point's 65 bytes after it.
+constexpr unsigned char kP256Spki[] = {0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48,
+                                       0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48,
+                                       0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00};
+
+std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> p256_key(std::string_view point) {
+  std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> none(nullptr, &EVP_PKEY_free);
+  if (point.size() != 65 || static_cast<unsigned char>(point[0]) != 0x04) return none;
+  std::string der(reinterpret_cast<const char*>(kP256Spki), sizeof(kP256Spki));
+  der.append(point);
+  const auto* cursor = reinterpret_cast<const unsigned char*>(der.data());
+  // d2i_PUBKEY decodes the point and refuses one that is not on the curve.
+  return std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>(
+      d2i_PUBKEY(nullptr, &cursor, static_cast<long>(der.size())), &EVP_PKEY_free);
+}
+
+}  // namespace
+
+bool p256_point(std::string_view point) { return p256_key(point) != nullptr; }
+
+bool es256_verify(std::string_view public_key, std::string_view message,
+                  std::string_view signature) {
+  if (signature.size() != 64) return false;
+  const auto key = p256_key(public_key);
+  if (!key) return false;
+  std::unique_ptr<ECDSA_SIG, decltype(&ECDSA_SIG_free)> sig(ECDSA_SIG_new(), &ECDSA_SIG_free);
+  if (!sig) throw SdeError("OpenSSL could not allocate a signature");
+  BIGNUM* r = BN_bin2bn(bytes_of(signature.substr(0, 32)), 32, nullptr);
+  BIGNUM* s = BN_bin2bn(bytes_of(signature.substr(32, 32)), 32, nullptr);
+  if (r == nullptr || s == nullptr || ECDSA_SIG_set0(sig.get(), r, s) != 1) {
+    BN_free(r);
+    BN_free(s);
+    return false;
+  }
+  unsigned char* der = nullptr;
+  const int size = i2d_ECDSA_SIG(sig.get(), &der);
+  if (size <= 0) return false;
+  std::unique_ptr<unsigned char, void (*)(unsigned char*)> owned(
+      der, [](unsigned char* bytes) { OPENSSL_free(bytes); });
+  std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(),
+                                                                  &EVP_MD_CTX_free);
+  if (!context) throw SdeError("OpenSSL could not allocate a verification context");
+  if (EVP_DigestVerifyInit(context.get(), nullptr, EVP_sha256(), nullptr, key.get()) != 1) {
+    return false;
+  }
+  return EVP_DigestVerify(context.get(), der, static_cast<std::size_t>(size), bytes_of(message),
                           message.size()) == 1;
 }
 

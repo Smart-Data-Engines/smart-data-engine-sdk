@@ -15,8 +15,10 @@
 /// query.
 ///
 /// A session is one unit of work, like a connection: one thread uses it at a time, and a second
-/// thread entering it while it is in use is refused (`ResourceBusy`) rather than raced. The model,
-/// the map and the engines must outlive it; it copies none of them.
+/// thread entering it while it is in use is refused (`ResourceBusy`) rather than raced. It keeps its
+/// own copies of the model and the map, so a map loaded into the same variable later reaches no
+/// session opened before it - only the checks of a new session admit a map; the engines must outlive
+/// it.
 
 #include <cstdint>
 #include <exception>
@@ -244,8 +246,8 @@ class Session {
       PageLimit limit, bool paginate) const;
   [[nodiscard]] std::int64_t now() const;
 
-  const Model& model_;
-  const PlacementMap& placement_;
+  const Model model_;
+  const PlacementMap placement_;
   std::map<std::string, Engine*> engines_;
   Recorder* recorder_;
   const NameMap* names_;

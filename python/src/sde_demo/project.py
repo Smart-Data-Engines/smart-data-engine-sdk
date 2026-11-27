@@ -78,8 +78,12 @@ def public_keys(value: Any) -> dict[str, bytes]:
             decoded = base64.b64decode(encoded, validate=True)
         except binascii.Error:
             raise DemoRefused("Invalid public key configuration.") from None
-        if len(decoded) != 32:
-            raise DemoRefused("Ed25519 public keys must contain 32 bytes.")
+        # The map's loader checks the key itself (a P-256 key must be a point on the curve) and
+        # its refusal is said in full below; here only the two lengths a key can have.
+        if len(decoded) not in (32, 65):
+            raise DemoRefused(
+                "A trusted public key is 32 bytes (Ed25519) or 65 (a P-256 point, ES256)."
+            )
         result[name] = decoded
     return result
 
@@ -118,11 +122,13 @@ def bootstrap(value: dict[str, Any]) -> tuple[dict[str, Any], sde.PlacementMap]:
         # Refused before setup writes anything, and the reason is about the map - a missing
         # 'signed' extra, a bad signature - never about a credential, so it can be said in full.
         raise DemoRefused(f"The bootstrap's map does not load: {exc}") from None
-    check_map_project(placement, value["project_id"])
+    # The starter's own refusal first, said as a refusal: a map below contract 4 is one a session
+    # with the project also refuses, and would otherwise end the setup as an incomplete operation.
     if placement.contract < GENERATIONS_SINCE or placement.map_version != 1:
         raise DemoRefused(
             "A new demo must start from a signed generation-bearing initial map (version 1)."
         )
+    check_map_project(placement, value["project_id"])
     for group in placement.groups.values():
         if len(group.all()) != 1 or group.source.engine not in engines:
             raise DemoRefused("Bootstrap must contain only bound initial source materializations.")

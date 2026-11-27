@@ -104,8 +104,9 @@ the supplied metadata and run its steps against a recording DDL backend; compare
 and every call. These cases replace the model/map/row inputs with a metadata snapshot.
 
 Also execute each `verification.json` case as specified in [§7b](format-contract.md#7b-verification-requests-and-bound-reports):
-project identity comes from local session configuration, and the complete request is checked before
-comparison. Preserve it in the outgoing report. A stored fingerprint cannot describe a mutable
+where it has `engine_generations`, bind those write fences as for `generation.json`, with the copy
+marks its map implies; project identity comes from local session configuration, and the complete
+request is checked before comparison. Preserve it in the outgoing report. A stored fingerprint cannot describe a mutable
 parsed map; retain an immutable input snapshot and reject copied objects that have not been loaded.
 
 Dual write, the resume marker, and the forward-only check. A migration reaches a library as a map
@@ -780,3 +781,13 @@ byte order mark that leads a secret, which some UTF-8 decoders drop by default. 
 timeouts your number parser would read, from `inf` to an underscore or a digit beyond ASCII: test
 the digits with your own pattern before any parser sees them. A refusal names the part that is
 wrong and never contains the secret; each case that has one says so.
+
+**17. Copy and source marks (Tier 2). Vectors: `marks/`.**
+
+Two functions of a mark, so no engine: whether the mark read on a table makes it the copy of a group
+in a project, and whether a table carrying it may be a source (§7r). Compute the marks from their
+forms yourself and compare strings exactly. Four cases carry most of the risk. A copy's mark of
+another group, project or table name is no copy of this one. A staging's mark names its group
+(`stage2`), and an earlier release's (`stage1`) does not, so it is taken only on a table named after
+its stage. A source's mark is never a copy's, though another group's is taken on a source, because
+a group can be renamed. And no copy's or staging's mark is taken on a source, whatever its group.

@@ -16,8 +16,11 @@ import type { PhysicalLayout } from './placement.js'
 /** What `prepareSchema` writes on a copy's table it creates: its project, group and name. */
 export const COPY_MARKER = /^sde\.copy1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}$/
 
-/** What a staging writes on the table it creates: its project, its stage and the table's name. */
+/** What a staging of an earlier release wrote on the table it created: project, stage, name. */
 export const STAGE_MARKER = /^sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}$/
+
+/** What a staging writes on the table it creates: its project, its stage, its group and name. */
+export const STAGE2_MARKER = /^sde\.stage2\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}$/
 
 /** What a cutover writes on the copy it makes the source, in place of the copy's mark. */
 export const SOURCE_MARKER = /^sde\.source1\.[0-9a-f]{32}\.[0-9a-f]{16}\.[0-9a-f]{16}$/
@@ -37,9 +40,19 @@ export function copyMarker(projectId: string, group: string, table: string): str
   return `sde.copy1.${projectId}.${digest(group, 16)}.${digest(table, 16)}`
 }
 
-/** The mark a staging writes on `table`, the copy it creates for stage `stageId`. */
+/** The mark a staging of an earlier release wrote on `table`, its copy for stage `stageId`. */
 export function stageMarker(projectId: string, stageId: string, table: string): string {
   return `sde.stage1.${projectId}.${stageId}.${digest(table, 16)}`
+}
+
+/** The mark a staging writes on `table`, the copy it creates for `group` in stage `stageId`. */
+export function stage2Marker(projectId: string, stageId: string, group: string, table: string): string {
+  return `sde.stage2.${projectId}.${stageId}.${digest(group, 16)}.${digest(table, 16)}`
+}
+
+/** Whether `mark` is one that makes a table a copy: a copy's or a staging's (any group). */
+export function copyMarks(mark: string | null): boolean {
+  return mark !== null && (COPY_MARKER.test(mark) || STAGE_MARKER.test(mark) || STAGE2_MARKER.test(mark))
 }
 
 /** Why `table` is not taken as a copy's: what every library says, with what it found. */
@@ -60,10 +73,28 @@ export function copyRefusal(table: string, found: string | null): string {
   )
 }
 
+/** Why a source's table that carries a copy's or a staging's mark is not `group`'s source. */
+export function sourceRefusal(table: string, group: string, mark: string | null = null): string {
+  if (mark !== null && (STAGE_MARKER.test(mark) || STAGE2_MARKER.test(mark))) {
+    return (
+      `the source's table '${table}' of ${group} carries a staging's mark: a staged copy becomes the ` +
+      "source only through a cutover, which writes a source's mark in place of the staging's, so this " +
+      'is a copy a map names as a source (format contract §7r). A staged copy an earlier operator\'s ' +
+      "cutover promoted gets the source's mark from the operator of this release (docs/upgrading.md)"
+    )
+  }
+  return (
+    `the source's table '${table}' of ${group} carries a copy's mark: a copy becomes the source only ` +
+    "through a cutover, which writes a source's mark in place of the copy's, so this is a copy a " +
+    'map names as a source (format contract §7r)'
+  )
+}
+
 /**
  * Whether `found`, the mark read on `table`, makes it a copy of `group` in this project: the mark
  * `prepareSchema` writes for exactly this group and table, or the one a staging of this project
- * writes on the copy it names after its stage.
+ * writes for this group on the copy it names after its stage (or, of an earlier release, without the
+ * group).
  */
 export function ownedCopyMarker(
   projectId: string,
@@ -74,7 +105,8 @@ export function ownedCopyMarker(
   if (!found) return false
   if (found === copyMarker(projectId, group, table)) return true
   const staged = STAGED_NAME.exec(table)
-  return staged !== null && found === stageMarker(projectId, staged[1]!, table)
+  if (staged === null) return false
+  return found === stage2Marker(projectId, staged[1]!, group, table) || found === stageMarker(projectId, staged[1]!, table)
 }
 
 /**

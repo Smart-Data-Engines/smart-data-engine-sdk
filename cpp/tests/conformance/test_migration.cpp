@@ -23,6 +23,7 @@
 #include "sde/migration.hpp"
 #include "sde/model.hpp"
 #include "sde/packets.hpp"
+#include "sde/ownership.hpp"
 #include "sde/placement.hpp"
 #include "sde/session.hpp"
 #include "sde/telemetry.hpp"
@@ -178,6 +179,22 @@ void bind_generation_metadata(Engines& engines, const sde::Json& metadata, bool 
   }
 }
 
+/// The marks `prepare_schema` writes on a map's copies (format contract section 7r), by engine and
+/// table: what the fake engines of a provisioned deployment hold.
+void bind_copy_marks(Engines& engines, const sde::PlacementMap& map) {
+  if (map.contract() < sde::GENERATIONS_SINCE || !map.project_id()) return;
+  std::map<std::string, std::map<std::string, std::string>> marks;
+  for (const auto& [group, spot] : map.groups()) {
+    if (!spot.write_epoch) continue;
+    for (const sde::Materialization& material : spot.derived) {
+      for (const auto& [entity, table] : material.layout.tables) {
+        marks[material.engine][table] = sde::copy_marker(*map.project_id(), group, table);
+      }
+    }
+  }
+  for (auto& [name, engine] : engines) engine->bind_marks(marks[name]);
+}
+
 std::optional<std::string> project_of(const sde::Json& want) {
   const sde::Json* project = want.find("project_id");
   if (project == nullptr || project->is_null()) return std::nullopt;
@@ -188,6 +205,7 @@ void drive_generation(const std::filesystem::path& directory, const sde::Model& 
                       const sde::PlacementMap& map, Engines& engines) {
   const sde::Json want = read_json(directory / "generation.json");
   bind_generation_metadata(engines, *want.find("engine_generations"), false);
+  bind_copy_marks(engines, map);
   sde::SessionOptions options;
   options.project_id = project_of(want);
   if (const sde::Json* error = want.find("error")) {
@@ -395,6 +413,13 @@ void drive_verify(const std::filesystem::path& directory, const sde::Model& mode
 void drive_verification(const std::filesystem::path& directory, const sde::Model& model,
                         const sde::PlacementMap& map, Engines& engines) {
   const sde::Json want = read_json(directory / "verification.json");
+  // The write fences a provisioned deployment holds, and the copy marks its map implies (section
+  // 7r): the request binds a project, and only a map of contract 4 or later is taken where one is
+  // configured.
+  if (const sde::Json* generations = want.find("engine_generations")) {
+    bind_generation_metadata(engines, *generations, false);
+    bind_copy_marks(engines, map);
+  }
   sde::SessionOptions session_options;
   session_options.project_id = project_of(want);
   sde::Session session(model, map, pointers(engines), session_options);
@@ -419,6 +444,7 @@ void drive_frozen(const std::filesystem::path& directory, const sde::Model& mode
                   const sde::PlacementMap& map, Engines& engines) {
   const sde::Json want = read_json(directory / "frozen.json");
   bind_generation_metadata(engines, *want.find("engine_generations"), true);
+  bind_copy_marks(engines, map);
   const std::string project = want.find("project_id")->as_string();
   const sde::InspectionContext context(model, map, pointers(engines), project);
   const sde::VerificationRequest request =

@@ -148,6 +148,48 @@ std::string truncated(std::string_view message) {
 /// The configured keys, by name, after refusing what cannot be a key - an empty set, or one of the
 /// wrong length. Both are the caller's configuration rather than the map, and are refused as such:
 /// a key pasted a byte short would otherwise look like a map that does not verify.
+/// Why `key` is not a public key a map is verified with, or nothing when it is one: 32 bytes of
+/// Ed25519, or 65 bytes of an uncompressed SEC1 point on P-256 (ES256).
+std::optional<std::string> key_problem(const std::string& key) {
+  if (key.size() == 32) return std::nullopt;
+  if (key.size() != 65) {
+    return std::to_string(key.size()) +
+           " bytes and an Ed25519 public key is 32, a P-256 public key (an uncompressed SEC1 point) "
+           "65";
+  }
+  if (static_cast<unsigned char>(key[0]) != 0x04) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    const auto first = static_cast<unsigned char>(key[0]);
+    return std::string("65 bytes whose first is 0x") + kHex[first >> 4U] + kHex[first & 0x0FU] +
+           ": a P-256 key is an uncompressed point, whose first byte is 0x04";
+  }
+  if (!detail::p256_point(key)) return std::string("65 bytes that are not a point on P-256");
+  return std::nullopt;
+}
+
+/// r and s, 32 bytes each, both in [1, n), and s at most n/2: the one form of a map's ES256
+/// signature, so that a document has one signature, as in Ed25519. Big-endian bytes of one length
+/// compare as the numbers do.
+bool p1363_low_s(const std::string& value) {
+  static constexpr unsigned char kN[32] = {
+      0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51};
+  static constexpr unsigned char kHalf[32] = {
+      0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31, 0x92, 0xa8};
+  if (value.size() != 64) return false;
+  const auto* r = reinterpret_cast<const unsigned char*>(value.data());
+  const auto* s = r + 32;
+  const auto zero = [](const unsigned char* number) {
+    return std::all_of(number, number + 32, [](unsigned char byte) { return byte == 0; });
+  };
+  const auto below = [](const unsigned char* a, const unsigned char* b) {
+    return std::lexicographical_compare(a, a + 32, b, b + 32);
+  };
+  // r in [1, n); s in [1, n/2], that is s not above n/2.
+  return !zero(r) && below(r, kN) && !zero(s) && !below(kHalf, s);
+}
+
 std::vector<std::pair<std::string, std::string>> key_set(const PublicKeys& public_keys) {
   if (!public_keys.is_bare() && public_keys.keys().empty()) {
     throw MapError(
@@ -158,12 +200,12 @@ std::vector<std::pair<std::string, std::string>> key_set(const PublicKeys& publi
   std::vector<std::pair<std::string, std::string>> pairs(public_keys.keys().begin(),
                                                          public_keys.keys().end());
   for (const auto& [name, key] : pairs) {
-    if (key.size() != 32) {
+    if (const auto problem = key_problem(key)) {
       throw MapError("the public key " + python_repr(name.empty() ? "(unnamed)" : name) + " is " +
-                     std::to_string(key.size()) +
-                     " bytes and an Ed25519 public key is 32. Refused here rather than at "
-                     "verification: a key pasted a byte short would look like a map that does not "
-                     "verify, and the two have completely different fixes.");
+                     *problem +
+                     ". Refused here rather than at verification: a key pasted a byte short would "
+                     "look like a map that does not verify, and the two have completely different "
+                     "fixes.");
     }
   }
   return pairs;
@@ -186,9 +228,11 @@ std::optional<std::string> verify_signature(const Json& document, const PublicKe
 std::optional<std::string> detail::verify_payload(
     const Json& signature, const PublicKeys& public_keys,
     const std::function<std::string()>& payload_of) {
-  const Json* alg = signature.is_object() ? signature.find("alg") : nullptr;
-  if (alg == nullptr || !alg->is_string() || alg->as_string() != "ed25519") {
-    throw MapError("only ed25519 signatures are understood");
+  const Json* alg_field = signature.is_object() ? signature.find("alg") : nullptr;
+  const std::string alg =
+      alg_field != nullptr && alg_field->is_string() ? alg_field->as_string() : std::string();
+  if (alg != "ed25519" && alg != "es256") {
+    throw MapError("only ed25519 and es256 signatures are understood");
   }
   const Json* value = signature.find("value");
   std::optional<std::string> decoded;
@@ -196,12 +240,28 @@ std::optional<std::string> detail::verify_payload(
     decoded = detail::base64_decode_as_python(value->as_string());
   }
   if (!decoded) throw MapError("the signature is not valid base64");
+  if (alg == "es256" && !p1363_low_s(*decoded)) {
+    throw MapError(
+        "an es256 signature is r and s, 32 bytes each (IEEE P1363), with both above zero and below "
+        "the order of P-256 and s in its lower half: one map, one signature");
+  }
 
   std::optional<std::string> claimed;
   if (const Json* key_id = signature.find("key_id"); key_id != nullptr && key_id->is_string()) {
     claimed = key_id->as_string();
   }
-  const auto keys = key_set(public_keys);
+  const auto supplied = key_set(public_keys);
+  // A key of one algorithm never verifies a signature of the other: try the map's alone.
+  std::vector<std::pair<std::string, std::string>> keys;
+  for (const auto& pair : supplied) {
+    if ((pair.second.size() == 32) == (alg == "ed25519")) keys.push_back(pair);
+  }
+  if (keys.empty()) {
+    throw MapError("the map is signed with " + alg + " and none of the " +
+                   std::to_string(supplied.size()) + " key(s) supplied is an " +
+                   (alg == "ed25519" ? std::string("Ed25519") : std::string("ES256 (P-256)")) +
+                   " key: a signature with no key to check it is refused, as an unverifiable claim");
+  }
   std::vector<std::pair<std::string, std::string>> ordered;
   if (claimed) {
     for (const auto& pair : keys) {
@@ -215,9 +275,9 @@ std::optional<std::string> detail::verify_payload(
   // form is refused only once the keys it would have been checked against are known to be keys.
   const std::string payload = payload_of();
   for (const auto& [name, key] : ordered) {
-    if (detail::ed25519_verify(key, payload, *decoded)) {
-      return name.empty() ? std::nullopt : std::optional<std::string>(name);
-    }
+    const bool verified = alg == "ed25519" ? detail::ed25519_verify(key, payload, *decoded)
+                                           : detail::es256_verify(key, payload, *decoded);
+    if (verified) return name.empty() ? std::nullopt : std::optional<std::string>(name);
   }
 
   std::vector<std::string> tried;

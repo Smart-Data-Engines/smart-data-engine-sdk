@@ -433,7 +433,8 @@ TEST_F(ClickHouseSchema, ALoginGrantedNothingSeesNoTable) {
   const sde::Model model = readings();
   const sde::PlacementMap map = readings_map(model, false, 1, 3);
   const auto provisioning = engine(roles.operator_dsn());
-  sde::prepare_schema(model, map, {{"db", provisioning.get()}}, kProject);
+  // A map of contract 3 carries no project, and is prepared without one (format contract 7r).
+  sde::prepare_schema(model, map, {{"db", provisioning.get()}});
   const auto runtime = engine(roles.runtime_dsn());
   EXPECT_EQ(refusal<sde::EngineError>([&] {
               (void)runtime->validate_schema(map.placement_of("Reading").source.layout,

@@ -33,7 +33,7 @@ def main() -> None:
     parser.add_argument("--scratch", type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1] / "vectors" / "migration"
-    base = root / "022-verification-is-bound-to-its-request"
+    base = root / "017-a-verify-that-matches"
     model = json.loads((base / "model.json").read_text())
     placement = json.loads((base / "map.json").read_text())
     placement.update(contract=4, project_id=P, map_version=2)
@@ -217,6 +217,30 @@ def main() -> None:
             ("calls.json", calls),
         ):
             (directory / filename).write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n")
+    # A map below contract 4 carries no project and no write generation, so neither a fence nor a
+    # mark applies to it (format contract §7r): with a project configured it is refused before an
+    # engine is asked anything, where a forged map of an older contract would reach any table of
+    # its shape. The frozen case's own map, contract 2, unchanged.
+    legacy = root / "237-a-map-below-contract-4-is-refused-where-a-project-is-configured"
+    legacy.mkdir(exist_ok=True)
+    for filename, body in (
+        ("model.json", model),
+        ("map.json", json.loads((base / "map.json").read_text())),
+        ("engines.json", {engine: {"tables": value} for engine, value in empty.items()}),
+        (
+            "generation.json",
+            {
+                "engine_generations": {},
+                "actions": [],
+                "tables": empty,
+                "project_id": P,
+                "error": "MigrationRefused",
+                "match": "carries no project and no write generation",
+            },
+        ),
+        ("calls.json", []),
+    ):
+        (legacy / filename).write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n")
     errors: list[tuple[str, dict[str, Any], str]] = []
 
     def error(name: str, mutate: Any, message: str) -> None:

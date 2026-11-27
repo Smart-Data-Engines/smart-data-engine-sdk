@@ -53,7 +53,6 @@ FindingKind = Literal[
 ]
 
 _OWNER = FENCE_PREFIX + "owner_"
-_STAGE_MARKER = re.compile(r"sde\.stage1\.[0-9a-f]{32}\.[0-9a-f]{32}\.[0-9a-f]{16}")
 
 
 @dataclass(frozen=True)
@@ -279,9 +278,10 @@ def departure(
     client's provisioning connections by the map's engine names, as ``prepare_schema`` takes them:
     reading a fence and removing it need the rights a runtime login does not have. A
     generation-bearing map needs its locally configured ``project_id``, never one learned from the
-    map, since it decides which fences are this project's.
+    map, since it decides which fences are this project's. A map below contract 4 is taken only
+    without one, as a session takes it (format contract §7r).
     """
-    project = check_map_project(placement, project_id) if placement.contract >= 4 else project_id
+    project = check_map_project(placement, project_id)
     fenced = fenced_groups(placement)
     required = sorted({material.engine for spot in fenced.values() for material in spot.all()})
     missing = [name for name in required if name not in engines]

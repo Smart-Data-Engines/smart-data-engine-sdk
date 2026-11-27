@@ -254,6 +254,54 @@ Do not drop retired tables or remove the state on the basis of a missing respons
 [staging](staging.md#abandoning-a-staging-that-cannot-finish) or
 [in-place index build](in-place-index.md#abandonment) instead.
 
+### A source an earlier cutover left with the staging's mark
+
+A cutover writes a source's mark on the copy it makes the source (format contract §7r). An operator
+before that mark existed left the staging's mark on the staged copy it promoted, and a session of
+this release refuses such a source (`carries a staging's mark`): a staged copy a forged map names as
+a source carries the same mark. With this release's operator, before the application's library is
+upgraded, run once:
+
+```bash
+sde-operator --project-dir <project directory> --config <operator configuration> mark-sources
+```
+
+It reads the mark of each source of the map in force whose group carries a write generation - the
+groups a session reads the marks of. Where the mark is a staging's of a stage the project's records
+hold completed for the group the map gives the table to, and a cutover of that group completed with
+success, it writes the source's mark in its place, after reading the table's identity again: its
+oid in PostgreSQL, its uuid in ClickHouse and Elasticsearch. Nothing else a cutover asks of a table
+is asked here: a trigger, a dependent view, a row policy or an ingest pipeline the application has
+added since stays as it is, since a mark moves no row and no authority. Writing the mark needs what
+writing a comment needs: the operator's login owns the table in PostgreSQL, holds `ALTER` on it in
+ClickHouse, and may update the index's mapping in Elasticsearch. It prints
+
+```json
+{"marked": [...], "left": [...], "unexamined": [...]}
+```
+
+- `marked`: group, entity, engine and table of each source it marked;
+- `left`: each source of the map in force that still carries a copy's or a staging's mark - which a
+  session of this release refuses - with the reason it was left:
+  - the mark is another project's or another table's;
+  - it is a copy's mark, or a staging's of this release: a cutover of this release writes the
+    source's mark itself, so no record of the project has such a table promoted;
+  - the stage, or a cutover of the group, is not in the project's records;
+  - an Elasticsearch index carries two marks, or the name is an alias;
+  - the table changed between the two reads, or it is in a ClickHouse database that is not Atomic,
+    where a table has no uuid to read again (the reason gives the source's mark, for an
+    administrator to write);
+  - the engine refused the mark: the login may not write it, the name is not a table, or a block on
+    the index refuses its mapping's update - each named as such;
+  - the engine did not answer, its error left out as the CLI leaves it out of every result;
+- `unexamined`: the bindings of those groups this operator is not bound to, whose sources it could
+  not read.
+
+A table it cannot mark does not stop it, and it exits 1 while `left` or `unexamined` is not empty:
+a session of this release refuses each source left, and may refuse one not read. Run again, it
+marks nothing. Like every operator command it takes the project's lock and refuses beside an
+unfinished operation.
+
 ## Pause budget and receipt
 
 A process watchdog bounds native waits independently of driver exception translation. Preflight
@@ -278,7 +326,8 @@ customer's operator, not a new signature authorizing placement. The controller m
 acceptance to its reserved packet through the authenticated operator handoff.
 
 CLI exit codes: 0 is a result, 2 a refused/invalid input, and 3 an operation or storage failure
-requiring inspection. A successful abort returns 0 with `outcome: "abort"`; consumers must read the
+requiring inspection; `mark-sources` exits 1 while it leaves a source with a copy's or a staging's
+mark, or cannot read one. A successful abort returns 0 with `outcome: "abort"`; consumers must read the
 outcome. Driver error details are omitted from the JSON output to avoid including local credentials.
 
 ## Filling the copy before the pause

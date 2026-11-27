@@ -584,6 +584,9 @@ carries fixes that change nothing a caller relies on.
 - `0.1.1` was a patch: index recovery waited for an interrupted statement.
 - `0.2.0` was not: rows the model forbids began to be refused, a function gained a required argument,
   and contract 6 maps appeared.
+- `0.3.0` was not either: a session refuses a copy's table without its mark and a source's with a
+  copy's or a staging's mark, a map below contract 4 where a project is configured, plain transport
+  to another host unless the connection string asks for it, and several values 0.2.0 wrote.
 
 **The tags are per-language, and the reason is not tidiness.** One shared tag would publish an
 artefact byte-identical to its predecessor, with an empty changelog, every time the *other* language

@@ -481,6 +481,9 @@ _UNREAD: Final = object()
 """A connection whose server range has not been read yet; ``None`` is a range read as whole."""
 
 
+_NIL_UUID: Final = "00000000-0000-0000-0000-000000000000"
+
+
 class ClickHouseEngine:
     """A thin adapter over clickhouse-connect. Executes decisions, makes none."""
 
@@ -662,6 +665,44 @@ class ClickHouseEngine:
             if found is None or not owned_copy_marker(project_id, group, table, found[1]):
                 raise MigrationRefused(copy_refusal(table, None if found is None else found[1]))
         return self.ensure_schema(layout, keys=keys)
+
+    @guarded
+    def table_facts(
+        self, tables: Sequence[str]
+    ) -> dict[str, tuple[frozenset[tuple[str, ...]], str | None]]:
+        """Each name's table as this connection's statements reach it: its identity and its mark.
+
+        For the check of a map's tables (format contract §7r): a copy's table carries its own
+        mark, a source carries no copy's, and no two names of the map reach one table - two engine
+        names bound to one database included, which only the identities can tell. One look-up of
+        the catalogue for all the names; a name that reaches no table has no keys and no mark.
+        """
+        names = sorted(set(tables))
+        found: dict[str, tuple[frozenset[tuple[str, ...]], str | None]] = {
+            name: (frozenset(), None) for name in names
+        }
+        if not names:
+            return found
+        server, database, database_name = (
+            str(value)
+            for value in self._cx.query(
+                "SELECT toString(serverUUID()), toString(uuid), name FROM system.databases "
+                "WHERE name = currentDatabase()"
+            ).result_rows[0]
+        )
+        rows = self._cx.query(
+            "SELECT name, toString(uuid), comment FROM system.tables "
+            "WHERE database = currentDatabase() AND has({names:Array(String)}, name)",
+            parameters={"names": names},
+        ).result_rows
+        for name, uuid, comment in rows:
+            # A database that is not Atomic gives every table the nil uuid: there the name is it.
+            key = str(uuid) if str(uuid) != _NIL_UUID else f"{database_name}.{name}"
+            found[str(name)] = (
+                frozenset({("clickhouse", server, database, key)}),
+                str(comment) or None,
+            )
+        return found
 
     def _mark(self, table: str) -> tuple[str, str] | None:
         """A table's uuid and its comment (empty when it has none), or ``None`` without a table."""

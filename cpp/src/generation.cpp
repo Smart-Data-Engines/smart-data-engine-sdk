@@ -34,7 +34,19 @@ void check_project_id(const std::optional<std::string>& project_id) {
 
 std::optional<std::string> check_map_project(const PlacementMap& placement,
                                              const std::optional<std::string>& project_id) {
-  if (placement.contract() < kGenerationsSince) return std::nullopt;
+  if (placement.contract() < kGenerationsSince) {
+    // A map below contract 4 carries no project and no write generation, so neither a fence nor a
+    // mark applies to it (format contract section 7r): taken where a project is configured, a
+    // forged map of an older contract would reach any table of its shape.
+    if (project_id) {
+      throw MigrationRefused(
+          "a map of contract " + std::to_string(placement.contract()) +
+          " carries no project and no write generation, and this session has a project "
+          "configured: a map below contract " +
+          std::to_string(kGenerationsSince) + " is taken only without one (docs/upgrading.md)");
+    }
+    return std::nullopt;
+  }
   if (!project_id || project_id != placement.project_id()) {
     throw MigrationRefused(
         "this generation-bearing map needs its locally configured project_id; do not learn that "
@@ -60,7 +72,10 @@ std::vector<PhysicalFinding> validate_generations(const Model& model,
                                                   const std::map<std::string, Engine*>& engines,
                                                   const std::optional<std::string>& project_id) {
   std::vector<PhysicalFinding> findings;
-  if (placement.contract() < kGenerationsSince) return findings;
+  if (placement.contract() < kGenerationsSince) {
+    (void)check_map_project(placement, project_id);  // refuses it where a project is configured
+    return findings;
+  }
   const std::string local_project = *check_map_project(placement, project_id);
   if (model.version() != placement.model_version()) {
     throw MigrationRefused("the generation-bearing map names another session model");

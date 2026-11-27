@@ -98,7 +98,8 @@ export interface PlacementMap {
 export interface LoadOptions {
   readonly model?: LogicalModel
   /**
-   * Raw 32-byte Ed25519 public key, or several of them under the caller's own names.
+   * Raw public key - 32 bytes of Ed25519 or a 65-byte uncompressed P-256 point (ES256) - or several
+   * of them under the caller's own names.
    *
    * The mapping form is what makes a rotation possible without breaking the client: while both
    * keys are configured, maps signed with either are accepted. What a runbook needs is not a key
@@ -521,17 +522,59 @@ function keySet(
     }
   }
   for (const [name, value] of pairs) {
-    if (value.length !== 32) {
+    const problem = keyProblem(value)
+    if (problem !== null) {
       throw new MapError(
-        `the public key ${JSON.stringify(name || '(unnamed)')} is ${value.length} bytes and an ` +
-          'Ed25519 public key is 32. Refused here rather than at verification: a key pasted a ' +
-          'byte short would look like a map that does not verify, and the two have completely ' +
-          'different fixes.',
+        `the public key ${JSON.stringify(name || '(unnamed)')} is ${problem}. Refused here rather ` +
+          'than at verification: a key pasted a byte short would look like a map that does not ' +
+          'verify, and the two have completely different fixes.',
       )
     }
   }
   return pairs
 }
+
+// P-256 (secp256r1): y^2 = x^3 - 3x + b over the field of P256_P (SEC 2, section 2.4.2).
+const P256_P = 2n ** 256n - 2n ** 224n + 2n ** 192n + 2n ** 96n - 1n
+const P256_B = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn
+const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+
+function bigFrom(bytes: Uint8Array): bigint {
+  let out = 0n
+  for (const byte of bytes) out = (out << 8n) | BigInt(byte)
+  return out
+}
+
+/** Why `value` is not a key a map is verified with: 32 bytes of Ed25519, or 65 of a P-256 point. */
+function keyProblem(value: Uint8Array): string | null {
+  if (value.length === 32) return null
+  if (value.length !== 65) {
+    return `${value.length} bytes and an Ed25519 public key is 32, a P-256 public key (an uncompressed SEC1 point) 65`
+  }
+  if (value[0] !== 4) {
+    const first = value[0]!.toString(16).padStart(2, '0')
+    return `65 bytes whose first is 0x${first}: a P-256 key is an uncompressed point, whose first byte is 0x04`
+  }
+  const x = bigFrom(value.subarray(1, 33))
+  const y = bigFrom(value.subarray(33))
+  const mod = (n: bigint): bigint => ((n % P256_P) + P256_P) % P256_P
+  if (x >= P256_P || y >= P256_P || mod(y * y - (x * x * x - 3n * x + P256_B)) !== 0n) {
+    return '65 bytes that are not a point on P-256'
+  }
+  return null
+}
+
+const keyAlg = (value: Uint8Array): 'ed25519' | 'es256' => (value.length === 32 ? 'ed25519' : 'es256')
+
+/** r and s of 32 bytes each, both in [1, n), s at most n/2: the one form of a map's ES256 signature. */
+function p1363LowS(value: Uint8Array): boolean {
+  if (value.length !== 64) return false
+  const r = bigFrom(value.subarray(0, 32))
+  const s = bigFrom(value.subarray(32))
+  return r > 0n && r < P256_N && s > 0n && s <= P256_N / 2n
+}
+
+const P256_SPKI_PREFIX = '3059301306072a8648ce3d020106082a8648ce3d030107034200'
 
 const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
@@ -630,15 +673,32 @@ export function verifyMapSignature(
   // In the reference's order: the block, its value, the hint, the configured keys, then the payload.
   // The payload came first here, so a map with two defects was refused for a different one.
   const signature = raw['signature']
-  if (!isPlainObject(signature) || signature['alg'] !== 'ed25519') {
-    throw new MapError('only ed25519 signatures are understood')
+  const alg = isPlainObject(signature) ? signature['alg'] : undefined
+  if (alg !== 'ed25519' && alg !== 'es256') {
+    throw new MapError('only ed25519 and es256 signatures are understood')
   }
-  const encoded = signature['value']
+  const encoded = (signature as Record<string, unknown>)['value']
   const value = typeof encoded === 'string' ? decodeBase64AsPython(encoded) : null
   if (value === null) throw new MapError('the signature is not valid base64')
+  if (alg === 'es256' && !p1363LowS(value)) {
+    throw new MapError(
+      'an es256 signature is r and s, 32 bytes each (IEEE P1363), with both above zero and below ' +
+        'the order of P-256 and s in its lower half: one map, one signature',
+    )
+  }
 
-  const claimed = typeof signature['key_id'] === 'string' ? signature['key_id'] : null
-  const keys = keySet(publicKey)
+  const block = signature as Record<string, unknown>
+  const claimed = typeof block['key_id'] === 'string' ? block['key_id'] : null
+  const supplied = keySet(publicKey)
+  // A key of one algorithm never verifies a signature of the other: try the map's alone.
+  const keys = supplied.filter(([, key]) => keyAlg(key) === alg)
+  if (keys.length === 0) {
+    throw new MapError(
+      `the map is signed with ${alg} and none of the ${supplied.length} key(s) supplied is an ` +
+        `${alg === 'ed25519' ? 'Ed25519' : 'ES256 (P-256)'} key: a signature with no key to check it ` +
+        'is refused, as an unverifiable claim',
+    )
+  }
   const ordered =
     claimed === null
       ? keys
@@ -649,16 +709,19 @@ export function verifyMapSignature(
   const { signature: _omit, ...rest } = raw
   const payload = contract === undefined ? canonicalBytes(rest) : mapPayload(rest, contract, true)
 
-  for (const [name, raw32] of ordered) {
-    // Node wants a KeyObject; a raw 32-byte Ed25519 key becomes one via a minimal DER wrapper. The
-    // alternative is asking callers for PEM, which is a worse interface for a key that is 32 bytes.
-    const der = Buffer.concat([
-      Buffer.from('302a300506032b6570032100', 'hex'),
-      Buffer.from(raw32),
-    ])
-    const key = createPublicKey({ key: der, format: 'der', type: 'spki' })
-    if (verifySignature(null, payload, key, value)) {
-      return name === '' ? null : name
+  for (const [name, rawKey] of ordered) {
+    // Node wants a KeyObject; a raw key becomes one via a minimal DER wrapper. The alternative is
+    // asking callers for PEM, which is a worse interface for a key of 32 or 65 bytes.
+    if (alg === 'ed25519') {
+      const der = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(rawKey)])
+      const key = createPublicKey({ key: der, format: 'der', type: 'spki' })
+      if (verifySignature(null, payload, key, value)) return name === '' ? null : name
+    } else {
+      const der = Buffer.concat([Buffer.from(P256_SPKI_PREFIX, 'hex'), Buffer.from(rawKey)])
+      const key = createPublicKey({ key: der, format: 'der', type: 'spki' })
+      if (verifySignature('sha256', payload, { key, dsaEncoding: 'ieee-p1363' }, value)) {
+        return name === '' ? null : name
+      }
     }
   }
 

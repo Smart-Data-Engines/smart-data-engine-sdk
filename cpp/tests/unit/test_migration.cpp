@@ -26,6 +26,7 @@
 #include "sde/errors.hpp"
 #include "sde/migration.hpp"
 #include "sde/model.hpp"
+#include "sde/ownership.hpp"
 #include "sde/placement.hpp"
 #include "sde/session.hpp"
 #include "sde/testing/memory.hpp"
@@ -693,42 +694,84 @@ TEST(Verify, AColumnAbsentFromTheCopyIsNotReadAsAStoredNull) {
 constexpr const char* kProject = "11111111111111111111111111111111";
 constexpr const char* kRequestId = "22222222222222222222222222222222";
 
-TEST(VerifyRequest, NamesTheSessionsModelAndNotOnlyTheMaps) {
-  // A map loaded without a model is checked against nothing, and below contract 4 a session does
-  // not compare the two versions: the request agrees with the map, and the model is another one.
-  const sde::Model model = readings();
-  const std::string text = R"({"contract": 3, "model_version": "0123456789abcdef", "map_version": 1,
-      "groups": {"Reading": {
-        "source": {"id": "src@pg", "engine": "pg",
+/// The readings' map of `contract`, naming the model `model_version`; from contract 4 with this
+/// project and the group at write generation 1.
+std::string readings_map(int contract, const std::string& model_version) {
+  const std::string generation = contract >= 4 ? R"("write_epoch": 1, )" : "";
+  const std::string project =
+      contract >= 4 ? R"("project_id": ")" + std::string(kProject) + R"(", )" : "";
+  return R"({"contract": )" + std::to_string(contract) + ", " + project +
+         R"("model_version": ")" + model_version + R"(", "map_version": 1,
+      "groups": {"Reading": {)" + generation + R"("source": {"id": "src@pg", "engine": "pg",
                    "layout": {"tables": {"Reading": "reading"}, "columns": )" +
-                           std::string(kColumns) + R"(}},
+         std::string(kColumns) + R"(}},
         "derived": [{"id": "copy@ch", "engine": "ch", "lag_budget_ms": 1000,
                      "layout": {"tables": {"Reading": "reading_copy"}, "columns": )" +
-                           std::string(kColumns) + R"(}}],
+         std::string(kColumns) + R"(}}],
         "also_write": ["copy@ch"]}}})";
-  const sde::PlacementMap map = sde::load_map(std::string_view(text));
+}
+
+/// An engine holding `table` empty, with the write fence a provisioned deployment holds at
+/// generation 1, and `mark` on it when given.
+sde::testing::MemoryEngine provisioned(const std::string& name, const std::string& table,
+                                       const std::optional<std::string>& mark = std::nullopt) {
+  sde::testing::MemoryEngineOptions options;
+  options.name = name;
+  options.tables[table] = {};
+  sde::testing::MemoryEngine engine(options);
+  auto backend = std::make_shared<sde::testing::MemoryFences>();
+  backend->identity = table;
+  backend->column = sde::ColumnState::valid;
+  const std::string prefix(sde::FENCE_PREFIX);
+  const std::string column(sde::EPOCH_COLUMN);
+  backend->constraints[prefix + "owner_" + kProject] = "1";
+  backend->constraints[prefix + "min_1"] = column + " >= 1";
+  backend->constraints[prefix + "max_1"] = column + " <= 1";
+  engine.bind_fences({{table, backend}});
+  if (mark) engine.bind_marks({{table, *mark}});
+  return engine;
+}
+
+TEST(VerifyRequest, NamesTheSessionsModelAndNotOnlyTheMaps) {
+  // A map loaded without a model is checked against nothing. A request binds a project, a session
+  // with a project takes a map of contract 4 or later alone, and such a session compares the map's
+  // model with its own when it opens: no verification runs with a model other than the map's.
+  const sde::Model model = readings();
+  const sde::PlacementMap map = sde::load_map(std::string_view(readings_map(4, "0123456789abcdef")));
   ASSERT_NE(map.model_version(), model.version());
   Store source("pg", {{"reading", {"id"}}}, nullptr);
   Store target("ch", {{"reading_copy", {"id"}}}, nullptr);
   sde::SessionOptions options;
   options.project_id = kProject;
-  sde::Session session(model, map, {{"pg", &source}, {"ch", &target}}, options);
-  sde::VerifyOptions verify;
-  verify.request = sde::verification_request(map, "Reading", kProject, kRequestId,
-                                             "2026-10-07T00:00:00+00:00");
-  EXPECT_EQ(refusal([&] { (void)sde::verify(session, "Reading", verify); }),
-            "verification request names another session model");
+  EXPECT_EQ(refusal([&] {
+              const sde::Session session(model, map, {{"pg", &source}, {"ch", &target}}, options);
+            }),
+            "the generation-bearing map names another session model");
+  // Below contract 4 the versions are not compared, and with a project the map is not taken.
+  const sde::PlacementMap older =
+      sde::load_map(std::string_view(readings_map(3, "0123456789abcdef")));
+  EXPECT_TRUE(contains(refusal([&] {
+                         const sde::Session session(model, older,
+                                                    {{"pg", &source}, {"ch", &target}}, options);
+                       }),
+                       "carries no project and no write generation"));
 }
 
 TEST(VerifyRequest, AComparisonWithoutATimeIsStampedAndStillNotBeforeItsRequest) {
   // With no time given, the report is stamped when it is made; a request from the future - a
   // control plane whose clock is ahead - is refused then, after the comparison, not before it.
+  // On contract 4, with the write fences and the copy's mark a provisioned deployment holds: a
+  // request binds a project, and a session with one takes no map below contract 4.
   sde::SessionOptions options;
   options.project_id = kProject;
   const sde::Model model = readings();
-  const sde::PlacementMap map = placed(model);
-  Store source("pg", {{"reading", {"id"}}}, nullptr);
-  Store target("ch", {{"reading_copy", {"id"}}}, nullptr);
+  sde::LoadOptions load;
+  load.model = &model;
+  const sde::PlacementMap map =
+      sde::load_map(std::string_view(readings_map(4, model.version())), load);
+  sde::testing::MemoryEngine source = provisioned("pg", "reading");
+  sde::testing::MemoryEngine target = provisioned(
+      "ch", "reading_copy", sde::copy_marker(kProject, "Reading", "reading_copy"));
   sde::Session session(model, map, {{"pg", &source}, {"ch", &target}}, options);
   sde::VerifyOptions verify;
   verify.request = sde::verification_request(map, "Reading", kProject, kRequestId,

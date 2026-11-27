@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from time import monotonic_ns
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from .advance import AdvancePlan, AdvanceReceipt
 from .canonical import canonical_bytes
@@ -178,6 +178,49 @@ def refuse_another_name(
             )
 
 
+def refuse_shared_source(
+    reach: Reach, group: str, material: str, entity: str, table: str
+) -> None:
+    """Refuse a source's table that another name of the map reaches (format contract §7r).
+
+    An erasure deletes from a source's table: one group's source named as another group's table -
+    two engine names bound to one database - or as another entity's of its own group would have it
+    delete the other's rows. A table that is not there reaches nothing.
+    """
+    this = (group, material, entity, table)
+    for key in sorted(reach):
+        names = reach[key]
+        if all((name, other, ent, named) != this for name, other, ent, named, _ in names):
+            continue
+        for name, other, ent, named, engine in names:
+            if (name, other, ent, named) != this:
+                raise MigrationRefused(
+                    f"the source's table {table!r} of {group} for {entity} is also {name}'s "
+                    f"table {named!r} for {ent} in {engine}: a source's table holds one entity "
+                    f"of its group alone, and two names of the map reach this one"
+                )
+
+
+
+_NOT_WRITTEN: Final[dict[str | None, str]] = {
+    "privilege": (
+        "the operator's login may not write the table's mark: in PostgreSQL it must own the "
+        "table, in ClickHouse hold ALTER on it, in Elasticsearch update the index's mapping"
+    ),
+    "kind": "the name is not an ordinary table, and a mark is written on a table alone",
+    "block": (
+        "a block on the index refuses the update of its mapping: lift it, and run the command again"
+    ),
+    # The driver's text can carry what a connection is, and is left out as the CLI leaves it out of
+    # every result.
+    None: (
+        "the engine did not answer or did not take the mark (its error is left out): run the "
+        "command again"
+    ),
+}
+"""Why ``mark-sources`` left a source whose mark the engine did not take, by
+:attr:`~sde.engines._operator.MarkNotWritten.cause`."""
+
 class LocalCutover:
     """One local POSIX project directory and dedicated operator/runtime-probe connections.
 
@@ -296,7 +339,7 @@ class LocalCutover:
         beside no staging, cutover or index build; ``stop_after`` bounds a run to that many
         chunks an entity.
         """
-        from .migration import backfill
+        from .migration import backfill_view
 
         self._owner()
         with self.store.lock():
@@ -335,7 +378,7 @@ class LocalCutover:
                             self._copy_owned(current, material.id, group, table, state, reach)
             context = InspectionContext(self.model, current, self.engines, self.project_id)
             return [
-                backfill(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
+                backfill_view(context, group, chunk_rows=self.chunk_rows, stop_after=stop_after)
                 for group in groups
             ]
 
@@ -455,7 +498,8 @@ class LocalCutover:
                     "it before an erasure"
                 )
             # Rows go from every copy of the entity first: each copy's table is one this project
-            # created and marked for its group (§7r), checked before anything is read or deleted.
+            # created and marked for its group (§7r), and each source's table no other name of
+            # the map reaches, checked before anything is read or deleted.
             erased = self.active_map()
             reach = map_reach(erased, self.native)
             for name, spot in sorted(erased.groups.items()):
@@ -465,6 +509,10 @@ class LocalCutover:
                     if material.engine in self.native:
                         table = material.layout.tables[request.entity]
                         self._copy_owned(erased, material.id, name, table, state, reach)
+                source = spot.source
+                refuse_shared_source(
+                    reach, name, source.id, request.entity, source.layout.tables[request.entity]
+                )
             plan = plan_erasure(self, request)
             if not execute:
                 return plan
@@ -477,6 +525,119 @@ class LocalCutover:
             receipt = execute_erasure(self, plan, erasure_secret(self.store.root), at=at)
             write_receipt(self.store.root, receipt)
             return receipt
+
+    def mark_sources(self) -> dict[str, list[Any]]:
+        """A source's mark on each source of the map in force an earlier cutover left with the
+        staging's mark, and every source still carrying a copy's or a staging's mark, with why.
+
+        A cutover before the source's mark existed left a staged copy it made the source with the
+        staging's mark (``sde.stage1``), and a session of this release refuses a source that carries
+        one (format contract §7r): it cannot tell that source from a staged copy a forged map names
+        as one. This project's records can. The mark names the stage; the stage's receipt says it
+        was completed for the group the map in force gives the table to; and a cutover of that
+        group completed with success. Only then is the source's mark written, after the table's
+        identity is read again. Nothing a cutover requires of a table is asked of it here - no
+        trigger, no dependent view, no pipeline - since a mark moves no row and no authority.
+
+        Only groups with a write generation are read: a session reads the marks of those alone.
+        Returns ``marked``, what it marked; ``left``, each of their sources that still carries a
+        copy's or a staging's mark, which a session of this release refuses, with the reason it
+        was left; and ``unexamined``, the bindings of those groups this operator is not bound to,
+        whose sources it could not read. A table it cannot mark does not stop it: the next one is
+        read. Idempotent; under the project lock, beside no unfinished operation.
+        """
+        from .engines._operator import MarkNotWritten
+        from .engines._staging import native_staging
+        from .ownership import copy_marks, source_marker
+
+        self._owner()
+        with self.store.lock():
+            state = self.store.read()
+            if state["execution"] is not None:
+                raise MigrationRefused(
+                    "an unfinished operation of this project holds its tables; resume or abandon "
+                    "it before marking sources"
+                )
+            current = self.active_map()
+            promoted = frozenset(
+                str(receipt.get("group"))
+                for record in state.get("completed", {}).values()
+                for receipt in [record.get("receipt") or {}]
+                if receipt.get("outcome") == "success"
+            )
+            marked: list[dict[str, Any]] = []
+            left: list[dict[str, Any]] = []
+            unexamined: set[str] = set()
+            for group, spot in sorted(current.groups.items()):
+                source = spot.source
+                if spot.write_epoch is None:
+                    # A session reads the marks of a group's tables only where its writes carry a
+                    # generation (format contract §7r), and nothing marked a group without one.
+                    continue
+                native = self.native.get(source.engine)
+                if native is None:
+                    unexamined.add(source.engine)
+                    continue
+                for entity, table in sorted(source.layout.tables.items()):
+                    where = {
+                        "group": group, "entity": entity, "engine": source.engine, "table": table
+                    }
+                    try:
+                        found = native_staging(native).marker(table)
+                        if found is None or not copy_marks(found[1]):
+                            continue
+                        assert found[1] is not None
+                        reason = self._unpromoted(found[1], group, table, state, promoted)
+                        if reason is None:
+                            native.write_source_mark(
+                                table, found[0], source_marker(self.project_id, group, table)
+                            )
+                    except MarkNotWritten as exc:
+                        reason = _NOT_WRITTEN.get(exc.cause, _NOT_WRITTEN[None])
+                    except MigrationRefused as exc:
+                        reason = str(exc)
+                    except EngineError:
+                        reason = _NOT_WRITTEN[None]
+                    if reason is None:
+                        marked.append(where)
+                    else:
+                        left.append({**where, "reason": reason})
+            return {"marked": marked, "left": left, "unexamined": sorted(unexamined)}
+
+    def _unpromoted(
+        self,
+        mark: str,
+        group: str,
+        table: str,
+        state: Mapping[str, Any],
+        promoted: frozenset[str],
+    ) -> str | None:
+        """Why this project's records do not show ``table`` promoted by a cutover of ``group``,
+        whose mark ``mark`` is a copy's or a staging's; ``None`` when they do."""
+        from .ownership import STAGE_MARKER, stage_marker
+
+        if STAGE_MARKER.fullmatch(mark) is None:
+            # A copy's mark, or a staging's that names its group: a cutover of this release writes
+            # the source's mark on the copy it promotes, so no cutover left either on a source.
+            return (
+                "it carries a copy's mark or a staging's of this release, which a cutover of this "
+                "release replaces with the source's when it promotes the copy: no record of this "
+                "project has it promoted"
+            )
+        stage = mark.split(".")[3]
+        receipt = (state.get("stages", {}).get(stage) or {}).get("receipt") or {}
+        if mark != stage_marker(self.project_id, stage, table):
+            return "its staging's mark is not one this project wrote on this table"
+        if receipt.get("outcome") != "prepared":
+            return f"no staging {stage} completed in this project's records"
+        if receipt.get("group") != group:
+            return (
+                f"staging {stage} prepared {receipt.get('group')!r}, and the map in force gives "
+                f"the table to {group!r}"
+            )
+        if group not in promoted:
+            return f"no cutover of {group!r} completed with success in this project's records"
+        return None
 
     def status(self) -> dict[str, Any]:
         return _local_status(

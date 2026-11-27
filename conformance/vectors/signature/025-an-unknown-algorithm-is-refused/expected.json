@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "only ed25519 and es256 signatures are understood",
+  "why": "an algorithm a library does not implement is refused by name, never verified as another"
+}

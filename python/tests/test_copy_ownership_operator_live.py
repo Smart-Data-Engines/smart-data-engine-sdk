@@ -14,6 +14,7 @@ import pytest
 from test_local_cutover_live import PROJECT, copy_rows, fixture
 
 import sde
+from sde import local_cutover
 from sde.engines._ownership import copy_owned
 from sde.erasure import ErasureRequest
 from sde.errors import MigrationRefused
@@ -197,3 +198,41 @@ def native_staging_marker(native: Any, table: str) -> str | None:
 
     found = native_staging(native).marker(table)
     return None if found is None else found[1]
+
+
+@pytest.mark.parametrize("source", ["postgres", "clickhouse"])
+@pytest.mark.parametrize("other", ["another group", "another entity of the group"])
+def test_an_erasure_refuses_a_source_another_name_reaches(
+    source: str, other: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One group's source named as another group's table - two engine names bound to one database
+    - or as another entity's of its own group would have an erasure delete the other's rows: the
+    erasure refuses a source's table another name of the map reaches, before anything is read or
+    deleted (§7r). The other name is added to what the map's names reach, as a binding would show
+    it; the control is the same erasure without it."""
+    with fixture(source, tmp_path) as (executor, _plan, _old, roles, _src, target, model, _key):
+        real = local_cutover.map_reach
+
+        def shared(current: Any, natives: Any) -> Any:
+            reach = real(current, natives)
+            spot = current.groups["Event"]
+            table = spot.source.layout.tables["Event"]
+            for names in reach.values():
+                if any((n[0], n[1], n[3]) == ("Event", spot.source.id, table) for n in names):
+                    names.append(
+                        ("Payment", "Payment@source", "Payment", "payments", "other")
+                        if other == "another group"
+                        else ("Event", spot.source.id, "Payment", table, spot.source.engine)
+                    )
+            return reach
+
+        request = ErasureRequest.build(model, "Event", [{"id": 1}])
+        before = copy_rows(roles, target)
+        monkeypatch.setattr(local_cutover, "map_reach", shared)
+        refused = "a source's table holds one entity of its group alone"
+        with pytest.raises(MigrationRefused, match=refused):
+            executor.erase(request, execute=True)
+        assert copy_rows(roles, target) == before
+        assert executor.store.read()["execution"] is None
+        monkeypatch.setattr(local_cutover, "map_reach", real)
+        executor.erase(request, execute=False)

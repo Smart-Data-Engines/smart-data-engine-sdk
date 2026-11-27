@@ -1,0 +1,5 @@
+{
+  "error": "MapError",
+  "match": "with both above zero and below the order of P-256",
+  "why": "r equal to the order of the curve is no ECDSA signature: refused by its form, before verification is attempted, as one outside the range of r and s is"
+}

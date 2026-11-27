@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from _generation import bind_generation_metadata, copy_marks
 
 import sde
 from sde.testing.loader import model_from_neutral
@@ -43,8 +44,11 @@ def fixture() -> tuple[sde.Session, sde.VerificationRequest, Recorded, dict[str,
             },
         }
 
+    # Contract 4: the request binds a locally configured project, and a map below contract 4 is
+    # refused where one is configured (format contract §7r).
     document = {
-        "contract": 3,
+        "contract": 4,
+        "project_id": PROJECT,
         "model_version": model.version,
         "map_version": 1,
         "groups": {
@@ -52,6 +56,7 @@ def fixture() -> tuple[sde.Session, sde.VerificationRequest, Recorded, dict[str,
                 "source": materialization("source", "events"),
                 "derived": [{**materialization("copy", "events_copy"), "lag_budget_ms": 1000}],
                 "also_write": ["copy"],
+                "write_epoch": 1,
             }
         },
     }
@@ -67,7 +72,15 @@ def fixture() -> tuple[sde.Session, sde.VerificationRequest, Recorded, dict[str,
         journal=journal,
         tables={"events_copy": [{"id": 729381, "value": "different-private-value"}]},
     )
-    session = sde.Session(model, placement, {"source": source, "copy": target}, project_id=PROJECT)
+    engines = {"source": source, "copy": target}
+    # The write fences and copy marks of a provisioned deployment, as the shared vectors bind them.
+    fenced = {"project_id": PROJECT, "epoch": 1}
+    bind_generation_metadata(
+        engines,
+        {"source": {"events": fenced}, "copy": {"events_copy": fenced}},
+        marks=copy_marks(placement),
+    )
+    session = sde.Session(model, placement, engines, project_id=PROJECT)
     request = sde.verification_request(
         placement, group="Event", project_id=PROJECT, request_id=REQUEST, requested_at=AT
     )
@@ -112,10 +125,11 @@ def test_wrong_binding_refuses_before_the_first_comparison_call(changed: dict[st
 
 
 def test_project_identity_cannot_be_learned_from_the_request() -> None:
-    session, request, journal, _ = fixture()
-    unconfigured = sde.Session(session.model, session.placement, session.engines)
-    with pytest.raises(sde.MigrationRefused, match="no project_id"):
-        sde.verify(unconfigured, "Event", request=request)
+    """Without a locally configured project no session opens on the map, so nothing verifies:
+    the project the request names is never taken for the local one."""
+    session, _, journal, _ = fixture()
+    with pytest.raises(sde.MigrationRefused, match="needs its locally configured project_id"):
+        sde.Session(session.model, session.placement, session.engines)
     assert journal.as_list() == []
 
 
@@ -162,7 +176,11 @@ def test_same_number_different_layout_is_a_different_map() -> None:
 
 def test_legacy_unsigned_annotations_do_not_change_the_old_load_behavior() -> None:
     session, _, _, document = fixture()
-    annotated = sde.load_map({**document, "annotation": 1.25}, model=session.model)
+    # A map of an earlier contract, without the project and the generation contract 4 added.
+    legacy = json.loads(json.dumps(document))
+    legacy["contract"] = 3
+    del legacy["project_id"], legacy["groups"]["Event"]["write_epoch"]
+    annotated = sde.load_map({**legacy, "annotation": 1.25}, model=session.model)
     assert annotated.fingerprint is None
     with pytest.raises(sde.MigrationRefused, match="canonically encodable"):
         sde.verification_request(

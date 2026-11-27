@@ -83,6 +83,7 @@ from .search import (
     text_index,
 )
 from .shapes import OperationShape, enumerate_shapes
+from .table_marks import check_table_marks
 from .telemetry import Recorder, StorageMeasurement, StorageSize
 from .temporal_range import TEMPORAL_KINDS, kind_noun
 from .verification import check_project_id
@@ -311,6 +312,11 @@ class Session:
         # nothing at all for an unsigned map.
         with session_owner(self):
             self._physical = validate_generations(model, placement, self._engines, project_id)
+            if placement.contract >= 4:
+                # What the fan-out and a backfill write to: a copy's table carries its own mark,
+                # a source's no copy's, and no two names of the map reach one table (§7r).
+                assert project_id is not None
+                check_table_marks(placement, self._engines, project_id)
             self._report_physical()
             self._forward_only = enforce_forward_only(placement, self._engines)
 
@@ -667,6 +673,8 @@ class Session:
             self._physical = validate_generations(
                 self._model, self._placement, self._engines, self._project_id
             )
+            assert self._project_id is not None
+            check_table_marks(self._placement, self._engines, self._project_id)
             self._report_physical()
             return
         findings: list[PhysicalFinding] = []

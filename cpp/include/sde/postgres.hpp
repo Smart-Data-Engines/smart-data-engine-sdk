@@ -53,6 +53,7 @@ class PostgresEngine final : public Engine,
                              public Fencable,
                              public SchemaValidator,
                              public MarksCopies,
+                             public ReadsTableFacts,
                              public StorageMeasurable {
  public:
   /// Nothing is opened until `connect`.
@@ -80,6 +81,9 @@ class PostgresEngine final : public Engine,
   std::vector<PhysicalFinding> ensure_copy(const PhysicalLayout& layout, const Keys& keys,
                                            const std::string& project_id,
                                            const std::string& group) override;
+  /// Each name's table as this connection's statements reach it: its identity and its mark (format
+  /// contract section 7r), one look-up of the catalogue for all of them.
+  std::map<std::string, TableFacts> table_facts(const std::vector<std::string>& tables) override;
   void insert(const std::string& table, const Row& values) override;
   std::optional<Row> get(const std::string& table, const Row& key) override;
   /// One transaction of this engine, nested ones as savepoints. A transaction the server aborted

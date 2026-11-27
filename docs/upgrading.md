@@ -10,10 +10,10 @@ What a release of which number may change is in
 [`compatibility.md`](compatibility.md#what-a-release-may-change). The page starts at 0.2.0: what
 changed before it is in the changelog alone.
 
-## From 0.2.0 to the next release
+## From 0.2.0 to 0.3.0
 
-`main` after `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0. The next release of
-both takes the number 0.3.0, since it refuses input that 0.2.0 accepted.
+`smart-data-engine-sdk` 0.3.0 and `@smart-data-engines/sde` 0.3.0, after 0.2.0 of both: a minor,
+since they refuse input that 0.2.0 accepted.
 
 **What does not change.** Both read placement maps of contracts 1 to 6 and the signed packets of the
 same protocols as 0.2.0 does ([`compatibility.md`](compatibility.md#maps-and-signed-packets)). No `schema/`
@@ -191,6 +191,19 @@ of its table or column.
 
 Changelog: *Fixed: a map cannot put a statement of its own choosing into a client's engine*.
 
+**A map below contract 4 is refused where a project is configured.** Affected: a service that
+configures its project (`project_id`) and opens a session or prepares a schema on a map of contract
+1, 2 or 3 - a hand-written one, or one an earlier control plane issued before write generations.
+Such a map carries no project and no write generation, so it cannot be told from a forged map of an
+older contract, which would reach any table of its shape; the session, `prepare_schema` or
+`sde.departure` refuses it with `MigrationRefused` (`carries no project and no write generation`)
+before any statement of its own. Either load a map of contract 4 or later, which the control plane issues with the
+project, or leave the project out of that service's configuration: without one the map is taken as
+before. Verifying a copy against a request (format contract §7b) binds the configured project, so
+it runs on contract 4 or later.
+
+Changelog: *Fixed: a map below contract 4 is refused where a project is configured*.
+
 ### A write fence's backend of your own
 
 **A write fence's backend has one more operation.** Affected: a `FenceBackend` implemented outside
@@ -233,8 +246,9 @@ release wrote such a map.
 **A copy's table carries its creator's mark, and the operator writes to no other.** Affected: a
 deployment whose map has a copy - the initial handoff of [`local-cutover.md`](local-cutover.md)
 provisions one - made by `prepare_schema` before this release. Its tables have no mark, so
-`prepare_schema` and every operator command that writes to the copy refuse it, by name. Make the copy
-again: it holds only rows of its source. The simplest way is to stage a new copy
+`prepare_schema`, every operator command that writes to the copy and every session of the map refuse
+it, by name - a session when it opens, so make the copy again before the application's library is
+upgraded. It holds only rows of its source. The simplest way is to stage a new copy
 ([staging](staging.md)): its tables are created marked, under new names, and its backfill starts
 from nothing. To keep the map you have, make sure the table is the copy you provisioned, then drop
 it, delete the copy's backfill progress - the rows (in Elasticsearch, documents) of
@@ -248,13 +262,50 @@ An engine adapter of your own that holds a copy of a group with a write generati
 tables `copy_statements` / `copyStatements` gives - without `IF NOT EXISTS`, the mark in the
 statement that creates each - and refuse a table of the name whose mark `owned_copy_marker` /
 `ownedCopyMarker` does not take (in C++, `sde/ownership.hpp`). Without it, `prepare_schema` refuses
-such a copy, by name, before any statement.
+such a copy, by name, before any statement. It also says what each name of a map reaches -
+`table_facts` (Python), `tableFacts` (TypeScript, `ReadsTableFacts`) or `ReadsTableFacts` (C++):
+each name's table as the adapter's statements reach it, by an identity that is the same however it
+is reached, and the mark it carries. Without it a session refuses a map with a copy on its engine,
+when it opens.
 
 A map you write by hand, of contract 4 or later, may not name a copy's table for anything else too
 - another group's source or copy, or another entity of the copy: `load_map` refuses it.
+Nor may two groups' sources be one table, or one table hold two entities of a group's source, by
+one name or by two engine names bound to one database: a session and `prepare_schema` refuse a
+source's table another name of the map reaches, and so does the operator's erasure. A source on an
+engine whose adapter does not say what its names reach is not held to this.
+
+`sde.backfill` (Python) takes a session only: a call with an `InspectionContext` or another view of
+a map is refused, since only a session read the marks of the map's tables when it opened. Open a
+session on the map and pass it.
+
+Upgrade the operator (`sde-operator`, Python) first, before the application's library. A source an
+earlier operator's cutover made from a staged copy carries the staging's mark (`sde.stage1`), and a
+session of this release refuses it (`carries a staging's mark`): it cannot be told from a staged copy
+a forged map names as a source. With the upgraded operator, before the library is upgraded, run
+`sde-operator --project-dir <dir> --config <file> mark-sources`
+([local cutover](local-cutover.md#a-source-an-earlier-cutover-left-with-the-stagings-mark)). It
+writes the source's mark on each such source the project's records show was promoted - a stage
+completed for the group the map in force gives the table to, and a cutover of that group completed
+with success - whatever the application has added to the table since, a trigger or a dependent view
+included. It names every source it leaves with a copy's or a staging's mark, with the reason, and
+every binding it is not bound to, and exits 1 while there is one: a session of this release would
+refuse each source left, so find where each came from before the library is upgraded, and bind the
+operator to every engine of the map. A copy an earlier staging marked is still taken as a copy.
+
+A copy marked by this release's `prepare_schema` and then made the source by an earlier operator's
+cutover keeps the copy's mark, and a session of this release refuses that source; `mark-sources`
+leaves it. Only a staging's mark names a stage, whose receipt in the project's records says which
+group it was prepared for; a copy's mark names no record the operator could check. That is why the
+operator goes first.
+
+C++: a session keeps its own copies of the model and the map it opened on. A map loaded into the
+same variable afterwards does not reach it - open a new session for a new map, as before; the
+model and the map need not outlive the session any more.
 
 Changelog: *Fixed: a copy's table is one the library created and marked, and the operator writes to
-no other*.
+no other*, *Fixed: a session reads the marks of its map's tables when it opens* and *Fixed: a
+staging's mark names its group, and no copy's or staging's mark is taken on a source*.
 
 ### After the upgrade
 

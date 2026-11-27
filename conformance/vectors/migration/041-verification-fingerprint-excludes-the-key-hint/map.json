@@ -1,5 +1,5 @@
 {
-  "contract": 2,
+  "contract": 4,
   "model_version": "fe8473623a7c98b7",
   "map_version": 1,
   "groups": {
@@ -51,12 +51,14 @@
       ],
       "also_write": [
         "Reading@pg2"
-      ]
+      ],
+      "write_epoch": 1
     }
   },
+  "project_id": "11111111111111111111111111111111",
   "signature": {
     "alg": "ed25519",
-    "value": "gQU+9s8Cgz85gQl02UHXEwJwBs2jGwSG/GjeEezAF0M9rbNp/WNGTqJnV4BMXhSmPnwESlAU7foCy3J47p0+Bw==",
+    "value": "+g9/SgN+91GRd89x6/voNrSpMIojfhBEGpmcJdgfoMs8faqgnYokDFwmZbHYwgFl/KKRxkhvKP6rUeL3BTmUBQ==",
     "key_id": "a-different-untrusted-hint"
   }
 }

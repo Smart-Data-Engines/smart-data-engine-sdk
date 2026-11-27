@@ -13,7 +13,7 @@ import sde
 from sde.testing.loader import model_from_neutral
 
 ROOT = Path(__file__).resolve().parents[2]
-CASE = ROOT / "conformance/vectors/migration/022-verification-is-bound-to-its-request"
+CASE = ROOT / "conformance/vectors/migration/017-a-verify-that-matches"
 PROJECT = "1" * 32
 
 

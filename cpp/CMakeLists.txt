@@ -84,6 +84,7 @@ add_library(sde
   src/bignum.cpp
   src/value.cpp
   src/ownership.cpp
+  src/table_marks.cpp
   src/schema.cpp
   src/query.cpp
   src/admission.cpp

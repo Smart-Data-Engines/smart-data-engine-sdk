@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "generation.hpp"
+#include "table_marks_internal.hpp"
 #include "sde/errors.hpp"
 #include "sde/write_fence.hpp"
 
@@ -73,6 +74,9 @@ void prepare_schema(const Model& model, const PlacementMap& placement,
         detail::refuse_a_fencing_engine(name, material->engine, *engines.at(material->engine));
       }
     }
+    // The tables already there: a source carries no copy's mark, and no copy is reached by another
+    // name of the map (section 7r). The copies this call creates are read again after it.
+    detail::check_table_marks(placement, engines, *local_project, false);
   }
   for (const Group& group : model.groups()) {
     const GroupPlacement& spot = placement.placement_of(group.name);
@@ -97,6 +101,9 @@ void prepare_schema(const Model& model, const PlacementMap& placement,
             .prepare(*spot.write_epoch);
       }
     }
+  }
+  if (placement.contract() >= kGenerationsSince) {
+    detail::check_table_marks(placement, engines, *local_project);
   }
   if (placement.is_signed()) {
     // Storage only: recording this map's version here would activate it before the generations

@@ -230,9 +230,23 @@ def test_the_release_table_ends_with_main_and_has_every_release() -> None:
     assert _numbers(rows[-1][1]) == list(range(sde.MAP_CONTRACT_FLOOR, sde.MAP_CONTRACT + 1))
     assert _numbers(rows[-1][2]) == [cutover.CUTOVER_PROTOCOL, cutover.CUTOVER_RELAYOUT_PROTOCOL]
     assert _numbers(rows[-1][3]) == [advance.ADVANCE_PROTOCOL]
-    # A release that has no loader for the packet says so in words, never with a number.
+    # The algorithms main reads are the ones the signature vectors hold every library to.
+    vectors = (ROOT / "conformance" / "vectors" / "signature").glob("*/map.json")
+    algorithms = {
+        json.loads(path.read_text(encoding="utf-8")).get("signature", {}).get("alg")
+        for path in vectors
+    }
+    assert {"ed25519", "es256"} <= algorithms, algorithms
+    assert rows[-1][4] == "Ed25519 and ES256", rows[-1]
+    # ES256 came with 0.3.0; every release before it read Ed25519 alone.
+    assert {row[0]: row[4] for row in rows[:-1]} == {
+        **{row[0]: "Ed25519" for row in rows[:-1] if row[0] != "0.3.0"},
+        "0.3.0": "Ed25519 and ES256",
+    }, rows
+    # A release that has no loader for the packet says so in words, never with a number: those
+    # before 0.3.0, the release that brought it.
     released_with_it = [row[0] for row in rows[:-1] if _numbers(row[3])]
-    assert released_with_it == [], released_with_it
+    assert released_with_it == ["0.3.0"], released_with_it
     listed = {version for row in rows[:-1] for version in re.findall(r"\d+\.\d+\.\d+", row[0])}
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     released = {
