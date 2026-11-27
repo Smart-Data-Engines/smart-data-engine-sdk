@@ -6,7 +6,7 @@
     "project_id": "11111111111111111111111111111111",
     "model_version": "fe8473623a7c98b7",
     "map_version": 1.5,
-    "map_fingerprint": "3913711e96f023c472cde92996beb0b5413096934e8a8a28799b67873465f2d9",
+    "map_fingerprint": "dc775487ba2160097d0f718b283a445770789bfb954d29f8aa3f94297c15fe4f",
     "group": "Reading",
     "source": {
       "engine": "pg-main",
@@ -24,6 +24,28 @@
   "group": "Reading",
   "at": "2026-09-12T12:00:01Z",
   "chunk_rows": 3,
+  "engine_generations": {
+    "pg-main": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      }
+    },
+    "pg-copy": {
+      "reading": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      },
+      "sample": {
+        "project_id": "11111111111111111111111111111111",
+        "epoch": 1
+      }
+    }
+  },
   "error": "MigrationRefused",
   "match": "integer"
 }

@@ -12,7 +12,7 @@ import { Session } from '../src/session.js'
 import type { Row } from '../src/session.js'
 import { EngineError } from '../src/errors.js'
 import { generatorId, reading, weatherModel } from '../src/demo/model.js'
-import { project, read, write } from '../src/demo/project.js'
+import { DemoRefused, project, read, write } from '../src/demo/project.js'
 import { alertExpected, alertHumidity, fleetExpected, fleetRuns, requireDrivers, runWeather, workloads } from '../src/demo/weather.js'
 
 const roots: string[] = []
@@ -115,6 +115,16 @@ it('needs no operator credentials and refuses a changed runtime file', () => {
   expect(project(root).model.version).toBe(weatherModel().version)
   write(join(root, 'runtime-credentials.json'), { db: 'changed' })
   expect(() => project(root)).toThrow('credentials differ')
+})
+it('refuses an active map below contract 4 as the starter refusal, not an incomplete run', () => {
+  const { root, current, signed } = fixture()
+  const legacy: Record<string, unknown> = structuredClone(current)
+  legacy['contract'] = 3
+  delete legacy['project_id']
+  for (const group of Object.values(legacy['groups'] as Record<string, Record<string, unknown>>)) delete group['write_epoch']
+  write(join(root, 'state', 'active-map.json'), signed(legacy))
+  expect(() => project(root)).toThrow(DemoRefused)
+  expect(() => project(root)).toThrow('generation-bearing map')
 })
 it('trusts a P-256 key for a map signed with ES256, and refuses one that is not a point', () => {
   expect(project(fixture('es256').root).model.version).toBe(weatherModel().version)

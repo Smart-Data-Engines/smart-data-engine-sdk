@@ -503,3 +503,19 @@ def test_postgres_homograph_cannot_count_another_accessible_table(tmp_path: Path
     finally:
         if (root / "resources.json").exists():
             resources.reset(root, admin)
+
+
+def test_a_map_below_contract_4_is_the_count_demo_s_own_refusal() -> None:
+    """The demo's refusal, said before the project check, which refuses such a map too and would
+    end the request as another kind of error."""
+    bundle, sign = supplied()
+    legacy = deepcopy(bundle["current_map"])
+    legacy.pop("signature")
+    legacy.pop("project_id")
+    legacy["contract"] = 3
+    for group in legacy["groups"].values():
+        group.pop("write_epoch")
+    placement = sde.load_map(sign(legacy), model=model(), public_key=project.public_keys(
+        bundle["public_keys"]), require_signature=True)
+    with pytest.raises(project.DemoRefused, match="loaded, signed Weather project map"):
+        query_count._source(placement, bundle["project_id"])

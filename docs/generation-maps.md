@@ -22,7 +22,8 @@ native generation or deleting a source.
   strict API is unchanged; this normalization belongs to the new map reader.
 - `project_id` and group `write_epoch` cannot be placed in a document declaring an earlier contract.
   Earlier readers must reject contract 4 rather than ignore the write requirement. Existing maps
-  of contracts 1–3 continue in their legacy mode.
+  of contracts 1–3 continue in their legacy mode without a project configured; with one, a session,
+  `prepare_schema` and departure refuse them (format contract §7r).
 - The physical `__sde_write_epoch` column and `__sde_fence_drains` table are reserved. The technical
   column is not a logical model field or an application-supplied write value.
 

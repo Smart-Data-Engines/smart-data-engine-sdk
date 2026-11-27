@@ -1086,8 +1086,15 @@ describe('migration vectors', () => {
       if (existsSync(boundFile)) {
         const want = readJson<{
           project_id?: string; group: string; request: unknown; at: string; chunk_rows?: number;
-          error?: string; match?: string; report?: unknown; matched?: boolean
+          error?: string; match?: string; report?: unknown; matched?: boolean;
+          engine_generations?: Record<string, Record<string, {project_id: string; epoch: number}>>
         }>(boundFile)
+        // The write fences a provisioned deployment holds, and the copy marks its map implies (§7r):
+        // the request binds a project, and only a map of contract 4 or later is taken where one is
+        // configured.
+        if (want.engine_generations !== undefined) {
+          bindGenerationMetadata(engines, want.engine_generations, false, copyMarks(map))
+        }
         const boundSession = await Session.open(model, map, engines,
           want.project_id === undefined ? {} : { projectId: want.project_id })
         const compare = async () => verify(boundSession, want.group, {

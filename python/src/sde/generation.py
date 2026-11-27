@@ -54,6 +54,15 @@ def json_numbers(value: Any) -> Any:
 
 def check_map_project(placement: PlacementMap, project_id: str | None) -> str | None:
     if placement.contract < 4:
+        if project_id is not None:
+            # A map below contract 4 carries no project and no write generation, so neither a
+            # fence nor a mark applies to it (format contract §7r): taken where a project is
+            # configured, a forged map of an older contract would reach any table of its shape.
+            raise MigrationRefused(
+                f"a map of contract {placement.contract} carries no project and no write "
+                f"generation, and this session has a project configured: a map below contract "
+                f"{GENERATIONS_SINCE} is taken only without one (docs/upgrading.md)"
+            )
         return None
     if project_id is None or project_id != placement.project_id:
         raise MigrationRefused(
@@ -106,6 +115,7 @@ def validate_generations(
     and generations still refuse.
     """
     if placement.contract < 4:
+        check_map_project(placement, project_id)  # refuses it where a project is configured
         return ()
     findings: list[PhysicalFinding] = []
     local_project = check_map_project(placement, project_id)

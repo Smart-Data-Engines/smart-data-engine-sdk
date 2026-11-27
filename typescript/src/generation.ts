@@ -31,7 +31,19 @@ export interface Fencable {
 }
 
 export function checkMapProject(placement: PlacementMap, projectId: string | undefined): string | undefined {
-  if (placement.contract < 4) return undefined
+  if (placement.contract < 4) {
+    // A map below contract 4 carries no project and no write generation, so neither a fence nor a
+    // mark applies to it (format contract §7r): taken where a project is configured, a forged map of
+    // an older contract would reach any table of its shape.
+    if (projectId !== undefined) {
+      throw new MigrationRefused(
+        `a map of contract ${placement.contract} carries no project and no write generation, and this ` +
+          `session has a project configured: a map below contract ${GENERATIONS_SINCE} is taken only ` +
+          'without one (docs/upgrading.md)',
+      )
+    }
+    return undefined
+  }
   if (projectId === undefined || projectId !== placement.projectId) {
     throw new MigrationRefused('this generation-bearing map needs its locally configured project_id; ' +
       'do not learn that identity from the supplied map')
@@ -90,7 +102,10 @@ function keysOf(model: LogicalModel, layout: PhysicalLayout): Record<string, rea
  */
 export async function validateGenerations(model: LogicalModel, placement: PlacementMap,
   engines: Readonly<Record<string, Engine>>, projectId: string | undefined): Promise<readonly PhysicalFinding[]> {
-  if (placement.contract < GENERATIONS_SINCE) return []
+  if (placement.contract < GENERATIONS_SINCE) {
+    checkMapProject(placement, projectId) // refuses it where a project is configured
+    return []
+  }
   const findings: PhysicalFinding[] = []
   const project = checkMapProject(placement, projectId) as string
   if (model.version !== placement.modelVersion) {

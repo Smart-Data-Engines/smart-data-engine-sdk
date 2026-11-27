@@ -8,6 +8,22 @@ agree. What does is the conformance suite and
 
 ## Unreleased
 
+**Fixed: a map below contract 4 is refused where a project is configured** (all three libraries;
+[format contract §7r](docs/format-contract.md#7r-a-copys-table-carries-its-creators-mark)). A map
+of contract 1 to 3 carries no project and no write generation, so neither a write fence nor a
+copy's mark applies to it, and the libraries took it as before also where a project was configured:
+a forged map of an older contract directed the application's writes - a session's fan-out, and
+`sde.backfill` through it - to any table of its shape, around every check of the marks. A session,
+its `ensure_schema`, `prepare_schema` and `sde.departure` with a project configured now refuse such
+a map (`carries no project and no write generation`) before any schema, fence, mark, watermark or
+data statement; without a project it is taken as before. The verification-request vectors
+`migration/022` to `045`, which bind a configured project, are on contract 4 with the write fences
+of a provisioned deployment (`engine_generations`): their engine calls are the ones they were, and
+each request and report names the new map's fingerprint; `030` keeps its map of contract 2 and no
+project, where verification refuses itself. New vector `migration/237`. The Weather starter says a
+bootstrap or an active map below contract 4 as its own refusal, as before. **Breaking** for a
+service with a project configured that loads a map below contract 4 ([upgrading](docs/upgrading.md)).
+
 **Added: maps and signed packets may be signed with ES256** (all three libraries;
 [format contract](docs/format-contract.md) §7, *Signing*; vectors `signature/016` to `029`). Beside
 Ed25519, a map or packet may carry `"alg": "es256"`: ECDSA over P-256 with SHA-256, the signature r

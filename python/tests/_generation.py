@@ -56,7 +56,8 @@ def bind_generation_metadata(
                         engine.name, "fence_" + operation, table=table_name, arguments=arguments
                     )
 
-                backend.done = note
+                # Every fence call joins the engines' journal: the test's own hook, not an API.
+                backend.done = note  # type: ignore[method-assign]
             backends[table] = backend
 
         def factory(

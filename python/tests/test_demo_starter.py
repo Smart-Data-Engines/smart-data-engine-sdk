@@ -67,6 +67,23 @@ def test_bootstrap_refuses_changed_input_before_allocation(
     assert not (tmp_path / "refused").exists()
 
 
+def test_setup_refuses_a_map_below_contract_4_as_the_starter_s_own_refusal(tmp_path: Path) -> None:
+    """A bootstrap whose map is of an earlier contract is the starter's refusal (exit 2), said
+    before the project check, which refuses such a map too and would end the setup as an
+    incomplete operation (exit 3)."""
+    bundle, sign = supplied()
+    legacy = deepcopy(bundle["current_map"])
+    legacy.pop("signature")
+    legacy.pop("project_id")
+    legacy["contract"] = 3
+    for group in legacy["groups"].values():
+        group.pop("write_epoch")
+    bundle["current_map"] = sign(legacy)
+    with pytest.raises(project.DemoRefused, match="generation-bearing initial map"):
+        project.setup(tmp_path / "refused", bundle, {})
+    assert not (tmp_path / "refused").exists()
+
+
 def test_generator_is_exact_under_an_unrelated_decimal_context() -> None:
     expected = reading("a" * 32, 0, 999)
     with localcontext() as context:
