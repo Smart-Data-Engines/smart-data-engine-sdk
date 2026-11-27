@@ -171,7 +171,7 @@ from .watermark import (
 from .write_fence import EPOCH_COLUMN as WRITE_EPOCH_COLUMN
 from .write_fence import FenceState, WriteFence
 
-__version__ = "0.2.1.dev0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ADVANCE_PROTOCOL",

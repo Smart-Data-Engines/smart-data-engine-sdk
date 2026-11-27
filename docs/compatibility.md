@@ -104,6 +104,7 @@ By release, for the two libraries on a registry:
 |---|---|---|---|---|
 | 0.1.0, 0.1.1 | 1 to 5 | 1 and 2 | not read | Ed25519 |
 | 0.2.0 | 1 to 6 | 1 and 2 | not read | Ed25519 |
+| 0.3.0 | 1 to 6 | 1 and 2 | 1 | Ed25519 and ES256 |
 | `main` | 1 to 6 | 1 and 2 | 1 | Ed25519 and ES256 |
 
 **Backwards compatible, forwards strict.** A library reads every earlier map contract with its

@@ -10,10 +10,10 @@ What a release of which number may change is in
 [`compatibility.md`](compatibility.md#what-a-release-may-change). The page starts at 0.2.0: what
 changed before it is in the changelog alone.
 
-## From 0.2.0 to the next release
+## From 0.2.0 to 0.3.0
 
-`main` after `smart-data-engine-sdk` 0.2.0 and `@smart-data-engines/sde` 0.2.0. The next release of
-both takes the number 0.3.0, since it refuses input that 0.2.0 accepted.
+`smart-data-engine-sdk` 0.3.0 and `@smart-data-engines/sde` 0.3.0, after 0.2.0 of both: a minor,
+since they refuse input that 0.2.0 accepted.
 
 **What does not change.** Both read placement maps of contracts 1 to 6 and the signed packets of the
 same protocols as 0.2.0 does ([`compatibility.md`](compatibility.md#maps-and-signed-packets)). No `schema/`
